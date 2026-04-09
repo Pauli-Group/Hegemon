@@ -442,6 +442,8 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
         let expected_magnitude = value.unsigned_abs();
         expected_sign == sign && expected_magnitude == u128::from(magnitude)
     };
+    let normalize_balance_slot_asset_id =
+        |asset_id: u64| Goldilocks::from_u64(asset_id).as_canonical_u64();
 
     if public_inputs.merkle_root != stark_inputs.merkle_root {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -466,13 +468,24 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
         && public_inputs
             .balance_slots
             .iter()
-            .map(|slot| slot.asset_id)
+            .map(|slot| normalize_balance_slot_asset_id(slot.asset_id))
             .collect::<Vec<_>>()
-            != stark_inputs.balance_slot_asset_ids
+            != stark_inputs
+                .balance_slot_asset_ids
+                .iter()
+                .copied()
+                .map(normalize_balance_slot_asset_id)
+                .collect::<Vec<_>>()
     {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "public balance slot assets do not match serialized public inputs",
-        ));
+        let public_assets = public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>();
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "public balance slot assets do not match serialized public inputs: public={public_assets:?} serialized={:?}",
+            stark_inputs.balance_slot_asset_ids
+        )));
     }
     if u8::from(public_inputs.stablecoin.enabled) != stark_inputs.stablecoin_enabled
         || public_inputs.stablecoin.asset_id != stark_inputs.stablecoin_asset_id
@@ -843,5 +856,14 @@ mod tests {
         proof.stark_public_inputs = None;
         let error = transaction_public_inputs_digest(&proof).expect_err("missing inputs fail");
         assert!(error.to_string().contains("missing STARK public inputs"));
+    }
+
+    #[test]
+    fn public_inputs_from_parts_normalizes_balance_slot_padding_sentinel() {
+        let public_inputs = TransactionPublicInputs::default();
+        let p3_inputs =
+            transaction_public_inputs_p3_from_parts(&public_inputs, &dummy_serialized_inputs())
+                .expect("balance slot padding sentinel should normalize through the field");
+        assert_eq!(p3_inputs.balance_slot_assets[0].as_canonical_u64(), 0);
     }
 }

@@ -146,6 +146,15 @@ const NATIVE_TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v
 const NATIVE_TX_LITE_COMMITMENT_MAX_ROWS: usize = 256;
 const NATIVE_TX_LITE_COMMITMENT_MAX_COLS: usize = 256;
 const NATIVE_TX_CANONICAL_PADDING_ASSET_ID: u64 = 4_294_967_294;
+const NATIVE_TX_INLINE_PUBLIC_ARGS_MISMATCH_CODE: u8 = 40;
+const NATIVE_TX_INLINE_BALANCE_SLOTS_CODE: u8 = 41;
+const NATIVE_TX_INLINE_BALANCE_TAG_CODE: u8 = 42;
+const NATIVE_TX_INLINE_TX_PAYLOAD_CODE: u8 = 43;
+const NATIVE_TX_INLINE_STATEMENT_HASH_RECONSTRUCTION_CODE: u8 = 44;
+const NATIVE_TX_INLINE_STATEMENT_HASH_MISMATCH_CODE: u8 = 45;
+const NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_RECONSTRUCTION_CODE: u8 = 46;
+const NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_MISMATCH_CODE: u8 = 47;
+const NATIVE_TX_INLINE_ZERO_RECEIPT_FIELDS_CODE: u8 = 48;
 
 mod native_serde_bytes48 {
     use serde::Serializer;
@@ -387,6 +396,11 @@ fn decode_native_tx_leaf_lite(
     let _leaf_statement_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
     let _leaf_witness_commitment_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
     let _leaf_proof_digest = read_array_checked::<48>(proof_bytes, &mut cursor)?;
+    if cursor < proof_bytes.len() {
+        let backend_wire = read_u8_checked(proof_bytes, &mut cursor)?;
+        protocol_versioning::TxProofBackend::try_from(backend_wire)
+            .map_err(|_| InvalidTransaction::BadProof)?;
+    }
     if cursor != proof_bytes.len() {
         return Err(InvalidTransaction::BadProof);
     }
@@ -1484,48 +1498,99 @@ pub mod pallet {
             version: VersionBinding,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: unstable stablecoin binding"
+                );
                 return Err(InvalidTransaction::Custom(7));
             }
             if !matches!(
                 CiphertextPolicyStorage::<T>::get(),
                 types::CiphertextPolicy::InlineAllowed
             ) {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: ciphertext policy forbids inline transport"
+                );
                 return Err(InvalidTransaction::Call);
             }
             if proof.data.len() > crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: proof_bytes={} exceeds native tx-leaf max={}",
+                    proof.data.len(),
+                    crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
+                );
                 return Err(InvalidTransaction::ExhaustsResources);
             }
             if nullifiers.is_empty() && commitments.is_empty() {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: empty nullifiers and commitments"
+                );
                 return Err(InvalidTransaction::Custom(1));
             }
             if !commitments.is_empty() && nullifiers.is_empty() {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: commitments present without nullifiers"
+                );
                 return Err(InvalidTransaction::Custom(1));
             }
             if ciphertexts.len() != commitments.len() {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: ciphertext_count={} != commitment_count={}",
+                    ciphertexts.len(),
+                    commitments.len()
+                );
                 return Err(InvalidTransaction::Custom(2));
             }
             if !MerkleRoots::<T>::contains_key(anchor) {
+                warn!(
+                    target: "shielded-pool",
+                    "inline unsigned transfer rejected: unknown anchor={:?}",
+                    anchor
+                );
                 return Err(InvalidTransaction::Custom(3));
             }
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
+                    warn!(
+                        target: "shielded-pool",
+                        "inline unsigned transfer rejected: zero nullifier"
+                    );
                     return Err(InvalidTransaction::Custom(4));
                 }
             }
             for cm in commitments.iter() {
                 if is_zero_commitment(cm) {
+                    warn!(
+                        target: "shielded-pool",
+                        "inline unsigned transfer rejected: zero commitment"
+                    );
                     return Err(InvalidTransaction::Custom(4));
                 }
             }
             let mut seen = Vec::new();
             for nf in nullifiers.iter() {
                 if seen.contains(nf) {
+                    warn!(
+                        target: "shielded-pool",
+                        "inline unsigned transfer rejected: duplicate nullifier={:?}",
+                        nf
+                    );
                     return Err(InvalidTransaction::Custom(4));
                 }
                 seen.push(*nf);
             }
             for nf in nullifiers.iter() {
                 if Nullifiers::<T>::contains_key(nf) {
+                    warn!(
+                        target: "shielded-pool",
+                        "inline unsigned transfer rejected: nullifier already spent={:?}",
+                        nf
+                    );
                     return Err(InvalidTransaction::Custom(5));
                 }
             }
@@ -1560,6 +1625,11 @@ pub mod pallet {
             version: VersionBinding,
         ) -> Result<Option<ValidActionMeta>, InvalidTransaction> {
             let Some(decoded) = decode_native_tx_leaf_lite(proof_bytes).unwrap_or_default() else {
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf decode returned None for proof_bytes={}",
+                    proof_bytes.len()
+                );
                 return Ok(None);
             };
 
@@ -1576,10 +1646,14 @@ pub mod pallet {
             };
             let verifier = T::ProofVerifier::default();
             if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf binding hash mismatch"
+                );
                 return Err(InvalidTransaction::BadSigner);
             }
 
-            verify_native_stark_inputs_match_public_args(
+            if verify_native_stark_inputs_match_public_args(
                 &decoded.stark_inputs,
                 nullifiers.len(),
                 commitments.len(),
@@ -1587,23 +1661,63 @@ pub mod pallet {
                 balance_slot_asset_ids,
                 stablecoin,
                 fee,
-            )?;
+            )
+            .is_err()
+            {
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf stark_inputs/public_args mismatch: anchor_match={} fee_match={} balance_slots_match={}",
+                    decoded.stark_inputs.merkle_root == *anchor,
+                    decoded.stark_inputs.fee == fee,
+                    decoded.stark_inputs.balance_slot_asset_ids.as_slice()
+                        == balance_slot_asset_ids
+                            .map(canonicalize_native_balance_slot_asset_id)
+                );
+                return Err(InvalidTransaction::Custom(
+                    NATIVE_TX_INLINE_PUBLIC_ARGS_MISMATCH_CODE,
+                ));
+            }
 
             let balance_slots = canonical_balance_slots_from_public_args(
                 *balance_slot_asset_ids,
                 fee,
                 0,
                 stablecoin,
-            )?;
-            let balance_tag = balance_commitment_bytes(i128::from(fee), &balance_slots)
-                .map_err(|_| InvalidTransaction::BadProof)?;
+            )
+            .map_err(|err| {
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf canonical balance slots reconstruction failed: {:?}",
+                    err
+                );
+                let _ = err;
+                InvalidTransaction::Custom(NATIVE_TX_INLINE_BALANCE_SLOTS_CODE)
+            })?;
+            let balance_tag =
+                balance_commitment_bytes(i128::from(fee), &balance_slots).map_err(|_| {
+                    warn!(
+                        target: "shielded-pool",
+                        "native tx leaf balance commitment reconstruction failed"
+                    );
+                    InvalidTransaction::Custom(NATIVE_TX_INLINE_BALANCE_TAG_CODE)
+                })?;
             if decoded.tx.nullifiers.as_slice() != nullifiers.as_slice()
                 || decoded.tx.commitments.as_slice() != commitments.as_slice()
                 || decoded.tx.ciphertext_hashes.as_slice() != ciphertext_hashes.as_slice()
                 || decoded.tx.balance_tag != balance_tag
                 || decoded.tx.version != version
             {
-                return Err(InvalidTransaction::BadProof);
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf tx payload mismatch: nullifiers_match={} commitments_match={} ciphertext_hashes_match={} balance_tag_match={} decoded_version={:?} expected_version={:?}",
+                    decoded.tx.nullifiers.as_slice() == nullifiers.as_slice(),
+                    decoded.tx.commitments.as_slice() == commitments.as_slice(),
+                    decoded.tx.ciphertext_hashes.as_slice() == ciphertext_hashes.as_slice(),
+                    decoded.tx.balance_tag == balance_tag,
+                    decoded.tx.version,
+                    version,
+                );
+                return Err(InvalidTransaction::Custom(NATIVE_TX_INLINE_TX_PAYLOAD_CODE));
             }
             let expected_statement_hash = native_statement_hash_from_public_args(
                 nullifiers.as_slice(),
@@ -1612,18 +1726,56 @@ pub mod pallet {
                 &balance_tag,
                 version,
                 &decoded.stark_inputs,
-            )?;
+            )
+            .map_err(|err| {
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf statement hash reconstruction failed: {:?}",
+                    err
+                );
+                let _ = err;
+                InvalidTransaction::Custom(NATIVE_TX_INLINE_STATEMENT_HASH_RECONSTRUCTION_CODE)
+            })?;
             if decoded.receipt.statement_hash != expected_statement_hash {
-                return Err(InvalidTransaction::BadProof);
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf statement hash mismatch"
+                );
+                return Err(InvalidTransaction::Custom(
+                    NATIVE_TX_INLINE_STATEMENT_HASH_MISMATCH_CODE,
+                ));
             }
-            let expected_public_inputs_digest = native_public_inputs_digest(&decoded.stark_inputs)?;
+            let expected_public_inputs_digest = native_public_inputs_digest(&decoded.stark_inputs)
+                .map_err(|err| {
+                    warn!(
+                        target: "shielded-pool",
+                        "native tx leaf public inputs digest reconstruction failed: {:?}",
+                        err
+                    );
+                    let _ = err;
+                    InvalidTransaction::Custom(
+                        NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_RECONSTRUCTION_CODE,
+                    )
+                })?;
             if decoded.receipt.public_inputs_digest != expected_public_inputs_digest {
-                return Err(InvalidTransaction::BadProof);
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf public inputs digest mismatch"
+                );
+                return Err(InvalidTransaction::Custom(
+                    NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_MISMATCH_CODE,
+                ));
             }
             if decoded.receipt.proof_digest == [0u8; 48]
                 || decoded.receipt.verifier_profile == [0u8; 48]
             {
-                return Err(InvalidTransaction::BadProof);
+                warn!(
+                    target: "shielded-pool",
+                    "native tx leaf receipt carried zero proof_digest/verifier_profile"
+                );
+                return Err(InvalidTransaction::Custom(
+                    NATIVE_TX_INLINE_ZERO_RECEIPT_FIELDS_CODE,
+                ));
             }
 
             Ok(Some(ValidActionMeta {
@@ -3019,7 +3171,14 @@ mod tests {
         InvalidTransaction, TransactionSource, TransactionValidityError,
     };
     use std::collections::BTreeMap;
-    use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
+    use superneo_hegemon::{
+        build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
+    };
+    use synthetic_crypto::ml_kem::MlKemKeyPair;
+    use synthetic_crypto::note_encryption::{
+        NoteCiphertext as CryptoNoteCiphertext, NotePlaintext as CryptoNotePlaintext,
+    };
+    use synthetic_crypto::traits::KemKeyPair;
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
@@ -3145,6 +3304,125 @@ mod tests {
             commitments,
             ciphertext_hashes,
             ciphertext_sizes,
+            public_inputs.merkle_root,
+            balance_slot_asset_ids,
+            binding_hash,
+        )
+    }
+
+    fn encrypted_note_from_crypto_ct(crypto_ct: CryptoNoteCiphertext) -> types::EncryptedNote {
+        let mut ciphertext = [0u8; types::ENCRYPTED_NOTE_SIZE];
+        let mut offset = 0usize;
+        ciphertext[offset] = crypto_ct.version;
+        offset += 1;
+        ciphertext[offset..offset + 2].copy_from_slice(&crypto_ct.crypto_suite.to_le_bytes());
+        offset += 2;
+        ciphertext[offset..offset + 4].copy_from_slice(&crypto_ct.diversifier_index.to_le_bytes());
+        offset += 4;
+
+        let note_len = u32::try_from(crypto_ct.note_payload.len()).expect("note payload len");
+        let memo_len = u32::try_from(crypto_ct.memo_payload.len()).expect("memo payload len");
+        ciphertext[offset..offset + 4].copy_from_slice(&note_len.to_le_bytes());
+        offset += 4;
+        ciphertext[offset..offset + crypto_ct.note_payload.len()]
+            .copy_from_slice(&crypto_ct.note_payload);
+        offset += crypto_ct.note_payload.len();
+        ciphertext[offset..offset + 4].copy_from_slice(&memo_len.to_le_bytes());
+        offset += 4;
+        ciphertext[offset..offset + crypto_ct.memo_payload.len()]
+            .copy_from_slice(&crypto_ct.memo_payload);
+
+        types::EncryptedNote {
+            ciphertext,
+            kem_ciphertext: frame_support::BoundedVec::truncate_from(crypto_ct.kem_ciphertext),
+        }
+    }
+
+    fn test_native_inline_fixture(
+        seed: u8,
+    ) -> (
+        types::StarkProof,
+        BoundedVec<[u8; 48], mock::MaxNullifiersPerTx>,
+        BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx>,
+        BoundedVec<types::EncryptedNote, mock::MaxEncryptedNotesPerTx>,
+        [u8; 48],
+        [u64; transaction_core::constants::BALANCE_SLOTS],
+        BindingHash,
+    ) {
+        let mut witness = test_native_sample_witness(seed);
+        let mut ciphertexts = Vec::with_capacity(witness.outputs.len());
+        let mut ciphertext_hashes = Vec::with_capacity(witness.outputs.len());
+
+        for (idx, output) in witness.outputs.iter().enumerate() {
+            let mut kem_seed = [0u8; 32];
+            kem_seed.fill(seed.wrapping_add(41 + idx as u8));
+            let keypair = MlKemKeyPair::generate_deterministic(
+                format!("pallet-inline-fixture-{seed}-{idx}").as_bytes(),
+            );
+            let plaintext = CryptoNotePlaintext::new(
+                output.note.value,
+                output.note.asset_id,
+                output.note.rho,
+                output.note.r,
+                Vec::new(),
+            );
+            let crypto_ct = CryptoNoteCiphertext::encrypt(
+                &keypair.public_key(),
+                output.note.pk_recipient,
+                types::NOTE_ENCRYPTION_VERSION,
+                types::CRYPTO_SUITE_GAMMA,
+                0,
+                &plaintext,
+                &kem_seed,
+            )
+            .expect("encrypt inline fixture note");
+            let note = encrypted_note_from_crypto_ct(crypto_ct);
+            let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+            bytes.extend_from_slice(&note.ciphertext);
+            bytes.extend_from_slice(&note.kem_ciphertext);
+            ciphertext_hashes.push(transaction_core::hashing_pq::ciphertext_hash_bytes(&bytes));
+            ciphertexts.push(note);
+        }
+        witness.ciphertext_hashes = ciphertext_hashes.clone();
+
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let nullifiers: BoundedVec<[u8; 48], mock::MaxNullifiersPerTx> = public_inputs.nullifiers
+            [..witness.inputs.len()]
+            .to_vec()
+            .try_into()
+            .expect("bounded nullifiers");
+        let commitments: BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx> = public_inputs
+            .commitments[..witness.outputs.len()]
+            .to_vec()
+            .try_into()
+            .expect("bounded commitments");
+        let ciphertexts: BoundedVec<types::EncryptedNote, mock::MaxEncryptedNotesPerTx> =
+            ciphertexts.try_into().expect("bounded ciphertexts");
+        let inputs = verifier::ShieldedTransferInputs {
+            anchor: public_inputs.merkle_root,
+            nullifiers: nullifiers.clone().into_inner(),
+            commitments: commitments.clone().into_inner(),
+            ciphertext_hashes,
+            balance_slot_asset_ids,
+            fee: witness.fee,
+            value_balance: 0,
+            stablecoin: None,
+        };
+        let binding_hash = verifier::StarkVerifier::compute_binding_hash(&inputs);
+        (
+            types::StarkProof::from_bytes(built.artifact_bytes),
+            nullifiers,
+            commitments,
+            ciphertexts,
             public_inputs.merkle_root,
             balance_slot_asset_ids,
             binding_hash,
@@ -3468,6 +3746,143 @@ mod tests {
                 "native tx-leaf sidecar payload should validate: {validity:?}"
             );
         });
+    }
+
+    #[test]
+    fn validate_inline_native_tx_leaf_is_accepted() {
+        mock::new_test_ext().execute_with(|| {
+            let (
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+            ) = test_native_inline_fixture(37);
+            pallet::MerkleRoots::<mock::Test>::insert(anchor, 1u64);
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned {
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 5,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                validity.is_ok(),
+                "native tx-leaf inline payload should validate: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn decode_native_tx_leaf_lite_accepts_backend_wire_id() {
+        let (proof, ..) = test_native_sidecar_fixture(35);
+        let decoded = decode_native_tx_leaf_lite(&proof.data).expect("lite decode should succeed");
+        assert!(
+            decoded.is_some(),
+            "native tx leaf lite decoder should accept trailing proof backend wire id"
+        );
+    }
+
+    #[test]
+    fn decode_native_tx_leaf_lite_matches_full_artifact_fields() {
+        let (
+            proof,
+            nullifiers,
+            commitments,
+            ciphertext_hashes,
+            _ciphertext_sizes,
+            _anchor,
+            _slots,
+            _binding,
+        ) = test_native_sidecar_fixture(36);
+        let full =
+            decode_native_tx_leaf_artifact_bytes(&proof.data).expect("full native tx leaf decode");
+        let lite = decode_native_tx_leaf_lite(&proof.data)
+            .expect("lite decode should succeed")
+            .expect("lite decode should classify native tx leaf");
+
+        assert_eq!(lite.receipt.statement_hash, full.receipt.statement_hash);
+        assert_eq!(lite.receipt.proof_digest, full.receipt.proof_digest);
+        assert_eq!(
+            lite.receipt.public_inputs_digest,
+            full.receipt.public_inputs_digest
+        );
+        assert_eq!(lite.receipt.verifier_profile, full.receipt.verifier_profile);
+        assert_eq!(
+            lite.stark_inputs.input_flags,
+            full.stark_public_inputs.input_flags
+        );
+        assert_eq!(
+            lite.stark_inputs.output_flags,
+            full.stark_public_inputs.output_flags
+        );
+        assert_eq!(lite.stark_inputs.fee, full.stark_public_inputs.fee);
+        assert_eq!(
+            lite.stark_inputs.value_balance_sign,
+            full.stark_public_inputs.value_balance_sign
+        );
+        assert_eq!(
+            lite.stark_inputs.value_balance_magnitude,
+            full.stark_public_inputs.value_balance_magnitude
+        );
+        assert_eq!(
+            lite.stark_inputs.merkle_root,
+            full.stark_public_inputs.merkle_root
+        );
+        assert_eq!(
+            lite.stark_inputs.balance_slot_asset_ids,
+            full.stark_public_inputs.balance_slot_asset_ids
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_enabled,
+            full.stark_public_inputs.stablecoin_enabled
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_asset_id,
+            full.stark_public_inputs.stablecoin_asset_id
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_policy_version,
+            full.stark_public_inputs.stablecoin_policy_version
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_issuance_sign,
+            full.stark_public_inputs.stablecoin_issuance_sign
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_issuance_magnitude,
+            full.stark_public_inputs.stablecoin_issuance_magnitude
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_policy_hash,
+            full.stark_public_inputs.stablecoin_policy_hash
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_oracle_commitment,
+            full.stark_public_inputs.stablecoin_oracle_commitment
+        );
+        assert_eq!(
+            lite.stark_inputs.stablecoin_attestation_commitment,
+            full.stark_public_inputs.stablecoin_attestation_commitment
+        );
+        assert_eq!(lite.tx.nullifiers, full.tx.nullifiers);
+        assert_eq!(lite.tx.commitments, full.tx.commitments);
+        assert_eq!(lite.tx.ciphertext_hashes, full.tx.ciphertext_hashes);
+        assert_eq!(lite.tx.balance_tag, full.tx.balance_tag);
+        assert_eq!(lite.tx.version, full.tx.version);
+        assert_eq!(lite.tx.nullifiers, nullifiers.into_inner());
+        assert_eq!(lite.tx.commitments, commitments.into_inner());
+        assert_eq!(lite.tx.ciphertext_hashes, ciphertext_hashes.into_inner());
     }
 
     #[test]

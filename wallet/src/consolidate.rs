@@ -140,7 +140,7 @@ async fn submit_consolidation_bundle(
     verbose: bool,
 ) -> Result<[u8; 32], WalletError> {
     if !config.use_da_sidecar {
-        return rpc.submit_shielded_transfer_unsigned(bundle).await;
+        return rpc.submit_transaction(bundle).await;
     }
 
     match rpc
@@ -169,7 +169,7 @@ async fn submit_consolidation_bundle(
             }
             config.use_da_sidecar = false;
             config.use_proof_sidecar = false;
-            rpc.submit_shielded_transfer_unsigned(bundle).await
+            rpc.submit_transaction(bundle).await
         }
         Err(err) => Err(err),
     }

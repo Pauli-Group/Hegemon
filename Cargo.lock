@@ -7100,6 +7100,7 @@ dependencies = [
  "sp-runtime",
  "sp-std",
  "superneo-hegemon",
+ "synthetic-crypto",
  "transaction-circuit",
  "transaction-core",
 ]

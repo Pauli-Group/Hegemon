@@ -35,6 +35,7 @@ sp-io = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 transaction-circuit = { path = "../../circuits/transaction" }
 superneo-hegemon = { path = "../../circuits/superneo-hegemon" }
+synthetic-crypto = { path = "../../crypto" }
 
 [features]
 default = ["std"]

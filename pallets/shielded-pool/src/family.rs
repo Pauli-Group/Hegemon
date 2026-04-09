@@ -20,6 +20,56 @@ use crate::types::{
 };
 use crate::Config;
 
+fn invalid_tx_detail(err: &sp_runtime::transaction_validity::InvalidTransaction) -> &'static str {
+    match err {
+        sp_runtime::transaction_validity::InvalidTransaction::BadProof => "bad-proof",
+        sp_runtime::transaction_validity::InvalidTransaction::BadSigner => "bad-signer",
+        sp_runtime::transaction_validity::InvalidTransaction::Call => "call",
+        sp_runtime::transaction_validity::InvalidTransaction::Payment => "payment",
+        sp_runtime::transaction_validity::InvalidTransaction::Future => "future",
+        sp_runtime::transaction_validity::InvalidTransaction::Stale => "stale",
+        sp_runtime::transaction_validity::InvalidTransaction::ExhaustsResources => {
+            "exhausts-resources"
+        }
+        sp_runtime::transaction_validity::InvalidTransaction::BadMandatory => "bad-mandatory",
+        sp_runtime::transaction_validity::InvalidTransaction::MandatoryValidation => {
+            "mandatory-validation"
+        }
+        sp_runtime::transaction_validity::InvalidTransaction::AncientBirthBlock => {
+            "ancient-birth-block"
+        }
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_PUBLIC_ARGS_MISMATCH_CODE,
+        ) => "native-inline-public-args-mismatch",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_BALANCE_SLOTS_CODE,
+        ) => "native-inline-balance-slots",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_BALANCE_TAG_CODE,
+        ) => "native-inline-balance-tag",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_TX_PAYLOAD_CODE,
+        ) => "native-inline-tx-payload",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_STATEMENT_HASH_RECONSTRUCTION_CODE,
+        ) => "native-inline-statement-hash-reconstruction",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_STATEMENT_HASH_MISMATCH_CODE,
+        ) => "native-inline-statement-hash-mismatch",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_RECONSTRUCTION_CODE,
+        ) => "native-inline-public-inputs-digest-reconstruction",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_MISMATCH_CODE,
+        ) => "native-inline-public-inputs-digest-mismatch",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            crate::NATIVE_TX_INLINE_ZERO_RECEIPT_FIELDS_CODE,
+        ) => "native-inline-zero-receipt-fields",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(_) => "custom",
+        _ => "other",
+    }
+}
+
 pub const FAMILY_SHIELDED_POOL: FamilyId = 1;
 
 pub const ACTION_SHIELDED_TRANSFER_INLINE: ActionId = 1;
@@ -279,7 +329,8 @@ pub fn validate_action<T: Config>(
             if let Err(ref err) = result {
                 log::warn!(
                     target: "shielded-pool",
-                    "kernel transfer-inline validation failed: err={:?} proof_bytes={} nullifiers={} commitments={} fee={}",
+                    "kernel transfer-inline validation failed: detail={} err={:?} proof_bytes={} nullifiers={} commitments={} fee={}",
+                    invalid_tx_detail(err),
                     err,
                     proof_len,
                     nullifiers.len(),
@@ -287,7 +338,7 @@ pub fn validate_action<T: Config>(
                     args.fee,
                 );
             }
-            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            result.map_err(|err| DispatchError::Other(invalid_tx_detail(&err)))
         }
         ShieldedFamilyAction::TransferSidecar { nullifiers, args } => {
             let proof_len = args.proof.len();
@@ -318,7 +369,7 @@ pub fn validate_action<T: Config>(
                     args.fee,
                 );
             }
-            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            result.map_err(|err| DispatchError::Other(invalid_tx_detail(&err)))
         }
         ShieldedFamilyAction::BatchTransfer { nullifiers, args } => {
             let result = Pallet::<T>::validate_batch_shielded_transfer_action(
@@ -340,7 +391,7 @@ pub fn validate_action<T: Config>(
                     args.total_fee,
                 );
             }
-            result.map_err(|_| DispatchError::Other("invalid-shielded-action"))
+            result.map_err(|err| DispatchError::Other(invalid_tx_detail(&err)))
         }
         ShieldedFamilyAction::EnableAggregationMode => {
             Pallet::<T>::validate_enable_aggregation_mode_action()

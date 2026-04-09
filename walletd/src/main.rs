@@ -926,11 +926,11 @@ async fn submit_bundle_strict(
             .await
     } else {
         eprintln!(
-            "[walletd] submitting unsigned self-contained shielded transfer (inline proof bytes)"
+            "[walletd] submitting unsigned self-contained kernel action (inline proof bytes)"
         );
-        // Default to self-contained unsigned submission so any miner can include
-        // the transfer without requiring proposer-local sidecar bytes.
-        client.submit_shielded_transfer_unsigned(bundle).await
+        // Default to the kernel-action path so unsigned inline transfers use the same
+        // envelope and validation route as the main wallet API.
+        client.submit_transaction(bundle).await
     }
 }
 

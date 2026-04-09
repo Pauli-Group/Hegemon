@@ -767,11 +767,13 @@ pub fn tx_validity_receipt_from_proof(
 ) -> Result<TxValidityReceipt, String> {
     let public_inputs_digest =
         transaction_public_inputs_digest(proof).map_err(|err| err.to_string())?;
+    let verifier_profile =
+        transaction_verifier_profile_digest(proof).map_err(|err| err.to_string())?;
     Ok(TxValidityReceipt {
         statement_hash: transaction_statement_hash(proof),
         proof_digest: transaction_proof_digest(proof),
         public_inputs_digest,
-        verifier_profile: transaction_verifier_profile_digest(proof),
+        verifier_profile,
     })
 }
 

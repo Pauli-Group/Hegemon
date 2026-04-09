@@ -75,9 +75,11 @@ use pallet_shielded_pool::family::{
     FAMILY_SHIELDED_POOL,
 };
 use pallet_shielded_pool::types::{EncryptedNote, StablecoinPolicyBinding};
+use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use pallet_timestamp;
 use parking_lot::Mutex as ParkingMutex;
 use protocol_kernel::types::ActionEnvelope;
+use protocol_versioning::VersionBinding;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sc_client_api::BlockBackend;
 use sc_transaction_pool_api::TransactionPool;
@@ -99,10 +101,19 @@ use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
+use superneo_hegemon::{
+    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+};
+use transaction_circuit::hashing_pq::{balance_commitment_bytes, ciphertext_hash_bytes};
+use transaction_circuit::proof::{
+    transaction_public_inputs_digest_from_serialized, TX_STATEMENT_HASH_DOMAIN,
+};
+use transaction_circuit::public_inputs::BalanceSlot;
 
 /// Default difficulty bits when runtime API query fails
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
 const MAX_RPC_MERKLE_WITNESS_NOTES: u64 = 65_536;
+const NATIVE_TX_CANONICAL_PADDING_ASSET_ID: u64 = 4_294_967_294;
 
 /// Production implementation of all RPC service traits.
 ///
@@ -272,7 +283,10 @@ where
     async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
     where
         Block::Hash: Into<sp_core::H256>,
+        C: ProvideRuntimeApi<Block> + Send + Sync + 'static,
+        C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
     {
+        self.log_shielded_kernel_action_diagnostics(&envelope);
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
@@ -301,6 +315,475 @@ where
         );
         Ok(out)
     }
+
+    fn log_shielded_kernel_action_diagnostics(&self, envelope: &ActionEnvelope)
+    where
+        C: ProvideRuntimeApi<Block> + Send + Sync + 'static,
+        C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
+    {
+        log_shielded_kernel_action_diagnostics(self, envelope);
+    }
+}
+
+fn canonicalize_native_balance_slot_asset_id_host(asset_id: u64) -> u64 {
+    if asset_id == u64::MAX {
+        NATIVE_TX_CANONICAL_PADDING_ASSET_ID
+    } else {
+        asset_id
+    }
+}
+
+fn canonical_balance_slots_from_public_args_host(
+    balance_slot_asset_ids: [u64; transaction_circuit::constants::BALANCE_SLOTS],
+    fee: u64,
+    stablecoin: &Option<StablecoinPolicyBinding>,
+) -> Result<Vec<BalanceSlot>, String> {
+    use transaction_circuit::constants::NATIVE_ASSET_ID;
+
+    let canonical_asset_ids =
+        balance_slot_asset_ids.map(canonicalize_native_balance_slot_asset_id_host);
+
+    if canonical_asset_ids[0] != NATIVE_ASSET_ID {
+        return Err(format!(
+            "slot0 asset {} != native asset {}",
+            canonical_asset_ids[0], NATIVE_ASSET_ID
+        ));
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for asset_id in canonical_asset_ids.iter().skip(1) {
+        if *asset_id == NATIVE_TX_CANONICAL_PADDING_ASSET_ID {
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding || *asset_id == NATIVE_ASSET_ID || *asset_id <= prev_asset {
+            return Err(format!(
+                "non-canonical asset ordering prev={} current={} saw_padding={}",
+                prev_asset, asset_id, saw_padding
+            ));
+        }
+        prev_asset = *asset_id;
+    }
+
+    if let Some(binding) = stablecoin {
+        if !canonical_asset_ids[1..].contains(&binding.asset_id) {
+            return Err(format!(
+                "stablecoin asset {} missing from balance slots {:?}",
+                binding.asset_id, canonical_asset_ids
+            ));
+        }
+    }
+
+    Ok(canonical_asset_ids
+        .into_iter()
+        .map(|asset_id| {
+            let delta = match stablecoin {
+                Some(binding) if asset_id == binding.asset_id => binding.issuance_delta,
+                _ if asset_id == NATIVE_ASSET_ID => i128::from(fee),
+                _ => 0,
+            };
+            BalanceSlot { asset_id, delta }
+        })
+        .collect())
+}
+
+fn stablecoin_matches_artifact(
+    artifact: &transaction_circuit::proof::SerializedStarkInputs,
+    stablecoin: &Option<StablecoinPolicyBinding>,
+) -> bool {
+    match stablecoin {
+        Some(binding) => {
+            let (issuance_sign, issuance_magnitude) = if binding.issuance_delta < 0 {
+                (1u8, binding.issuance_delta.unsigned_abs() as u64)
+            } else {
+                (0u8, binding.issuance_delta.unsigned_abs() as u64)
+            };
+            artifact.stablecoin_enabled == 1
+                && artifact.stablecoin_asset_id == binding.asset_id
+                && artifact.stablecoin_policy_version == binding.policy_version
+                && artifact.stablecoin_issuance_sign == issuance_sign
+                && artifact.stablecoin_issuance_magnitude == issuance_magnitude
+                && artifact.stablecoin_policy_hash == binding.policy_hash
+                && artifact.stablecoin_oracle_commitment == binding.oracle_commitment
+                && artifact.stablecoin_attestation_commitment == binding.attestation_commitment
+        }
+        None => {
+            artifact.stablecoin_enabled == 0
+                && artifact.stablecoin_asset_id == 0
+                && artifact.stablecoin_policy_version == 0
+                && artifact.stablecoin_issuance_sign == 0
+                && artifact.stablecoin_issuance_magnitude == 0
+                && artifact.stablecoin_policy_hash == [0u8; 48]
+                && artifact.stablecoin_oracle_commitment == [0u8; 48]
+                && artifact.stablecoin_attestation_commitment == [0u8; 48]
+        }
+    }
+}
+
+fn first_vector_mismatch<const N: usize>(lhs: &[[u8; N]], rhs: &[[u8; N]]) -> Option<usize> {
+    lhs.iter()
+        .zip(rhs.iter())
+        .position(|(left, right)| left != right)
+        .or_else(|| (lhs.len() != rhs.len()).then_some(lhs.len().min(rhs.len())))
+}
+
+fn extend_padded_digests_host(
+    out: &mut Vec<u8>,
+    values: &[[u8; 48]],
+    target: usize,
+) -> Result<(), String> {
+    if values.len() > target {
+        return Err(format!(
+            "digest count {} exceeds target {}",
+            values.len(),
+            target
+        ));
+    }
+    for value in values {
+        out.extend_from_slice(value);
+    }
+    for _ in values.len()..target {
+        out.extend_from_slice(&[0u8; 48]);
+    }
+    Ok(())
+}
+
+fn blake3_384_bytes_host(bytes: &[u8]) -> [u8; 48] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(bytes);
+    let mut output = [0u8; 48];
+    hasher.finalize_xof().fill(&mut output);
+    output
+}
+
+fn decode_signed_magnitude_host(sign: u8, magnitude: u64, label: &str) -> Result<i128, String> {
+    if sign > 1 {
+        return Err(format!("{label} sign {sign} is not binary"));
+    }
+    let magnitude = i128::from(magnitude);
+    Ok(if sign == 0 { magnitude } else { -magnitude })
+}
+
+fn native_statement_hash_from_artifact_host(
+    artifact: &superneo_hegemon::NativeTxLeafArtifact,
+) -> Result<[u8; 48], String> {
+    let mut message = Vec::new();
+    message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(&artifact.stark_public_inputs.merkle_root);
+    extend_padded_digests_host(
+        &mut message,
+        artifact.tx.nullifiers.as_slice(),
+        transaction_circuit::constants::MAX_INPUTS,
+    )?;
+    extend_padded_digests_host(
+        &mut message,
+        artifact.tx.commitments.as_slice(),
+        transaction_circuit::constants::MAX_OUTPUTS,
+    )?;
+    extend_padded_digests_host(
+        &mut message,
+        artifact.tx.ciphertext_hashes.as_slice(),
+        transaction_circuit::constants::MAX_OUTPUTS,
+    )?;
+    let value_balance = decode_signed_magnitude_host(
+        artifact.stark_public_inputs.value_balance_sign,
+        artifact.stark_public_inputs.value_balance_magnitude,
+        "value_balance",
+    )?;
+    let stablecoin_issuance = decode_signed_magnitude_host(
+        artifact.stark_public_inputs.stablecoin_issuance_sign,
+        artifact.stark_public_inputs.stablecoin_issuance_magnitude,
+        "stablecoin_issuance",
+    )?;
+    message.extend_from_slice(&artifact.stark_public_inputs.fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(&artifact.tx.balance_tag);
+    message.extend_from_slice(&artifact.tx.version.circuit.to_le_bytes());
+    message.extend_from_slice(&artifact.tx.version.crypto.to_le_bytes());
+    message.push(artifact.stark_public_inputs.stablecoin_enabled);
+    message.extend_from_slice(
+        &artifact
+            .stark_public_inputs
+            .stablecoin_asset_id
+            .to_le_bytes(),
+    );
+    message.extend_from_slice(&artifact.stark_public_inputs.stablecoin_policy_hash);
+    message.extend_from_slice(&artifact.stark_public_inputs.stablecoin_oracle_commitment);
+    message.extend_from_slice(
+        &artifact
+            .stark_public_inputs
+            .stablecoin_attestation_commitment,
+    );
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(
+        &artifact
+            .stark_public_inputs
+            .stablecoin_policy_version
+            .to_le_bytes(),
+    );
+    Ok(blake3_384_bytes_host(&message))
+}
+
+fn log_shielded_kernel_action_diagnostics<C, Block>(
+    service: &ProductionRpcService<C, Block>,
+    envelope: &ActionEnvelope,
+) where
+    Block: BlockT,
+    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
+{
+    let action = match ShieldedFamilyAction::decode_envelope(envelope) {
+        Ok(action) => action,
+        Err(err) => {
+            tracing::warn!(
+                target: "kernel",
+                family_id = envelope.family_id,
+                action_id = envelope.action_id,
+                public_args_len = envelope.public_args.len(),
+                "host pre-submit shielded envelope decode failed: {err:?}"
+            );
+            return;
+        }
+    };
+
+    let (
+        action_label,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        binding_hash,
+        proof_bytes,
+        anchor,
+        balance_slot_asset_ids,
+        stablecoin,
+        fee,
+    ) = match action {
+        ShieldedFamilyAction::TransferInline { nullifiers, args } => {
+            let ciphertext_hashes = args
+                .ciphertexts
+                .iter()
+                .map(|ciphertext| {
+                    let mut bytes = Vec::with_capacity(
+                        ciphertext.ciphertext.len() + ciphertext.kem_ciphertext.len(),
+                    );
+                    bytes.extend_from_slice(&ciphertext.ciphertext);
+                    bytes.extend_from_slice(&ciphertext.kem_ciphertext);
+                    ciphertext_hash_bytes(&bytes)
+                })
+                .collect::<Vec<_>>();
+            (
+                "inline",
+                nullifiers,
+                args.commitments,
+                ciphertext_hashes,
+                args.binding_hash,
+                args.proof,
+                args.anchor,
+                args.balance_slot_asset_ids,
+                args.stablecoin,
+                args.fee,
+            )
+        }
+        ShieldedFamilyAction::TransferSidecar { nullifiers, args } => (
+            "sidecar",
+            nullifiers,
+            args.commitments,
+            args.ciphertext_hashes,
+            args.binding_hash,
+            args.proof,
+            args.anchor,
+            args.balance_slot_asset_ids,
+            args.stablecoin,
+            args.fee,
+        ),
+        other => {
+            tracing::warn!(
+                target: "kernel",
+                family_id = envelope.family_id,
+                action_id = envelope.action_id,
+                decoded_action = ?other,
+                "host pre-submit shielded diagnostics skipped unsupported action"
+            );
+            return;
+        }
+    };
+
+    let artifact = match decode_native_tx_leaf_artifact_bytes(&proof_bytes) {
+        Ok(artifact) => artifact,
+        Err(err) => {
+            tracing::warn!(
+                target: "kernel",
+                action = action_label,
+                proof_bytes = proof_bytes.len(),
+                "host pre-submit native tx leaf decode failed: {err}"
+            );
+            return;
+        }
+    };
+
+    if let Err(err) =
+        verify_native_tx_leaf_artifact_bytes(&artifact.tx, &artifact.receipt, &proof_bytes)
+    {
+        tracing::warn!(
+            target: "kernel",
+            action = action_label,
+            proof_bytes = proof_bytes.len(),
+            "host pre-submit native tx leaf self-verification failed: {err}"
+        );
+    }
+
+    let canonical_balance_slot_asset_ids =
+        balance_slot_asset_ids.map(canonicalize_native_balance_slot_asset_id_host);
+    let runtime_api = service.client.runtime_api();
+    let best_hash = service.best_hash();
+    let runtime_ciphertext_policy = runtime_api.ciphertext_policy(best_hash).ok();
+    let runtime_proof_policy = runtime_api.proof_availability_policy(best_hash).ok();
+    let runtime_anchor_known = runtime_api.is_valid_anchor(best_hash, anchor).ok();
+    let runtime_nullifiers_spent = nullifiers
+        .iter()
+        .map(|nullifier| runtime_api.is_nullifier_spent(best_hash, *nullifier).ok())
+        .collect::<Vec<_>>();
+    let zero_nullifier_present = nullifiers.iter().any(|nullifier| *nullifier == [0u8; 48]);
+    let zero_commitment_present = commitments
+        .iter()
+        .any(|commitment| *commitment == [0u8; 48]);
+    let duplicate_nullifier_present = {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut duplicate = false;
+        for nullifier in &nullifiers {
+            if !seen.insert(*nullifier) {
+                duplicate = true;
+                break;
+            }
+        }
+        duplicate
+    };
+    let runtime_inputs = ShieldedTransferInputs {
+        anchor,
+        nullifiers: nullifiers.clone(),
+        commitments: commitments.clone(),
+        ciphertext_hashes: ciphertext_hashes.clone(),
+        balance_slot_asset_ids,
+        fee,
+        value_balance: 0,
+        stablecoin: stablecoin.clone(),
+    };
+    let expected_binding_hash = StarkVerifier::compute_binding_hash(&runtime_inputs).data;
+    let binding_hash_match = expected_binding_hash == binding_hash;
+    let expected_balance_tag =
+        canonical_balance_slots_from_public_args_host(balance_slot_asset_ids, fee, &stablecoin)
+            .and_then(|balance_slots| {
+                balance_commitment_bytes(i128::from(fee), &balance_slots)
+                    .map_err(|err| format!("balance commitment failed: {err:?}"))
+            });
+
+    let version: VersionBinding = envelope.binding.into();
+    let nullifiers_match = artifact.tx.nullifiers == nullifiers;
+    let commitments_match = artifact.tx.commitments == commitments;
+    let ciphertext_hashes_match = artifact.tx.ciphertext_hashes == ciphertext_hashes;
+    let balance_tag_match = expected_balance_tag
+        .as_ref()
+        .map(|expected| artifact.tx.balance_tag == *expected)
+        .unwrap_or(false);
+    let version_match = artifact.tx.version == version;
+    let anchor_match = artifact.stark_public_inputs.merkle_root == anchor;
+    let fee_match = artifact.stark_public_inputs.fee == fee;
+    let balance_slots_match = artifact
+        .stark_public_inputs
+        .balance_slot_asset_ids
+        .as_slice()
+        == canonical_balance_slot_asset_ids;
+    let stablecoin_match = stablecoin_matches_artifact(&artifact.stark_public_inputs, &stablecoin);
+    let expected_statement_hash = native_statement_hash_from_artifact_host(&artifact);
+    let statement_hash_match = expected_statement_hash
+        .as_ref()
+        .map(|expected| *expected == artifact.receipt.statement_hash)
+        .unwrap_or(false);
+    let expected_public_inputs_digest =
+        transaction_public_inputs_digest_from_serialized(&artifact.stark_public_inputs)
+            .map_err(|err| err.to_string());
+    let public_inputs_digest_match = expected_public_inputs_digest
+        .as_ref()
+        .map(|expected| *expected == artifact.receipt.public_inputs_digest)
+        .unwrap_or(false);
+    let nonzero_receipt_fields = artifact.receipt.proof_digest != [0u8; 48]
+        && artifact.receipt.verifier_profile != [0u8; 48];
+
+    if nullifiers_match
+        && commitments_match
+        && ciphertext_hashes_match
+        && balance_tag_match
+        && version_match
+        && anchor_match
+        && fee_match
+        && balance_slots_match
+        && stablecoin_match
+        && binding_hash_match
+        && statement_hash_match
+        && public_inputs_digest_match
+        && nonzero_receipt_fields
+    {
+        tracing::debug!(
+            target: "kernel",
+            action = action_label,
+            proof_bytes = proof_bytes.len(),
+            binding_hash_match,
+            zero_nullifier_present,
+            zero_commitment_present,
+            duplicate_nullifier_present,
+            runtime_nullifiers_spent = ?runtime_nullifiers_spent,
+            runtime_ciphertext_policy = ?runtime_ciphertext_policy,
+            runtime_proof_policy = ?runtime_proof_policy,
+            runtime_anchor_known = ?runtime_anchor_known,
+            "host pre-submit native tx leaf/public args check passed"
+        );
+        return;
+    }
+
+    tracing::warn!(
+        target: "kernel",
+        action = action_label,
+        proof_bytes = proof_bytes.len(),
+        nullifiers_match,
+        nullifier_mismatch_index = first_vector_mismatch(&artifact.tx.nullifiers, &nullifiers),
+        commitments_match,
+        commitment_mismatch_index = first_vector_mismatch(&artifact.tx.commitments, &commitments),
+        ciphertext_hashes_match,
+        ciphertext_hash_mismatch_index = first_vector_mismatch(
+            &artifact.tx.ciphertext_hashes,
+            &ciphertext_hashes
+        ),
+        balance_tag_match,
+        version_match,
+        anchor_match,
+        binding_hash_match,
+        zero_nullifier_present,
+        zero_commitment_present,
+        duplicate_nullifier_present,
+        fee_match,
+        balance_slots_match,
+        stablecoin_match,
+        statement_hash_match,
+        public_inputs_digest_match,
+        nonzero_receipt_fields,
+        decoded_fee = artifact.stark_public_inputs.fee,
+        expected_fee = fee,
+        decoded_version_circuit = artifact.tx.version.circuit,
+        decoded_version_crypto = artifact.tx.version.crypto,
+        expected_version_circuit = version.circuit,
+        expected_version_crypto = version.crypto,
+        runtime_nullifiers_spent = ?runtime_nullifiers_spent,
+        runtime_ciphertext_policy = ?runtime_ciphertext_policy,
+        runtime_proof_policy = ?runtime_proof_policy,
+        runtime_anchor_known = ?runtime_anchor_known,
+        decoded_balance_slot_asset_ids = ?artifact.stark_public_inputs.balance_slot_asset_ids,
+        expected_balance_slot_asset_ids = ?canonical_balance_slot_asset_ids,
+        balance_tag_error = %expected_balance_tag.as_ref().err().cloned().unwrap_or_default(),
+        statement_hash_error = %expected_statement_hash.as_ref().err().cloned().unwrap_or_default(),
+        public_inputs_digest_error = %expected_public_inputs_digest.as_ref().err().cloned().unwrap_or_default(),
+        "host pre-submit native tx leaf/public args mismatch"
+    );
 }
 
 // =============================================================================
