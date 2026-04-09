@@ -52,16 +52,11 @@ const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
 const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 2;
-const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH + (MERKLE_TREE_DEPTH * 3);
+const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
 const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1;
 const SMALLWOOD_SECRET_WITNESS_ROWS: usize =
     (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS) + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS);
 const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
-const SMALLWOOD_INPUT_CURRENT_AGG_OFFSET: usize =
-    SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH;
-const SMALLWOOD_INPUT_LEFT_AGG_OFFSET: usize =
-    SMALLWOOD_INPUT_CURRENT_AGG_OFFSET + MERKLE_TREE_DEPTH;
-const SMALLWOOD_INPUT_RIGHT_AGG_OFFSET: usize = SMALLWOOD_INPUT_LEFT_AGG_OFFSET + MERKLE_TREE_DEPTH;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_NULLIFIERS: usize = 4;
@@ -93,21 +88,6 @@ fn bridge_row_input_asset(input: usize) -> usize {
 #[inline]
 fn bridge_row_input_direction(input: usize, bit: usize) -> usize {
     bridge_input_base(input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
-}
-
-#[inline]
-fn bridge_row_input_current_agg(input: usize, level: usize) -> usize {
-    bridge_input_base(input) + SMALLWOOD_INPUT_CURRENT_AGG_OFFSET + level
-}
-
-#[inline]
-fn bridge_row_input_left_agg(input: usize, level: usize) -> usize {
-    bridge_input_base(input) + SMALLWOOD_INPUT_LEFT_AGG_OFFSET + level
-}
-
-#[inline]
-fn bridge_row_input_right_agg(input: usize, level: usize) -> usize {
-    bridge_input_base(input) + SMALLWOOD_INPUT_RIGHT_AGG_OFFSET + level
 }
 
 #[inline]

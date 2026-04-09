@@ -58,7 +58,7 @@ const PUB_STABLE_ISSUANCE_MAG: usize = 57;
 const PUB_STABLE_POLICY_HASH: usize = 58;
 const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
-const DIRECT_RAW_WITNESS_LEN: usize = 3_991;
+pub(crate) const DIRECT_RAW_WITNESS_LEN: usize = 3_991;
 const DIRECT_EXPANDED_WITNESS_LEN: usize = 59_749;
 const DIRECT_ROW_COUNT: usize = 934;
 const DIRECT_PACKED_WITNESS_LEN: usize = DIRECT_ROW_COUNT * PACKING_FACTOR;
@@ -863,7 +863,7 @@ impl<'a> RawCursor<'a> {
     }
 }
 
-fn parse_direct_raw_witness(
+pub(crate) fn parse_direct_raw_witness(
     raw_witness: &[u64],
 ) -> Result<TransactionWitness, TransactionCircuitError> {
     if raw_witness.len() != DIRECT_RAW_WITNESS_LEN {

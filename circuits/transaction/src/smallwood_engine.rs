@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::TransactionCircuitError,
-    smallwood_semantics::{test_candidate_witness_rust, SmallwoodConstraintAdapter},
+    smallwood_frontend::build_packed_smallwood_frontend_material_from_witness,
+    smallwood_semantics::{
+        direct_packed_program, parse_direct_raw_witness, test_candidate_witness_rust,
+        SmallwoodConstraintAdapter, DIRECT_RAW_WITNESS_LEN,
+    },
 };
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
@@ -300,17 +304,19 @@ pub(crate) fn verify_candidate(
                 .ok_or(TransactionCircuitError::ConstraintViolation(
                     "smallwood direct packed proof payload missing",
                 ))?;
+        let witness = parse_direct_raw_witness(&payload.witness_values)?;
         let expected_digest = direct_packed_bind_digest(binded_data, &payload.witness_values);
         if expected_digest != payload.binded_data_digest {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood direct packed proof binding digest mismatch",
             ));
         }
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness)?;
         return test_candidate_witness_rust(
             SmallwoodArithmetization::DirectPacked64V1,
-            &payload.witness_values,
-            cfg.row_count,
-            cfg.packing_factor,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
             statement.linear_constraint_offsets(),
             statement.linear_constraint_indices(),
             statement.linear_constraint_coefficients(),
@@ -464,7 +470,7 @@ pub(crate) fn projected_candidate_proof_bytes(
             },
             direct_packed: Some(DirectPackedProofBundle {
                 binded_data_digest: [0u8; DIGEST_BYTES],
-                witness_values: vec![0u64; cfg.row_count * cfg.packing_factor],
+                witness_values: vec![0u64; DIRECT_RAW_WITNESS_LEN],
             }),
         };
         return bincode::serialize(&proof)
@@ -494,9 +500,15 @@ fn prove_direct_packed_payload(
         statement.linear_constraint_coefficients(),
         statement.linear_targets(),
     )?;
+    let raw_witness = direct_packed_program()
+        .raw_witness
+        .slice(witness_values)?
+        .to_vec();
+    let witness = parse_direct_raw_witness(&raw_witness)?;
+    witness.validate()?;
     Ok(DirectPackedProofBundle {
-        binded_data_digest: direct_packed_bind_digest(binded_data, witness_values),
-        witness_values: witness_values.to_vec(),
+        binded_data_digest: direct_packed_bind_digest(binded_data, &raw_witness),
+        witness_values: raw_witness,
     })
 }
 
@@ -2159,8 +2171,8 @@ mod tests {
         eprintln!("direct packed proof bytes: {direct_bytes}");
         eprintln!("bridge proof bytes: {bridge_bytes}");
         assert!(
-            direct_bytes > bridge_bytes,
-            "direct packed payload should remain larger than the bridge proof until a matrix-aware succinct PCS/opening path exists"
+            direct_bytes < bridge_bytes,
+            "raw-witness direct payload should now be smaller than the bridge proof"
         );
         assert!(
             direct_bytes < 524_288,
