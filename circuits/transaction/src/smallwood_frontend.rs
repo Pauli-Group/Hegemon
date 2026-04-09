@@ -196,6 +196,19 @@ pub struct PackedBridgeSmallwoodFrontendMaterial {
     pub transcript_binding: Vec<u8>,
 }
 
+struct SmallwoodWitnessContext {
+    public_inputs: TransactionPublicInputs,
+    serialized_public_inputs: SerializedStarkInputs,
+    public_inputs_p3: TransactionPublicInputsP3,
+    public_values: Vec<u64>,
+    semantic_secret_rows: Vec<u64>,
+    raw_witness_rows: Vec<u64>,
+    bridge_poseidon_rows:
+        Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+    packed_poseidon_rows:
+        Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+}
+
 pub fn prove_smallwood_candidate(
     witness: &TransactionWitness,
 ) -> Result<TransactionProof, TransactionCircuitError> {
@@ -205,7 +218,19 @@ pub fn prove_smallwood_candidate(
             witness.version
         )));
     }
-    let material = build_packed_smallwood_bridge_material(witness)?;
+    let context = build_smallwood_witness_context(witness)?;
+    let direct_material = build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+    test_candidate_witness(
+        &direct_material.packed_expanded_witness,
+        direct_material.public_statement.lppc_row_count as usize,
+        direct_material.public_statement.lppc_packing_factor as usize,
+        SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+        &direct_material.linear_constraints.term_offsets,
+        &direct_material.linear_constraints.term_indices,
+        &direct_material.linear_constraints.term_coefficients,
+        &direct_material.linear_constraints.targets,
+    )?;
+    let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
     test_candidate_witness(
         &material.packed_witness_rows,
         material.public_statement.lppc_row_count as usize,
@@ -247,7 +272,8 @@ pub fn prove_smallwood_candidate(
 pub fn projected_smallwood_candidate_proof_bytes(
     witness: &TransactionWitness,
 ) -> Result<usize, TransactionCircuitError> {
-    let material = build_packed_smallwood_bridge_material_from_witness(witness)?;
+    let context = build_smallwood_witness_context(witness)?;
+    let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
     projected_smallwood_backend_proof_bytes(
         material.public_statement.lppc_row_count as usize,
         material.public_statement.lppc_packing_factor as usize,
@@ -430,38 +456,30 @@ fn build_smallwood_frontend_material(
 fn build_packed_smallwood_frontend_material(
     witness: &TransactionWitness,
 ) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
-    witness.validate()?;
-    validate_native_merkle_membership(witness)?;
-    let public_inputs = witness.public_inputs()?;
-    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
-    let public_inputs_p3 =
-        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
-    let raw_witness = native_relation_raw_witness_rows(witness)?;
-    let poseidon_rows = packed_poseidon_subtrace_rows(witness, &public_inputs)?;
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_frontend_material_from_context(&context, witness)
+}
+
+fn build_packed_smallwood_frontend_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
     let public_statement = build_packed_smallwood_public_statement(
-        &public_inputs_p3,
+        &context.public_inputs_p3,
         witness.version,
-        &raw_witness,
-        &poseidon_rows,
+        &context.raw_witness_rows,
+        &context.packed_poseidon_rows,
     )?;
     let expanded_witness = expanded_witness_words(
         &public_statement.public_values,
-        &raw_witness,
-        &poseidon_rows,
+        &context.raw_witness_rows,
+        &context.packed_poseidon_rows,
     );
     let packed_expanded_witness =
         pad_for_lppc_rows(expanded_witness, SMALLWOOD_PACKED_LPPC_PACKING_FACTOR);
     let linear_constraints = build_coordinate_linear_constraints((
         build_smallwood_public_selector_indices(public_statement.public_values.len()),
-        public_inputs_p3
-            .to_vec()
-            .into_iter()
-            .map(|felt| felt.as_canonical_u64())
-            .chain([
-                u64::from(witness.version.circuit),
-                u64::from(witness.version.crypto),
-            ])
-            .collect(),
+        context.public_values.clone(),
     ));
     let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
     Ok(PackedSmallwoodFrontendMaterial {
@@ -475,6 +493,49 @@ fn build_packed_smallwood_frontend_material(
 fn build_packed_smallwood_bridge_material(
     witness: &TransactionWitness,
 ) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_bridge_material_from_context(&context, witness)
+}
+
+fn build_packed_smallwood_bridge_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let packed_witness_rows = packed_bridge_witness_rows(
+        &context.public_values,
+        &context.semantic_secret_rows,
+        &context.bridge_poseidon_rows,
+        SMALLWOOD_BRIDGE_PACKING_FACTOR,
+    );
+    let row_count = packed_witness_rows.len() / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+    let public_statement = SmallwoodPublicStatement {
+        public_values: context.public_values.clone(),
+        public_value_count: context.public_values.len() as u32,
+        raw_witness_len: context.semantic_secret_rows.len() as u32,
+        lppc_row_count: row_count as u32,
+        poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
+        poseidon_state_row_count: (context.bridge_poseidon_rows.len()
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            as u32,
+        expanded_witness_len: packed_witness_rows.len() as u32,
+        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
+        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    };
+    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
+    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
+    Ok(PackedBridgeSmallwoodFrontendMaterial {
+        public_inputs: context.public_inputs.clone(),
+        serialized_public_inputs: context.serialized_public_inputs.clone(),
+        public_statement,
+        packed_witness_rows,
+        linear_constraints,
+        transcript_binding,
+    })
+}
+
+fn build_smallwood_witness_context(
+    witness: &TransactionWitness,
+) -> Result<SmallwoodWitnessContext, TransactionCircuitError> {
     witness.validate()?;
     validate_native_merkle_membership(witness)?;
     let public_inputs = witness.public_inputs()?;
@@ -490,37 +551,19 @@ fn build_packed_smallwood_bridge_material(
             u64::from(witness.version.crypto),
         ])
         .collect();
-    let secret_rows = semantic_secret_witness_rows(witness, &public_inputs_p3)?;
-    let poseidon_rows = poseidon_subtrace_rows(witness)?;
-    let packed_witness_rows = packed_bridge_witness_rows(
-        &public_values,
-        &secret_rows,
-        &poseidon_rows,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
-    );
-    let row_count = packed_witness_rows.len() / SMALLWOOD_BRIDGE_PACKING_FACTOR;
-    let public_statement = SmallwoodPublicStatement {
-        public_values: public_values.clone(),
-        public_value_count: public_values.len() as u32,
-        raw_witness_len: secret_rows.len() as u32,
-        lppc_row_count: row_count as u32,
-        poseidon_permutation_count: poseidon_rows.len() as u32,
-        poseidon_state_row_count: (poseidon_rows.len()
-            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
-            as u32,
-        expanded_witness_len: packed_witness_rows.len() as u32,
-        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
-        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-    };
-    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
-    let transcript_binding = smallwood_transcript_binding(&public_statement, witness.version)?;
-    Ok(PackedBridgeSmallwoodFrontendMaterial {
+    let semantic_secret_rows = semantic_secret_witness_rows(witness, &public_inputs_p3)?;
+    let raw_witness_rows = native_relation_raw_witness_rows(witness)?;
+    let bridge_poseidon_rows = poseidon_subtrace_rows(witness)?;
+    let packed_poseidon_rows = packed_poseidon_subtrace_rows(witness, &public_inputs)?;
+    Ok(SmallwoodWitnessContext {
         public_inputs,
         serialized_public_inputs,
-        public_statement,
-        packed_witness_rows,
-        linear_constraints,
-        transcript_binding,
+        public_inputs_p3,
+        public_values,
+        semantic_secret_rows,
+        raw_witness_rows,
+        bridge_poseidon_rows,
+        packed_poseidon_rows,
     })
 }
 
@@ -1991,6 +2034,50 @@ mod tests {
         )
         .expect_err("mutated packed smallwood frontend must fail");
         assert!(err.to_string().contains("smallwood"));
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_and_bridge_share_witness_context() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let direct =
+            build_packed_smallwood_frontend_material_from_context(&context, &witness).unwrap();
+        let bridge =
+            build_packed_smallwood_bridge_material_from_context(&context, &witness).unwrap();
+
+        assert_eq!(
+            direct.public_statement.public_values,
+            bridge.public_statement.public_values
+        );
+        assert_eq!(bridge.public_inputs, context.public_inputs);
+        assert_eq!(
+            bridge.serialized_public_inputs,
+            context.serialized_public_inputs
+        );
+
+        test_candidate_witness(
+            &direct.packed_expanded_witness,
+            direct.public_statement.lppc_row_count as usize,
+            direct.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &direct.linear_constraints.term_offsets,
+            &direct.linear_constraints.term_indices,
+            &direct.linear_constraints.term_coefficients,
+            &direct.linear_constraints.targets,
+        )
+        .unwrap();
+        test_candidate_witness(
+            &bridge.packed_witness_rows,
+            bridge.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &bridge.linear_constraints.term_offsets,
+            &bridge.linear_constraints.term_indices,
+            &bridge.linear_constraints.term_coefficients,
+            &bridge.linear_constraints.targets,
+        )
+        .unwrap();
     }
 
     #[test]
