@@ -1956,6 +1956,44 @@ mod tests {
     }
 
     #[test]
+    fn packed_smallwood_frontend_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        test_candidate_witness(
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_witness_rejects_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let mut material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        material.packed_expanded_witness[SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 17] ^= 1;
+        let err = test_candidate_witness(
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .expect_err("mutated packed smallwood frontend must fail");
+        assert!(err.to_string().contains("smallwood"));
+    }
+
+    #[test]
     fn packed_smallwood_bridge_material_matches_expected_shape() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
