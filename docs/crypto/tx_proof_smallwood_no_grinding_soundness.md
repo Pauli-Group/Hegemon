@@ -37,7 +37,7 @@ The compact bridge proof no longer serializes any witness envelope. Instead, the
 
 and from fixed shape metadata for the packed expanded native witness.
 
-The alternate `DirectPacked64V1` engine path is now different: it carries the canonical raw witness plus a transcript-bound sampled matrix-opening payload over the frozen `934 x 64` matrix. That alternate envelope is witness-carrying and is not the subject of this no-grinding note.
+The alternate `DirectPacked64V1` engine path is now different: it carries the canonical raw witness plus a transcript-bound sampled matrix-opening payload over the frozen `934 x 64` matrix. That opening schedule is derived from the direct raw-witness payload digest and fail-closes if the matrix-opening payload is missing or tampered. The alternate envelope is still witness-carrying and is not the subject of this no-grinding note.
 
 The exact active public statement fields are:
 

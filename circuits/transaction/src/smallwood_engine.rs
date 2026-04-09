@@ -376,7 +376,11 @@ pub(crate) fn verify_candidate(
             }
             let material = build_packed_smallwood_frontend_material_from_witness(&witness)?;
             match &proof.opened_witness.mode {
-                SmallwoodOpenedWitnessMode::None => {}
+                SmallwoodOpenedWitnessMode::None => {
+                    return Err(TransactionCircuitError::ConstraintViolation(
+                        "smallwood direct packed proof is missing the matrix-opening payload",
+                    ));
+                }
                 SmallwoodOpenedWitnessMode::MatrixRows {
                     binded_data_digest,
                     matrix_root,
@@ -384,7 +388,7 @@ pub(crate) fn verify_candidate(
                     opened_rows,
                     auth_paths,
                 } => verify_matrix_opening_bundle(
-                    binded_data,
+                    &expected_digest,
                     &material.packed_expanded_witness,
                     statement.row_count(),
                     statement.packing_factor(),
@@ -634,14 +638,17 @@ fn direct_packed_bind_digest(binded_data: &[u8], witness_values: &[u64]) -> [u8;
 }
 
 fn matrix_opening_bind_digest(
-    binded_data: &[u8],
+    payload_digest: &[u8; DIGEST_BYTES],
     matrix_root: &[u8; DIGEST_BYTES],
+    row_count: usize,
+    packing_factor: usize,
 ) -> [u8; DIGEST_BYTES] {
     let mut hasher = Hasher::new();
     hasher.update(SMALLWOOD_MATRIX_OPENING_DOMAIN);
-    hasher.update(&(binded_data.len() as u64).to_le_bytes());
-    hasher.update(binded_data);
+    hasher.update(payload_digest);
     hasher.update(matrix_root);
+    hasher.update(&(row_count as u64).to_le_bytes());
+    hasher.update(&(packing_factor as u64).to_le_bytes());
     hasher.finalize().as_bytes().to_owned()
 }
 
@@ -707,9 +714,12 @@ fn build_matrix_opening_bundle(
     row_count: usize,
     packing_factor: usize,
 ) -> Result<SmallwoodOpenedWitnessBundle, TransactionCircuitError> {
+    let raw_witness = direct_packed_program().raw_witness.slice(flat)?;
+    let payload_digest = direct_packed_bind_digest(binded_data, raw_witness);
     let mut levels = build_matrix_merkle_levels(flat, row_count, packing_factor)?;
     let matrix_root = merkle_build_levels(&mut levels);
-    let binded_data_digest = matrix_opening_bind_digest(binded_data, &matrix_root);
+    let binded_data_digest =
+        matrix_opening_bind_digest(&payload_digest, &matrix_root, row_count, packing_factor);
     let row_indices = derive_matrix_opening_row_indices(&binded_data_digest, row_count)?;
     let opened_rows = row_indices
         .iter()
@@ -733,7 +743,7 @@ fn build_matrix_opening_bundle(
 }
 
 fn verify_matrix_opening_bundle(
-    binded_data: &[u8],
+    payload_digest: &[u8; DIGEST_BYTES],
     expected_flat: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -743,7 +753,8 @@ fn verify_matrix_opening_bundle(
     opened_rows: &[Vec<u64>],
     auth_paths: &[Vec<[u8; DIGEST_BYTES]>],
 ) -> Result<(), TransactionCircuitError> {
-    let expected_bind_digest = matrix_opening_bind_digest(binded_data, matrix_root);
+    let expected_bind_digest =
+        matrix_opening_bind_digest(payload_digest, matrix_root, row_count, packing_factor);
     if *binded_data_digest != expected_bind_digest {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood direct packed matrix-opening binding digest mismatch",
@@ -2481,6 +2492,108 @@ mod tests {
         };
         let proof_bytes = bincode::serialize(&proof).unwrap();
         verify_candidate(&statement, &material.transcript_binding, &proof_bytes).unwrap();
+    }
+
+    #[test]
+    fn direct_packed_arithmetization_rejects_missing_matrix_opening_payload() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let proof = SmallwoodProof {
+            salt: [0u8; SALT_BYTES],
+            nonce: [0u8; NONCE_BYTES],
+            h_piop: [0u8; DIGEST_BYTES],
+            piop: PiopProof {
+                ppol_highs: Vec::new(),
+                plin_highs: Vec::new(),
+            },
+            pcs: PcsProof {
+                rcombi_tails: Vec::new(),
+                subset_evals: Vec::new(),
+                partial_evals: Vec::new(),
+                decs: DecsProof {
+                    auth_paths: Vec::new(),
+                    masking_evals: Vec::new(),
+                    high_coeffs: Vec::new(),
+                },
+            },
+            opened_witness: SmallwoodOpenedWitnessBundle {
+                mode: SmallwoodOpenedWitnessMode::None,
+            },
+            direct_packed: Some(DirectPackedProofBundle {
+                binded_data_digest: direct_packed_bind_digest(
+                    &material.transcript_binding,
+                    direct_packed_program()
+                        .raw_witness
+                        .slice(&material.packed_expanded_witness)
+                        .unwrap(),
+                ),
+                witness_values: direct_packed_program()
+                    .raw_witness
+                    .slice(&material.packed_expanded_witness)
+                    .unwrap()
+                    .to_vec(),
+            }),
+        };
+        let proof_bytes = bincode::serialize(&proof).unwrap();
+        let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
+            .expect_err("direct packed proof without matrix opening unexpectedly verified");
+        assert!(
+            err.to_string().contains("matrix-opening payload"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn direct_packed_arithmetization_rejects_tampered_matrix_opening_payload() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let mut proof: SmallwoodProof = bincode::deserialize(
+            &prove_candidate(
+                &statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        match &mut proof.opened_witness.mode {
+            SmallwoodOpenedWitnessMode::MatrixRows { auth_paths, .. } => {
+                auth_paths[0][0][0] ^= 1;
+            }
+            mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
+        }
+        let proof_bytes = bincode::serialize(&proof).unwrap();
+        let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
+            .expect_err("tampered matrix opening unexpectedly verified");
+        assert!(
+            err.to_string()
+                .contains("matrix-opening auth path mismatch")
+                || err.to_string().contains("binding digest mismatch")
+                || err.to_string().contains("row schedule mismatch"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
