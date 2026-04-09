@@ -38,6 +38,9 @@ const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
 const POSEIDON_PERMUTATION_COUNT: usize =
     1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
+const BALANCE_TAG_PERMUTATIONS: usize = 2;
+const DIRECT_POSEIDON_PERMUTATION_COUNT: usize =
+    POSEIDON_PERMUTATION_COUNT + BALANCE_TAG_PERMUTATIONS;
 const POSEIDON_GROUP_COUNT: usize =
     (POSEIDON_PERMUTATION_COUNT + PACKING_FACTOR - 1) / PACKING_FACTOR;
 const PUB_INPUT_FLAG0: usize = 0;
@@ -288,8 +291,66 @@ pub(crate) struct DirectPackedProgram {
     pub(crate) ciphertext_hashes: DirectPackedRange,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedPermutationSpan {
+    start: usize,
+    len: usize,
+}
+
+#[allow(dead_code)]
+impl DirectPackedPermutationSpan {
+    pub(crate) const fn new(start: usize, len: usize) -> Self {
+        Self { start, len }
+    }
+
+    pub(crate) const fn start(self) -> usize {
+        self.start
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    pub(crate) const fn end(self) -> usize {
+        self.start + self.len
+    }
+
+    pub(crate) const fn word_range(self) -> DirectPackedRange {
+        DirectPackedRange::new(
+            self.start * POSEIDON_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH,
+            self.len * POSEIDON_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedInputPoseidonPlan {
+    pub(crate) commitment: DirectPackedPermutationSpan,
+    pub(crate) merkle_nodes: [DirectPackedPermutationSpan; MERKLE_DEPTH],
+    pub(crate) nullifier: DirectPackedPermutationSpan,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedOutputPoseidonPlan {
+    pub(crate) commitment: DirectPackedPermutationSpan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DirectPackedPoseidonProgram {
+    pub(crate) prf: DirectPackedPermutationSpan,
+    pub(crate) inputs: [DirectPackedInputPoseidonPlan; MAX_INPUTS],
+    pub(crate) outputs: [DirectPackedOutputPoseidonPlan; MAX_OUTPUTS],
+    pub(crate) balance_tag: DirectPackedPermutationSpan,
+}
+
 fn take_direct_range(cursor: &mut usize, len: usize) -> DirectPackedRange {
     let range = DirectPackedRange::new(*cursor, len);
+    *cursor += len;
+    range
+}
+
+fn take_permutation_span(cursor: &mut usize, len: usize) -> DirectPackedPermutationSpan {
+    let range = DirectPackedPermutationSpan::new(*cursor, len);
     *cursor += len;
     range
 }
@@ -367,6 +428,33 @@ pub(crate) fn direct_packed_program() -> DirectPackedProgram {
         output_asset_range,
         outputs,
         ciphertext_hashes,
+    }
+}
+
+pub(crate) fn direct_packed_poseidon_program() -> DirectPackedPoseidonProgram {
+    let mut permutation_cursor = 0usize;
+    let prf = take_permutation_span(&mut permutation_cursor, 1);
+    let inputs = core::array::from_fn(|_| {
+        let commitment = take_permutation_span(&mut permutation_cursor, 3);
+        let merkle_nodes =
+            core::array::from_fn(|_| take_permutation_span(&mut permutation_cursor, 2));
+        let nullifier = take_permutation_span(&mut permutation_cursor, 1);
+        DirectPackedInputPoseidonPlan {
+            commitment,
+            merkle_nodes,
+            nullifier,
+        }
+    });
+    let outputs = core::array::from_fn(|_| DirectPackedOutputPoseidonPlan {
+        commitment: take_permutation_span(&mut permutation_cursor, 3),
+    });
+    let balance_tag = take_permutation_span(&mut permutation_cursor, BALANCE_TAG_PERMUTATIONS);
+    debug_assert_eq!(permutation_cursor, DIRECT_POSEIDON_PERMUTATION_COUNT);
+    DirectPackedPoseidonProgram {
+        prf,
+        inputs,
+        outputs,
+        balance_tag,
     }
 }
 
@@ -571,15 +659,9 @@ fn test_direct_packed_frontend_witness(
         ));
     }
 
-    let expected_poseidon = flatten_poseidon_rows(&packed_poseidon_subtrace_rows_from_witness(
-        &witness,
-        &public_inputs,
-    )?);
-    if poseidon_flat != expected_poseidon.as_slice() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood packed frontend poseidon subtrace mismatch",
-        ));
-    }
+    let expected_poseidon = packed_poseidon_subtrace_rows_from_witness(&witness, &public_inputs)?;
+    validate_direct_packed_poseidon_trace(poseidon_flat, &expected_poseidon)?;
+    let expected_poseidon = flatten_poseidon_rows(&expected_poseidon);
     let poseidon_cell = direct_packed_poseidon_cell(0, 0, 0);
     if matrix.cell(poseidon_cell.row(), poseidon_cell.col())? != expected_poseidon[0] {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -693,11 +775,21 @@ pub(crate) trait SmallwoodConstraintAdapter: Sync {
     fn linear_constraint_indices(&self) -> &[u32];
     fn linear_constraint_coefficients(&self) -> &[u64];
     fn linear_targets(&self) -> &[u64];
+    fn nonlinear_eval_view<'a>(
+        &self,
+        eval_point: u64,
+        row_scalars: &'a [u64],
+    ) -> SmallwoodNonlinearEvalView<'a>;
     fn compute_constraints_u64(
         &self,
-        rows: &[u64],
+        view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError>;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SmallwoodNonlinearEvalView<'a> {
+    RowScalars { eval_point: u64, rows: &'a [u64] },
 }
 
 impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
@@ -741,12 +833,29 @@ impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
         self.linear_constraint_targets
     }
 
+    fn nonlinear_eval_view<'b>(
+        &self,
+        eval_point: u64,
+        row_scalars: &'b [u64],
+    ) -> SmallwoodNonlinearEvalView<'b> {
+        match self.arithmetization {
+            SmallwoodArithmetization::Bridge64V1 => SmallwoodNonlinearEvalView::RowScalars {
+                eval_point,
+                rows: row_scalars,
+            },
+            SmallwoodArithmetization::DirectPacked64V1 => SmallwoodNonlinearEvalView::RowScalars {
+                eval_point,
+                rows: row_scalars,
+            },
+        }
+    }
+
     fn compute_constraints_u64(
         &self,
-        rows: &[u64],
+        view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        compute_bridge_constraints_u64(self, rows, out)
+        compute_bridge_constraints_u64(self, view, out)
     }
 }
 
@@ -1103,6 +1212,61 @@ fn flatten_poseidon_rows(
         }
     }
     flat
+}
+
+fn poseidon_span_words<'a>(
+    poseidon_flat: &'a [u64],
+    span: DirectPackedPermutationSpan,
+) -> Result<&'a [u64], TransactionCircuitError> {
+    span.word_range().slice(poseidon_flat)
+}
+
+fn validate_direct_packed_poseidon_trace(
+    poseidon_flat: &[u64],
+    expected_rows: &[[[u64; POSEIDON2_WIDTH]; POSEIDON_ROWS_PER_PERMUTATION]],
+) -> Result<(), TransactionCircuitError> {
+    if expected_rows.len() != DIRECT_POSEIDON_PERMUTATION_COUNT {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood packed frontend poseidon permutation count {}, expected {}",
+            expected_rows.len(),
+            DIRECT_POSEIDON_PERMUTATION_COUNT
+        )));
+    }
+    let program = direct_packed_poseidon_program();
+    let expected_flat = flatten_poseidon_rows(expected_rows);
+    let compare_span =
+        |label: &str, span: DirectPackedPermutationSpan| -> Result<(), TransactionCircuitError> {
+            let actual = poseidon_span_words(poseidon_flat, span)?;
+            let expected = poseidon_span_words(&expected_flat, span)?;
+            if actual != expected {
+                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "smallwood packed frontend {label} poseidon trace mismatch"
+                )));
+            }
+            Ok(())
+        };
+    compare_span("prf", program.prf)?;
+    for (input_idx, input_plan) in program.inputs.iter().enumerate() {
+        compare_span(
+            &format!("input {input_idx} commitment"),
+            input_plan.commitment,
+        )?;
+        for (level, span) in input_plan.merkle_nodes.iter().enumerate() {
+            compare_span(&format!("input {input_idx} merkle level {level}"), *span)?;
+        }
+        compare_span(
+            &format!("input {input_idx} nullifier"),
+            input_plan.nullifier,
+        )?;
+    }
+    for (output_idx, output_plan) in program.outputs.iter().enumerate() {
+        compare_span(
+            &format!("output {output_idx} commitment"),
+            output_plan.commitment,
+        )?;
+    }
+    compare_span("balance tag", program.balance_tag)?;
+    Ok(())
 }
 
 fn packed_poseidon_subtrace_rows_from_witness(
@@ -1511,7 +1675,7 @@ pub(crate) fn packed_constraint_count() -> usize {
 
 pub(crate) fn compute_bridge_constraints_u64(
     statement: &PackedStatement<'_>,
-    rows: &[u64],
+    view: SmallwoodNonlinearEvalView<'_>,
     out: &mut [u64],
 ) -> Result<(), TransactionCircuitError> {
     if !matches!(
@@ -1529,6 +1693,12 @@ pub(crate) fn compute_bridge_constraints_u64(
             out.len()
         )));
     }
+    let rows = match view {
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point: _eval_point,
+            rows,
+        } => rows,
+    };
     let felt_rows = rows.iter().copied().map(Felt::from_u64).collect::<Vec<_>>();
     let mut felt_out = vec![Felt::ZERO; expected];
     compute_constraints(statement, &felt_rows, &mut felt_out);

@@ -2024,6 +2024,26 @@ mod tests {
     }
 
     #[test]
+    fn direct_packed_poseidon_program_matches_expected_spans() {
+        let program = crate::smallwood_semantics::direct_packed_poseidon_program();
+        assert_eq!(program.prf.start(), 0);
+        assert_eq!(program.prf.len(), 1);
+        assert_eq!(program.inputs[0].commitment.start(), 1);
+        assert_eq!(program.inputs[0].commitment.len(), 3);
+        assert_eq!(program.inputs[0].merkle_nodes[0].start(), 4);
+        assert_eq!(program.inputs[0].merkle_nodes[0].len(), 2);
+        assert_eq!(program.inputs[0].merkle_nodes[31].start(), 66);
+        assert_eq!(program.inputs[0].nullifier.start(), 68);
+        assert_eq!(program.inputs[1].commitment.start(), 69);
+        assert_eq!(program.inputs[1].nullifier.start(), 136);
+        assert_eq!(program.outputs[0].commitment.start(), 137);
+        assert_eq!(program.outputs[1].commitment.start(), 140);
+        assert_eq!(program.balance_tag.start(), 143);
+        assert_eq!(program.balance_tag.len(), 2);
+        assert_eq!(program.balance_tag.end(), 145);
+    }
+
+    #[test]
     fn packed_smallwood_frontend_witness_satisfies_constraints() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;

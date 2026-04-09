@@ -42,7 +42,7 @@ struct SmallwoodProof {
     h_piop: [u8; DIGEST_BYTES],
     piop: PiopProof,
     pcs: PcsProof,
-    all_evals: Vec<Vec<u64>>,
+    opened_witness: SmallwoodOpenedWitnessBundle,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +64,11 @@ struct DecsProof {
     auth_paths: Vec<Vec<[u8; DIGEST_BYTES]>>,
     masking_evals: Vec<Vec<u64>>,
     high_coeffs: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SmallwoodOpenedWitnessBundle {
+    row_scalars: Vec<Vec<u64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -195,7 +200,7 @@ pub(crate) fn prove_candidate(
     let nonce = choose_opening_nonce(&cfg.packing_points, &h_piop)?;
     log_stage("opening_nonce", &mut last_stage);
     let eval_points = xof_piop_opening_points(&nonce, &h_piop);
-    let (pcs_proof, all_evals) = pcs_open(
+    let (pcs_proof, opened_witness) = pcs_open(
         &cfg,
         &pcs_key,
         &witness_polys,
@@ -211,7 +216,7 @@ pub(crate) fn prove_candidate(
         h_piop,
         piop: piop.proof,
         pcs: pcs_proof,
-        all_evals,
+        opened_witness,
     };
     let encoded = bincode::serialize(&proof).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -240,7 +245,7 @@ pub(crate) fn verify_candidate(
         ))
     })?;
     let cfg = SmallwoodConfig::new(statement)?;
-    if proof.all_evals.len() != SMALLWOOD_NB_OPENED_EVALS {
+    if proof.opened_witness.row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
         ));
@@ -253,7 +258,7 @@ pub(crate) fn verify_candidate(
         &cfg,
         &proof.salt,
         &eval_points,
-        &proof.all_evals,
+        &proof.opened_witness.row_scalars,
         &proof.pcs,
         &proof.h_piop,
     )?;
@@ -264,7 +269,7 @@ pub(crate) fn verify_candidate(
         statement,
         &piop_input,
         &eval_points,
-        &proof.all_evals,
+        &proof.opened_witness.row_scalars,
         &proof.piop,
     )?;
     let recomputed = hash_piop_transcript(&piop_transcript);
@@ -280,8 +285,12 @@ fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof: &SmallwoodProof,
 ) -> Result<(), TransactionCircuitError> {
-    if proof.all_evals.len() != SMALLWOOD_NB_OPENED_EVALS
-        || proof.all_evals.iter().any(|row| row.len() != cfg.nb_polys)
+    if proof.opened_witness.row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS
+        || proof
+            .opened_witness
+            .row_scalars
+            .iter()
+            .any(|row| row.len() != cfg.nb_polys)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation shape mismatch",
@@ -513,20 +522,20 @@ fn piop_recompute_transcript(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     in_transcript: &[u64],
     eval_points: &[u64],
-    all_evals: &[Vec<u64>],
+    row_scalars: &[Vec<u64>],
     proof: &PiopProof,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let hash_fpp = hash_piop(in_transcript);
     let gammas = derive_gamma_prime(cfg, &hash_fpp);
-    let wit_evals = all_evals
+    let wit_evals = row_scalars
         .iter()
         .map(|row| row[..cfg.row_count].to_vec())
         .collect::<Vec<_>>();
-    let meval_ppoly = all_evals
+    let meval_ppoly = row_scalars
         .iter()
         .map(|row| row[cfg.row_count..cfg.row_count + SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
-    let meval_plin = all_evals
+    let meval_plin = row_scalars
         .iter()
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
@@ -699,7 +708,7 @@ fn pcs_open(
     _mpol_plin: &[Vec<u64>],
     eval_points: &[u64],
     h_piop: &[u8; DIGEST_BYTES],
-) -> Result<(PcsProof, Vec<Vec<u64>>), TransactionCircuitError> {
+) -> Result<(PcsProof, SmallwoodOpenedWitnessBundle), TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
     let mut last = started;
@@ -720,7 +729,8 @@ fn pcs_open(
     let (combi_heads, rcombi_tails, subset_evals, decs_proof) =
         lvcs_open(cfg, &key.lvcs_key, &coeffs, h_piop)?;
     log_stage("lvcs_open", &mut last);
-    let (all_evals, partial_evals) = pcs_build_opened_evaluations(cfg, eval_points, &combi_heads)?;
+    let (opened_witness, partial_evals) =
+        pcs_build_opened_evaluations(cfg, eval_points, &combi_heads)?;
     log_stage("opened_evals", &mut last);
 
     Ok((
@@ -730,7 +740,7 @@ fn pcs_open(
             partial_evals,
             decs: decs_proof,
         },
-        all_evals,
+        opened_witness,
     ))
 }
 
@@ -738,14 +748,14 @@ fn pcs_recompute_transcript(
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
     eval_points: &[u64],
-    all_evals: &[Vec<u64>],
+    row_scalars: &[Vec<u64>],
     proof: &PcsProof,
     h_piop: &[u8; DIGEST_BYTES],
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
     let combi_heads =
-        pcs_reconstruct_combi_heads(cfg, eval_points, all_evals, &proof.partial_evals)?;
+        pcs_reconstruct_combi_heads(cfg, eval_points, row_scalars, &proof.partial_evals)?;
     let decs_trans_hash =
         hash_challenge_opening_decs(cfg, &combi_heads, h_piop, &proof.rcombi_tails);
     let (decs_leaf_indexes, _decs_nonce) = xof_decs_opening(
@@ -796,8 +806,8 @@ fn pcs_build_opened_evaluations(
     cfg: &SmallwoodConfig,
     eval_points: &[u64],
     combi_heads: &[Vec<u64>],
-) -> Result<(Vec<Vec<u64>>, Vec<Vec<u64>>), TransactionCircuitError> {
-    let mut all_evals = vec![vec![0u64; cfg.nb_polys]; eval_points.len()];
+) -> Result<(SmallwoodOpenedWitnessBundle, Vec<Vec<u64>>), TransactionCircuitError> {
+    let mut row_scalars = vec![vec![0u64; cfg.nb_polys]; eval_points.len()];
     let mut partial_evals =
         vec![vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys]; eval_points.len()];
     for (j, &eval_point) in eval_points.iter().enumerate() {
@@ -833,16 +843,16 @@ fn pcs_build_opened_evaluations(
                     num_combi += 1;
                 }
             }
-            all_evals[j][k] = acc;
+            row_scalars[j][k] = acc;
         }
     }
-    Ok((all_evals, partial_evals))
+    Ok((SmallwoodOpenedWitnessBundle { row_scalars }, partial_evals))
 }
 
 fn pcs_reconstruct_combi_heads(
     cfg: &SmallwoodConfig,
     eval_points: &[u64],
-    all_evals: &[Vec<u64>],
+    row_scalars: &[Vec<u64>],
     partial_evals: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut combi_heads = vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.nb_lvcs_opened_combi];
@@ -870,7 +880,7 @@ fn pcs_reconstruct_combi_heads(
                 }
                 sum = add_mod(sum, mul_mod(value, pow));
             }
-            unstacked_vec[poly_ind] = sub_mod(all_evals[j][k], sum);
+            unstacked_vec[poly_ind] = sub_mod(row_scalars[j][k], sum);
             poly_ind += cfg.width[k];
         }
         debug_assert_eq!(partial_ind, cfg.nb_unstacked_cols - cfg.nb_polys);
@@ -907,9 +917,11 @@ fn get_constraint_polynomials(
         .collect::<Vec<_>>();
     let evaluated_constraints = wit_evals
         .par_iter()
-        .map(|row| {
+        .zip(sample_points.par_iter().copied())
+        .map(|(row, sample_point)| {
             let mut row_constraints = vec![0u64; cfg.constraint_count];
-            statement.compute_constraints_u64(row, &mut row_constraints)?;
+            let view = statement.nonlinear_eval_view(sample_point, row);
+            statement.compute_constraints_u64(view, &mut row_constraints)?;
             Ok::<_, TransactionCircuitError>(row_constraints)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -932,9 +944,9 @@ fn get_constraint_polynomial_evals(
     witness_evals: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut out = vec![vec![0u64; cfg.constraint_count]; eval_points.len()];
-    let _ = eval_points;
     for (row_idx, rows) in witness_evals.iter().enumerate() {
-        statement.compute_constraints_u64(rows, &mut out[row_idx])?;
+        let view = statement.nonlinear_eval_view(eval_points[row_idx], rows);
+        statement.compute_constraints_u64(view, &mut out[row_idx])?;
     }
     Ok(out)
 }
@@ -1582,7 +1594,9 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
                 high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
             },
         },
-        all_evals: vec![vec![0u64; cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS],
+        opened_witness: SmallwoodOpenedWitnessBundle {
+            row_scalars: vec![vec![0u64; cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS],
+        },
     };
     bincode::serialize(&proof)
         .map(|bytes| bytes.len())
@@ -2086,7 +2100,7 @@ mod tests {
         pcs_build_coefficients(&cfg, &eval_points, &mut coeffs);
         let (original_combi_heads, original_rcombi_tails, original_subset_evals, _original_decs) =
             lvcs_open(&cfg, &pcs_key.lvcs_key, &coeffs, &h_piop).unwrap();
-        let (pcs_proof, all_evals) = pcs_open(
+        let (pcs_proof, opened_witness) = pcs_open(
             &cfg,
             &pcs_key,
             &witness_polys,
@@ -2098,9 +2112,13 @@ mod tests {
         .unwrap();
         assert_eq!(pcs_proof.rcombi_tails, original_rcombi_tails);
         assert_eq!(pcs_proof.subset_evals, original_subset_evals);
-        let combi_heads =
-            pcs_reconstruct_combi_heads(&cfg, &eval_points, &all_evals, &pcs_proof.partial_evals)
-                .unwrap();
+        let combi_heads = pcs_reconstruct_combi_heads(
+            &cfg,
+            &eval_points,
+            &opened_witness.row_scalars,
+            &pcs_proof.partial_evals,
+        )
+        .unwrap();
         assert_eq!(combi_heads, original_combi_heads);
         let trans_hash =
             hash_challenge_opening_decs(&cfg, &combi_heads, &h_piop, &pcs_proof.rcombi_tails);
