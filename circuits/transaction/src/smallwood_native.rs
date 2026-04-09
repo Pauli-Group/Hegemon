@@ -8,6 +8,7 @@ use crate::smallwood_semantics::{test_candidate_witness_rust, PackedStatement};
 
 pub fn prove_candidate(
     arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
     witness_values: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -20,6 +21,7 @@ pub fn prove_candidate(
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     let statement = PackedStatement::new(
         arithmetization,
+        public_values,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -33,6 +35,7 @@ pub fn prove_candidate(
 
 pub fn verify_candidate(
     arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
     row_count: usize,
     packing_factor: usize,
     constraint_degree: u16,
@@ -45,6 +48,7 @@ pub fn verify_candidate(
 ) -> Result<(), TransactionCircuitError> {
     let statement = PackedStatement::new(
         arithmetization,
+        public_values,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -58,6 +62,7 @@ pub fn verify_candidate(
 
 pub fn test_candidate_witness(
     arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
     witness_values: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -69,6 +74,7 @@ pub fn test_candidate_witness(
 ) -> Result<(), TransactionCircuitError> {
     let statement = PackedStatement::new(
         arithmetization,
+        public_values,
         row_count,
         packing_factor,
         constraint_degree as usize,
@@ -79,6 +85,7 @@ pub fn test_candidate_witness(
     );
     test_candidate_witness_rust(
         arithmetization,
+        public_values,
         witness_values,
         row_count,
         packing_factor,
@@ -94,6 +101,7 @@ pub fn test_candidate_witness(
 
 pub fn projected_candidate_proof_bytes(
     arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
     row_count: usize,
     packing_factor: usize,
     constraint_degree: u16,
@@ -102,6 +110,7 @@ pub fn projected_candidate_proof_bytes(
     let linear_constraint_targets = vec![0u64; linear_constraint_count];
     let statement = PackedStatement::new(
         arithmetization,
+        public_values,
         row_count,
         packing_factor,
         constraint_degree as usize,

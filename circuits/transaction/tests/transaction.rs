@@ -375,6 +375,24 @@ fn smallwood_candidate_default_projection_tracks_bridge_arithmetization() {
 }
 
 #[test]
+fn smallwood_candidate_explicit_direct_proof_wrapper_tracks_direct_arithmetization() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+    .expect("smallwood candidate direct proof");
+    let mirror: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    assert_eq!(
+        mirror.arithmetization,
+        SmallwoodArithmetization::DirectPacked64V1,
+        "explicit direct SmallWood proof should carry the direct arithmetization tag"
+    );
+}
+
+#[test]
 fn smallwood_candidate_proof_reaches_three_x_reduction_against_shipped_plonky3() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;

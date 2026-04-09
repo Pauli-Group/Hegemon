@@ -109,16 +109,49 @@ struct SmallwoodConfig {
     packing_points: Vec<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DirectPackedRowScalarBlocker {
+    raw_witness_words: usize,
+    poseidon_words: usize,
+    padding_words: usize,
+    opened_row_scalar_words: usize,
+    opened_partial_tail_words: usize,
+}
+
+fn direct_packed_row_scalar_blocker(cfg: &SmallwoodConfig) -> DirectPackedRowScalarBlocker {
+    let program = direct_packed_program();
+    DirectPackedRowScalarBlocker {
+        raw_witness_words: DIRECT_RAW_WITNESS_LEN,
+        poseidon_words: program.poseidon_segment.len(),
+        padding_words: program.padding.len(),
+        opened_row_scalar_words: SMALLWOOD_NB_OPENED_EVALS * cfg.nb_polys,
+        opened_partial_tail_words: SMALLWOOD_NB_OPENED_EVALS
+            * (cfg.nb_unstacked_cols - cfg.nb_polys),
+    }
+}
+
+fn direct_packed_row_scalar_blocker_error(cfg: &SmallwoodConfig) -> TransactionCircuitError {
+    let blocker = direct_packed_row_scalar_blocker(cfg);
+    TransactionCircuitError::ConstraintViolationOwned(format!(
+        "direct packed hidden-witness SmallWood is blocked on the current PCS: the row-polynomial engine only authenticates {} row-scalar openings and {} partial unstacked-column words across {} random points, but the direct semantics need matrix-aware access to {} raw-witness words, {} poseidon words, and {} padding words",
+        blocker.opened_row_scalar_words,
+        blocker.opened_partial_tail_words,
+        SMALLWOOD_NB_OPENED_EVALS,
+        blocker.raw_witness_words,
+        blocker.poseidon_words,
+        blocker.padding_words,
+    ))
+}
+
 fn ensure_row_polynomial_arithmetization(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<(), TransactionCircuitError> {
     match statement.arithmetization() {
         SmallwoodArithmetization::Bridge64V1 => Ok(()),
-        SmallwoodArithmetization::DirectPacked64V1 => Err(
-            TransactionCircuitError::ConstraintViolation(
-                "direct packed SmallWood arithmetization is not implemented in the row-polynomial proof engine yet",
-            ),
-        ),
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let cfg = SmallwoodConfig::new(statement)?;
+            Err(direct_packed_row_scalar_blocker_error(&cfg))
+        }
     }
 }
 
@@ -314,6 +347,7 @@ pub(crate) fn verify_candidate(
         let material = build_packed_smallwood_frontend_material_from_witness(&witness)?;
         return test_candidate_witness_rust(
             SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
             &material.packed_expanded_witness,
             material.public_statement.lppc_row_count as usize,
             material.public_statement.lppc_packing_factor as usize,
@@ -492,6 +526,7 @@ fn prove_direct_packed_payload(
 ) -> Result<DirectPackedProofBundle, TransactionCircuitError> {
     test_candidate_witness_rust(
         SmallwoodArithmetization::DirectPacked64V1,
+        statement.public_values(),
         witness_values,
         statement.row_count(),
         statement.packing_factor(),
@@ -2113,6 +2148,7 @@ mod tests {
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         let statement = PackedStatement::new(
             SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2145,6 +2181,7 @@ mod tests {
 
         let direct_statement = PackedStatement::new(
             SmallwoodArithmetization::DirectPacked64V1,
+            &direct_material.public_statement.public_values,
             direct_material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2155,6 +2192,7 @@ mod tests {
         );
         let bridge_statement = PackedStatement::new(
             SmallwoodArithmetization::Bridge64V1,
+            &bridge_material.public_statement.public_values,
             bridge_material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2177,6 +2215,78 @@ mod tests {
         assert!(
             direct_bytes < 524_288,
             "direct packed payload should still fit under the native tx-leaf cap"
+        );
+    }
+
+    #[test]
+    fn direct_packed_hidden_witness_is_blocked_by_row_scalar_pcs() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
+        let blocker = direct_packed_row_scalar_blocker(&cfg);
+        assert_eq!(blocker.raw_witness_words, DIRECT_RAW_WITNESS_LEN);
+        assert_eq!(
+            blocker.poseidon_words,
+            direct_packed_program().poseidon_segment.len()
+        );
+        assert_eq!(
+            blocker.opened_row_scalar_words,
+            SMALLWOOD_NB_OPENED_EVALS * cfg.nb_polys
+        );
+        assert_eq!(
+            blocker.opened_partial_tail_words,
+            SMALLWOOD_NB_OPENED_EVALS * (cfg.nb_unstacked_cols - cfg.nb_polys)
+        );
+        let err = ensure_row_polynomial_arithmetization(&statement)
+            .expect_err("direct packed hidden-witness mode unexpectedly fit the row-scalar PCS");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("blocked on the current PCS"),
+            "unexpected blocker message: {msg}"
+        );
+        assert!(
+            msg.contains("3991 raw-witness words"),
+            "unexpected blocker message: {msg}"
+        );
+        assert!(
+            msg.contains("55680 poseidon words"),
+            "unexpected blocker message: {msg}"
+        );
+    }
+
+    #[test]
+    fn direct_packed_row_scalar_eval_path_fails_at_nonlinear_adapter() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
+        let row_scalars = vec![vec![0u64; cfg.row_count]; SMALLWOOD_NB_OPENED_EVALS];
+        let err = get_constraint_polynomial_evals(&cfg, &statement, &[64, 65, 66], &row_scalars)
+            .expect_err("direct packed row-scalar eval path unexpectedly succeeded");
+        assert!(
+            err.to_string().contains("matrix-aware witness access"),
+            "unexpected direct nonlinear adapter error: {err}"
         );
     }
 
@@ -2216,6 +2326,7 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = PackedStatement::new(
             SmallwoodArithmetization::Bridge64V1,
+            &material.public_statement.public_values,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
@@ -2294,6 +2405,7 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = PackedStatement::new(
             SmallwoodArithmetization::Bridge64V1,
+            &material.public_statement.public_values,
             material.public_statement.lppc_row_count as usize,
             SMALLWOOD_BRIDGE_PACKING_FACTOR,
             SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,

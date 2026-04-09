@@ -30,7 +30,7 @@ const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
 const INPUT_ROWS: usize = 130;
 const OUTPUT_ROWS: usize = 2;
-const PUBLIC_ROWS: usize = 2;
+const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
 const SECRET_ROWS: usize = 264;
 const PACKING_FACTOR: usize = 64;
@@ -461,6 +461,7 @@ pub(crate) fn direct_packed_poseidon_program() -> DirectPackedPoseidonProgram {
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
     arithmetization: SmallwoodArithmetization,
+    public_values: &'a [u64],
     row_count: usize,
     packing_factor: usize,
     constraint_degree: usize,
@@ -481,6 +482,7 @@ pub(crate) struct PackedStatement<'a> {
 
 pub(crate) fn test_candidate_witness_rust(
     arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
     witness_values: &[u64],
     row_count: usize,
     packing_factor: usize,
@@ -509,6 +511,7 @@ pub(crate) fn test_candidate_witness_rust(
     }
     let statement = PackedStatement::new(
         arithmetization,
+        public_values,
         row_count,
         packing_factor,
         EFFECTIVE_CONSTRAINT_DEGREE,
@@ -604,6 +607,7 @@ fn verify_linear_constraints(
 impl<'a> PackedStatement<'a> {
     pub(crate) fn new(
         arithmetization: SmallwoodArithmetization,
+        public_values: &'a [u64],
         row_count: usize,
         packing_factor: usize,
         constraint_degree: usize,
@@ -614,6 +618,7 @@ impl<'a> PackedStatement<'a> {
     ) -> Self {
         let mut statement = Self {
             arithmetization,
+            public_values,
             row_count,
             packing_factor,
             constraint_degree,
@@ -627,8 +632,8 @@ impl<'a> PackedStatement<'a> {
             linear_constraint_coefficients,
             linear_constraint_targets,
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
-            slot_denominator_inverses: derive_slot_denominator_inverses(linear_constraint_targets),
-            stable_selector_bits: derive_stable_selector_bits(linear_constraint_targets),
+            slot_denominator_inverses: derive_slot_denominator_inverses(public_values),
+            stable_selector_bits: derive_stable_selector_bits(public_values),
             stable_policy_hash_challenge: Felt::ZERO,
             stable_oracle_challenge: Felt::ZERO,
             stable_attestation_challenge: Felt::ZERO,
@@ -687,6 +692,10 @@ impl<'a> PackedStatement<'a> {
         self.linear_constraint_coefficients
     }
 
+    pub(crate) fn public_values(&self) -> &[u64] {
+        self.public_values
+    }
+
     pub(crate) fn arithmetization(&self) -> SmallwoodArithmetization {
         self.arithmetization
     }
@@ -703,6 +712,7 @@ pub(crate) trait SmallwoodConstraintAdapter: Sync {
     fn linear_constraint_indices(&self) -> &[u32];
     fn linear_constraint_coefficients(&self) -> &[u64];
     fn linear_targets(&self) -> &[u64];
+    fn public_values(&self) -> &[u64];
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
@@ -760,6 +770,10 @@ impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
 
     fn linear_targets(&self) -> &[u64] {
         self.linear_constraint_targets
+    }
+
+    fn public_values(&self) -> &[u64] {
+        self.public_values
     }
 
     fn nonlinear_eval_view<'b>(
@@ -1640,7 +1654,7 @@ fn nontrivial_challenge(statement: &PackedStatement<'_>, tag: u64, a: u64, b: u6
     input.push(tag);
     input.push(a);
     input.push(b);
-    input.extend_from_slice(&statement.linear_constraint_targets[..PUBLIC_VALUE_COUNT]);
+    input.extend_from_slice(statement.public_values());
     let mut output = [0u64; 1];
     xof_words(&input, &mut output);
     if output[0] <= 1 {
@@ -1650,7 +1664,7 @@ fn nontrivial_challenge(statement: &PackedStatement<'_>, tag: u64, a: u64, b: u6
 }
 
 fn public_value(statement: &PackedStatement<'_>, row: usize) -> Felt {
-    Felt::from_u64(statement.linear_constraint_targets[row])
+    Felt::from_u64(statement.public_values[row])
 }
 
 #[inline]
