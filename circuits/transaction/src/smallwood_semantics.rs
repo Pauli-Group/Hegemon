@@ -1673,39 +1673,45 @@ fn row_input_base(input: usize) -> usize {
 }
 
 #[inline]
-fn row_output_base(output: usize) -> usize {
-    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * OUTPUT_ROWS
+fn row_input_direction(input: usize, bit: usize) -> usize {
+    row_input_base(input) + 2 + bit
 }
 
 #[inline]
 fn row_input_value(input: usize) -> usize {
     row_input_base(input)
 }
+
 #[inline]
 fn row_input_asset(input: usize) -> usize {
     row_input_base(input) + 1
 }
-#[inline]
-fn row_input_direction(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 2 + bit
-}
+
 #[inline]
 fn row_input_current_agg(input: usize, level: usize) -> usize {
     row_input_base(input) + 34 + level
 }
+
 #[inline]
 fn row_input_left_agg(input: usize, level: usize) -> usize {
     row_input_base(input) + 66 + level
 }
+
 #[inline]
 fn row_input_right_agg(input: usize, level: usize) -> usize {
     row_input_base(input) + 98 + level
 }
 
 #[inline]
+fn row_output_base(output: usize) -> usize {
+    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * OUTPUT_ROWS
+}
+
+#[inline]
 fn row_output_value(output: usize) -> usize {
     row_output_base(output)
 }
+
 #[inline]
 fn row_output_asset(output: usize) -> usize {
     row_output_base(output) + 1
@@ -2005,15 +2011,17 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         let mut delta = Felt::ZERO;
         for input in 0..MAX_INPUTS {
             let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
+            let value = rows[row_input_value(input)];
             let asset = rows[row_input_asset(input)];
             let weight = slot_membership_weights(statement, asset)[slot];
-            delta += flag * rows[row_input_value(input)] * weight;
+            delta += flag * value * weight;
         }
         for output_idx in 0..MAX_OUTPUTS {
             let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
+            let value = rows[row_output_value(output_idx)];
             let asset = rows[row_output_asset(output_idx)];
             let weight = slot_membership_weights(statement, asset)[slot];
-            delta -= flag * rows[row_output_value(output_idx)] * weight;
+            delta -= flag * value * weight;
         }
         out[c] = if slot == 0 {
             delta - native_expected

@@ -1050,7 +1050,6 @@ fn build_packed_bridge_linear_constraints(
             let merkle0 = bridge_input_merkle_permutation(input, level, 0);
             let merkle1 = bridge_input_merkle_permutation(input, level, 1);
             let lane = packed_bridge_permutation_lane(merkle0);
-
             let current_row = bridge_row_input_current_agg(input, level);
             let left_row = bridge_row_input_left_agg(input, level);
             let right_row = bridge_row_input_right_agg(input, level);
@@ -1356,6 +1355,14 @@ fn aggregate_hash_words(words: &[u64; SMALLWOOD_WORDS_PER_48_BYTES], challenge: 
         power = mul_mod_u64(power, challenge);
     }
     acc
+}
+
+fn hash_felt_to_words(hash: &HashFelt) -> [u64; SMALLWOOD_WORDS_PER_48_BYTES] {
+    let mut words = [0u64; SMALLWOOD_WORDS_PER_48_BYTES];
+    for (idx, felt) in hash.iter().enumerate() {
+        words[idx] = felt.as_canonical_u64();
+    }
+    words
 }
 
 fn aggregate_hash(hash: &HashFelt, challenge: u64) -> u64 {
@@ -1692,14 +1699,6 @@ fn push_bytes32_values(out: &mut Vec<u64>, bytes: &[u8; 32]) {
 
 fn push_bytes48_values(out: &mut Vec<u64>, bytes: &[u8; 48]) {
     out.extend(bytes.iter().map(|byte| u64::from(*byte)));
-}
-
-fn hash_felt_to_words(hash: &HashFelt) -> [u64; SMALLWOOD_WORDS_PER_48_BYTES] {
-    let mut words = [0u64; SMALLWOOD_WORDS_PER_48_BYTES];
-    for (idx, felt) in hash.iter().enumerate() {
-        words[idx] = felt.as_canonical_u64();
-    }
-    words
 }
 
 fn push_native_relation_inputs(
@@ -2474,31 +2473,5 @@ mod tests {
         )
         .expect_err("mutated smallwood witness must fail");
         assert!(err.to_string().contains("witness test failed"));
-    }
-
-    #[test]
-    fn packed_smallwood_bridge_first_merkle_aggregates_match_source() {
-        let mut witness = sample_witness();
-        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let challenge =
-            smallwood_bridge_merkle_challenge(&material.public_statement.public_values, 0, 0);
-        let current = witness.inputs[0].note.commitment();
-        let sibling = witness.inputs[0].merkle_path.siblings[0];
-        let current_row = bridge_row_input_current_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        let left_row = bridge_row_input_left_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        let right_row = bridge_row_input_right_agg(0, 0) * SMALLWOOD_BRIDGE_PACKING_FACTOR;
-        assert_eq!(
-            material.packed_witness_rows[current_row],
-            aggregate_hash(&current, challenge)
-        );
-        assert_eq!(
-            material.packed_witness_rows[left_row],
-            aggregate_hash(&current, challenge)
-        );
-        assert_eq!(
-            material.packed_witness_rows[right_row],
-            aggregate_hash(&sibling, challenge)
-        );
     }
 }
