@@ -10,11 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::TransactionCircuitError,
-    smallwood_frontend::build_packed_smallwood_frontend_material_from_witness,
-    smallwood_semantics::{
-        direct_packed_program, parse_direct_raw_witness, test_candidate_witness_rust,
-        SmallwoodConstraintAdapter, DIRECT_RAW_WITNESS_LEN,
-    },
+    smallwood_semantics::SmallwoodConstraintAdapter,
 };
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
@@ -27,8 +23,6 @@ const NONCE_BYTES: usize = 4;
 
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
-const SMALLWOOD_MATRIX_OPENING_DOMAIN: &[u8] = b"hegemon.smallwood.matrix-opening.v1";
-
 const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
 const SMALLWOOD_BETA: usize = 2;
@@ -36,8 +30,6 @@ const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
 const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
 const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_DECS_POW_BITS: u32 = 0;
-const SMALLWOOD_MATRIX_OPENING_QUERY_COUNT: usize = 8;
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SmallwoodArithmetization {
     Bridge64V1,
@@ -52,7 +44,6 @@ struct SmallwoodProof {
     piop: PiopProof,
     pcs: PcsProof,
     opened_witness: SmallwoodOpenedWitnessBundle,
-    direct_packed: Option<DirectPackedProofBundle>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,19 +78,6 @@ enum SmallwoodOpenedWitnessMode {
     RowScalars {
         row_scalars: Vec<Vec<u64>>,
     },
-    MatrixRows {
-        binded_data_digest: [u8; DIGEST_BYTES],
-        matrix_root: [u8; DIGEST_BYTES],
-        row_indices: Vec<u32>,
-        opened_rows: Vec<Vec<u64>>,
-        auth_paths: Vec<Vec<[u8; DIGEST_BYTES]>>,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct DirectPackedProofBundle {
-    binded_data_digest: [u8; DIGEST_BYTES],
-    witness_values: Vec<u64>,
 }
 
 impl SmallwoodOpenedWitnessBundle {
@@ -141,49 +119,11 @@ struct SmallwoodConfig {
     packing_points: Vec<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DirectPackedRowScalarBlocker {
-    raw_witness_words: usize,
-    poseidon_words: usize,
-    padding_words: usize,
-    opened_row_scalar_words: usize,
-    opened_partial_tail_words: usize,
-}
-
-fn direct_packed_row_scalar_blocker(cfg: &SmallwoodConfig) -> DirectPackedRowScalarBlocker {
-    let program = direct_packed_program();
-    DirectPackedRowScalarBlocker {
-        raw_witness_words: DIRECT_RAW_WITNESS_LEN,
-        poseidon_words: program.poseidon_segment.len(),
-        padding_words: program.padding.len(),
-        opened_row_scalar_words: SMALLWOOD_NB_OPENED_EVALS * cfg.nb_polys,
-        opened_partial_tail_words: SMALLWOOD_NB_OPENED_EVALS
-            * (cfg.nb_unstacked_cols - cfg.nb_polys),
-    }
-}
-
-fn direct_packed_row_scalar_blocker_error(cfg: &SmallwoodConfig) -> TransactionCircuitError {
-    let blocker = direct_packed_row_scalar_blocker(cfg);
-    TransactionCircuitError::ConstraintViolationOwned(format!(
-        "direct packed hidden-witness SmallWood is blocked on the current PCS: the row-polynomial engine only authenticates {} row-scalar openings and {} partial unstacked-column words across {} random points, but the direct semantics need matrix-aware access to {} raw-witness words, {} poseidon words, and {} padding words",
-        blocker.opened_row_scalar_words,
-        blocker.opened_partial_tail_words,
-        SMALLWOOD_NB_OPENED_EVALS,
-        blocker.raw_witness_words,
-        blocker.poseidon_words,
-        blocker.padding_words,
-    ))
-}
-
 fn ensure_row_polynomial_arithmetization(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<(), TransactionCircuitError> {
     match statement.arithmetization() {
-        SmallwoodArithmetization::Bridge64V1 => Ok(()),
-        SmallwoodArithmetization::DirectPacked64V1 => {
-            let cfg = SmallwoodConfig::new(statement)?;
-            Err(direct_packed_row_scalar_blocker_error(&cfg))
-        }
+        SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => Ok(()),
     }
 }
 
@@ -211,44 +151,6 @@ pub(crate) fn prove_candidate(
     witness_values: &[u64],
     binded_data: &[u8],
 ) -> Result<Vec<u8>, TransactionCircuitError> {
-    if matches!(
-        statement.arithmetization(),
-        SmallwoodArithmetization::DirectPacked64V1
-    ) {
-        let direct_payload = prove_direct_packed_payload(statement, witness_values, binded_data)?;
-        let opened_witness = build_matrix_opening_bundle(
-            binded_data,
-            witness_values,
-            statement.row_count(),
-            statement.packing_factor(),
-        )?;
-        return bincode::serialize(&SmallwoodProof {
-            salt: [0u8; SALT_BYTES],
-            nonce: [0u8; NONCE_BYTES],
-            h_piop: direct_payload.binded_data_digest,
-            piop: PiopProof {
-                ppol_highs: Vec::new(),
-                plin_highs: Vec::new(),
-            },
-            pcs: PcsProof {
-                rcombi_tails: Vec::new(),
-                subset_evals: Vec::new(),
-                partial_evals: Vec::new(),
-                decs: DecsProof {
-                    auth_paths: Vec::new(),
-                    masking_evals: Vec::new(),
-                    high_coeffs: Vec::new(),
-                },
-            },
-            opened_witness,
-            direct_packed: Some(direct_payload),
-        })
-        .map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to serialize direct smallwood proof: {err}"
-            ))
-        });
-    }
     ensure_row_polynomial_arithmetization(statement)?;
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let stage_started = Instant::now();
@@ -334,7 +236,6 @@ pub(crate) fn prove_candidate(
         piop: piop.proof,
         pcs: pcs_proof,
         opened_witness,
-        direct_packed: None,
     };
     let encoded = bincode::serialize(&proof).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -362,73 +263,10 @@ pub(crate) fn verify_candidate(
         ))
     })?;
     let cfg = SmallwoodConfig::new(statement)?;
-    if matches!(
-        statement.arithmetization(),
-        SmallwoodArithmetization::DirectPacked64V1
-    ) {
-        if let Some(payload) = proof.direct_packed.as_ref() {
-            let witness = parse_direct_raw_witness(&payload.witness_values)?;
-            let expected_digest = direct_packed_bind_digest(binded_data, &payload.witness_values);
-            if expected_digest != payload.binded_data_digest {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "smallwood direct packed proof binding digest mismatch",
-                ));
-            }
-            let material = build_packed_smallwood_frontend_material_from_witness(&witness)?;
-            match &proof.opened_witness.mode {
-                SmallwoodOpenedWitnessMode::None => {
-                    return Err(TransactionCircuitError::ConstraintViolation(
-                        "smallwood direct packed proof is missing the matrix-opening payload",
-                    ));
-                }
-                SmallwoodOpenedWitnessMode::MatrixRows {
-                    binded_data_digest,
-                    matrix_root,
-                    row_indices,
-                    opened_rows,
-                    auth_paths,
-                } => verify_matrix_opening_bundle(
-                    &expected_digest,
-                    &material.packed_expanded_witness,
-                    statement.row_count(),
-                    statement.packing_factor(),
-                    binded_data_digest,
-                    matrix_root,
-                    row_indices,
-                    opened_rows,
-                    auth_paths,
-                )?,
-                SmallwoodOpenedWitnessMode::RowScalars { .. } => {
-                    return Err(TransactionCircuitError::ConstraintViolation(
-                        "smallwood direct packed proof unexpectedly carries row-scalar PCS opened witness data",
-                    ));
-                }
-            }
-            return test_candidate_witness_rust(
-                SmallwoodArithmetization::DirectPacked64V1,
-                &material.public_statement.public_values,
-                &material.packed_expanded_witness,
-                material.public_statement.lppc_row_count as usize,
-                material.public_statement.lppc_packing_factor as usize,
-                statement.linear_constraint_offsets(),
-                statement.linear_constraint_indices(),
-                statement.linear_constraint_coefficients(),
-                statement.linear_targets(),
-            );
-        }
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood direct packed proof is missing the raw-witness payload",
-        ));
-    }
     ensure_row_polynomial_arithmetization(statement)?;
-    if proof.direct_packed.is_some() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "bridge SmallWood proof unexpectedly carries direct packed payload",
-        ));
-    }
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
         TransactionCircuitError::ConstraintViolation(
-            "smallwood bridge proof missing row-scalar opened witness data",
+            "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
     if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
@@ -551,257 +389,8 @@ pub(crate) fn projected_candidate_proof_bytes(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new(statement)?;
-    if matches!(
-        statement.arithmetization(),
-        SmallwoodArithmetization::DirectPacked64V1
-    ) {
-        let opened_witness = build_matrix_opening_bundle(
-            &[],
-            &vec![0u64; statement.row_count() * statement.packing_factor()],
-            statement.row_count(),
-            statement.packing_factor(),
-        )?;
-        let proof = SmallwoodProof {
-            salt: [0u8; SALT_BYTES],
-            nonce: [0u8; NONCE_BYTES],
-            h_piop: [0u8; DIGEST_BYTES],
-            piop: PiopProof {
-                ppol_highs: Vec::new(),
-                plin_highs: Vec::new(),
-            },
-            pcs: PcsProof {
-                rcombi_tails: Vec::new(),
-                subset_evals: Vec::new(),
-                partial_evals: Vec::new(),
-                decs: DecsProof {
-                    auth_paths: Vec::new(),
-                    masking_evals: Vec::new(),
-                    high_coeffs: Vec::new(),
-                },
-            },
-            opened_witness,
-            direct_packed: Some(DirectPackedProofBundle {
-                binded_data_digest: [0u8; DIGEST_BYTES],
-                witness_values: vec![0u64; DIRECT_RAW_WITNESS_LEN],
-            }),
-        };
-        return bincode::serialize(&proof)
-            .map(|bytes| bytes.len())
-            .map_err(|err| {
-                TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "failed to serialize direct smallwood proof hint: {err}"
-                ))
-            });
-    }
     ensure_row_polynomial_arithmetization(statement)?;
     Ok(serialized_proof_size_hint(&cfg))
-}
-
-fn prove_direct_packed_payload(
-    statement: &(dyn SmallwoodConstraintAdapter + Sync),
-    witness_values: &[u64],
-    binded_data: &[u8],
-) -> Result<DirectPackedProofBundle, TransactionCircuitError> {
-    test_candidate_witness_rust(
-        SmallwoodArithmetization::DirectPacked64V1,
-        statement.public_values(),
-        witness_values,
-        statement.row_count(),
-        statement.packing_factor(),
-        statement.linear_constraint_offsets(),
-        statement.linear_constraint_indices(),
-        statement.linear_constraint_coefficients(),
-        statement.linear_targets(),
-    )?;
-    let raw_witness = direct_packed_program()
-        .raw_witness
-        .slice(witness_values)?
-        .to_vec();
-    let witness = parse_direct_raw_witness(&raw_witness)?;
-    witness.validate()?;
-    Ok(DirectPackedProofBundle {
-        binded_data_digest: direct_packed_bind_digest(binded_data, &raw_witness),
-        witness_values: raw_witness,
-    })
-}
-
-fn direct_packed_bind_digest(binded_data: &[u8], witness_values: &[u64]) -> [u8; DIGEST_BYTES] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.smallwood.direct-packed.v1");
-    hasher.update(&(binded_data.len() as u64).to_le_bytes());
-    hasher.update(binded_data);
-    hasher.update(&(witness_values.len() as u64).to_le_bytes());
-    for word in witness_values {
-        hasher.update(&word.to_le_bytes());
-    }
-    hasher.finalize().as_bytes().to_owned()
-}
-
-fn matrix_opening_bind_digest(
-    payload_digest: &[u8; DIGEST_BYTES],
-    matrix_root: &[u8; DIGEST_BYTES],
-    row_count: usize,
-    packing_factor: usize,
-) -> [u8; DIGEST_BYTES] {
-    let mut hasher = Hasher::new();
-    hasher.update(SMALLWOOD_MATRIX_OPENING_DOMAIN);
-    hasher.update(payload_digest);
-    hasher.update(matrix_root);
-    hasher.update(&(row_count as u64).to_le_bytes());
-    hasher.update(&(packing_factor as u64).to_le_bytes());
-    hasher.finalize().as_bytes().to_owned()
-}
-
-fn hash_matrix_row(row_index: usize, row: &[u64]) -> [u8; DIGEST_BYTES] {
-    let mut input = Vec::with_capacity(2 + row.len());
-    input.push(row_index as u64);
-    input.push(row.len() as u64);
-    input.extend_from_slice(row);
-    words_xof(&input, DIGEST_WORDS)
-}
-
-fn build_matrix_merkle_levels(
-    flat: &[u64],
-    row_count: usize,
-    packing_factor: usize,
-) -> Result<Vec<Vec<[u8; DIGEST_BYTES]>>, TransactionCircuitError> {
-    if flat.len() != row_count * packing_factor {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "smallwood matrix witness length {} does not match rows {} x packing {}",
-            flat.len(),
-            row_count,
-            packing_factor
-        )));
-    }
-    Ok(vec![flat
-        .chunks_exact(packing_factor)
-        .enumerate()
-        .map(|(row_index, row)| hash_matrix_row(row_index, row))
-        .collect()])
-}
-
-fn derive_matrix_opening_row_indices(
-    binded_data_digest: &[u8; DIGEST_BYTES],
-    row_count: usize,
-) -> Result<Vec<usize>, TransactionCircuitError> {
-    if row_count == 0 {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood matrix opening requires non-zero row_count",
-        ));
-    }
-    let target = SMALLWOOD_MATRIX_OPENING_QUERY_COUNT.min(row_count);
-    let mut hasher = Hasher::new();
-    hasher.update(SMALLWOOD_MATRIX_OPENING_DOMAIN);
-    hasher.update(binded_data_digest);
-    hasher.update(&(row_count as u64).to_le_bytes());
-    let mut reader = hasher.finalize_xof();
-    let mut out = Vec::with_capacity(target);
-    while out.len() < target {
-        let mut buf = [0u8; 16];
-        reader.fill(&mut buf);
-        let idx = (u128::from_le_bytes(buf) % row_count as u128) as usize;
-        if !out.contains(&idx) {
-            out.push(idx);
-        }
-    }
-    out.sort_unstable();
-    Ok(out)
-}
-
-fn build_matrix_opening_bundle(
-    binded_data: &[u8],
-    flat: &[u64],
-    row_count: usize,
-    packing_factor: usize,
-) -> Result<SmallwoodOpenedWitnessBundle, TransactionCircuitError> {
-    let raw_witness = direct_packed_program().raw_witness.slice(flat)?;
-    let payload_digest = direct_packed_bind_digest(binded_data, raw_witness);
-    let mut levels = build_matrix_merkle_levels(flat, row_count, packing_factor)?;
-    let matrix_root = merkle_build_levels(&mut levels);
-    let binded_data_digest =
-        matrix_opening_bind_digest(&payload_digest, &matrix_root, row_count, packing_factor);
-    let row_indices = derive_matrix_opening_row_indices(&binded_data_digest, row_count)?;
-    let opened_rows = row_indices
-        .iter()
-        .map(|&row_index| {
-            flat[row_index * packing_factor..(row_index + 1) * packing_factor].to_vec()
-        })
-        .collect::<Vec<_>>();
-    let auth_paths = row_indices
-        .iter()
-        .map(|&row_index| merkle_auth_path(&levels, row_index))
-        .collect::<Vec<_>>();
-    Ok(SmallwoodOpenedWitnessBundle {
-        mode: SmallwoodOpenedWitnessMode::MatrixRows {
-            binded_data_digest,
-            matrix_root,
-            row_indices: row_indices.into_iter().map(|idx| idx as u32).collect(),
-            opened_rows,
-            auth_paths,
-        },
-    })
-}
-
-fn verify_matrix_opening_bundle(
-    payload_digest: &[u8; DIGEST_BYTES],
-    expected_flat: &[u64],
-    row_count: usize,
-    packing_factor: usize,
-    binded_data_digest: &[u8; DIGEST_BYTES],
-    matrix_root: &[u8; DIGEST_BYTES],
-    row_indices: &[u32],
-    opened_rows: &[Vec<u64>],
-    auth_paths: &[Vec<[u8; DIGEST_BYTES]>],
-) -> Result<(), TransactionCircuitError> {
-    let expected_bind_digest =
-        matrix_opening_bind_digest(payload_digest, matrix_root, row_count, packing_factor);
-    if *binded_data_digest != expected_bind_digest {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood direct packed matrix-opening binding digest mismatch",
-        ));
-    }
-    let expected_row_indices = derive_matrix_opening_row_indices(binded_data_digest, row_count)?;
-    let provided_row_indices = row_indices
-        .iter()
-        .map(|&idx| idx as usize)
-        .collect::<Vec<_>>();
-    if provided_row_indices != expected_row_indices {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "smallwood direct packed matrix-opening row schedule mismatch: expected {:?}, got {:?}",
-            expected_row_indices, provided_row_indices
-        )));
-    }
-    if opened_rows.len() != row_indices.len() || auth_paths.len() != row_indices.len() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood direct packed matrix-opening shape mismatch",
-        ));
-    }
-    for ((&row_index_u32, row), path) in row_indices.iter().zip(opened_rows.iter()).zip(auth_paths)
-    {
-        let row_index = row_index_u32 as usize;
-        if row.len() != packing_factor {
-            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood direct packed matrix-opening row {row_index} length {}, expected {}",
-                row.len(),
-                packing_factor
-            )));
-        }
-        let expected_row =
-            &expected_flat[row_index * packing_factor..(row_index + 1) * packing_factor];
-        if row.as_slice() != expected_row {
-            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood direct packed matrix-opening row {row_index} does not match reconstructed matrix",
-            )));
-        }
-        let leaf = hash_matrix_row(row_index, row);
-        let computed_root = merkle_compute_root(row_index, &leaf, path);
-        if computed_root != *matrix_root {
-            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood direct packed matrix-opening auth path mismatch for row {row_index}",
-            )));
-        }
-    }
-    Ok(())
 }
 
 struct PiopRunOutput {
@@ -2037,7 +1626,6 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
             vec![0u64; cfg.nb_polys];
             SMALLWOOD_NB_OPENED_EVALS
         ]),
-        direct_packed: None,
     };
     bincode::serialize(&proof)
         .map(|bytes| bytes.len())
@@ -2392,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_packed_arithmetization_proves_and_verifies_with_payload() {
+    fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
         let witness = sample_witness();
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         let statement = PackedStatement::new(
@@ -2418,17 +2006,11 @@ mod tests {
             proof.len()
         );
         let decoded: SmallwoodProof = bincode::deserialize(&proof).unwrap();
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
         match decoded.opened_witness.mode {
-            SmallwoodOpenedWitnessMode::MatrixRows {
-                binded_data_digest: _,
-                matrix_root: _,
-                row_indices,
-                opened_rows,
-                auth_paths,
-            } => {
-                assert_eq!(row_indices.len(), SMALLWOOD_MATRIX_OPENING_QUERY_COUNT);
-                assert_eq!(opened_rows.len(), row_indices.len());
-                assert_eq!(auth_paths.len(), row_indices.len());
+            SmallwoodOpenedWitnessMode::RowScalars { row_scalars } => {
+                assert_eq!(row_scalars.len(), SMALLWOOD_NB_OPENED_EVALS);
+                assert!(row_scalars.iter().all(|row| row.len() == cfg.nb_polys));
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
@@ -2436,174 +2018,12 @@ mod tests {
     }
 
     #[test]
-    fn direct_packed_arithmetization_verifies_with_matrix_opening_payload() {
-        let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
-        let proof = SmallwoodProof {
-            salt: [0u8; SALT_BYTES],
-            nonce: [0u8; NONCE_BYTES],
-            h_piop: [0u8; DIGEST_BYTES],
-            piop: PiopProof {
-                ppol_highs: Vec::new(),
-                plin_highs: Vec::new(),
-            },
-            pcs: PcsProof {
-                rcombi_tails: Vec::new(),
-                subset_evals: Vec::new(),
-                partial_evals: Vec::new(),
-                decs: DecsProof {
-                    auth_paths: Vec::new(),
-                    masking_evals: Vec::new(),
-                    high_coeffs: Vec::new(),
-                },
-            },
-            opened_witness: build_matrix_opening_bundle(
-                &material.transcript_binding,
-                &material.packed_expanded_witness,
-                statement.row_count(),
-                statement.packing_factor(),
-            )
-            .unwrap(),
-            direct_packed: Some(DirectPackedProofBundle {
-                binded_data_digest: direct_packed_bind_digest(
-                    &material.transcript_binding,
-                    direct_packed_program()
-                        .raw_witness
-                        .slice(&material.packed_expanded_witness)
-                        .unwrap(),
-                ),
-                witness_values: direct_packed_program()
-                    .raw_witness
-                    .slice(&material.packed_expanded_witness)
-                    .unwrap()
-                    .to_vec(),
-            }),
-        };
-        let proof_bytes = bincode::serialize(&proof).unwrap();
-        verify_candidate(&statement, &material.transcript_binding, &proof_bytes).unwrap();
-    }
-
-    #[test]
-    fn direct_packed_arithmetization_rejects_missing_matrix_opening_payload() {
-        let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
-        let proof = SmallwoodProof {
-            salt: [0u8; SALT_BYTES],
-            nonce: [0u8; NONCE_BYTES],
-            h_piop: [0u8; DIGEST_BYTES],
-            piop: PiopProof {
-                ppol_highs: Vec::new(),
-                plin_highs: Vec::new(),
-            },
-            pcs: PcsProof {
-                rcombi_tails: Vec::new(),
-                subset_evals: Vec::new(),
-                partial_evals: Vec::new(),
-                decs: DecsProof {
-                    auth_paths: Vec::new(),
-                    masking_evals: Vec::new(),
-                    high_coeffs: Vec::new(),
-                },
-            },
-            opened_witness: SmallwoodOpenedWitnessBundle {
-                mode: SmallwoodOpenedWitnessMode::None,
-            },
-            direct_packed: Some(DirectPackedProofBundle {
-                binded_data_digest: direct_packed_bind_digest(
-                    &material.transcript_binding,
-                    direct_packed_program()
-                        .raw_witness
-                        .slice(&material.packed_expanded_witness)
-                        .unwrap(),
-                ),
-                witness_values: direct_packed_program()
-                    .raw_witness
-                    .slice(&material.packed_expanded_witness)
-                    .unwrap()
-                    .to_vec(),
-            }),
-        };
-        let proof_bytes = bincode::serialize(&proof).unwrap();
-        let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
-            .expect_err("direct packed proof without matrix opening unexpectedly verified");
-        assert!(
-            err.to_string().contains("matrix-opening payload"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn direct_packed_arithmetization_rejects_tampered_matrix_opening_payload() {
-        let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
-        let mut proof: SmallwoodProof = bincode::deserialize(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        match &mut proof.opened_witness.mode {
-            SmallwoodOpenedWitnessMode::MatrixRows { auth_paths, .. } => {
-                auth_paths[0][0][0] ^= 1;
-            }
-            mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
-        }
-        let proof_bytes = bincode::serialize(&proof).unwrap();
-        let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
-            .expect_err("tampered matrix opening unexpectedly verified");
-        assert!(
-            err.to_string()
-                .contains("matrix-opening auth path mismatch")
-                || err.to_string().contains("binding digest mismatch")
-                || err.to_string().contains("row schedule mismatch"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn direct_packed_payload_is_not_the_live_product_path() {
+    fn direct_packed_projection_matches_bridge_baseline() {
         let witness = sample_witness();
         let direct_material =
             build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         let bridge_material =
             build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-
         let direct_statement = PackedStatement::new(
             SmallwoodArithmetization::DirectPacked64V1,
             &direct_material.public_statement.public_values,
@@ -2626,25 +2046,16 @@ mod tests {
             &bridge_material.linear_constraints.term_coefficients,
             &bridge_material.linear_constraints.targets,
         );
-
-        let direct_bytes =
-            projected_candidate_proof_bytes(&direct_statement).expect("direct size hint");
-        let bridge_bytes =
-            projected_candidate_proof_bytes(&bridge_statement).expect("bridge size hint");
-        eprintln!("direct packed proof bytes: {direct_bytes}");
-        eprintln!("bridge proof bytes: {bridge_bytes}");
+        let direct_bytes = projected_candidate_proof_bytes(&direct_statement).unwrap();
+        let bridge_bytes = projected_candidate_proof_bytes(&bridge_statement).unwrap();
         assert!(
-            direct_bytes < bridge_bytes,
-            "raw-witness direct payload should now be smaller than the bridge proof"
-        );
-        assert!(
-            direct_bytes < 524_288,
-            "direct packed payload should still fit under the native tx-leaf cap"
+            direct_bytes <= bridge_bytes,
+            "row-aligned direct mode must stay at or below the bridge baseline: direct={direct_bytes} bridge={bridge_bytes}",
         );
     }
 
     #[test]
-    fn direct_packed_hidden_witness_is_blocked_by_row_scalar_pcs() {
+    fn direct_packed_arithmetization_rejects_opened_witness_mode_mismatch() {
         let witness = sample_witness();
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         let statement = PackedStatement::new(
@@ -2658,89 +2069,22 @@ mod tests {
             &material.linear_constraints.term_coefficients,
             &material.linear_constraints.targets,
         );
-        let cfg = SmallwoodConfig::new(&statement).unwrap();
-        let blocker = direct_packed_row_scalar_blocker(&cfg);
-        assert_eq!(blocker.raw_witness_words, DIRECT_RAW_WITNESS_LEN);
-        assert_eq!(
-            blocker.poseidon_words,
-            direct_packed_program().poseidon_segment.len()
-        );
-        assert_eq!(
-            blocker.opened_row_scalar_words,
-            SMALLWOOD_NB_OPENED_EVALS * cfg.nb_polys
-        );
-        assert_eq!(
-            blocker.opened_partial_tail_words,
-            SMALLWOOD_NB_OPENED_EVALS * (cfg.nb_unstacked_cols - cfg.nb_polys)
-        );
-        let err = ensure_row_polynomial_arithmetization(&statement)
-            .expect_err("direct packed hidden-witness mode unexpectedly fit the row-scalar PCS");
-        let msg = err.to_string();
+        let mut proof: SmallwoodProof = bincode::deserialize(
+            &prove_candidate(
+                &statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        proof.opened_witness.mode = SmallwoodOpenedWitnessMode::None;
+        let proof_bytes = bincode::serialize(&proof).unwrap();
+        let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
+            .expect_err("mode-mismatched direct proof unexpectedly verified");
         assert!(
-            msg.contains("blocked on the current PCS"),
-            "unexpected blocker message: {msg}"
-        );
-        assert!(
-            msg.contains("3991 raw-witness words"),
-            "unexpected blocker message: {msg}"
-        );
-        assert!(
-            msg.contains("55680 poseidon words"),
-            "unexpected blocker message: {msg}"
-        );
-    }
-
-    #[test]
-    fn direct_packed_row_scalar_eval_path_fails_at_nonlinear_adapter() {
-        let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
-        let cfg = SmallwoodConfig::new(&statement).unwrap();
-        let row_scalars = vec![vec![0u64; cfg.row_count]; SMALLWOOD_NB_OPENED_EVALS];
-        let err = get_constraint_polynomial_evals(&cfg, &statement, &[64, 65, 66], &row_scalars)
-            .expect_err("direct packed row-scalar eval path unexpectedly succeeded");
-        assert!(
-            err.to_string().contains("matrix-aware witness access"),
-            "unexpected direct nonlinear adapter error: {err}"
-        );
-    }
-
-    #[test]
-    fn reparsed_direct_raw_witness_rebuilds_identical_bridge_material() {
-        let witness = sample_witness();
-        let direct_material =
-            build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let original_bridge =
-            build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let raw_witness = direct_packed_program()
-            .raw_witness
-            .slice(&direct_material.packed_expanded_witness)
-            .unwrap()
-            .to_vec();
-        let reparsed = parse_direct_raw_witness(&raw_witness).unwrap();
-        let rebuilt_bridge =
-            build_packed_smallwood_bridge_material_from_witness(&reparsed).unwrap();
-        assert_eq!(
-            rebuilt_bridge.transcript_binding,
-            original_bridge.transcript_binding
-        );
-        assert_eq!(
-            rebuilt_bridge.packed_witness_rows,
-            original_bridge.packed_witness_rows
-        );
-        assert_eq!(
-            rebuilt_bridge.linear_constraints.targets,
-            original_bridge.linear_constraints.targets
+            err.to_string().contains("row-scalar"),
+            "unexpected error: {err}"
         );
     }
 

@@ -4,8 +4,8 @@ use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionB
 use serde::{Deserialize, Serialize};
 use transaction_core::{
     constants::{
-        BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
-        POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH,
+        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE,
+        POSEIDON2_STEPS, POSEIDON2_WIDTH,
     },
     p3_air::TransactionPublicInputsP3,
     poseidon2::poseidon2_step,
@@ -212,13 +212,9 @@ pub struct PackedBridgeSmallwoodFrontendMaterial {
 struct SmallwoodWitnessContext {
     public_inputs: TransactionPublicInputs,
     serialized_public_inputs: SerializedStarkInputs,
-    public_inputs_p3: TransactionPublicInputsP3,
     public_values: Vec<u64>,
     semantic_secret_rows: Vec<u64>,
-    raw_witness_rows: Vec<u64>,
     bridge_poseidon_rows:
-        Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
-    packed_poseidon_rows:
         Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
 }
 
@@ -383,10 +379,7 @@ pub fn verify_smallwood_candidate_proof_bytes(
         }
         SmallwoodArithmetization::DirectPacked64V1 => {
             let statement = build_direct_packed_smallwood_public_statement(pub_inputs, version)?;
-            let constraints = build_coordinate_linear_constraints((
-                build_smallwood_public_selector_indices(statement.public_values.len()),
-                statement.public_values.clone(),
-            ));
+            let constraints = build_packed_bridge_linear_constraints(&statement);
             (statement, constraints)
         }
     };
@@ -572,23 +565,26 @@ fn build_packed_smallwood_frontend_material_from_context(
     context: &SmallwoodWitnessContext,
     witness: &TransactionWitness,
 ) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
-    let public_statement = build_packed_smallwood_public_statement(
-        &context.public_inputs_p3,
-        witness.version,
-        &context.raw_witness_rows,
-        &context.packed_poseidon_rows,
-    )?;
-    let expanded_witness = expanded_witness_words(
-        &public_statement.public_values,
-        &context.raw_witness_rows,
-        &context.packed_poseidon_rows,
+    let packed_expanded_witness = packed_bridge_witness_rows(
+        &context.semantic_secret_rows,
+        &context.bridge_poseidon_rows,
+        SMALLWOOD_BRIDGE_PACKING_FACTOR,
     );
-    let packed_expanded_witness =
-        pad_for_lppc_rows(expanded_witness, SMALLWOOD_PACKED_LPPC_PACKING_FACTOR);
-    let linear_constraints = build_coordinate_linear_constraints((
-        build_smallwood_public_selector_indices(public_statement.public_values.len()),
-        context.public_values.clone(),
-    ));
+    let row_count = packed_expanded_witness.len() / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+    let public_statement = SmallwoodPublicStatement {
+        public_values: context.public_values.clone(),
+        public_value_count: context.public_values.len() as u32,
+        raw_witness_len: context.semantic_secret_rows.len() as u32,
+        lppc_row_count: row_count as u32,
+        poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
+        poseidon_state_row_count: (context.bridge_poseidon_rows.len()
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            as u32,
+        expanded_witness_len: packed_expanded_witness.len() as u32,
+        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
+        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    };
+    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
     let transcript_binding = smallwood_transcript_binding(
         &public_statement,
         witness.version,
@@ -667,18 +663,13 @@ fn build_smallwood_witness_context(
         ])
         .collect();
     let semantic_secret_rows = semantic_secret_witness_rows(witness, &public_inputs_p3)?;
-    let raw_witness_rows = native_relation_raw_witness_rows(witness)?;
     let bridge_poseidon_rows = poseidon_subtrace_rows(witness)?;
-    let packed_poseidon_rows = packed_poseidon_subtrace_rows(witness, &public_inputs)?;
     Ok(SmallwoodWitnessContext {
         public_inputs,
         serialized_public_inputs,
-        public_inputs_p3,
         public_values,
         semantic_secret_rows,
-        raw_witness_rows,
         bridge_poseidon_rows,
-        packed_poseidon_rows,
     })
 }
 
@@ -760,76 +751,11 @@ fn build_smallwood_public_statement(
     })
 }
 
-fn build_packed_smallwood_public_statement(
-    public_inputs: &TransactionPublicInputsP3,
-    version: VersionBinding,
-    raw_witness: &[u64],
-    poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
-) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
-    let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
-    public_values.extend(
-        public_inputs
-            .to_vec()
-            .into_iter()
-            .map(|felt| felt.as_canonical_u64()),
-    );
-    public_values.push(u64::from(version.circuit));
-    public_values.push(u64::from(version.crypto));
-
-    let raw_witness_len = raw_witness.len();
-    let poseidon_permutation_count = poseidon_rows.len();
-    let poseidon_state_row_count =
-        poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
-    let expanded_witness_len =
-        public_values.len() + raw_witness_len + (poseidon_state_row_count * POSEIDON2_WIDTH);
-    let lppc_row_count = expanded_witness_len.div_ceil(SMALLWOOD_PACKED_LPPC_PACKING_FACTOR);
-
-    Ok(SmallwoodPublicStatement {
-        public_value_count: public_values.len() as u32,
-        public_values,
-        raw_witness_len: raw_witness_len as u32,
-        lppc_row_count: lppc_row_count as u32,
-        poseidon_permutation_count: poseidon_permutation_count as u32,
-        poseidon_state_row_count: poseidon_state_row_count as u32,
-        expanded_witness_len: expanded_witness_len as u32,
-        lppc_packing_factor: SMALLWOOD_PACKED_LPPC_PACKING_FACTOR as u16,
-        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-    })
-}
-
 fn build_direct_packed_smallwood_public_statement(
     public_inputs: &TransactionPublicInputsP3,
     version: VersionBinding,
 ) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
-    let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
-    public_values.extend(
-        public_inputs
-            .to_vec()
-            .into_iter()
-            .map(|felt| felt.as_canonical_u64()),
-    );
-    public_values.push(u64::from(version.circuit));
-    public_values.push(u64::from(version.crypto));
-
-    let raw_witness_len = 3_991usize;
-    let poseidon_permutation_count = smallwood_poseidon_permutation_count() + 2;
-    let poseidon_state_row_count =
-        poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
-    let expanded_witness_len =
-        public_values.len() + raw_witness_len + (poseidon_state_row_count * POSEIDON2_WIDTH);
-    let lppc_row_count = expanded_witness_len.div_ceil(SMALLWOOD_PACKED_LPPC_PACKING_FACTOR);
-
-    Ok(SmallwoodPublicStatement {
-        public_value_count: public_values.len() as u32,
-        public_values,
-        raw_witness_len: raw_witness_len as u32,
-        lppc_row_count: lppc_row_count as u32,
-        poseidon_permutation_count: poseidon_permutation_count as u32,
-        poseidon_state_row_count: poseidon_state_row_count as u32,
-        expanded_witness_len: expanded_witness_len as u32,
-        lppc_packing_factor: SMALLWOOD_PACKED_LPPC_PACKING_FACTOR as u16,
-        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-    })
+    build_packed_smallwood_bridge_public_statement(public_inputs, version)
 }
 
 fn build_smallwood_public_selector_indices(public_value_count: usize) -> Vec<u32> {
@@ -1428,42 +1354,6 @@ fn semantic_secret_witness_rows(
     Ok(values)
 }
 
-fn native_relation_raw_witness_rows(
-    witness: &TransactionWitness,
-) -> Result<Vec<u64>, TransactionCircuitError> {
-    witness.validate()?;
-    validate_native_merkle_membership(witness)?;
-    let mut values = Vec::with_capacity(3_991);
-    let (value_balance_sign, value_balance_magnitude) =
-        signed_magnitude_u64(witness.value_balance, "value_balance")?;
-    let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
-        signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
-
-    values.push(witness.inputs.len() as u64);
-    values.push(witness.outputs.len() as u64);
-    values.push(witness.ciphertext_hashes.len() as u64);
-    push_bytes32_values(&mut values, &witness.sk_spend);
-    push_bytes48_values(&mut values, &witness.merkle_root);
-    values.push(witness.fee);
-    values.push(u64::from(value_balance_sign));
-    values.push(value_balance_magnitude);
-    values.push(u64::from(witness.stablecoin.enabled));
-    values.push(witness.stablecoin.asset_id);
-    push_bytes48_values(&mut values, &witness.stablecoin.policy_hash);
-    push_bytes48_values(&mut values, &witness.stablecoin.oracle_commitment);
-    push_bytes48_values(&mut values, &witness.stablecoin.attestation_commitment);
-    values.push(u64::from(stablecoin_issuance_sign));
-    values.push(stablecoin_issuance_magnitude);
-    values.push(u64::from(witness.stablecoin.policy_version));
-    values.push(u64::from(witness.version.circuit));
-    values.push(u64::from(witness.version.crypto));
-    push_native_relation_inputs(&mut values, &witness.inputs)?;
-    push_native_relation_outputs(&mut values, &witness.outputs)?;
-    push_native_relation_ciphertext_hashes(&mut values, &witness.ciphertext_hashes)?;
-    debug_assert_eq!(values.len(), 3_991);
-    Ok(values)
-}
-
 fn smallwood_poseidon_permutation_count() -> usize {
     1 + (MAX_INPUTS * 3) + (MAX_INPUTS * MERKLE_TREE_DEPTH * 2) + MAX_INPUTS + (MAX_OUTPUTS * 3)
 }
@@ -1547,28 +1437,6 @@ fn poseidon_subtrace_rows(
     Ok(traces)
 }
 
-fn packed_poseidon_subtrace_rows(
-    witness: &TransactionWitness,
-    public_inputs: &TransactionPublicInputs,
-) -> Result<
-    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
-    TransactionCircuitError,
-> {
-    let mut traces = poseidon_subtrace_rows(witness)?;
-    let native_delta = public_inputs
-        .balance_slots
-        .iter()
-        .find(|slot| slot.asset_id == crate::constants::NATIVE_ASSET_ID)
-        .map(|slot| slot.delta)
-        .unwrap_or(0);
-    let (_, balance_tag_traces) = trace_sponge_hash(
-        BALANCE_DOMAIN_TAG,
-        &balance_commitment_inputs(native_delta, &public_inputs.balance_slots)?,
-    );
-    traces.extend(balance_tag_traces);
-    Ok(traces)
-}
-
 fn expanded_witness_words(
     public_values: &[u64],
     raw_witness: &[u64],
@@ -1587,12 +1455,6 @@ fn expanded_witness_words(
         }
     }
     expanded
-}
-
-fn pad_for_lppc_rows(mut flat: Vec<u64>, packing_factor: usize) -> Vec<u64> {
-    let padded_len = flat.len().div_ceil(packing_factor) * packing_factor;
-    flat.resize(padded_len, 0);
-    flat
 }
 
 fn packed_bridge_witness_rows(
@@ -1693,172 +1555,6 @@ fn projected_wrapped_smallwood_candidate_proof_bytes(
     Ok(encode_smallwood_candidate_proof(arithmetization, vec![0u8; ark_proof_bytes])?.len())
 }
 
-fn push_bytes32_values(out: &mut Vec<u64>, bytes: &[u8; 32]) {
-    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
-}
-
-fn push_bytes48_values(out: &mut Vec<u64>, bytes: &[u8; 48]) {
-    out.extend(bytes.iter().map(|byte| u64::from(*byte)));
-}
-
-fn push_native_relation_inputs(
-    out: &mut Vec<u64>,
-    inputs: &[InputNoteWitness],
-) -> Result<(), TransactionCircuitError> {
-    if inputs.len() > MAX_INPUTS {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "native tx input count {} exceeds {}",
-            inputs.len(),
-            MAX_INPUTS
-        )));
-    }
-    for idx in 0..MAX_INPUTS {
-        out.push(inputs.get(idx).map(|input| input.note.value).unwrap_or(0));
-    }
-    for idx in 0..MAX_INPUTS {
-        out.push(
-            inputs
-                .get(idx)
-                .map(|input| input.note.asset_id)
-                .unwrap_or(0),
-        );
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            push_bytes32_values(out, &input.note.pk_recipient);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            push_bytes32_values(out, &input.note.pk_auth);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            push_bytes32_values(out, &input.note.rho);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            push_bytes32_values(out, &input.note.r);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_INPUTS {
-        out.push(inputs.get(idx).map(|input| input.position).unwrap_or(0));
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            push_bytes32_values(out, &input.rho_seed);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_INPUTS {
-        if let Some(input) = inputs.get(idx) {
-            if input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
-                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "native tx input {} merkle path has length {}, expected {}",
-                    idx,
-                    input.merkle_path.siblings.len(),
-                    MERKLE_TREE_DEPTH
-                )));
-            }
-            for sibling in &input.merkle_path.siblings {
-                push_bytes48_values(out, &crate::hashing_pq::felts_to_bytes48(sibling));
-            }
-        } else {
-            out.extend(std::iter::repeat_n(0u64, MERKLE_TREE_DEPTH * 48));
-        }
-    }
-    Ok(())
-}
-
-fn push_native_relation_outputs(
-    out: &mut Vec<u64>,
-    outputs: &[OutputNoteWitness],
-) -> Result<(), TransactionCircuitError> {
-    if outputs.len() > MAX_OUTPUTS {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "native tx output count {} exceeds {}",
-            outputs.len(),
-            MAX_OUTPUTS
-        )));
-    }
-    for idx in 0..MAX_OUTPUTS {
-        out.push(
-            outputs
-                .get(idx)
-                .map(|output| output.note.value)
-                .unwrap_or(0),
-        );
-    }
-    for idx in 0..MAX_OUTPUTS {
-        out.push(
-            outputs
-                .get(idx)
-                .map(|output| output.note.asset_id)
-                .unwrap_or(0),
-        );
-    }
-    for idx in 0..MAX_OUTPUTS {
-        if let Some(output) = outputs.get(idx) {
-            push_bytes32_values(out, &output.note.pk_recipient);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_OUTPUTS {
-        if let Some(output) = outputs.get(idx) {
-            push_bytes32_values(out, &output.note.pk_auth);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_OUTPUTS {
-        if let Some(output) = outputs.get(idx) {
-            push_bytes32_values(out, &output.note.rho);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    for idx in 0..MAX_OUTPUTS {
-        if let Some(output) = outputs.get(idx) {
-            push_bytes32_values(out, &output.note.r);
-        } else {
-            out.extend(std::iter::repeat_n(0u64, 32));
-        }
-    }
-    Ok(())
-}
-
-fn push_native_relation_ciphertext_hashes(
-    out: &mut Vec<u64>,
-    ciphertext_hashes: &[[u8; 48]],
-) -> Result<(), TransactionCircuitError> {
-    if ciphertext_hashes.len() > MAX_OUTPUTS {
-        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "native tx ciphertext hash count {} exceeds {}",
-            ciphertext_hashes.len(),
-            MAX_OUTPUTS
-        )));
-    }
-    for idx in 0..MAX_OUTPUTS {
-        push_bytes48_values(
-            out,
-            &ciphertext_hashes.get(idx).copied().unwrap_or([0u8; 48]),
-        );
-    }
-    Ok(())
-}
-
 fn bytes_to_felts(bytes: &[u8]) -> Vec<Felt> {
     bytes
         .chunks(8)
@@ -1868,32 +1564,6 @@ fn bytes_to_felts(bytes: &[u8]) -> Vec<Felt> {
             Felt::from_u64(u64::from_be_bytes(buf))
         })
         .collect()
-}
-
-fn balance_commitment_inputs(
-    native_delta: i128,
-    slots: &[crate::public_inputs::BalanceSlot],
-) -> Result<Vec<Felt>, TransactionCircuitError> {
-    let native_magnitude = native_delta.unsigned_abs();
-    let native_magnitude = u64::try_from(native_magnitude).map_err(|_| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "native balance magnitude {native_magnitude} exceeds u64::MAX"
-        ))
-    })?;
-    let mut inputs = Vec::with_capacity(1 + slots.len() * 2);
-    inputs.push(Felt::from_u64(native_magnitude));
-    for slot in slots {
-        let magnitude = slot.delta.unsigned_abs();
-        let magnitude = u64::try_from(magnitude).map_err(|_| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "balance slot {} magnitude {} exceeds u64::MAX",
-                slot.asset_id, magnitude
-            ))
-        })?;
-        inputs.push(Felt::from_u64(slot.asset_id));
-        inputs.push(Felt::from_u64(magnitude));
-    }
-    Ok(inputs)
 }
 
 fn commitment_inputs(note: &crate::note::NoteData) -> Vec<Felt> {
@@ -2135,71 +1805,32 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let bridge = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 3_991);
-        assert_eq!(statement.poseidon_permutation_count, 145);
-        assert_eq!(statement.poseidon_state_row_count, 4_640);
-        assert_eq!(statement.expanded_witness_len, 59_749);
-        assert_eq!(statement.lppc_row_count, 934);
+        assert_eq!(statement.raw_witness_len, 264);
+        assert_eq!(statement.poseidon_permutation_count, 143);
+        assert_eq!(statement.poseidon_state_row_count, 4_576);
+        assert_eq!(statement.expanded_witness_len, 90_624);
+        assert_eq!(statement.lppc_row_count, 1_416);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
-        assert_eq!(material.linear_constraints.targets.len(), 78);
-        assert_eq!(material.linear_constraints.term_offsets.len(), 79);
         assert_eq!(
             material.packed_expanded_witness.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
         );
         assert_eq!(
-            &material.packed_expanded_witness[..statement.public_value_count as usize],
-            statement.public_values.as_slice()
+            material.public_statement,
+            bridge.public_statement
         );
-        assert!(
-            material.packed_expanded_witness[statement.expanded_witness_len as usize..]
-                .iter()
-                .all(|value| *value == 0)
+        assert_eq!(
+            material.packed_expanded_witness,
+            bridge.packed_witness_rows
         );
-    }
-
-    #[test]
-    fn direct_packed_program_matches_expected_segments() {
-        let program = crate::smallwood_semantics::direct_packed_program();
-        assert_eq!(program.public_values.start(), 0);
-        assert_eq!(program.public_values.len(), 78);
-        assert_eq!(program.raw_witness.start(), 78);
-        assert_eq!(program.raw_witness.len(), 3_991);
-        assert_eq!(program.poseidon_segment.start(), 4_069);
-        assert_eq!(program.poseidon_segment.len(), 55_680);
-        assert_eq!(program.padding.start(), 59_749);
-        assert_eq!(program.padding.len(), 27);
-        assert_eq!(program.inputs[0].position.index(64), 575);
-        assert_eq!(program.inputs[0].merkle_siblings.start(), 641);
-        assert_eq!(program.inputs[0].merkle_siblings.len(), 1_536);
-        assert_eq!(program.inputs[1].merkle_siblings.start(), 2_177);
-        assert_eq!(program.outputs[0].pk_recipient.start(), 3_717);
-        assert_eq!(program.outputs[1].r.end(), 3_973);
-        assert_eq!(program.ciphertext_hashes.start(), 3_973);
-        assert_eq!(program.ciphertext_hashes.end(), 4_069);
-    }
-
-    #[test]
-    fn direct_packed_poseidon_program_matches_expected_spans() {
-        let program = crate::smallwood_semantics::direct_packed_poseidon_program();
-        assert_eq!(program.prf.start(), 0);
-        assert_eq!(program.prf.len(), 1);
-        assert_eq!(program.inputs[0].commitment.start(), 1);
-        assert_eq!(program.inputs[0].commitment.len(), 3);
-        assert_eq!(program.inputs[0].merkle_nodes[0].start(), 4);
-        assert_eq!(program.inputs[0].merkle_nodes[0].len(), 2);
-        assert_eq!(program.inputs[0].merkle_nodes[31].start(), 66);
-        assert_eq!(program.inputs[0].nullifier.start(), 68);
-        assert_eq!(program.inputs[1].commitment.start(), 69);
-        assert_eq!(program.inputs[1].nullifier.start(), 136);
-        assert_eq!(program.outputs[0].commitment.start(), 137);
-        assert_eq!(program.outputs[1].commitment.start(), 140);
-        assert_eq!(program.balance_tag.start(), 143);
-        assert_eq!(program.balance_tag.len(), 2);
-        assert_eq!(program.balance_tag.end(), 145);
+        assert_eq!(
+            material.linear_constraints.targets,
+            bridge.linear_constraints.targets
+        );
     }
 
     #[test]
@@ -2249,20 +1880,26 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        for public_index in [PUB_NULLIFIERS, PUB_COMMITMENTS, PUB_MERKLE_ROOT] {
-            let mut public_values = material.public_statement.public_values.clone();
-            public_values[public_index] ^= 1;
+        for public_index in [
+            PUB_NULLIFIERS,
+            PUB_COMMITMENTS,
+            PUB_MERKLE_ROOT,
+            58,
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let linear_constraints = build_packed_bridge_linear_constraints(&statement);
             let err = test_candidate_witness(
                 SmallwoodArithmetization::DirectPacked64V1,
-                &public_values,
+                &statement.public_values,
                 &material.packed_expanded_witness,
-                material.public_statement.lppc_row_count as usize,
-                material.public_statement.lppc_packing_factor as usize,
+                statement.lppc_row_count as usize,
+                statement.lppc_packing_factor as usize,
                 SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-                &material.linear_constraints.term_offsets,
-                &material.linear_constraints.term_indices,
-                &material.linear_constraints.term_coefficients,
-                &material.linear_constraints.targets,
+                &linear_constraints.term_offsets,
+                &linear_constraints.term_indices,
+                &linear_constraints.term_coefficients,
+                &linear_constraints.targets,
             )
             .expect_err("mutated public binding must fail");
             assert!(err.to_string().contains("smallwood"));
@@ -2283,10 +1920,16 @@ mod tests {
             direct.public_statement.public_values,
             bridge.public_statement.public_values
         );
+        assert_eq!(direct.public_statement, bridge.public_statement);
         assert_eq!(bridge.public_inputs, context.public_inputs);
         assert_eq!(
             bridge.serialized_public_inputs,
             context.serialized_public_inputs
+        );
+        assert_eq!(direct.packed_expanded_witness, bridge.packed_witness_rows);
+        assert_eq!(
+            direct.linear_constraints.targets,
+            bridge.linear_constraints.targets
         );
 
         test_candidate_witness(

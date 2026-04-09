@@ -36,7 +36,6 @@ struct MirrorSmallwoodProof {
     piop: MirrorPiopProof,
     pcs: MirrorPcsProof,
     opened_witness: MirrorSmallwoodOpenedWitnessBundle,
-    direct_packed: Option<MirrorDirectPackedProofBundle>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,19 +49,6 @@ enum MirrorSmallwoodOpenedWitnessMode {
     RowScalars {
         row_scalars: Vec<Vec<u64>>,
     },
-    MatrixRows {
-        binded_data_digest: [u8; 32],
-        matrix_root: [u8; 32],
-        row_indices: Vec<u32>,
-        opened_rows: Vec<Vec<u64>>,
-        auth_paths: Vec<Vec<[u8; 32]>>,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorDirectPackedProofBundle {
-    binded_data_digest: [u8; 32],
-    witness_values: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -405,6 +391,47 @@ fn smallwood_candidate_explicit_direct_proof_wrapper_tracks_direct_arithmetizati
         SmallwoodArithmetization::DirectPacked64V1,
         "explicit direct SmallWood proof should carry the direct arithmetization tag"
     );
+}
+
+#[test]
+fn smallwood_candidate_direct_projection_stays_at_or_below_bridge_baseline() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let direct_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+    .expect("projected direct smallwood candidate proof bytes");
+    let bridge_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::Bridge64V1,
+    )
+    .expect("projected bridge smallwood candidate proof bytes");
+    assert!(
+        direct_bytes <= bridge_bytes,
+        "direct SmallWood candidate projection should stay at or below the bridge baseline: direct={direct_bytes} bridge={bridge_bytes}"
+    );
+}
+
+#[test]
+fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+    .expect("smallwood candidate direct proof");
+    let outer: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let inner: MirrorSmallwoodProof =
+        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
+    match inner.opened_witness.mode {
+        MirrorSmallwoodOpenedWitnessMode::RowScalars { row_scalars } => {
+            assert!(!row_scalars.is_empty(), "row-scalar openings must be present");
+        }
+        mode => panic!("unexpected direct opened witness mode: {mode:?}"),
+    }
 }
 
 #[test]
