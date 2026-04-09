@@ -52,7 +52,10 @@ enum MirrorSmallwoodOpenedWitnessMode {
     },
     MatrixRows {
         binded_data_digest: [u8; 32],
+        matrix_root: [u8; 32],
+        row_indices: Vec<u32>,
         opened_rows: Vec<Vec<u64>>,
+        auth_paths: Vec<Vec<[u8; 32]>>,
     },
 }
 

@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `106881` bytes, the passing release roundtrip emits `106881` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `106885` bytes, the passing release roundtrip emits `106885` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - and the focused local release roundtrip is now down to about `1.89s` directly and about `1.98s` through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor, removing the remaining DECS hot-loop allocation churn with preallocated row buffers plus thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, and then deleting the duplicated public witness rows too,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
@@ -29,13 +29,15 @@ The current `SmallwoodCandidate` proof bytes are now just a Rust-native SmallWoo
 - Rust prover/verifier engine: [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs)
 - Rust semantic constraint kernel: [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs)
 
-The proof no longer serializes any witness envelope. Instead, the public statement is derived directly from:
+The compact bridge proof no longer serializes any witness envelope. Instead, the public statement is derived directly from:
 
 - `TransactionPublicInputsP3::to_vec()`
 - `version.circuit`
 - `version.crypto`
 
 and from fixed shape metadata for the packed expanded native witness.
+
+The alternate `DirectPacked64V1` engine path is now different: it carries the canonical raw witness plus a transcript-bound sampled matrix-opening payload over the frozen `934 x 64` matrix. That alternate envelope is witness-carrying and is not the subject of this no-grinding note.
 
 The exact active public statement fields are:
 
@@ -187,7 +189,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge now emits an actual `106881`-byte release proof, about `3.31x` smaller than the shipped Plonky3 proof. The remaining gap is the distance between the current `1416`-row bridge and the smaller `934`-row structural target, not the old `2982`-row live bridge. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane bridge geometry, and that active bridge now emits an actual `106885`-byte release proof, about `3.31x` smaller than the shipped Plonky3 proof. The remaining gap is the distance between the current `1416`-row bridge and the smaller `934`-row structural target, not the old `2982`-row live bridge. So this note is exact, but still narrow.
 
 ## Product conclusion
 
