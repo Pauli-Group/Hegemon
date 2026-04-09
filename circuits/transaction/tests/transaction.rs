@@ -41,7 +41,14 @@ struct MirrorSmallwoodProof {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MirrorSmallwoodOpenedWitnessBundle {
-    row_scalars: Vec<Vec<u64>>,
+    mode: MirrorSmallwoodOpenedWitnessMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum MirrorSmallwoodOpenedWitnessMode {
+    None,
+    RowScalars { row_scalars: Vec<Vec<u64>> },
+    MatrixRows { opened_rows: Vec<Vec<u64>> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -484,7 +491,10 @@ fn smallwood_candidate_malformed_all_evals_do_not_panic() {
         bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
     let mut inner: MirrorSmallwoodProof =
         bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    inner.opened_witness.row_scalars[0].clear();
+    match &mut inner.opened_witness.mode {
+        MirrorSmallwoodOpenedWitnessMode::RowScalars { row_scalars } => row_scalars[0].clear(),
+        mode => panic!("unexpected opened witness mode in bridge proof: {mode:?}"),
+    }
     outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
     proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
 
@@ -494,6 +504,31 @@ fn smallwood_candidate_malformed_all_evals_do_not_panic() {
         Ok(Ok(_)) => panic!("malformed proof unexpectedly verified"),
         Err(_) => panic!("malformed all_evals triggered a verifier panic"),
     }
+}
+
+#[test]
+fn smallwood_candidate_rejects_opened_witness_mode_mismatch() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let (_proving_key, verifying_key) = generate_keys();
+    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+
+    let mut outer: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let mut inner: MirrorSmallwoodProof =
+        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.opened_witness.mode = MirrorSmallwoodOpenedWitnessMode::None;
+    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+
+    let err =
+        verify(&proof, &verifying_key).expect_err("mode-mismatched proof unexpectedly verified");
+    assert!(
+        err.to_string().contains("opened witness mode")
+            || err.to_string().contains("row-scalar")
+            || err.to_string().contains("smallwood"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

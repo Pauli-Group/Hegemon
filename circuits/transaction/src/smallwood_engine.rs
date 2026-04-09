@@ -76,13 +76,41 @@ struct DecsProof {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SmallwoodOpenedWitnessBundle {
-    row_scalars: Vec<Vec<u64>>,
+    mode: SmallwoodOpenedWitnessMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum SmallwoodOpenedWitnessMode {
+    None,
+    RowScalars { row_scalars: Vec<Vec<u64>> },
+    MatrixRows { opened_rows: Vec<Vec<u64>> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct DirectPackedProofBundle {
     binded_data_digest: [u8; DIGEST_BYTES],
     witness_values: Vec<u64>,
+}
+
+impl SmallwoodOpenedWitnessBundle {
+    fn none() -> Self {
+        Self {
+            mode: SmallwoodOpenedWitnessMode::None,
+        }
+    }
+
+    fn row_scalars(row_scalars: Vec<Vec<u64>>) -> Self {
+        Self {
+            mode: SmallwoodOpenedWitnessMode::RowScalars { row_scalars },
+        }
+    }
+
+    fn row_scalars_ref(&self) -> Option<&[Vec<u64>]> {
+        match &self.mode {
+            SmallwoodOpenedWitnessMode::RowScalars { row_scalars } => Some(row_scalars),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -202,9 +230,7 @@ pub(crate) fn prove_candidate(
                     high_coeffs: Vec::new(),
                 },
             },
-            opened_witness: SmallwoodOpenedWitnessBundle {
-                row_scalars: Vec::new(),
-            },
+            opened_witness: SmallwoodOpenedWitnessBundle::none(),
             direct_packed: Some(direct_payload),
         })
         .map_err(|err| {
@@ -344,6 +370,11 @@ pub(crate) fn verify_candidate(
                 "smallwood direct packed proof binding digest mismatch",
             ));
         }
+        if !matches!(proof.opened_witness.mode, SmallwoodOpenedWitnessMode::None) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood direct packed proof unexpectedly carries PCS opened witness data",
+            ));
+        }
         let material = build_packed_smallwood_frontend_material_from_witness(&witness)?;
         return test_candidate_witness_rust(
             SmallwoodArithmetization::DirectPacked64V1,
@@ -358,7 +389,17 @@ pub(crate) fn verify_candidate(
         );
     }
     ensure_row_polynomial_arithmetization(statement)?;
-    if proof.opened_witness.row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
+    if proof.direct_packed.is_some() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "bridge SmallWood proof unexpectedly carries direct packed payload",
+        ));
+    }
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood bridge proof missing row-scalar opened witness data",
+        ),
+    )?;
+    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
         ));
@@ -371,7 +412,7 @@ pub(crate) fn verify_candidate(
         &cfg,
         &proof.salt,
         &eval_points,
-        &proof.opened_witness.row_scalars,
+        row_scalars,
         &proof.pcs,
         &proof.h_piop,
     )?;
@@ -382,7 +423,7 @@ pub(crate) fn verify_candidate(
         statement,
         &piop_input,
         &eval_points,
-        &proof.opened_witness.row_scalars,
+        row_scalars,
         &proof.piop,
     )?;
     let recomputed = hash_piop_transcript(&piop_transcript);
@@ -398,12 +439,13 @@ fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof: &SmallwoodProof,
 ) -> Result<(), TransactionCircuitError> {
-    if proof.opened_witness.row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS
-        || proof
-            .opened_witness
-            .row_scalars
-            .iter()
-            .any(|row| row.len() != cfg.nb_polys)
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood bridge proof opened witness mode mismatch",
+        ),
+    )?;
+    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS
+        || row_scalars.iter().any(|row| row.len() != cfg.nb_polys)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation shape mismatch",
@@ -499,9 +541,7 @@ pub(crate) fn projected_candidate_proof_bytes(
                     high_coeffs: Vec::new(),
                 },
             },
-            opened_witness: SmallwoodOpenedWitnessBundle {
-                row_scalars: Vec::new(),
-            },
+            opened_witness: SmallwoodOpenedWitnessBundle::none(),
             direct_packed: Some(DirectPackedProofBundle {
                 binded_data_digest: [0u8; DIGEST_BYTES],
                 witness_values: vec![0u64; DIRECT_RAW_WITNESS_LEN],
@@ -1037,7 +1077,10 @@ fn pcs_build_opened_evaluations(
             row_scalars[j][k] = acc;
         }
     }
-    Ok((SmallwoodOpenedWitnessBundle { row_scalars }, partial_evals))
+    Ok((
+        SmallwoodOpenedWitnessBundle::row_scalars(row_scalars),
+        partial_evals,
+    ))
 }
 
 fn pcs_reconstruct_combi_heads(
@@ -1785,9 +1828,10 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
                 high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
             },
         },
-        opened_witness: SmallwoodOpenedWitnessBundle {
-            row_scalars: vec![vec![0u64; cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS],
-        },
+        opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(vec![
+            vec![0u64; cfg.nb_polys];
+            SMALLWOOD_NB_OPENED_EVALS
+        ]),
         direct_packed: None,
     };
     bincode::serialize(&proof)
@@ -2168,6 +2212,11 @@ mod tests {
             "direct packed proof bytes {} exceed native tx-leaf cap",
             proof.len()
         );
+        let decoded: SmallwoodProof = bincode::deserialize(&proof).unwrap();
+        assert!(matches!(
+            decoded.opened_witness.mode,
+            SmallwoodOpenedWitnessMode::None
+        ));
         verify_candidate(&statement, &material.transcript_binding, &proof).unwrap();
     }
 
@@ -2466,7 +2515,7 @@ mod tests {
         let combi_heads = pcs_reconstruct_combi_heads(
             &cfg,
             &eval_points,
-            &opened_witness.row_scalars,
+            opened_witness.row_scalars_ref().unwrap(),
             &pcs_proof.partial_evals,
         )
         .unwrap();
