@@ -8,6 +8,19 @@ Repository fingerprint: `6a9b335dc1d4070f2fb507ad607bcac1678cef96`
 
 Reviewed package hash: `a7e884631cd77552ab4f960e5ec0b6d0ae4ddacc39fec2d0a441a3b45abb4f22`
 
+## Status Note (2026-04-10)
+
+This memo is a dated review snapshot of the repository and review package as they existed on `2026-04-03`. It is not the current live-status summary.
+
+Several implementation-consistency findings recorded below were valid for that snapshot but have since been addressed in the main repo and regenerated package artifacts. In particular:
+
+- the top-level deployment narrative no longer claims the product path starts from live `InlineTx`,
+- the native tx-leaf review vectors have been regenerated to match the current artifact format,
+- the independent reference verifier now parses and checks the live tx-leaf `proof_backend` byte and receipt digest semantics,
+- the current exact spec/claim surface should be read from [docs/crypto/native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md), [docs/crypto/native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md), and [audits/native-backend-128b/CLAIMS.md](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/CLAIMS.md).
+
+What has not changed is the review-level conclusion that this backend remains `candidate_under_review`, not a settled externally supported `128`-bit result.
+
 ## Summary
 
 - Shipping recommendation: acceptable only as `candidate_under_review`
