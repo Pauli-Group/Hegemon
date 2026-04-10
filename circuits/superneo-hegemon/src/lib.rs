@@ -5062,7 +5062,6 @@ mod tests {
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-    use transaction_circuit::proof::prove;
     use transaction_circuit::{
         prove_smallwood_candidate, StablecoinPolicyBinding, TransactionWitness,
     };
@@ -5675,7 +5674,12 @@ mod tests {
     fn sample_transaction_proof(seed: u64) -> TransactionProof {
         let witness = sample_witness(seed);
         let (proving_key, _) = generate_keys();
-        prove(&witness, &proving_key).expect("sample tx proof")
+        prove_transaction_with_params(
+            &witness,
+            &proving_key,
+            TransactionProofParams::release_for_version(witness.version),
+        )
+        .expect("sample tx proof")
     }
 
     fn alternate_native_backend_params() -> NativeBackendParams {

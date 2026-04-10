@@ -3,7 +3,9 @@ use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use p3_uni_stark::verify as verify_uni_stark;
-use protocol_versioning::VersionBinding;
+use protocol_versioning::{
+    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fs, path::Path};
 use superneo_ccs::{
@@ -1081,6 +1083,7 @@ struct RefNativeTxLeafArtifact {
     receipt: CanonicalTxValidityReceipt,
     stark_public_inputs: SerializedStarkInputs,
     tx: RefTxLeafPublicTx,
+    proof_backend: TxProofBackend,
     stark_proof: Vec<u8>,
     commitment: LatticeCommitment,
     leaf: LeafArtifact<LeafDigestProof>,
@@ -1463,6 +1466,12 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "statement digest mismatch"
     );
     ensure!(artifact.tx == tx, "public tx mismatch");
+    let expected_backend =
+        tx_proof_backend_for_version(artifact.tx.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND);
+    ensure!(
+        artifact.proof_backend == expected_backend,
+        "native tx-leaf proof backend mismatch"
+    );
     ensure!(
         artifact.stark_public_inputs == stark_public_inputs,
         "serialized STARK inputs mismatch"
@@ -1485,6 +1494,7 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         &artifact.tx,
         &artifact.stark_public_inputs,
         &artifact.stark_proof,
+        artifact.proof_backend,
         &params,
         pk.shape_digest,
     )?;
@@ -1823,6 +1833,7 @@ fn native_tx_leaf_receipt_from_parts(
     tx: &RefTxLeafPublicTx,
     stark_public_inputs: &SerializedStarkInputs,
     stark_proof: &[u8],
+    proof_backend: TxProofBackend,
     params: &NativeBackendParams,
     shape_digest: ShapeDigest,
 ) -> Result<CanonicalTxValidityReceipt> {
@@ -1833,7 +1844,10 @@ fn native_tx_leaf_receipt_from_parts(
     let relation = TxLeafPublicRelation::default();
     Ok(CanonicalTxValidityReceipt {
         statement_hash: tx_statement_hash_from_tx_leaf_public(tx, stark_public_inputs)?,
-        proof_digest: digest48(TX_PROOF_DIGEST_DOMAIN, stark_proof),
+        proof_digest: digest48_with_parts(
+            TX_PROOF_DIGEST_DOMAIN,
+            &[&[proof_backend.wire_id()], stark_proof],
+        ),
         public_inputs_digest: transaction_public_inputs_digest_from_serialized(stark_public_inputs)
             .map_err(|err| anyhow!("failed to hash transaction public inputs: {err}"))?,
         verifier_profile: review_verifier_profile(
@@ -2274,6 +2288,13 @@ fn parse_native_tx_leaf_artifact(
     let stark_proof = read_bytes(bytes, &mut cursor, proof_len)?;
     let commitment = parse_lattice_commitment(params, bytes, &mut cursor, "native tx-leaf")?;
     let leaf = parse_leaf_artifact(bytes, &mut cursor)?;
+    let proof_backend = if cursor < bytes.len() {
+        let wire = read_u8(bytes, &mut cursor)?;
+        TxProofBackend::try_from(wire)
+            .map_err(|_| anyhow!("unsupported native tx-leaf proof backend {wire}"))?
+    } else {
+        DEFAULT_TX_PROOF_BACKEND
+    };
     ensure!(
         cursor == bytes.len(),
         "native tx-leaf artifact has {} trailing bytes",
@@ -2289,6 +2310,7 @@ fn parse_native_tx_leaf_artifact(
         receipt,
         stark_public_inputs,
         tx,
+        proof_backend,
         stark_proof,
         commitment,
         leaf,
@@ -4024,13 +4046,6 @@ fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N]> {
     bytes
         .try_into()
         .map_err(|_| anyhow!("hex string has {} bytes, expected {}", len, N))
-}
-
-fn digest48(label: &[u8], payload: &[u8]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
-    hasher.update(payload);
-    hash48(hasher)
 }
 
 fn digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {

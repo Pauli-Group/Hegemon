@@ -838,7 +838,7 @@ fn pcs_build_opened_evaluations(
         let mut num_col = 0usize;
         let mut num_combi = SMALLWOOD_BETA * j;
         let mut ind = 0usize;
-        for k in 0..cfg.nb_polys {
+        for (k, row_scalar) in row_scalars[j].iter_mut().enumerate().take(cfg.nb_polys) {
             let mut acc = 0u64;
             let mut pow = 1u64;
             for i in 0..cfg.width[k] {
@@ -863,7 +863,7 @@ fn pcs_build_opened_evaluations(
                     num_combi += 1;
                 }
             }
-            row_scalars[j][k] = acc;
+            *row_scalar = acc;
         }
     }
     Ok((
@@ -887,7 +887,7 @@ fn pcs_reconstruct_combi_heads(
         let mut unstacked_vec = vec![0u64; cfg.nb_unstacked_cols];
         let mut poly_ind = 0usize;
         let mut partial_ind = 0usize;
-        for k in 0..cfg.nb_polys {
+        for (k, row_scalar) in row_scalars[j].iter().enumerate().take(cfg.nb_polys) {
             let mut sum = 0u64;
             let mut pow = 1u64;
             for i in 1..cfg.width[k] {
@@ -903,7 +903,7 @@ fn pcs_reconstruct_combi_heads(
                 }
                 sum = add_mod(sum, mul_mod(value, pow));
             }
-            unstacked_vec[poly_ind] = sub_mod(row_scalars[j][k], sum);
+            unstacked_vec[poly_ind] = sub_mod(*row_scalar, sum);
             poly_ind += cfg.width[k];
         }
         debug_assert_eq!(partial_ind, cfg.nb_unstacked_cols - cfg.nb_polys);
@@ -987,8 +987,11 @@ fn get_constraint_linear_polynomials_batched(
         .into_par_iter()
         .map(|rep| {
             let mut aggregated = vec![0u64; cfg.witness_size];
-            for check in 0..cfg.linear_constraint_count {
-                let gamma = gammas[rep][check];
+            for (check, &gamma) in gammas[rep]
+                .iter()
+                .enumerate()
+                .take(cfg.linear_constraint_count)
+            {
                 if gamma == 0 {
                     continue;
                 }
@@ -1048,7 +1051,11 @@ fn get_constraint_linear_evals(
     }
     let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
     for num in 0..eval_points.len() {
-        for check in 0..cfg.linear_constraint_count {
+        for (check, out_eval) in out[num]
+            .iter_mut()
+            .enumerate()
+            .take(cfg.linear_constraint_count)
+        {
             let start = statement.linear_constraint_offsets()[check] as usize;
             let end = statement.linear_constraint_offsets()[check + 1] as usize;
             let mut acc = 0u64;
@@ -1063,7 +1070,7 @@ fn get_constraint_linear_evals(
                 let term = mul_mod(witness_evals[num][row], mul_mod(lag_evals[num][col], coeff));
                 acc = add_mod(acc, term);
             }
-            out[num][check] = acc;
+            *out_eval = acc;
         }
     }
     Ok(out)
@@ -1190,11 +1197,11 @@ fn lvcs_open(
     for j in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
         let mut ind = 0usize;
         let mut pos = 0usize;
-        for k in 0..cfg.nb_lvcs_rows {
+        for (k, eval) in evals[j].iter().enumerate().take(cfg.nb_lvcs_rows) {
             if ind < cfg.nb_lvcs_opened_combi && cfg.fullrank_cols[ind] == k {
                 ind += 1;
             } else {
-                subset_evals[j][pos] = evals[j][k];
+                subset_evals[j][pos] = *eval;
                 pos += 1;
             }
         }
@@ -1436,12 +1443,12 @@ fn decs_commitment_transcript(
     let gamma_all = derive_decs_challenge(cfg.nb_lvcs_rows, &hash_mt);
     let mut transcript = Vec::new();
     transcript.extend(digest_to_words(&hash_mt));
-    for k in 0..SMALLWOOD_DECS_ETA {
+    for (k, gamma_row) in gamma_all.iter().enumerate().take(SMALLWOOD_DECS_ETA) {
         let mut dec_evals = vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS];
         for i in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
             let mut acc = 0u64;
             for j in 0..cfg.nb_lvcs_rows {
-                acc = add_mod(acc, mul_mod(evals[i][j], gamma_all[k][j]));
+                acc = add_mod(acc, mul_mod(evals[i][j], gamma_row[j]));
             }
             acc = add_mod(acc, proof.masking_evals[i][k]);
             dec_evals[i] = acc;
@@ -1766,7 +1773,7 @@ fn xof_decs_opening(
 }
 
 fn bytes_to_words(bytes: &[u8]) -> Result<Vec<u64>, TransactionCircuitError> {
-    if bytes.len() % 8 != 0 {
+    if !bytes.len().is_multiple_of(8) {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood binded_data must be padded to 8-byte words",
         ));
@@ -1865,7 +1872,7 @@ fn merkle_auth_path(
 ) -> Vec<[u8; DIGEST_BYTES]> {
     let mut path = Vec::with_capacity(levels.len().saturating_sub(1));
     for level in levels.iter().take(levels.len().saturating_sub(1)) {
-        let sibling = if index % 2 == 0 {
+        let sibling = if index.is_multiple_of(2) {
             min(index + 1, level.len() - 1)
         } else {
             index - 1
@@ -1877,6 +1884,7 @@ fn merkle_auth_path(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes, Felt};
@@ -2341,7 +2349,7 @@ fn merkle_compute_root(
     let mut current = *leaf;
     for sibling in path {
         let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
-        if index % 2 == 0 {
+        if index.is_multiple_of(2) {
             input.extend(digest_to_words(&current));
             input.extend(digest_to_words(sibling));
         } else {
@@ -2611,16 +2619,16 @@ fn poly_mul_scalar(poly: &[u64], scalar: u64) -> Vec<u64> {
 fn poly_mul_into(out: &mut [u64], a: &[u64], b: &[u64], degree_a: usize, degree_b: usize) {
     out.fill(0);
     let degree_c = degree_a + degree_b;
-    for num in 0..=degree_c {
+    for (num, out_coeff) in out.iter_mut().enumerate().take(degree_c + 1) {
         let mut acc = 0u64;
-        for i in 0..=min(num, degree_a) {
+        for (i, &a_coeff) in a.iter().enumerate().take(min(num, degree_a) + 1) {
             let j = num - i;
             if j > degree_b {
                 continue;
             }
-            acc = add_mod(acc, mul_mod(a[i], b[j]));
+            acc = add_mod(acc, mul_mod(a_coeff, b[j]));
         }
-        out[num] = acc;
+        *out_coeff = acc;
     }
 }
 
@@ -2667,8 +2675,8 @@ fn mat_inv(a: &[Vec<u64>]) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let n = a.len();
     let mut a_copy = a.to_vec();
     let mut inv = vec![vec![0u64; n]; n];
-    for i in 0..n {
-        inv[i][i] = 1;
+    for (i, row) in inv.iter_mut().enumerate().take(n) {
+        row[i] = 1;
     }
     for i in 0..n {
         let mut pivot = i;

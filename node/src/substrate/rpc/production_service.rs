@@ -644,10 +644,8 @@ fn log_shielded_kernel_action_diagnostics<C, Block>(
         .iter()
         .map(|nullifier| runtime_api.is_nullifier_spent(best_hash, *nullifier).ok())
         .collect::<Vec<_>>();
-    let zero_nullifier_present = nullifiers.iter().any(|nullifier| *nullifier == [0u8; 48]);
-    let zero_commitment_present = commitments
-        .iter()
-        .any(|commitment| *commitment == [0u8; 48]);
+    let zero_nullifier_present = nullifiers.contains(&[0u8; 48]);
+    let zero_commitment_present = commitments.contains(&[0u8; 48]);
     let duplicate_nullifier_present = {
         let mut seen = std::collections::BTreeSet::new();
         let mut duplicate = false;

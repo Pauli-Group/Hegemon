@@ -492,7 +492,7 @@ fn derive_slot_denominator_inverses(public_values: &[u64]) -> [Felt; BALANCE_SLO
 
 fn slot_membership_weights(statement: &PackedStatement<'_>, asset: Felt) -> [Felt; BALANCE_SLOTS] {
     let mut weights = [Felt::ZERO; BALANCE_SLOTS];
-    for slot in 0..BALANCE_SLOTS {
+    for (slot, weight) in weights.iter_mut().enumerate().take(BALANCE_SLOTS) {
         let mut numerator = Felt::ONE;
         for other in 0..BALANCE_SLOTS {
             if other == slot {
@@ -500,7 +500,7 @@ fn slot_membership_weights(statement: &PackedStatement<'_>, asset: Felt) -> [Fel
             }
             numerator *= asset - public_value(statement, PUB_SLOT_ASSETS + other);
         }
-        weights[slot] = numerator * statement.slot_denominator_inverses[slot];
+        *weight = numerator * statement.slot_denominator_inverses[slot];
     }
     weights
 }
@@ -638,8 +638,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
 
         let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
         let rhs_hash = [Felt::ZERO; HASH_LIMBS];
-        for limb in 0..HASH_LIMBS {
-            lhs_hash[limb] = inactive
+        for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
+            *lhs_limb = inactive
                 * public_value(
                     statement,
                     PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb,
@@ -673,8 +673,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
 
     let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
     let rhs_hash = [Felt::ZERO; HASH_LIMBS];
-    for limb in 0..HASH_LIMBS {
-        lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_POLICY_HASH + limb);
+    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
+        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_POLICY_HASH + limb);
     }
     out[c] = aggregate_weighted_differences(
         statement.stable_policy_hash_challenge,
@@ -682,14 +682,14 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         &rhs_hash,
     );
     c += 1;
-    for limb in 0..HASH_LIMBS {
-        lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_ORACLE + limb);
+    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
+        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_ORACLE + limb);
     }
     out[c] =
         aggregate_weighted_differences(statement.stable_oracle_challenge, &lhs_hash, &rhs_hash);
     c += 1;
-    for limb in 0..HASH_LIMBS {
-        lhs_hash[limb] = stable_disabled * public_value(statement, PUB_STABLE_ATTESTATION + limb);
+    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
+        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_ATTESTATION + limb);
     }
     out[c] = aggregate_weighted_differences(
         statement.stable_attestation_challenge,

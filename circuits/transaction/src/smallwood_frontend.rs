@@ -1399,7 +1399,7 @@ fn semantic_secret_witness_rows(
     for (idx, input) in inputs.iter().enumerate() {
         values.push(input.note.value);
         values.push(input.note.asset_id);
-        values.extend((0..MERKLE_TREE_DEPTH).map(|bit| ((input.position >> bit) & 1) as u64));
+        values.extend((0..MERKLE_TREE_DEPTH).map(|bit| (input.position >> bit) & 1));
         if input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
             return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
                 "native tx input merkle path has length {}, expected {}",
@@ -2201,18 +2201,22 @@ mod tests {
         let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
         let group_rows_start =
             SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
-        for permutation in 0..poseidon_rows.len() {
+        for (permutation, permutation_rows) in poseidon_rows.iter().enumerate() {
             let group = permutation / SMALLWOOD_BRIDGE_PACKING_FACTOR;
             let lane = permutation % SMALLWOOD_BRIDGE_PACKING_FACTOR;
-            for step in 0..SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION {
-                for limb in 0..POSEIDON2_WIDTH {
+            for (step, step_rows) in permutation_rows
+                .iter()
+                .enumerate()
+                .take(SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            {
+                for (limb, &value) in step_rows.iter().enumerate().take(POSEIDON2_WIDTH) {
                     let row = group_rows_start
                         + (group * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION + step)
                             * POSEIDON2_WIDTH
                         + limb;
                     assert_eq!(
                         material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR + lane],
-                        poseidon_rows[permutation][step][limb]
+                        value
                     );
                 }
             }
@@ -2242,16 +2246,16 @@ mod tests {
         let group_rows_start =
             SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
         let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
-        for limb in 0..POSEIDON2_WIDTH {
+        for (limb, slot) in state.iter_mut().enumerate().take(POSEIDON2_WIDTH) {
             let row = group_rows_start + 29 * POSEIDON2_WIDTH + limb;
-            state[limb] =
+            *slot =
                 Felt::from_u64(material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR]);
         }
         poseidon2_step(&mut state, 29);
-        for limb in 0..POSEIDON2_WIDTH {
+        for (limb, &value) in state.iter().enumerate().take(POSEIDON2_WIDTH) {
             let row = group_rows_start + 30 * POSEIDON2_WIDTH + limb;
             assert_eq!(
-                state[limb].as_canonical_u64(),
+                value.as_canonical_u64(),
                 material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR]
             );
         }
