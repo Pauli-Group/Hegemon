@@ -12,7 +12,7 @@ This document explains how HEGEMON's privacy-preserving design accommodates regu
 6. [Post-Quantum Cryptography as Compliance Feature](#6-post-quantum-cryptography-as-compliance-feature)
 7. [Optional Compliance Attestation Circuits](#7-optional-compliance-attestation-circuits)
 8. [Exchange and VASP Integration](#8-exchange-and-vasp-integration)
-9. [Governance and Regulatory Adaptation](#9-governance-and-regulatory-adaptation)
+9. [Release Coordination and Regulatory Adaptation](#9-release-coordination-and-regulatory-adaptation)
 10. [Comparison with Transparent Chains](#10-comparison-with-transparent-chains)
 
 ---
@@ -307,7 +307,7 @@ pub struct ComplianceAttestation {
 }
 ```
 
-### Governance Integration
+### Release Coordination Integration
 
 New attestation types are introduced via `VersionProposal`:
 
@@ -325,7 +325,7 @@ Properties:
 - **Opt-in only**: Users choose whether to attach attestations
 - **Protocol-neutral**: Core consensus does not require attestations
 - **VASP-enforceable**: VASPs can require attestations for their customers
-- **Upgradeable**: New attestation types added via governance, not hard forks
+- **Upgradeable**: New attestation types added via release coordination, not hard forks
 
 ---
 
@@ -369,34 +369,34 @@ Recommended (for custodians): **Viewing escrow** — Exchange can fulfill regula
 
 ---
 
-## 9. Governance and Regulatory Adaptation
+## 9. Release Coordination and Regulatory Adaptation
 
 ### Responding to Regulatory Changes
 
-HEGEMON's versioning system (`governance/VERSIONING.md`) enables protocol adaptation without fragmenting the privacy pool:
+HEGEMON's versioning system (`governance/VERSIONING.md`) enables protocol adaptation without fragmenting the privacy pool. There is no on-chain governance in the live PoW chain; proposals are reviewed off-chain and adopted by miners and the wider economic network:
 
-| Regulatory Scenario | Governance Response |
-|---------------------|---------------------|
+| Regulatory Scenario | Release Coordination Response |
+|---------------------|-------------------------------|
 | New attestation requirement | Add optional circuit via `VersionProposal` |
 | Cryptographic vulnerability | Emergency primitive swap via `UpgradeDirective` |
 | Jurisdiction-specific rule | Application-layer enforcement, not protocol change |
 | Outright ban | No protocol response possible; user/VASP responsibility |
 
-### Governance Structure
+### Release Coordination Model
 
-| Decision Type | Authority | Process |
-|---------------|-----------|---------|
+| Decision Type | Primary actors | Process |
+|---------------|----------------|---------|
 | Circuit versions | Core team + security reviewers | `VersionProposal` → review → activation |
 | Cryptographic upgrades | External audit + core team | Cryptanalysis review → `VersionProposal` |
-| Economic parameters | Miner + community signaling | Proposal → discussion → miner adoption |
+| Economic parameters | Miners + broader economic actors | Proposal → discussion → software adoption |
 | Emergency response | Pre-authorized fast-track | `runbooks/emergency_version_swap.md` |
 
-### Decentralization Timeline
+### Current Operating Model
 
-1. **Phase 1 (Current)**: Core team proposes, community reviews, miners activate
-2. **Phase 2**: Formalized proposal process with economic stake
-3. **Phase 3**: On-chain governance with viewing-key-weighted voting (prevents plutocracy)
-4. **Phase 4**: Full decentralization with foundation dissolution
+1. Core team or external contributors draft a `VersionProposal` with code, keys, and review artifacts.
+2. Security reviewers, exchanges, miners, and wallet operators evaluate that package off-chain.
+3. A release line becomes canonical only if miners and the wider economic network adopt it.
+4. `VersionSchedule` then makes activation, coexistence, migration, and retirement deterministic inside that adopted release line.
 
 ---
 
@@ -450,7 +450,7 @@ This document must be updated when:
 - Viewing key derivation or memo structure changes in `DESIGN.md`
 - Exchange integration patterns evolve
 
-**Owners**: Governance team, with input from legal counsel.
+**Owners**: Core protocol maintainers, with input from legal counsel.
 
 **Review cadence**: Quarterly, or upon significant regulatory developments.
 

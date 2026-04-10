@@ -17,7 +17,7 @@ I’d keep (roughly) Zcash’s original goals, updated for 2025:
    * SNARK/STARK based only on collision-resistant hashes (FRI-style IOPs etc.). ([C# Corner][2])
 4. **Bitcoin-like mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
 5. **Upgradability**: built-in versioning and “escape hatches” for *future* PQ breaks.
-6. **Secure, seamless, delighting UX**: wallet, governance, and miner/operator touchpoints must keep the PQ stack invisible,
+6. **Secure, seamless, delighting UX**: wallet, release-coordination, and miner/operator touchpoints must keep the PQ stack invisible,
    provide ergonomic flows across devices, and surface positive confirmation cues so users feel safe and delighted without
    facing operational friction.
 
@@ -28,7 +28,7 @@ Everything else is negotiable.
 ### 0.2 Admin posture (production/testnet)
 
 * **No sudo or session pallets** in production/testnet genesis. The PoW chain runs without validator sessions.
-* Any privileged changes must flow through governance pallets or runtime upgrades, not a built‑in superuser key.
+* The live chain has no on-chain governance path. Protocol changes ship through socially adopted release lines and PoW uptake, not a built‑in superuser key.
 
 ### 0.1 Explicit overheads relative to Zcash
 
@@ -62,7 +62,7 @@ communication that compares this system to the status quo.
 Use *only* NIST PQC signatures:
 
 * Primary: **ML-DSA** (Dilithium, FIPS 204) for “everyday” signatures. ([NIST][1])
-* Backup: **SLH-DSA** (SPHINCS+, FIPS 205) for long-lived roots of trust (genesis multisig, governance keys, etc.). ([Cloud Security Alliance][3])
+* Backup: **SLH-DSA** (SPHINCS+, FIPS 205) for long-lived roots of trust (genesis multisig, release-signing keys, etc.). ([Cloud Security Alliance][3])
 
 Where they're used:
 
@@ -136,7 +136,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) should be treated as protocol-release parameters, not live governance knobs. The live transaction-proof family is now also a version-owned protocol parameter: `protocol/versioning` and `runtime/src/manifest.rs` commit both the active tx proof backend and, for the current Plonky3 line, the release tx FRI profile. The active default binding still resolves to `backend = Plonky3Fri` with `(log_blowup = 4, num_queries = 32, query_pow_bits = 0)`, while a non-default `SMALLWOOD_CANDIDATE_VERSION_BINDING` now resolves cleanly to `backend = SmallwoodCandidate`. That candidate path already runs through the exact same `tx_leaf -> receipt_root` aggregation lane, and the backend seam is real: a candidate tx proof can be wrapped into a native `tx_leaf`, dispatched by backend id, and aggregated without touching the lattice folding layer. The important current caveat is now exactly located. The repo has both:
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) should be treated as protocol-release parameters, not live runtime knobs. The live transaction-proof family is now also a version-owned protocol parameter: `protocol/versioning` and `runtime/src/manifest.rs` commit both the active tx proof backend and, for the current Plonky3 line, the release tx FRI profile. The active default binding still resolves to `backend = Plonky3Fri` with `(log_blowup = 4, num_queries = 32, query_pow_bits = 0)`, while a non-default `SMALLWOOD_CANDIDATE_VERSION_BINDING` now resolves cleanly to `backend = SmallwoodCandidate`. That candidate path already runs through the exact same `tx_leaf -> receipt_root` aggregation lane, and the backend seam is real: a candidate tx proof can be wrapped into a native `tx_leaf`, dispatched by backend id, and aggregated without touching the lattice folding layer. The important current caveat is now exactly located. The repo has both:
 
 * a real scalar semantic SmallWood prover over the native tx-validity witness surface, and
 * a real packed Rust frontend material builder for the frozen `64`-lane target statement (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`, `lppc_packing_factor = 64`), and

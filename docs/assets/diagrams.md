@@ -137,7 +137,7 @@ stateDiagram-v2
     [*] --> Draft: Author proposes VersionBinding
 
     Draft --> Review: Submit VersionProposal
-    Review --> Scheduled: Governance ratifies
+    Review --> Scheduled: Release line adopted
 
     state Scheduled {
         [*] --> Pending
