@@ -171,22 +171,23 @@ pub const CRYPTO_SUITE_ALPHA: CryptoSuiteId = 1;
 pub const CRYPTO_SUITE_BETA: CryptoSuiteId = 2;
 pub const CRYPTO_SUITE_GAMMA: CryptoSuiteId = 3;
 
-pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
-    circuit: CIRCUIT_V2,
-    crypto: CRYPTO_SUITE_GAMMA,
-};
 pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_BETA,
 };
+pub const LEGACY_PLONKY3_FRI_VERSION_BINDING: VersionBinding = VersionBinding {
+    circuit: CIRCUIT_V2,
+    crypto: CRYPTO_SUITE_GAMMA,
+};
+pub const DEFAULT_VERSION_BINDING: VersionBinding = SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
-pub const DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::Plonky3Fri;
+pub const DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::SmallwoodCandidate;
 pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
 
 pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
     match (version.circuit, version.crypto) {
-        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_PROOF_BACKEND),
         (CIRCUIT_V2, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
+        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(TxProofBackend::Plonky3Fri),
         _ => None,
     }
 }
@@ -195,5 +196,33 @@ pub const fn tx_fri_profile_for_version(version: VersionBinding) -> Option<TxFri
     match (version.circuit, version.crypto) {
         (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_FRI_PROFILE),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_binding_uses_smallwood_candidate_backend() {
+        assert_eq!(DEFAULT_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING);
+        assert_eq!(DEFAULT_TX_PROOF_BACKEND, TxProofBackend::SmallwoodCandidate);
+        assert_eq!(
+            tx_proof_backend_for_version(DEFAULT_VERSION_BINDING),
+            Some(TxProofBackend::SmallwoodCandidate)
+        );
+        assert_eq!(tx_fri_profile_for_version(DEFAULT_VERSION_BINDING), None);
+    }
+
+    #[test]
+    fn legacy_plonky3_binding_still_maps_to_fri_profile() {
+        assert_eq!(
+            tx_proof_backend_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+            Some(TxProofBackend::Plonky3Fri)
+        );
+        assert_eq!(
+            tx_fri_profile_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+            Some(DEFAULT_TX_FRI_PROFILE)
+        );
     }
 }

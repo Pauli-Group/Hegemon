@@ -1,12 +1,12 @@
 //! Transaction circuit crate for shielded transactions.
 //!
-//! This crate provides real STARK proofs using Plonky3.
+//! This crate provides real transaction proofs for shielded transactions.
 //!
-//! ## Main API (Real STARK Proofs)
+//! ## Main API (Real Transaction Proofs)
 //!
-//! - [`p3_prover::TransactionProverP3`] - Generate Plonky3 STARK proofs
-//! - [`p3_verifier::verify_transaction_proof_bytes_p3`] - Verify Plonky3 proofs
-//! - [`transaction_core::p3_air::TransactionAirP3`] - The AIR (Plonky3)
+//! - [`proof::prove`] - Generate transaction proofs using the version-bound backend
+//! - [`proof::verify`] - Verify transaction proofs using the version-bound backend
+//! - [`protocol_versioning::TxProofBackend`] - Backend selector carried by the proof
 //!
 //! ## Batch Proofs
 //!
@@ -15,9 +15,10 @@
 //!
 //! ## Implementation
 //!
-//! Plonky3 is the active backend today, but the proof object now carries an
-//! explicit backend identifier so a future replacement prover can replace
-//! it without rewriting the tx-leaf / receipt-root aggregation interfaces.
+//! SmallWood is the active default backend today, while Plonky3 remains
+//! available behind an explicit legacy version binding. The proof object
+//! carries an explicit backend identifier so the tx-leaf / receipt-root
+//! aggregation interfaces stay stable across backend swaps.
 
 pub mod constants;
 pub mod dimensions;
@@ -36,7 +37,7 @@ pub mod trace;
 pub mod witness;
 pub use transaction_core::poseidon_constants;
 
-// Plonky3 implementation (default)
+// Legacy Plonky3 implementation
 pub mod p3_config;
 pub mod p3_prover;
 pub mod p3_verifier;
@@ -56,7 +57,7 @@ pub use smallwood_frontend::{
 };
 pub use witness::TransactionWitness;
 
-// Plonky3 exports (default)
+// Legacy Plonky3 exports
 pub use p3_prover::{prewarm_transaction_prover_cache_p3, TransactionProverP3};
 pub use p3_verifier::{
     prewarm_transaction_verifier_cache_p3, verify_transaction_proof_bytes_p3,

@@ -1,14 +1,17 @@
 //! STARK Proof Generation for Shielded Transactions
 //!
-//! This module provides the STARK prover for generating zero-knowledge proofs
-//! for shielded transactions. Unlike Groth16, STARK proofs require NO trusted setup
-//! and are post-quantum secure.
+//! This module provides the transaction prover for generating zero-knowledge proofs
+//! for shielded transactions. The concrete backend is version-owned in
+//! `protocol-versioning`; the current default witness path resolves to
+//! `SmallwoodCandidate`, while legacy Plonky3 support remains available for
+//! historical decoding and comparison work.
 //!
 //! ## Design
 //!
 //! - **Transparent Setup**: No ceremony or trusted parameters needed
 //! - **Post-Quantum Security**: Based on hash functions only (Poseidon/Blake3)
-//! - **FRI-based IOP**: Uses Fast Reed-Solomon Interactive Oracle Proofs
+//! - **Version-owned backend**: the active default is SmallWood, with legacy
+//!   Plonky3/FRI support retained behind explicit version bindings.
 //!
 //! ## Usage
 //!
@@ -24,12 +27,9 @@
 //!
 //! ## Security
 //!
-//! STARK proofs rely only on collision-resistant hash functions, making them
-//! resistant to quantum attacks. The trade-off is larger proof sizes (hundreds of kB)
-//! compared to Groth16 (~200 bytes), but this is acceptable for quantum resistance.
-//!
-//! Note: With 48-byte digests and a 128-bit PQ target, current Plonky3 transaction proofs are
-//! hundreds of kB (≈357KB in the release `TransactionAirP3` e2e test).
+//! The active transaction-proof path remains post-quantum and transparent.
+//! Legacy Plonky3 proofs are still much larger than the current SmallWood
+//! default, but they remain decodable for compatibility and comparison.
 
 use std::time::{Duration, Instant};
 
@@ -47,17 +47,17 @@ use crate::error::WalletError;
 /// Configuration for the STARK prover.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StarkProverConfig {
-    /// FRI blowup factor (higher = more security, larger proofs).
+    /// Advisory blowup factor for legacy Plonky3/FRI paths.
     ///
-    /// Note: Plonky3 FRI parameters are currently compile-time constants in
-    /// `transaction_core::p3_config`; this field is advisory/UX-only today.
+    /// Note: the active default backend is SmallWood, so this field is
+    /// advisory/UX-only unless the caller intentionally uses a Plonky3 binding.
     ///
     /// Default: 16 (log_blowup = 4).
     pub blowup_factor: usize,
-    /// Number of FRI query rounds.
+    /// Advisory FRI query-round count for legacy Plonky3 paths.
     ///
-    /// Note: Plonky3 FRI parameters are currently compile-time constants in
-    /// `transaction_core::p3_config`; this field is advisory/UX-only today.
+    /// Note: the active default backend is SmallWood, so this field is
+    /// advisory/UX-only unless the caller intentionally uses a Plonky3 binding.
     ///
     /// Default: 32 (128-bit engineering target at log_blowup = 4).
     pub num_queries: usize,
@@ -178,10 +178,10 @@ impl StarkProverConfig {
     }
 }
 
-/// STARK prover for shielded transactions.
+/// Transaction prover for shielded transactions.
 ///
-/// Generates zero-knowledge proofs using FRI-based STARKs.
-/// The proving system is transparent (no trusted setup) and post-quantum secure.
+/// Generates version-owned zero-knowledge proofs.
+/// The proving system remains transparent (no trusted setup) and post-quantum secure.
 pub struct StarkProver {
     /// Prover configuration.
     config: StarkProverConfig,
@@ -328,7 +328,7 @@ impl Default for StarkProver {
 /// Result of proof generation.
 #[derive(Clone, Debug)]
 pub struct ProofResult {
-    /// Serialized STARK proof bytes (Plonky3 format).
+    /// Serialized transaction proof bytes (backend-specific format).
     pub proof_bytes: Vec<u8>,
     /// Nullifiers from the transaction (48-byte arrays).
     pub nullifiers: Vec<[u8; 48]>,

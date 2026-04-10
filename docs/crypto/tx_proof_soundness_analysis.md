@@ -1,12 +1,14 @@
-# Transaction Proof Soundness Analysis
+# Legacy Plonky3 Transaction Proof Soundness Analysis
 
-This note freezes the current Hegemon transaction-proof release profile, the exact code-derived AIR terms used to analyze it, and the measured proof-size sweep at fixed `log_blowup = 4`.
+This note freezes the legacy Hegemon Plonky3 transaction-proof release profile, the exact code-derived AIR terms used to analyze it, and the measured proof-size sweep at fixed `log_blowup = 4`.
 
-It is intentionally narrow. This is not a full theorem for every non-interactive Fiat-Shamir detail of the shipped Goldilocks/Poseidon2/FRI stack. It is the exact engineering note needed to answer three concrete questions:
+It is intentionally narrow. This is not a full theorem for every non-interactive Fiat-Shamir detail of the legacy Goldilocks/Poseidon2/FRI stack. It is the exact engineering note needed to answer three concrete questions:
 
 1. What release FRI profile does the current product actually bind to?
 2. What exact algebraic AIR error terms can be derived directly from code for that profile?
 3. How much proof-size reduction is available from lower query counts before the current Hegemon `128-bit` engineering floor is violated?
+
+The active default tx proof backend is now `SmallwoodCandidate`; its exact profile note lives in [tx_proof_smallwood_no_grinding_soundness.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_no_grinding_soundness.md). This document remains in-tree as the exact note for the old Plonky3 comparison line.
 
 ## Exact release profile surface
 
@@ -17,7 +19,7 @@ The active release transaction-proof FRI profile is now version-owned and manife
 - Release/build config plumbing: [circuits/transaction-core/src/p3_config.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_config.rs)
 - Strict version-bound verifier: [circuits/transaction-core/src/p3_verifier.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_verifier.rs)
 
-For the active default binding, the release profile is:
+For the legacy Plonky3 binding, the release profile is:
 
 - `log_blowup = 4`
 - `num_queries = 32`

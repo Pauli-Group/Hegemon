@@ -249,26 +249,20 @@ pub fn shielded_verifying_key() -> pallet_shielded_pool::verifier::VerifyingKey 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol_versioning::{DEFAULT_TX_FRI_PROFILE, DEFAULT_TX_PROOF_BACKEND};
+    use protocol_versioning::DEFAULT_TX_PROOF_BACKEND;
 
     #[test]
-    fn manifest_includes_default_tx_stark_profile() {
+    fn manifest_includes_default_tx_backend_and_only_live_profiles() {
         let manifest = protocol_manifest();
         assert_eq!(manifest.tx_proof_backends.len(), 1);
         let backend = &manifest.tx_proof_backends[0];
         assert_eq!(backend.version, DEFAULT_VERSION_BINDING);
         assert_eq!(backend.backend, DEFAULT_TX_PROOF_BACKEND);
         assert_eq!(backend.claimed_security_bits, 128);
-        assert_eq!(manifest.tx_stark_profiles.len(), 1);
-        let profile = &manifest.tx_stark_profiles[0];
-        assert_eq!(profile.version, DEFAULT_VERSION_BINDING);
-        assert_eq!(profile.log_blowup, DEFAULT_TX_FRI_PROFILE.log_blowup);
-        assert_eq!(profile.num_queries, DEFAULT_TX_FRI_PROFILE.num_queries);
-        assert_eq!(
-            profile.query_pow_bits,
-            DEFAULT_TX_FRI_PROFILE.query_pow_bits
+        assert!(
+            manifest.tx_stark_profiles.is_empty(),
+            "Smallwood is the active default, so the live manifest should not advertise a default Plonky3 FRI profile"
         );
-        assert_eq!(profile.claimed_security_bits, 128);
     }
 
     #[test]

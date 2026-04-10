@@ -126,8 +126,8 @@ mod cli {
             std::env::set_var("HEGEMON_DEV_MODE", "1");
         }
 
-        // Safety default: Plonky3 proving/verification can spike RAM; on macOS this can wedge the
-        // machine under memory pressure. If the user didn't set rayon thread counts explicitly,
+        // Safety default: transaction proving/verification can spike RAM, and the legacy Plonky3
+        // path is especially expensive. If the user didn't set rayon thread counts explicitly,
         // cap the default in dev mode. Override with `HEGEMON_RAYON_THREADS` or `RAYON_NUM_THREADS`.
         if std::env::var_os("RAYON_NUM_THREADS").is_none() {
             let requested = std::env::var("HEGEMON_RAYON_THREADS")

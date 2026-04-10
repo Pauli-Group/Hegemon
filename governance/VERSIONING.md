@@ -2,6 +2,8 @@
 
 This document supplements DESIGN.md / METHODS.md by describing how we use the new version identifiers in code (`protocol-versioning`) and the release artifacts (`VersionProposal`, `VersionSchedule`, `UpgradeDirective`) to roll out or retire primitives without splitting the privacy pool. The live chain has no on-chain governance path: protocol change happens through off-chain release coordination, social consensus, and PoW adoption. The guidance below assumes Proof-of-Work block production: “operators” are miners, mining pool maintainers, or full node operators who distribute binaries to them. The `governance/` directory name is historical.
 
+In the current release line, the active default transaction-proof binding resolves to `SmallwoodCandidate`. The old Plonky3/FRI binding remains explicitly versioned only so historical artifacts and comparison surfaces can still be decoded and measured. Proposal authors should therefore treat Plonky3 as a legacy binding unless they are intentionally scheduling a compatibility or rollback path.
+
 ## Terminology
 
 - **VersionBinding** – a `(circuit_version, crypto_suite)` pair compiled into every transaction witness/proof.
