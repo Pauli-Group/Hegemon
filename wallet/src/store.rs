@@ -6,10 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::Argon2;
 use chacha20poly1305::{
-    aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit,
+    aead::{Aead, Payload},
 };
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
 use transaction_circuit::{hashing_pq::Commitment, note::NoteData};
@@ -36,6 +36,7 @@ pub struct WalletStore {
     key: [u8; KEY_LEN],
     salt: [u8; SALT_LEN],
     state: Mutex<WalletState>,
+    commitment_tree_cache: Mutex<Option<CommitmentTree>>,
 }
 
 /// Zeroize the encryption key when the WalletStore is dropped
@@ -125,6 +126,7 @@ impl WalletStore {
             key,
             salt,
             state: Mutex::new(state),
+            commitment_tree_cache: Mutex::new(None),
         };
         store.write_locked()?;
         Ok(store)
@@ -149,7 +151,7 @@ impl WalletStore {
             other => {
                 return Err(WalletError::Serialization(format!(
                     "unsupported wallet file version {other} (expected {FILE_VERSION})"
-                )))
+                )));
             }
         };
         Ok(WalletStore {
@@ -157,6 +159,7 @@ impl WalletStore {
             key,
             salt: file.salt,
             state: Mutex::new(state),
+            commitment_tree_cache: Mutex::new(None),
         })
     }
 
@@ -226,6 +229,7 @@ impl WalletStore {
         self.with_mut(|state| {
             if state.tree_depth != depth {
                 state.tree_depth = depth;
+                self.invalidate_commitment_tree_cache()?;
             }
             Ok(())
         })
@@ -292,6 +296,7 @@ impl WalletStore {
             state.last_synced_height = 0;
             state.last_synced_block_hash = None;
             state.genesis_hash = None;
+            self.invalidate_commitment_tree_cache()?;
             Ok(())
         })
     }
@@ -348,6 +353,7 @@ impl WalletStore {
                     .ok_or(WalletError::InvalidState("commitment index overflow"))?;
             }
             state.next_commitment_index = expected;
+            self.invalidate_commitment_tree_cache()?;
             Ok(())
         })
     }
@@ -602,17 +608,13 @@ impl WalletStore {
     }
 
     pub fn commitment_tree(&self) -> Result<CommitmentTree, WalletError> {
-        self.with_state(|state| {
-            let depth = state.tree_depth as usize;
-            let mut tree = CommitmentTree::new(depth)
-                .map_err(|_| WalletError::InvalidState("invalid tree depth"))?;
-            for value in &state.commitments {
-                let _ = tree
-                    .append(*value)
-                    .map_err(|_| WalletError::InvalidState("tree overflow"))?;
-            }
-            Ok(tree)
-        })
+        if let Some(tree) = self.cached_commitment_tree()? {
+            return Ok(tree);
+        }
+
+        let tree = self.with_state(Self::build_commitment_tree_from_state)?;
+        self.store_commitment_tree_cache(tree.clone())?;
+        Ok(tree)
     }
 
     /// Validate that tracked notes match the local commitment list.
@@ -945,6 +947,46 @@ impl WalletStore {
 
             Ok(())
         })
+    }
+
+    fn build_commitment_tree_from_state(
+        state: &WalletState,
+    ) -> Result<CommitmentTree, WalletError> {
+        let depth = state.tree_depth as usize;
+        let mut tree = CommitmentTree::new(depth)
+            .map_err(|_| WalletError::InvalidState("invalid tree depth"))?;
+        for value in &state.commitments {
+            let _ = tree
+                .append(*value)
+                .map_err(|_| WalletError::InvalidState("tree overflow"))?;
+        }
+        Ok(tree)
+    }
+
+    fn cached_commitment_tree(&self) -> Result<Option<CommitmentTree>, WalletError> {
+        let cache = self
+            .commitment_tree_cache
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet tree cache poisoned"))?;
+        Ok(cache.clone())
+    }
+
+    fn store_commitment_tree_cache(&self, tree: CommitmentTree) -> Result<(), WalletError> {
+        let mut cache = self
+            .commitment_tree_cache
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet tree cache poisoned"))?;
+        *cache = Some(tree);
+        Ok(())
+    }
+
+    fn invalidate_commitment_tree_cache(&self) -> Result<(), WalletError> {
+        let mut cache = self
+            .commitment_tree_cache
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet tree cache poisoned"))?;
+        *cache = None;
+        Ok(())
     }
 
     fn with_state<F, T>(&self, func: F) -> Result<T, WalletError>
@@ -1412,7 +1454,7 @@ mod tests {
     use crate::notes::MemoPlaintext;
     use crate::notes::NoteCiphertext;
     use crate::notes::NotePlaintext;
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
     use tempfile::tempdir;
     use transaction_circuit::hashing_pq::felts_to_bytes48;
 

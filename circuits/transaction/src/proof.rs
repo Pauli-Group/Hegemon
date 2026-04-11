@@ -1,23 +1,23 @@
 //! Transaction proof structures and proving/verification functions.
 //!
 //! This module provides the main interface for creating and verifying
-//! transaction proofs. It uses real STARK proofs via Plonky3.
+//! transaction proofs across the version-bound backend seam.
 
 use protocol_versioning::{
-    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+    DEFAULT_TX_PROOF_BACKEND, TxProofBackend, VersionBinding, tx_proof_backend_for_version,
 };
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
-    prove_smallwood_candidate, smallwood_candidate_verifier_profile_material,
-    verify_smallwood_candidate_proof_bytes, verify_smallwood_candidate_transaction_proof,
-    SmallwoodCandidateProof,
+    SmallwoodCandidateProof, prove_smallwood_candidate,
+    smallwood_candidate_verifier_profile_material, verify_smallwood_candidate_proof_bytes,
+    verify_smallwood_candidate_transaction_proof,
 };
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
+    hashing_pq::{Commitment, balance_commitment_bytes, bytes48_to_felts},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
     smallwood_engine::SmallwoodArithmetization,
@@ -34,14 +34,13 @@ use postcard::to_allocvec;
 use transaction_core::p3_air::TransactionPublicInputsP3;
 use transaction_core::p3_config::release_tx_fri_profile_for_version;
 
-/// A transaction proof containing public inputs and the STARK proof bytes.
+/// A transaction proof containing public inputs and backend-specific proof bytes.
 ///
-/// The `stark_proof` field contains the actual cryptographic proof.
+/// The `stark_proof` field is legacy wire naming and contains the actual proof bytes.
 /// The other fields are public inputs that can be verified against the proof.
 ///
-/// For full STARK verification, use:
-/// - `p3_verifier::verify_transaction_proof_bytes_p3()` with proper `TransactionPublicInputsP3`
-/// - Or use `TransactionProverP3::prove()` and verify directly
+/// For backend-specific verification, use `verify()` or
+/// `verify_transaction_proof_bytes_for_backend()`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionProof {
     pub public_inputs: TransactionPublicInputs,
@@ -52,11 +51,11 @@ pub struct TransactionProof {
     pub balance_slots: Vec<BalanceSlot>,
     #[serde(default = "default_tx_proof_backend")]
     pub backend: TxProofBackend,
-    /// The actual STARK proof bytes (backend-specific format).
+    /// The actual proof bytes (backend-specific format).
     /// This is the cryptographic proof that the transaction is valid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stark_proof: Vec<u8>,
-    /// STARK public inputs in serialized form for verification.
+    /// Serialized verifier-facing public inputs for verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stark_public_inputs: Option<SerializedStarkInputs>,
 }

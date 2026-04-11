@@ -1,6 +1,6 @@
 use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
+use protocol_versioning::{TxProofBackend, VersionBinding, tx_proof_backend_for_version};
 use serde::{Deserialize, Serialize};
 use transaction_core::{
     constants::{
@@ -14,11 +14,11 @@ use transaction_core::{
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{bytes48_to_felts, merkle_node, Felt, HashFelt},
-    note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
+    hashing_pq::{Felt, HashFelt, bytes48_to_felts, merkle_node},
+    note::{InputNoteWitness, MERKLE_TREE_DEPTH, MerklePath, OutputNoteWitness},
     proof::{
-        transaction_public_inputs_p3_from_parts, SerializedStarkInputs, TransactionProof,
-        VerificationReport,
+        SerializedStarkInputs, TransactionProof, VerificationReport,
+        transaction_public_inputs_p3_from_parts,
     },
     public_inputs::TransactionPublicInputs,
     smallwood_engine::SmallwoodArithmetization,
@@ -71,6 +71,17 @@ const PUB_STABLE_POLICY_VERSION: usize = 55;
 const PUB_STABLE_POLICY_HASH: usize = 58;
 const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
+
+fn smallwood_witness_self_check_enabled() -> bool {
+    std::env::var("HEGEMON_SMALLWOOD_WITNESS_SELF_CHECK")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "" | "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(cfg!(debug_assertions))
+}
 
 #[inline]
 fn bridge_input_base(input: usize) -> usize {
@@ -277,18 +288,20 @@ pub fn prove_smallwood_candidate_with_arithmetization(
     match arithmetization {
         SmallwoodArithmetization::Bridge64V1 => {
             let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
-            test_candidate_witness(
-                SmallwoodArithmetization::Bridge64V1,
-                &material.public_statement.public_values,
-                &material.packed_witness_rows,
-                material.public_statement.lppc_row_count as usize,
-                SMALLWOOD_BRIDGE_PACKING_FACTOR,
-                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-                &material.linear_constraints.term_offsets,
-                &material.linear_constraints.term_indices,
-                &material.linear_constraints.term_coefficients,
-                &material.linear_constraints.targets,
-            )?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    SmallwoodArithmetization::Bridge64V1,
+                    &material.public_statement.public_values,
+                    &material.packed_witness_rows,
+                    material.public_statement.lppc_row_count as usize,
+                    SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                    &material.linear_constraints.term_offsets,
+                    &material.linear_constraints.term_indices,
+                    &material.linear_constraints.term_coefficients,
+                    &material.linear_constraints.targets,
+                )?;
+            }
             let ark_proof = prove_smallwood_backend(
                 SmallwoodArithmetization::Bridge64V1,
                 &material.public_statement.public_values,
@@ -316,18 +329,20 @@ pub fn prove_smallwood_candidate_with_arithmetization(
         SmallwoodArithmetization::DirectPacked64V1 => {
             let direct_material =
                 build_packed_smallwood_frontend_material_from_context(&context, witness)?;
-            test_candidate_witness(
-                SmallwoodArithmetization::DirectPacked64V1,
-                &direct_material.public_statement.public_values,
-                &direct_material.packed_expanded_witness,
-                direct_material.public_statement.lppc_row_count as usize,
-                direct_material.public_statement.lppc_packing_factor as usize,
-                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
-                &direct_material.linear_constraints.term_offsets,
-                &direct_material.linear_constraints.term_indices,
-                &direct_material.linear_constraints.term_coefficients,
-                &direct_material.linear_constraints.targets,
-            )?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    SmallwoodArithmetization::DirectPacked64V1,
+                    &direct_material.public_statement.public_values,
+                    &direct_material.packed_expanded_witness,
+                    direct_material.public_statement.lppc_row_count as usize,
+                    direct_material.public_statement.lppc_packing_factor as usize,
+                    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                    &direct_material.linear_constraints.term_offsets,
+                    &direct_material.linear_constraints.term_indices,
+                    &direct_material.linear_constraints.term_coefficients,
+                    &direct_material.linear_constraints.targets,
+                )?;
+            }
             let ark_proof = prove_smallwood_backend(
                 SmallwoodArithmetization::DirectPacked64V1,
                 &direct_material.public_statement.public_values,

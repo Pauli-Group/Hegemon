@@ -1699,12 +1699,7 @@ fn kernel_shielded_runtime_call_with_version(
     new_nullifiers: Vec<[u8; 48]>,
     public_args: Vec<u8>,
 ) -> runtime::RuntimeCall {
-    let envelope = build_shielded_kernel_envelope(
-        version,
-        action_id,
-        new_nullifiers,
-        public_args,
-    );
+    let envelope = build_shielded_kernel_envelope(version, action_id, new_nullifiers, public_args);
     runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope })
 }
 

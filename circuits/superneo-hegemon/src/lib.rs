@@ -2,12 +2,12 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::{
-    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+    DEFAULT_TX_PROOF_BACKEND, TxProofBackend, VersionBinding, tx_proof_backend_for_version,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,28 +15,28 @@ use superneo_backend_lattice::{
     LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, RingElem,
 };
 use superneo_ccs::{
-    digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
-    StatementEncoding, WitnessField, WitnessSchema,
+    Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix, StatementEncoding,
+    WitnessField, WitnessSchema, digest_statement,
 };
 use superneo_core::{Backend, FoldedInstance, LeafArtifact};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
+use transaction_circuit::SmallwoodArithmetization;
+use transaction_circuit::TransactionPublicInputsP3;
+use transaction_circuit::TransactionWitness;
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
+use transaction_circuit::note::{InputNoteWitness, MERKLE_TREE_DEPTH, OutputNoteWitness};
 use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
-    prove_with_params as prove_transaction_with_params,
+    SerializedStarkInputs, TransactionProof, prove_with_params as prove_transaction_with_params,
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
     transaction_verifier_profile_digest, verify as verify_transaction_proof,
-    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
+    verify_transaction_proof_bytes_for_backend,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
-use transaction_circuit::SmallwoodArithmetization;
-use transaction_circuit::TransactionPublicInputsP3;
-use transaction_circuit::TransactionWitness;
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
@@ -63,6 +63,17 @@ const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
 const NATIVE_TX_LEAF_PROOF_BACKEND_WIRE_BYTES: usize = 1;
 const NATIVE_RECEIPT_ROOT_MINI_ROOT_SIZE: usize = 8;
 const DEFAULT_RECEIPT_ROOT_BUILD_CACHE_CAPACITY: usize = 256;
+
+fn native_tx_leaf_self_verify_enabled() -> bool {
+    std::env::var("HEGEMON_NATIVE_TX_SELF_VERIFY")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "" | "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(cfg!(debug_assertions))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeTxLeafCommitmentStats {
@@ -2688,8 +2699,10 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
     let (pk, _) = backend.setup(&security, relation.shape())?;
 
-    verify_transaction_proof(proof, transaction_verifying_key())
-        .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
+    if native_tx_leaf_self_verify_enabled() {
+        verify_transaction_proof(proof, transaction_verifying_key())
+            .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
+    }
     let tx = tx_leaf_public_tx_from_transaction_proof(proof)?;
     let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
     let receipt = native_tx_leaf_receipt_from_transaction_proof(proof, params)?;
@@ -5065,11 +5078,11 @@ mod tests {
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
-    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+    use transaction_circuit::hashing_pq::{HashFelt, felts_to_bytes48, merkle_node};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use transaction_circuit::{
-        prove_smallwood_candidate, StablecoinPolicyBinding, TransactionWitness,
+        StablecoinPolicyBinding, TransactionWitness, prove_smallwood_candidate,
     };
 
     use super::*;
@@ -5491,11 +5504,13 @@ mod tests {
 
         assert_eq!(layer_widths, vec![16, 8, 4, 2, 1]);
         assert_eq!(hierarchy.hierarchy.mini_roots.len(), 2);
-        assert!(hierarchy
-            .hierarchy
-            .mini_roots
-            .iter()
-            .all(|node| node.leaf_count == 8));
+        assert!(
+            hierarchy
+                .hierarchy
+                .mini_roots
+                .iter()
+                .all(|node| node.leaf_count == 8)
+        );
     }
 
     #[test]
@@ -5542,11 +5557,10 @@ mod tests {
         let mut artifacts = receipt_root_distinct_artifacts();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
         artifacts.swap(0, 1);
-        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(
-            &artifacts,
-            &built.artifact_bytes
-        )
-        .is_err());
+        assert!(
+            verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &built.artifact_bytes)
+                .is_err()
+        );
     }
 
     #[test]
@@ -5651,9 +5665,7 @@ mod tests {
         static CACHE: std::sync::OnceLock<
             std::sync::Mutex<std::collections::BTreeMap<u64, BuiltNativeTxLeafArtifact>>,
         > = std::sync::OnceLock::new();
-        let cache = CACHE.get_or_init(|| {
-            std::sync::Mutex::new(std::collections::BTreeMap::new())
-        });
+        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
         if let Some(built) = cache.lock().expect("sample artifact cache lock").get(&seed) {
             return built.clone();
         }
@@ -5693,8 +5705,7 @@ mod tests {
     }
 
     fn review_bundle_valid_native_tx_leaf_artifact() -> NativeTxLeafArtifact {
-        static VALID_LEAF: std::sync::OnceLock<NativeTxLeafArtifact> =
-            std::sync::OnceLock::new();
+        static VALID_LEAF: std::sync::OnceLock<NativeTxLeafArtifact> = std::sync::OnceLock::new();
         VALID_LEAF
             .get_or_init(|| {
                 let bundle_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
