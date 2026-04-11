@@ -736,6 +736,7 @@ pub(crate) fn verify_balance_slots(
 mod tests {
     use super::*;
     use crate::public_inputs::TransactionPublicInputs;
+    use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
 
     fn dummy_serialized_inputs() -> SerializedStarkInputs {
         SerializedStarkInputs {
@@ -758,13 +759,15 @@ mod tests {
     }
 
     fn dummy_proof() -> TransactionProof {
-        let public_inputs = TransactionPublicInputs::default();
+        let mut public_inputs = TransactionPublicInputs::default();
+        public_inputs.circuit_version = LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit;
+        public_inputs.crypto_suite = LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto;
         TransactionProof {
             nullifiers: public_inputs.nullifiers.clone(),
             commitments: public_inputs.commitments.clone(),
             balance_slots: public_inputs.balance_slots.clone(),
             public_inputs,
-            backend: DEFAULT_TX_PROOF_BACKEND,
+            backend: TxProofBackend::Plonky3Fri,
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(dummy_serialized_inputs()),
         }

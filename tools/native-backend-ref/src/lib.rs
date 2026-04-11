@@ -2,7 +2,6 @@ use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
 use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
-use p3_uni_stark::verify as verify_uni_stark;
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
 };
@@ -13,10 +12,9 @@ use superneo_ccs::{
     SparseEntry, SparseMatrix, StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
 };
 use superneo_core::{validate_fold_pair, FoldedInstance, LeafArtifact, SecurityParams};
+use transaction_circuit::proof::verify_transaction_proof_bytes_for_backend;
 use transaction_core::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::hashing_pq::bytes48_to_felts;
-use transaction_core::p3_air::TransactionAirP3;
-use transaction_core::p3_config::{config_with_fri, TransactionProofP3};
 use transaction_core::TransactionPublicInputsP3;
 
 const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
@@ -1507,8 +1505,13 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         &artifact.tx,
         &artifact.stark_public_inputs,
     )?;
-    verify_transaction_proof_bytes_p3(&artifact.stark_proof, &p3_public_inputs)
-        .map_err(|err| anyhow!("STARK proof verification failed: {err}"))?;
+    verify_transaction_proof_bytes_for_backend(
+        artifact.proof_backend,
+        &artifact.stark_proof,
+        &p3_public_inputs,
+        artifact.tx.version,
+    )
+    .map_err(|err| anyhow!("tx proof verification failed: {err}"))?;
 
     validate_native_tx_leaf_public_witness_with_params(
         &params,
@@ -2293,7 +2296,7 @@ fn parse_native_tx_leaf_artifact(
         TxProofBackend::try_from(wire)
             .map_err(|_| anyhow!("unsupported native tx-leaf proof backend {wire}"))?
     } else {
-        DEFAULT_TX_PROOF_BACKEND
+        tx_proof_backend_for_version(tx.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND)
     };
     ensure!(
         cursor == bytes.len(),
@@ -2611,109 +2614,6 @@ fn bytes48_to_goldilocks(bytes: &[u8; 48]) -> Vec<Goldilocks> {
         .chunks_exact(8)
         .map(|chunk| Goldilocks::new(u64::from_le_bytes(chunk.try_into().unwrap())))
         .collect()
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct InferredFriProfileP3 {
-    log_blowup: usize,
-    num_queries: usize,
-}
-
-#[derive(Debug, Clone)]
-enum TransactionVerifyErrorP3 {
-    InvalidProofFormat,
-    InvalidPublicInputs(String),
-    VerificationFailed(String),
-}
-
-impl core::fmt::Display for TransactionVerifyErrorP3 {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidProofFormat => write!(f, "Invalid proof format"),
-            Self::InvalidPublicInputs(err) => write!(f, "Invalid public inputs: {err}"),
-            Self::VerificationFailed(err) => write!(f, "Verification failed: {err}"),
-        }
-    }
-}
-
-fn infer_fri_profile_from_proof_p3(
-    proof: &TransactionProofP3,
-) -> Result<InferredFriProfileP3, TransactionVerifyErrorP3> {
-    let num_queries = proof.opening_proof.query_proofs.len();
-    if num_queries == 0 {
-        return Err(TransactionVerifyErrorP3::VerificationFailed(
-            "proof has zero FRI queries".to_owned(),
-        ));
-    }
-    let final_poly_len = proof.opening_proof.final_poly.len();
-    if final_poly_len == 0 || !final_poly_len.is_power_of_two() {
-        return Err(TransactionVerifyErrorP3::VerificationFailed(
-            "proof final polynomial length is invalid".to_owned(),
-        ));
-    }
-    let log_final_poly_len = final_poly_len.ilog2() as usize;
-    let baseline = proof.opening_proof.commit_phase_commits.len() + log_final_poly_len;
-    let mut observed_log_max_height: Option<usize> = None;
-    for (query_index, query_proof) in proof.opening_proof.query_proofs.iter().enumerate() {
-        let query_max = query_proof
-            .input_proof
-            .iter()
-            .map(|batch| batch.opening_proof.len())
-            .max()
-            .ok_or_else(|| {
-                TransactionVerifyErrorP3::VerificationFailed(format!(
-                    "query {query_index} has no input opening proofs"
-                ))
-            })?;
-        if query_max < baseline {
-            return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
-                "query {query_index} opening depth {query_max} smaller than required baseline {baseline}"
-            )));
-        }
-        match observed_log_max_height {
-            Some(expected) if expected != query_max => {
-                return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
-                    "query opening depth mismatch: expected {expected}, got {query_max} at query {query_index}"
-                )));
-            }
-            Some(_) => {}
-            None => observed_log_max_height = Some(query_max),
-        }
-    }
-    let observed_log_max_height = observed_log_max_height.ok_or_else(|| {
-        TransactionVerifyErrorP3::VerificationFailed("proof has no query opening paths".to_owned())
-    })?;
-    let log_blowup = observed_log_max_height
-        .checked_sub(baseline)
-        .ok_or_else(|| {
-            TransactionVerifyErrorP3::VerificationFailed(
-                "failed to infer FRI blowup from proof shape".to_owned(),
-            )
-        })?;
-    Ok(InferredFriProfileP3 {
-        log_blowup,
-        num_queries,
-    })
-}
-
-fn verify_transaction_proof_bytes_p3(
-    proof_bytes: &[u8],
-    pub_inputs: &TransactionPublicInputsP3,
-) -> Result<(), TransactionVerifyErrorP3> {
-    pub_inputs
-        .validate()
-        .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
-    let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
-        .map_err(|_| TransactionVerifyErrorP3::InvalidProofFormat)?;
-    let fri_profile = infer_fri_profile_from_proof_p3(&proof)?;
-    let config = config_with_fri(fri_profile.log_blowup, fri_profile.num_queries);
-    verify_uni_stark(
-        &config.config,
-        &TransactionAirP3,
-        &proof,
-        &pub_inputs.to_vec(),
-    )
-    .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }
 
 fn transaction_public_inputs_digest_from_serialized(

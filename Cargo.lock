@@ -5971,6 +5971,7 @@ dependencies = [
  "serde_json",
  "superneo-ccs",
  "superneo-core",
+ "transaction-circuit",
  "transaction-core",
 ]
 
@@ -11278,11 +11279,13 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake3",
+ "hex",
  "p3-field",
  "p3-goldilocks",
  "protocol-versioning",
  "rayon",
  "serde",
+ "serde_json",
  "superneo-backend-lattice",
  "superneo-ccs",
  "superneo-core",

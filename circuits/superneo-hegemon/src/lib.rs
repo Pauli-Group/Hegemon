@@ -4,7 +4,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 
 use anyhow::{ensure, Result};
 use blake3::Hasher;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
@@ -1663,6 +1663,8 @@ fn serialized_stark_inputs_from_witness(
         signed_magnitude_u64(witness.value_balance, "value_balance")?;
     let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
         signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+    let canonicalize_balance_slot_asset_id =
+        |asset_id: u64| Goldilocks::from_u64(asset_id).as_canonical_u64();
     Ok(SerializedStarkInputs {
         input_flags: (0..MAX_INPUTS)
             .map(|idx| u8::from(idx < witness.inputs.len()))
@@ -1677,7 +1679,7 @@ fn serialized_stark_inputs_from_witness(
         balance_slot_asset_ids: public_inputs
             .balance_slots
             .iter()
-            .map(|slot| slot.asset_id)
+            .map(|slot| canonicalize_balance_slot_asset_id(slot.asset_id))
             .collect(),
         stablecoin_enabled: u8::from(witness.stablecoin.enabled),
         stablecoin_asset_id: witness.stablecoin.asset_id,
@@ -4512,7 +4514,7 @@ fn decode_native_tx_leaf_artifact_with_params(
         TxProofBackend::try_from(wire)
             .map_err(|_| anyhow::anyhow!("unsupported native tx-leaf proof backend {wire}"))?
     } else {
-        DEFAULT_TX_PROOF_BACKEND
+        tx_proof_backend_for_version(tx.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND)
     };
     ensure!(
         cursor == bytes.len(),
@@ -5055,7 +5057,11 @@ fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
 
 #[cfg(test)]
 mod tests {
-    use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    use std::{fs, path::PathBuf};
+
+    use protocol_versioning::{
+        LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
+    };
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -5233,7 +5239,7 @@ mod tests {
     fn native_tx_leaf_artifact_round_trip() {
         let witness = sample_witness(18);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(18);
         let metadata =
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
                 .unwrap();
@@ -5242,19 +5248,19 @@ mod tests {
             native_backend_params().parameter_fingerprint()
         );
         assert_eq!(metadata.spec_digest, native_backend_params().spec_digest());
-        assert_eq!(metadata.proof_backend, DEFAULT_TX_PROOF_BACKEND);
+        assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
     }
 
     #[test]
     fn native_tx_leaf_artifact_defaults_missing_backend_byte_to_plonky3() {
         let witness = sample_witness(19);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(19);
         let mut legacy_bytes = built.artifact_bytes.clone();
         legacy_bytes.pop().expect("proof backend byte");
         let metadata =
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes).unwrap();
-        assert_eq!(metadata.proof_backend, DEFAULT_TX_PROOF_BACKEND);
+        assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
     }
 
     #[test]
@@ -5303,14 +5309,13 @@ mod tests {
     fn native_receipt_root_accepts_smallwood_candidate_leaf_record() {
         let mut smallwood_witness = sample_witness(45);
         smallwood_witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let plonky3_witness = sample_witness(46);
         let smallwood_proof = prove_smallwood_candidate(&smallwood_witness).unwrap();
         let smallwood_leaf = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
             &native_backend_params(),
             &smallwood_proof,
         )
         .unwrap();
-        let plonky3_leaf = build_native_tx_leaf_artifact_bytes(&plonky3_witness).unwrap();
+        let plonky3_leaf = sample_native_tx_leaf_artifact(46);
         let artifacts = vec![
             decode_native_tx_leaf_artifact_bytes(&smallwood_leaf.artifact_bytes).unwrap(),
             decode_native_tx_leaf_artifact_bytes(&plonky3_leaf.artifact_bytes).unwrap(),
@@ -5339,7 +5344,7 @@ mod tests {
     fn native_tx_leaf_rejects_tampered_stark_proof() {
         let witness = sample_witness(19);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(19);
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.stark_proof[0] ^= 0x5a;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -5348,8 +5353,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_oversized_stark_proof_bytes() {
-        let witness = sample_witness(39);
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(39);
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.stark_proof = vec![0u8; MAX_NATIVE_TX_STARK_PROOF_BYTES + 1];
         let err = encode_native_tx_leaf_artifact(&artifact).unwrap_err();
@@ -5363,7 +5367,7 @@ mod tests {
     fn native_tx_leaf_rejects_malformed_commitment() {
         let witness = sample_witness(20);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(20);
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.commitment.rows[0].coeffs[0] ^= 1;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -5375,7 +5379,11 @@ mod tests {
         let witness = sample_witness(21);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
         let params = alternate_native_backend_params();
-        let built = build_native_tx_leaf_artifact_bytes_with_params(&params, &witness).unwrap();
+        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+            &params,
+            &sample_transaction_proof(21),
+        )
+        .unwrap();
         assert!(
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
                 .is_err()
@@ -5386,7 +5394,7 @@ mod tests {
     fn native_tx_leaf_rejects_spec_digest_mismatch() {
         let witness = sample_witness(22);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = build_native_tx_leaf_artifact_bytes(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(22);
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.spec_digest[0] ^= 0x5a;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -5433,10 +5441,7 @@ mod tests {
     #[test]
     fn native_receipt_root_hierarchy_matches_flat_root() {
         let artifacts = (0..16)
-            .map(|seed| {
-                build_native_tx_leaf_artifact_bytes(&sample_witness(seed + 60))
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let records = artifacts
@@ -5464,10 +5469,7 @@ mod tests {
     #[test]
     fn native_receipt_root_hierarchy_reports_expected_layers() {
         let artifacts = (0..16)
-            .map(|seed| {
-                build_native_tx_leaf_artifact_bytes(&sample_witness(seed + 90))
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed + 100)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let records = artifacts
@@ -5498,9 +5500,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_hierarchy_rejects_zero_mini_root_size() {
-        let artifact = build_native_tx_leaf_artifact_bytes(&sample_witness(120))
-            .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            .unwrap();
+        let artifact = receipt_root_fixture_artifact(120);
         let record = native_tx_leaf_record_from_artifact(&artifact);
         let err = build_native_receipt_root_hierarchy_from_records(&[record], 0).unwrap_err();
         assert!(
@@ -5511,13 +5511,9 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_tampered_fold_rows() {
-        let witnesses = [sample_witness(30), sample_witness(31)];
-        let artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+        let artifacts = [30u64, 31]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
@@ -5529,13 +5525,9 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_spec_digest_mismatch() {
-        let witnesses = [sample_witness(34), sample_witness(35)];
-        let artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+        let artifacts = [34u64, 35]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
@@ -5547,15 +5539,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_mixed_child_commitments() {
-        let witnesses = [sample_witness(32), sample_witness(33)];
-        let mut artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
-            .collect::<Result<Vec<_>>>()
-            .unwrap();
+        let mut artifacts = receipt_root_distinct_artifacts();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
         artifacts.swap(0, 1);
         assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(
@@ -5567,13 +5551,9 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_tampered_leaf_proof_digest() {
-        let witnesses = [sample_witness(40), sample_witness(41)];
-        let artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+        let artifacts = [40u64, 41]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
@@ -5585,13 +5565,9 @@ mod tests {
 
     #[test]
     fn native_receipt_root_rejects_tampered_leaf_statement_digest() {
-        let witnesses = [sample_witness(42), sample_witness(43)];
-        let artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+        let artifacts = [42u64, 43]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
@@ -5603,10 +5579,7 @@ mod tests {
 
     #[test]
     fn native_receipt_root_builder_rejects_too_many_leaves() {
-        let witness = sample_witness(36);
-        let artifact = build_native_tx_leaf_artifact_bytes(&witness)
-            .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            .unwrap();
+        let artifact = receipt_root_fixture_artifact(36);
         let artifacts =
             vec![artifact; native_backend_params().max_claimed_receipt_root_leaves as usize + 1];
         let err = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap_err();
@@ -5618,13 +5591,9 @@ mod tests {
 
     #[test]
     fn native_receipt_root_verifier_rejects_too_many_leaves() {
-        let witnesses = [sample_witness(37), sample_witness(38)];
-        let artifacts = witnesses
-            .iter()
-            .map(|witness| {
-                build_native_tx_leaf_artifact_bytes(witness)
-                    .and_then(|built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes))
-            })
+        let artifacts = [37u64, 38]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
@@ -5646,11 +5615,7 @@ mod tests {
         let params = native_backend_params();
         for leaf_count in [1usize, 2, 8, 9] {
             let artifacts = (0..leaf_count)
-                .map(|seed| {
-                    build_native_tx_leaf_artifact_bytes(&sample_witness(seed as u64 + 60)).and_then(
-                        |built| decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes),
-                    )
-                })
+                .map(|seed| Ok(receipt_root_fixture_artifact(seed as u64 + 200)))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
             let chunked =
@@ -5680,6 +5645,81 @@ mod tests {
             TransactionProofParams::release_for_version(witness.version),
         )
         .expect("sample tx proof")
+    }
+
+    fn sample_native_tx_leaf_artifact(seed: u64) -> BuiltNativeTxLeafArtifact {
+        static CACHE: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::BTreeMap<u64, BuiltNativeTxLeafArtifact>>,
+        > = std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(|| {
+            std::sync::Mutex::new(std::collections::BTreeMap::new())
+        });
+        if let Some(built) = cache.lock().expect("sample artifact cache lock").get(&seed) {
+            return built.clone();
+        }
+        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+            &native_backend_params(),
+            &sample_transaction_proof(seed),
+        )
+        .expect("sample native tx-leaf artifact");
+        cache
+            .lock()
+            .expect("sample artifact cache lock")
+            .insert(seed, built.clone());
+        built
+    }
+
+    fn sample_decoded_native_tx_leaf_artifact(seed: u64) -> NativeTxLeafArtifact {
+        decode_native_tx_leaf_artifact_bytes(&sample_native_tx_leaf_artifact(seed).artifact_bytes)
+            .expect("decode sample native tx-leaf artifact")
+    }
+
+    fn receipt_root_fixture_artifact(seed: u64) -> NativeTxLeafArtifact {
+        let _ = seed;
+        review_bundle_valid_native_tx_leaf_artifact()
+    }
+
+    fn receipt_root_distinct_artifacts() -> Vec<NativeTxLeafArtifact> {
+        static DISTINCT: std::sync::OnceLock<Vec<NativeTxLeafArtifact>> =
+            std::sync::OnceLock::new();
+        DISTINCT
+            .get_or_init(|| {
+                vec![
+                    review_bundle_valid_native_tx_leaf_artifact(),
+                    sample_decoded_native_tx_leaf_artifact(71),
+                ]
+            })
+            .clone()
+    }
+
+    fn review_bundle_valid_native_tx_leaf_artifact() -> NativeTxLeafArtifact {
+        static VALID_LEAF: std::sync::OnceLock<NativeTxLeafArtifact> =
+            std::sync::OnceLock::new();
+        VALID_LEAF
+            .get_or_init(|| {
+                let bundle_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../testdata/native_backend_vectors/bundle.json");
+                let bundle_bytes = fs::read(&bundle_path)
+                    .unwrap_or_else(|err| panic!("read {}: {err}", bundle_path.display()));
+                let bundle: serde_json::Value = serde_json::from_slice(&bundle_bytes)
+                    .unwrap_or_else(|err| {
+                        panic!("parse review bundle {}: {err}", bundle_path.display())
+                    });
+                let artifact_hex = bundle["cases"]
+                    .as_array()
+                    .and_then(|cases| {
+                        cases
+                            .iter()
+                            .find(|case| case["name"].as_str() == Some("native_tx_leaf_valid"))
+                    })
+                    .and_then(|case| case["artifact_hex"].as_str())
+                    .expect("review bundle must contain native_tx_leaf_valid artifact_hex");
+                let artifact_bytes =
+                    hex::decode(artifact_hex).expect("review bundle artifact_hex must decode");
+                decode_native_tx_leaf_artifact_bytes(&artifact_bytes)
+                    .expect("review bundle native tx-leaf artifact must decode")
+            })
+            .clone()
     }
 
     fn alternate_native_backend_params() -> NativeBackendParams {
@@ -5758,7 +5798,10 @@ mod tests {
             fee: 5,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            version: TransactionWitness::default_version_binding(),
+            // Keep the default crate test lane on the historical Plonky3 binding so
+            // generic regression tests do not accidentally become release-grade
+            // SmallWood proving runs. Dedicated SmallWood tests opt in explicitly.
+            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
         }
     }
 

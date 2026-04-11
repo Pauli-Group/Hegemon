@@ -189,7 +189,7 @@ use wallet::address::ShieldedAddress;
 
 // Import runtime APIs for difficulty queries
 use parking_lot::Mutex as ParkingMutex;
-use protocol_versioning::{DEFAULT_TX_PROOF_BACKEND, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{tx_proof_backend_for_version, DEFAULT_TX_PROOF_BACKEND};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
@@ -1299,6 +1299,7 @@ fn materialize_transaction_public_inputs_with_hashes(
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
+    version: protocol_versioning::VersionBinding,
 ) -> Result<MaterializedTxPublicInputs, String> {
     let input_count = nullifiers.len();
     let output_count = commitments.len();
@@ -1337,7 +1338,7 @@ fn materialize_transaction_public_inputs_with_hashes(
         fee,
         value_balance,
         stablecoin_binding,
-        DEFAULT_VERSION_BINDING,
+        version,
     )
     .map_err(|err| err.to_string())?;
     Ok(MaterializedTxPublicInputs {
@@ -1359,6 +1360,7 @@ fn build_transaction_proof(
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
+    version: protocol_versioning::VersionBinding,
 ) -> Result<TransactionProof, String> {
     if proof_bytes.is_empty() {
         return Err("shielded transfer proof bytes are empty".to_string());
@@ -1379,6 +1381,7 @@ fn build_transaction_proof(
         stablecoin,
         fee,
         value_balance,
+        version,
     )?;
 
     Ok(TransactionProof {
@@ -1386,7 +1389,7 @@ fn build_transaction_proof(
         nullifiers: materialized.padded_nullifiers,
         commitments: materialized.padded_commitments,
         balance_slots: materialized.balance_slots,
-        backend: DEFAULT_TX_PROOF_BACKEND,
+        backend: tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(materialized.stark_public_inputs),
     })
@@ -1402,6 +1405,7 @@ fn build_transaction_proof_with_hashes(
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
+    version: protocol_versioning::VersionBinding,
 ) -> Result<TransactionProof, String> {
     if proof_bytes.is_empty() {
         return Err("shielded transfer proof bytes are empty".to_string());
@@ -1415,6 +1419,7 @@ fn build_transaction_proof_with_hashes(
         stablecoin,
         fee,
         value_balance,
+        version,
     )?;
 
     Ok(TransactionProof {
@@ -1422,7 +1427,7 @@ fn build_transaction_proof_with_hashes(
         nullifiers: materialized.padded_nullifiers,
         commitments: materialized.padded_commitments,
         balance_slots: materialized.balance_slots,
-        backend: DEFAULT_TX_PROOF_BACKEND,
+        backend: tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(materialized.stark_public_inputs),
     })
@@ -1688,13 +1693,14 @@ fn shielded_action_from_extrinsic(
     shielded_action_from_runtime_call(&extrinsic.function)
 }
 
-fn kernel_shielded_runtime_call(
+fn kernel_shielded_runtime_call_with_version(
+    version: protocol_versioning::VersionBinding,
     action_id: u16,
     new_nullifiers: Vec<[u8; 48]>,
     public_args: Vec<u8>,
 ) -> runtime::RuntimeCall {
     let envelope = build_shielded_kernel_envelope(
-        runtime::manifest::default_version_binding(),
+        version,
         action_id,
         new_nullifiers,
         public_args,
@@ -1707,7 +1713,22 @@ fn kernel_shielded_extrinsic(
     new_nullifiers: Vec<[u8; 48]>,
     public_args: Vec<u8>,
 ) -> runtime::UncheckedExtrinsic {
-    runtime::UncheckedExtrinsic::new_unsigned(kernel_shielded_runtime_call(
+    kernel_shielded_extrinsic_with_version(
+        runtime::manifest::default_version_binding(),
+        action_id,
+        new_nullifiers,
+        public_args,
+    )
+}
+
+fn kernel_shielded_extrinsic_with_version(
+    version: protocol_versioning::VersionBinding,
+    action_id: u16,
+    new_nullifiers: Vec<[u8; 48]>,
+    public_args: Vec<u8>,
+) -> runtime::UncheckedExtrinsic {
+    runtime::UncheckedExtrinsic::new_unsigned(kernel_shielded_runtime_call_with_version(
+        version,
         action_id,
         new_nullifiers,
         public_args,
@@ -3862,6 +3883,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                         args.stablecoin.clone(),
                         args.fee,
                         0,
+                        version,
                     )?;
                     (Some(materialized), None)
                 };
@@ -3890,6 +3912,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                         args.stablecoin.clone(),
                         args.fee,
                         0,
+                        version,
                     )?;
                     consensus::types::Transaction::new(
                         nullifiers.clone(),
@@ -3949,6 +3972,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                             args.stablecoin.clone(),
                             args.fee,
                             0,
+                            version,
                         )?;
                         if let Ok(native_artifact) =
                             tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes.clone())
@@ -3974,6 +3998,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                             args.stablecoin.clone(),
                             args.fee,
                             0,
+                            version,
                         )?;
                         if let Ok(native_artifact) =
                             tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes.clone())
@@ -4007,6 +4032,7 @@ fn extract_shielded_transfers_for_parallel_verification(
                     args.stablecoin.clone(),
                     args.fee,
                     0,
+                    version,
                 )?;
                 let tx = match (tx_proof.as_ref(), maybe_ciphertexts) {
                     (Some(proof), Some(ciphertexts)) => {
@@ -11658,7 +11684,24 @@ mod tests {
         commitments: Vec<[u8; 48]>,
         balance_slot_asset_ids: [u64; 4],
     ) -> runtime::UncheckedExtrinsic {
-        kernel_shielded_extrinsic(
+        test_inline_transfer_extrinsic_with_proof_for_version(
+            runtime::manifest::default_version_binding(),
+            proof_bytes,
+            nullifiers,
+            commitments,
+            balance_slot_asset_ids,
+        )
+    }
+
+    fn test_inline_transfer_extrinsic_with_proof_for_version(
+        version: protocol_versioning::VersionBinding,
+        proof_bytes: Vec<u8>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
+        balance_slot_asset_ids: [u64; 4],
+    ) -> runtime::UncheckedExtrinsic {
+        kernel_shielded_extrinsic_with_version(
+            version,
             pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
             nullifiers,
             pallet_shielded_pool::family::ShieldedTransferInlineArgs {
@@ -12262,7 +12305,8 @@ mod tests {
 
     #[test]
     fn extract_inline_transfer_accepts_legacy_inline_tx_proof_payload() {
-        let witness = test_native_sample_witness(17);
+        let mut witness = test_native_sample_witness(17);
+        witness.version = protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
         let (proving_key, _) = generate_keys();
         let proof = prove(&witness, &proving_key).expect("legacy inline proof");
         let public_inputs = witness.public_inputs().expect("public inputs");
@@ -12274,8 +12318,9 @@ mod tests {
             .collect::<Vec<_>>()
             .try_into()
             .expect("four balance slots");
-        let extrinsic = test_inline_transfer_extrinsic_with_proof(
-            bincode::serialize(&proof).expect("serialize legacy proof"),
+        let extrinsic = test_inline_transfer_extrinsic_with_proof_for_version(
+            protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING,
+            proof.proof_bytes().to_vec(),
             public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
             public_inputs.commitments[..witness.outputs.len()].to_vec(),
             balance_slot_asset_ids,

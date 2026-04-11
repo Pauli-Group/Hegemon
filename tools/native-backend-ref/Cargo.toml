@@ -21,6 +21,7 @@ protocol-versioning = { path = "../../protocol/versioning" }
 superneo-ccs = { path = "../../circuits/superneo-ccs" }
 superneo-core = { path = "../../circuits/superneo-core" }
 transaction-core = { path = "../../circuits/transaction-core", features = ["serde"] }
+transaction-circuit = { path = "../../circuits/transaction" }
 
 [lints]
 workspace = true

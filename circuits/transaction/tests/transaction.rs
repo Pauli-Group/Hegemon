@@ -1,5 +1,7 @@
 use p3_field::PrimeCharacteristicRing;
-use protocol_versioning::{DEFAULT_TX_PROOF_BACKEND, SMALLWOOD_CANDIDATE_VERSION_BINDING};
+use protocol_versioning::{
+    LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
+};
 use serde::{Deserialize, Serialize};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
@@ -270,7 +272,8 @@ fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
 
 #[test]
 fn verification_fails_for_bad_balance() {
-    let witness = sample_witness();
+    let mut witness = sample_witness();
+    witness.version = LEGACY_PLONKY3_FRI_VERSION_BINDING;
     let (_proving_key, verifying_key) = generate_keys();
     let public_inputs = witness.public_inputs().expect("public inputs");
     let trace =
@@ -280,7 +283,7 @@ fn verification_fails_for_bad_balance() {
         commitments: public_inputs.commitments.clone(),
         balance_slots: trace.padded_balance_slots(),
         public_inputs,
-        backend: DEFAULT_TX_PROOF_BACKEND,
+        backend: transaction_circuit::TxProofBackend::Plonky3Fri,
         stark_proof: Vec::new(),
         stark_public_inputs: None,
     };

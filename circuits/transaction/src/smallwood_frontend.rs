@@ -1275,6 +1275,8 @@ fn serialized_public_inputs_from_witness(
         signed_magnitude_u64(witness.value_balance, "value_balance")?;
     let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
         signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+    let canonicalize_balance_slot_asset_id =
+        |asset_id: u64| Felt::from_u64(asset_id).as_canonical_u64();
     Ok(SerializedStarkInputs {
         input_flags: (0..MAX_INPUTS)
             .map(|idx| u8::from(idx < witness.inputs.len()))
@@ -1289,7 +1291,7 @@ fn serialized_public_inputs_from_witness(
         balance_slot_asset_ids: public_inputs
             .balance_slots
             .iter()
-            .map(|slot| slot.asset_id)
+            .map(|slot| canonicalize_balance_slot_asset_id(slot.asset_id))
             .collect(),
         stablecoin_enabled: u8::from(witness.stablecoin.enabled),
         stablecoin_asset_id: witness.stablecoin.asset_id,
@@ -2148,6 +2150,18 @@ mod tests {
             &bridge.linear_constraints.targets,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn serialized_public_inputs_canonicalize_padding_asset_ids() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+
+        assert_eq!(
+            context.serialized_public_inputs.balance_slot_asset_ids,
+            vec![0, 1, 4_294_967_294, 4_294_967_294]
+        );
     }
 
     #[test]
