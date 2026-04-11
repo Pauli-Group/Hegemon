@@ -2,12 +2,12 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::{
-    DEFAULT_TX_PROOF_BACKEND, TxProofBackend, VersionBinding, tx_proof_backend_for_version,
+    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,28 +15,28 @@ use superneo_backend_lattice::{
     LatticeBackend, LatticeCommitment, LeafDigestProof, NativeBackendParams, RingElem,
 };
 use superneo_ccs::{
-    Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix, StatementEncoding,
-    WitnessField, WitnessSchema, digest_statement,
+    digest_statement, Assignment, CcsShape, Relation, RelationId, SparseEntry, SparseMatrix,
+    StatementEncoding, WitnessField, WitnessSchema,
 };
 use superneo_core::{Backend, FoldedInstance, LeafArtifact};
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
-use transaction_circuit::SmallwoodArithmetization;
-use transaction_circuit::TransactionPublicInputsP3;
-use transaction_circuit::TransactionWitness;
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, MERKLE_TREE_DEPTH, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
 use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
-    SerializedStarkInputs, TransactionProof, prove_with_params as prove_transaction_with_params,
+    prove_with_params as prove_transaction_with_params,
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
     transaction_verifier_profile_digest, verify as verify_transaction_proof,
-    verify_transaction_proof_bytes_for_backend,
+    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
+use transaction_circuit::SmallwoodArithmetization;
+use transaction_circuit::TransactionPublicInputsP3;
+use transaction_circuit::TransactionWitness;
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
@@ -5078,11 +5078,11 @@ mod tests {
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
-    use transaction_circuit::hashing_pq::{HashFelt, felts_to_bytes48, merkle_node};
+    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use transaction_circuit::{
-        StablecoinPolicyBinding, TransactionWitness, prove_smallwood_candidate,
+        prove_smallwood_candidate, StablecoinPolicyBinding, TransactionWitness,
     };
 
     use super::*;
@@ -5504,13 +5504,11 @@ mod tests {
 
         assert_eq!(layer_widths, vec![16, 8, 4, 2, 1]);
         assert_eq!(hierarchy.hierarchy.mini_roots.len(), 2);
-        assert!(
-            hierarchy
-                .hierarchy
-                .mini_roots
-                .iter()
-                .all(|node| node.leaf_count == 8)
-        );
+        assert!(hierarchy
+            .hierarchy
+            .mini_roots
+            .iter()
+            .all(|node| node.leaf_count == 8));
     }
 
     #[test]
@@ -5557,10 +5555,11 @@ mod tests {
         let mut artifacts = receipt_root_distinct_artifacts();
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
         artifacts.swap(0, 1);
-        assert!(
-            verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &built.artifact_bytes)
-                .is_err()
-        );
+        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(
+            &artifacts,
+            &built.artifact_bytes
+        )
+        .is_err());
     }
 
     #[test]

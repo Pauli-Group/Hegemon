@@ -6,33 +6,32 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use disclosure_circuit::{
-    PaymentDisclosureClaim, PaymentDisclosureProofBundle, PaymentDisclosureWitness,
-    prove_payment_disclosure, verify_payment_disclosure,
+    prove_payment_disclosure, verify_payment_disclosure, PaymentDisclosureClaim,
+    PaymentDisclosureProofBundle, PaymentDisclosureWitness,
 };
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    StablecoinPolicyBinding,
     hashing_pq::{
         bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes,
     },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
+    StablecoinPolicyBinding,
 };
 use wallet::{
-    RecipientSpec, WalletError,
     address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
     build_stablecoin_burn, build_transaction, build_transaction_with_binding,
     disclosure::{
-        DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation, DisclosurePackage,
-        DisclosureProof, decode_base64, encode_base64,
+        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
+        DisclosurePackage, DisclosureProof,
     },
     is_ambiguous_submission_error,
     keys::{DerivedKeys, RootSecret},
@@ -43,6 +42,7 @@ use wallet::{
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
+    RecipientSpec, WalletError,
 };
 
 #[derive(Parser)]

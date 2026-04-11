@@ -4,20 +4,20 @@
 //! transaction proofs across the version-bound backend seam.
 
 use protocol_versioning::{
-    DEFAULT_TX_PROOF_BACKEND, TxProofBackend, VersionBinding, tx_proof_backend_for_version,
+    tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
 };
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
-    SmallwoodCandidateProof, prove_smallwood_candidate,
-    smallwood_candidate_verifier_profile_material, verify_smallwood_candidate_proof_bytes,
-    verify_smallwood_candidate_transaction_proof,
+    prove_smallwood_candidate, smallwood_candidate_verifier_profile_material,
+    verify_smallwood_candidate_proof_bytes, verify_smallwood_candidate_transaction_proof,
+    SmallwoodCandidateProof,
 };
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{Commitment, balance_commitment_bytes, bytes48_to_felts},
+    hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
     smallwood_engine::SmallwoodArithmetization,

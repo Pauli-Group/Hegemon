@@ -6,10 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::Argon2;
 use chacha20poly1305::{
-    ChaCha20Poly1305, KeyInit,
     aead::{Aead, Payload},
+    ChaCha20Poly1305, KeyInit,
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
 use transaction_circuit::{hashing_pq::Commitment, note::NoteData};
@@ -1454,7 +1454,7 @@ mod tests {
     use crate::notes::MemoPlaintext;
     use crate::notes::NoteCiphertext;
     use crate::notes::NotePlaintext;
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{rngs::StdRng, SeedableRng};
     use tempfile::tempdir;
     use transaction_circuit::hashing_pq::felts_to_bytes48;
 

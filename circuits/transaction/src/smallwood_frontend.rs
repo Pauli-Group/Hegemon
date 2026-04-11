@@ -1,6 +1,6 @@
 use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use protocol_versioning::{TxProofBackend, VersionBinding, tx_proof_backend_for_version};
+use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
 use serde::{Deserialize, Serialize};
 use transaction_core::{
     constants::{
@@ -14,11 +14,11 @@ use transaction_core::{
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{Felt, HashFelt, bytes48_to_felts, merkle_node},
-    note::{InputNoteWitness, MERKLE_TREE_DEPTH, MerklePath, OutputNoteWitness},
+    hashing_pq::{bytes48_to_felts, merkle_node, Felt, HashFelt},
+    note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
     proof::{
-        SerializedStarkInputs, TransactionProof, VerificationReport,
-        transaction_public_inputs_p3_from_parts,
+        transaction_public_inputs_p3_from_parts, SerializedStarkInputs, TransactionProof,
+        VerificationReport,
     },
     public_inputs::TransactionPublicInputs,
     smallwood_engine::SmallwoodArithmetization,
