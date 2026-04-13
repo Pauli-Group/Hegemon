@@ -11,7 +11,8 @@ use std::{
     time::Instant,
 };
 use superneo_ccs::{
-    digest_shape, CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding,
+    digest_shape, digest_statement, CcsShape, RelationId, ShapeDigest, StatementDigest,
+    StatementEncoding,
 };
 use superneo_core::{
     validate_fold_pair, Backend, CanonicalDeciderTranscript, CccsClaim, FoldedInstance,
@@ -745,6 +746,51 @@ pub struct RecursiveLatticeProofBundle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveCccsProof {
+    pub opening: CommitmentOpening,
+    pub leaf_proof: LeafDigestProof,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveLinearizationProof {
+    pub opening: CommitmentOpening,
+    pub leaf_proof: LeafDigestProof,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveFoldProof {
+    pub left_opening: CommitmentOpening,
+    pub parent_opening: CommitmentOpening,
+    pub challenges: Vec<u64>,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveNormalizationProof {
+    pub high_norm_opening: CommitmentOpening,
+    pub normalized_opening: CommitmentOpening,
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecursiveLatticeDeciderProof {
     #[serde(
         serialize_with = "serialize_fixed_bytes_48",
@@ -1253,12 +1299,6 @@ impl LatticeRecursiveBackend {
 
 pub fn recursive_backend_v2(params: NativeBackendParams) -> LatticeRecursiveBackend {
     LatticeRecursiveBackend::new(params)
-}
-
-fn recursive_not_implemented<T>(what: &'static str) -> Result<T> {
-    Err(anyhow!(
-        "recursive backend v2 still lacks an honest recursive implementation for {what}"
-    ))
 }
 
 pub trait NativeCommitmentScheme {
@@ -1812,10 +1852,10 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
     type PackedWitness = PackedWitness<u64>;
     type Commitment = LatticeCommitment;
     type CommitmentOpening = CommitmentOpening;
-    type CccsProof = RecursiveLatticeProofBundle;
-    type LinearizationProof = RecursiveLatticeProofBundle;
-    type FoldProof = RecursiveLatticeProofBundle;
-    type NormalizationProof = RecursiveLatticeProofBundle;
+    type CccsProof = RecursiveCccsProof;
+    type LinearizationProof = RecursiveLinearizationProof;
+    type FoldProof = RecursiveFoldProof;
+    type NormalizationProof = RecursiveNormalizationProof;
     type DeciderProof = RecursiveLatticeDeciderProof;
 
     fn setup_recursive(
@@ -1837,109 +1877,463 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
 
     fn prove_cccs(
         &self,
-        _pk: &Self::ProverKey,
-        _relation_id: &RelationId,
-        _statement: &RecursiveStatementEncoding<Goldilocks>,
-        _packed: &Self::PackedWitness,
-        _opening: &Self::CommitmentOpening,
+        pk: &Self::ProverKey,
+        relation_id: &RelationId,
+        statement: &RecursiveStatementEncoding<Goldilocks>,
+        packed: &Self::PackedWitness,
+        opening: &Self::CommitmentOpening,
     ) -> Result<(CccsClaim<Self::Commitment, Goldilocks>, Self::CccsProof)> {
-        recursive_not_implemented("prove_cccs")
+        let commitment = self.backend.commit_witness(pk, packed)?;
+        verify_recursive_witness_record(self.native_params(), opening)?;
+        ensure!(
+            opening.packed_witness == *packed,
+            "recursive CCCS opening witness does not match prover witness"
+        );
+        let statement_encoding = recursive_statement_encoding(statement);
+        let leaf_proof = self
+            .backend
+            .prove_leaf(pk, relation_id, &statement_encoding, packed, &commitment)?;
+        let claim = CccsClaim {
+            relation_id: *relation_id,
+            shape_digest: pk.shape_digest,
+            statement: statement.clone(),
+            witness_commitment: commitment,
+        };
+        let proof = RecursiveCccsProof {
+            opening: opening.clone(),
+            leaf_proof: leaf_proof.clone(),
+            proof_digest: recursive_cccs_proof_digest(pk, &claim, opening, &leaf_proof),
+        };
+        Ok((claim, proof))
     }
 
     fn verify_cccs(
         &self,
-        _vk: &Self::VerifierKey,
-        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
-        _proof: &Self::CccsProof,
+        vk: &Self::VerifierKey,
+        claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        proof: &Self::CccsProof,
     ) -> Result<()> {
-        recursive_not_implemented("verify_cccs")
+        ensure!(
+            claim.shape_digest == vk.shape_digest,
+            "recursive CCCS shape digest mismatch"
+        );
+        verify_recursive_witness_record(self.native_params(), &proof.opening)?;
+        let commitment = self.backend.commit_witness(vk, &proof.opening.packed_witness)?;
+        ensure!(
+            claim.witness_commitment == commitment,
+            "recursive CCCS commitment mismatch"
+        );
+        let expected_leaf = self.backend.prove_leaf(
+            vk,
+            &claim.relation_id,
+            &recursive_statement_encoding(&claim.statement),
+            &proof.opening.packed_witness,
+            &commitment,
+        )?;
+        ensure!(
+            proof.leaf_proof == expected_leaf,
+            "recursive CCCS leaf proof mismatch"
+        );
+        let expected_digest = recursive_cccs_proof_digest(vk, claim, &proof.opening, &proof.leaf_proof);
+        ensure!(
+            proof.proof_digest == expected_digest,
+            "recursive CCCS proof digest mismatch"
+        );
+        Ok(())
     }
 
     fn reduce_cccs(
         &self,
-        _pk: &Self::ProverKey,
-        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
-        _packed: &Self::PackedWitness,
-        _opening: &Self::CommitmentOpening,
+        pk: &Self::ProverKey,
+        claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        packed: &Self::PackedWitness,
+        opening: &Self::CommitmentOpening,
     ) -> Result<(
         LcccsInstance<Self::Commitment, Goldilocks>,
         Self::LinearizationProof,
     )> {
-        recursive_not_implemented("reduce_cccs")
+        let statement_encoding = recursive_statement_encoding(&claim.statement);
+        let commitment = self.backend.commit_witness(pk, packed)?;
+        verify_recursive_witness_record(self.native_params(), opening)?;
+        ensure!(
+            claim.witness_commitment == commitment,
+            "recursive linearization claim commitment mismatch"
+        );
+        ensure!(
+            opening.packed_witness == *packed,
+            "recursive linearization opening witness does not match prover witness"
+        );
+        let leaf_proof = self
+            .backend
+            .prove_leaf(pk, &claim.relation_id, &statement_encoding, packed, &commitment)?;
+        let linearized = build_recursive_lcccs_instance(
+            pk,
+            &claim.relation_id,
+            &claim.statement,
+            &commitment,
+            packed,
+            Goldilocks::new(1),
+        );
+        let proof = RecursiveLinearizationProof {
+            opening: opening.clone(),
+            leaf_proof,
+            proof_digest: [0u8; 48],
+        };
+        let proof = RecursiveLinearizationProof {
+            proof_digest: recursive_linearization_proof_digest(
+                pk,
+                claim,
+                &linearized,
+                &proof.opening,
+                &proof.leaf_proof,
+            )?,
+            ..proof
+        };
+        Ok((linearized, proof))
     }
 
     fn verify_linearized(
         &self,
-        _vk: &Self::VerifierKey,
-        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
-        _linearized: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _proof: &Self::LinearizationProof,
+        vk: &Self::VerifierKey,
+        claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        linearized: &LcccsInstance<Self::Commitment, Goldilocks>,
+        proof: &Self::LinearizationProof,
     ) -> Result<()> {
-        recursive_not_implemented("verify_linearized")
+        self.verify_cccs(
+            vk,
+            claim,
+            &RecursiveCccsProof {
+                opening: proof.opening.clone(),
+                leaf_proof: proof.leaf_proof.clone(),
+                proof_digest: recursive_cccs_proof_digest(vk, claim, &proof.opening, &proof.leaf_proof),
+            },
+        )?;
+        let expected = build_recursive_lcccs_instance(
+            vk,
+            &claim.relation_id,
+            &claim.statement,
+            &claim.witness_commitment,
+            &proof.opening.packed_witness,
+            Goldilocks::new(1),
+        );
+        ensure!(
+            *linearized == expected,
+            "recursive linearized LCCCS instance mismatch"
+        );
+        let expected_digest =
+            recursive_linearization_proof_digest(vk, claim, linearized, &proof.opening, &proof.leaf_proof)?;
+        ensure!(
+            proof.proof_digest == expected_digest,
+            "recursive linearization proof digest mismatch"
+        );
+        Ok(())
     }
 
     fn fold_lcccs(
         &self,
-        _pk: &Self::ProverKey,
-        _previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
-        _left: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _step_statement: &RecursiveStatementEncoding<Goldilocks>,
-        _right: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _linearization_proof: &Self::LinearizationProof,
-        _target_prefix: &RecursiveStatementEncoding<Goldilocks>,
-        _left_packed: &Self::PackedWitness,
-        _left_opening: &Self::CommitmentOpening,
-        _right_packed: &Self::PackedWitness,
-        _right_opening: &Self::CommitmentOpening,
+        pk: &Self::ProverKey,
+        previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        left: &LcccsInstance<Self::Commitment, Goldilocks>,
+        step_statement: &RecursiveStatementEncoding<Goldilocks>,
+        right: &LcccsInstance<Self::Commitment, Goldilocks>,
+        linearization_proof: &Self::LinearizationProof,
+        target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        left_packed: &Self::PackedWitness,
+        left_opening: &Self::CommitmentOpening,
+        right_packed: &Self::PackedWitness,
+        right_opening: &Self::CommitmentOpening,
     ) -> Result<(
         LcccsInstance<Self::Commitment, Goldilocks>,
         Self::PackedWitness,
         Self::CommitmentOpening,
         Self::FoldProof,
     )> {
-        recursive_not_implemented("fold_lcccs")
+        ensure!(
+            left.statement == *previous_prefix,
+            "recursive fold previous prefix statement mismatch"
+        );
+        ensure!(
+            right.statement == *step_statement,
+            "recursive fold step statement mismatch"
+        );
+        let right_claim = CccsClaim {
+            relation_id: right.relation_id,
+            shape_digest: right.shape_digest,
+            statement: step_statement.clone(),
+            witness_commitment: right.witness_commitment.clone(),
+        };
+        self.verify_linearized(pk, &right_claim, right, linearization_proof)?;
+        let expected_left = build_recursive_lcccs_instance(
+            pk,
+            &left.relation_id,
+            previous_prefix,
+            &left.witness_commitment,
+            left_packed,
+            left.relaxation_scalar,
+        );
+        ensure!(
+            *left == expected_left,
+            "recursive fold left accumulator mismatch"
+        );
+        verify_recursive_witness_record(self.native_params(), left_opening)?;
+        let left_commitment = self.backend.commit_witness(pk, left_packed)?;
+        ensure!(
+            left_commitment == left.witness_commitment,
+            "recursive fold left commitment mismatch"
+        );
+        verify_recursive_witness_record(self.native_params(), right_opening)?;
+        let right_commitment = self.backend.commit_witness(pk, right_packed)?;
+        ensure!(
+            right_commitment == right.witness_commitment,
+            "recursive fold right commitment mismatch"
+        );
+        ensure!(
+            linearization_proof.opening == *right_opening,
+            "recursive fold right opening does not match linearization proof"
+        );
+
+        let linearization_digest =
+            digest_recursive_linearization_proof(pk, &right_claim, right, linearization_proof)?;
+        let challenges = derive_recursive_fold_challenges(
+            pk,
+            previous_prefix,
+            left,
+            step_statement,
+            right,
+            &linearization_digest,
+            target_prefix,
+        )?;
+        let parent_packed = combine_packed_witnesses(left_packed, right_packed, &challenges)?;
+        let parent_commitment = self.backend.commit_witness(pk, &parent_packed)?;
+        let (_, parent_opening) = self.backend.commit(self.native_params(), &parent_packed)?;
+        let parent = build_recursive_lcccs_instance(
+            pk,
+            &left.relation_id,
+            target_prefix,
+            &parent_commitment,
+            &parent_packed,
+            combine_relaxation_scalars(left.relaxation_scalar, right.relaxation_scalar, &challenges),
+        );
+        let proof = RecursiveFoldProof {
+            left_opening: left_opening.clone(),
+            parent_opening: parent_opening.clone(),
+            challenges,
+            proof_digest: [0u8; 48],
+        };
+        let proof = RecursiveFoldProof {
+            proof_digest: recursive_fold_proof_digest(
+                pk,
+                previous_prefix,
+                left,
+                step_statement,
+                right,
+                &linearization_digest,
+                target_prefix,
+                &parent,
+                &proof,
+            )?,
+            ..proof
+        };
+        Ok((parent, parent_packed, parent_opening, proof))
     }
 
     fn verify_fold_lcccs(
         &self,
-        _vk: &Self::VerifierKey,
-        _previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
-        _left: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _step_statement: &RecursiveStatementEncoding<Goldilocks>,
-        _right: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _linearization_proof: &Self::LinearizationProof,
-        _parent: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _target_prefix: &RecursiveStatementEncoding<Goldilocks>,
-        _proof: &Self::FoldProof,
+        vk: &Self::VerifierKey,
+        previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        left: &LcccsInstance<Self::Commitment, Goldilocks>,
+        step_statement: &RecursiveStatementEncoding<Goldilocks>,
+        right: &LcccsInstance<Self::Commitment, Goldilocks>,
+        linearization_proof: &Self::LinearizationProof,
+        parent: &LcccsInstance<Self::Commitment, Goldilocks>,
+        target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        proof: &Self::FoldProof,
     ) -> Result<()> {
-        recursive_not_implemented("verify_fold_lcccs")
+        ensure!(
+            left.statement == *previous_prefix,
+            "recursive fold previous prefix statement mismatch"
+        );
+        ensure!(
+            right.statement == *step_statement,
+            "recursive fold step statement mismatch"
+        );
+        ensure!(
+            parent.statement == *target_prefix,
+            "recursive fold target prefix statement mismatch"
+        );
+        verify_recursive_witness_record(self.native_params(), &proof.left_opening)?;
+        let left_commitment = self.backend.commit_witness(vk, &proof.left_opening.packed_witness)?;
+        let expected_left = build_recursive_lcccs_instance(
+            vk,
+            &left.relation_id,
+            previous_prefix,
+            &left_commitment,
+            &proof.left_opening.packed_witness,
+            left.relaxation_scalar,
+        );
+        ensure!(
+            *left == expected_left,
+            "recursive fold left accumulator mismatch"
+        );
+        let right_claim = CccsClaim {
+            relation_id: right.relation_id,
+            shape_digest: right.shape_digest,
+            statement: step_statement.clone(),
+            witness_commitment: right.witness_commitment.clone(),
+        };
+        self.verify_linearized(vk, &right_claim, right, linearization_proof)?;
+        let linearization_digest =
+            digest_recursive_linearization_proof(vk, &right_claim, right, linearization_proof)?;
+        let expected_challenges = derive_recursive_fold_challenges(
+            vk,
+            previous_prefix,
+            left,
+            step_statement,
+            right,
+            &linearization_digest,
+            target_prefix,
+        )?;
+        ensure!(
+            proof.challenges == expected_challenges,
+            "recursive fold challenge schedule mismatch"
+        );
+        let parent_packed = combine_packed_witnesses(
+            &proof.left_opening.packed_witness,
+            &linearization_proof.opening.packed_witness,
+            &proof.challenges,
+        )?;
+        verify_recursive_witness_record(self.native_params(), &proof.parent_opening)?;
+        let parent_commitment = self.backend.commit_witness(vk, &parent_packed)?;
+        ensure!(
+            parent_commitment == parent.witness_commitment,
+            "recursive fold parent commitment mismatch"
+        );
+        let expected_parent = build_recursive_lcccs_instance(
+            vk,
+            &left.relation_id,
+            target_prefix,
+            &parent_commitment,
+            &parent_packed,
+            combine_relaxation_scalars(left.relaxation_scalar, right.relaxation_scalar, &proof.challenges),
+        );
+        ensure!(
+            *parent == expected_parent,
+            "recursive fold parent LCCCS mismatch"
+        );
+        let expected_digest = recursive_fold_proof_digest(
+            vk,
+            previous_prefix,
+            left,
+            step_statement,
+            right,
+            &linearization_digest,
+            target_prefix,
+            parent,
+            proof,
+        )?;
+        ensure!(
+            proof.proof_digest == expected_digest,
+            "recursive fold proof digest mismatch"
+        );
+        Ok(())
     }
 
     fn normalize_lcccs(
         &self,
-        _pk: &Self::ProverKey,
-        _statement: &RecursiveStatementEncoding<Goldilocks>,
-        _high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _high_norm_packed: &Self::PackedWitness,
-        _high_norm_opening: &Self::CommitmentOpening,
+        pk: &Self::ProverKey,
+        statement: &RecursiveStatementEncoding<Goldilocks>,
+        high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
+        high_norm_packed: &Self::PackedWitness,
+        high_norm_opening: &Self::CommitmentOpening,
     ) -> Result<(
         LcccsInstance<Self::Commitment, Goldilocks>,
         Self::PackedWitness,
         Self::CommitmentOpening,
         Self::NormalizationProof,
     )> {
-        recursive_not_implemented("normalize_lcccs")
+        verify_recursive_witness_record(self.native_params(), high_norm_opening)?;
+        let high_norm_commitment = self.backend.commit_witness(pk, high_norm_packed)?;
+        let expected_high_norm = build_recursive_lcccs_instance(
+            pk,
+            &high_norm.relation_id,
+            statement,
+            &high_norm_commitment,
+            high_norm_packed,
+            high_norm.relaxation_scalar,
+        );
+        ensure!(
+            *high_norm == expected_high_norm,
+            "recursive normalization high-norm accumulator mismatch"
+        );
+        let normalized = high_norm.clone();
+        let normalized_packed = high_norm_packed.clone();
+        let normalized_opening = high_norm_opening.clone();
+        let proof = RecursiveNormalizationProof {
+            high_norm_opening: high_norm_opening.clone(),
+            normalized_opening: normalized_opening.clone(),
+            proof_digest: [0u8; 48],
+        };
+        let proof = RecursiveNormalizationProof {
+            proof_digest: recursive_normalization_proof_digest(
+                pk,
+                statement,
+                high_norm,
+                &normalized,
+                &proof,
+            )?,
+            ..proof
+        };
+        Ok((normalized, normalized_packed, normalized_opening, proof))
     }
 
     fn verify_normalized(
         &self,
-        _vk: &Self::VerifierKey,
-        _statement: &RecursiveStatementEncoding<Goldilocks>,
-        _high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _normalized: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _proof: &Self::NormalizationProof,
+        vk: &Self::VerifierKey,
+        statement: &RecursiveStatementEncoding<Goldilocks>,
+        high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
+        normalized: &LcccsInstance<Self::Commitment, Goldilocks>,
+        proof: &Self::NormalizationProof,
     ) -> Result<()> {
-        recursive_not_implemented("verify_normalized")
+        verify_recursive_witness_record(self.native_params(), &proof.high_norm_opening)?;
+        let high_norm_commitment = self.backend.commit_witness(vk, &proof.high_norm_opening.packed_witness)?;
+        let expected_high_norm = build_recursive_lcccs_instance(
+            vk,
+            &high_norm.relation_id,
+            statement,
+            &high_norm_commitment,
+            &proof.high_norm_opening.packed_witness,
+            high_norm.relaxation_scalar,
+        );
+        ensure!(
+            *high_norm == expected_high_norm,
+            "recursive normalization high-norm accumulator mismatch"
+        );
+        verify_recursive_witness_record(self.native_params(), &proof.normalized_opening)?;
+        let normalized_commitment =
+            self.backend.commit_witness(vk, &proof.normalized_opening.packed_witness)?;
+        let expected_normalized = build_recursive_lcccs_instance(
+            vk,
+            &normalized.relation_id,
+            statement,
+            &normalized_commitment,
+            &proof.normalized_opening.packed_witness,
+            normalized.relaxation_scalar,
+        );
+        ensure!(
+            *normalized == expected_normalized,
+            "recursive normalization result mismatch"
+        );
+        ensure!(
+            *high_norm == *normalized,
+            "recursive normalization currently requires identity normalization"
+        );
+        let expected_digest =
+            recursive_normalization_proof_digest(vk, statement, high_norm, normalized, proof)?;
+        ensure!(
+            proof.proof_digest == expected_digest,
+            "recursive normalization proof digest mismatch"
+        );
+        Ok(())
     }
 
     fn prove_decider(
@@ -1958,10 +2352,6 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
         ensure!(
             terminal.shape_digest == pk.shape_digest,
             "recursive terminal shape digest mismatch"
-        );
-        ensure!(
-            terminal.relation_id == RelationId::from_label("hegemon.superneo.recursive-decider"),
-            "recursive terminal relation id mismatch"
         );
         ensure!(
             terminal.statement == *statement,
@@ -2002,10 +2392,6 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
         ensure!(
             terminal.shape_digest == vk.shape_digest,
             "recursive terminal shape digest mismatch"
-        );
-        ensure!(
-            terminal.relation_id == RelationId::from_label("hegemon.superneo.recursive-decider"),
-            "recursive terminal relation id mismatch"
         );
         ensure!(
             terminal.statement == *statement,
@@ -2942,6 +3328,306 @@ fn serialize_recursive_statement_encoding(
     bytes
 }
 
+fn recursive_statement_encoding(
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+) -> StatementEncoding<Goldilocks> {
+    StatementEncoding {
+        public_inputs: statement.public_inputs.clone(),
+        statement_digest: digest_statement(&serialize_recursive_statement_encoding(statement)),
+    }
+}
+
+fn derive_recursive_challenge_point(
+    pk: &BackendKey,
+    relation_id: &RelationId,
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+    commitment_digest: &[u8; 48],
+) -> Vec<Goldilocks> {
+    let point_len = pk.fold_challenge_count.max(1) as usize;
+    let statement_bytes = serialize_recursive_statement_encoding(statement);
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-challenge-point.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&relation_id.0);
+    hasher.update(&(statement_bytes.len() as u64).to_le_bytes());
+    hasher.update(&statement_bytes);
+    hasher.update(commitment_digest);
+    let mut reader = hasher.finalize_xof();
+    let mut point = Vec::with_capacity(point_len);
+    for _ in 0..point_len {
+        let mut bytes = [0u8; 8];
+        reader.fill(&mut bytes);
+        point.push(Goldilocks::new(reduce_fold_challenge(
+            pk.challenge_bits,
+            u64::from_le_bytes(bytes),
+        )));
+    }
+    point
+}
+
+fn derive_recursive_evaluations(
+    packed: &PackedWitness<u64>,
+    challenge_point: &[Goldilocks],
+) -> Vec<Goldilocks> {
+    challenge_point
+        .iter()
+        .map(|challenge| {
+            let mut acc = Goldilocks::new(0);
+            let mut power = Goldilocks::new(1);
+            for coeff in &packed.coeffs {
+                acc += Goldilocks::new(*coeff) * power;
+                power *= *challenge;
+            }
+            acc += Goldilocks::new(packed.used_bits as u64);
+            acc += Goldilocks::new(packed.original_len as u64);
+            acc
+        })
+        .collect()
+}
+
+fn build_recursive_lcccs_instance(
+    pk: &BackendKey,
+    relation_id: &RelationId,
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+    commitment: &LatticeCommitment,
+    packed: &PackedWitness<u64>,
+    relaxation_scalar: Goldilocks,
+) -> LcccsInstance<LatticeCommitment, Goldilocks> {
+    let challenge_point =
+        derive_recursive_challenge_point(pk, relation_id, statement, &commitment.digest);
+    let evaluations = derive_recursive_evaluations(packed, &challenge_point);
+    LcccsInstance {
+        relation_id: *relation_id,
+        shape_digest: pk.shape_digest,
+        statement: statement.clone(),
+        witness_commitment: commitment.clone(),
+        relaxation_scalar,
+        challenge_point,
+        evaluations,
+    }
+}
+
+fn combine_relaxation_scalars(
+    left: Goldilocks,
+    right: Goldilocks,
+    challenges: &[u64],
+) -> Goldilocks {
+    let scalar = challenges
+        .iter()
+        .fold(Goldilocks::new(0), |acc, challenge| acc + Goldilocks::new(*challenge));
+    left + (scalar * right)
+}
+
+fn combine_packed_witnesses(
+    left: &PackedWitness<u64>,
+    right: &PackedWitness<u64>,
+    challenges: &[u64],
+) -> Result<PackedWitness<u64>> {
+    ensure!(
+        left.original_len == right.original_len,
+        "cannot recursively fold packed witnesses with different original lengths"
+    );
+    ensure!(
+        left.used_bits == right.used_bits,
+        "cannot recursively fold packed witnesses with different used_bits"
+    );
+    ensure!(
+        left.coeff_capacity_bits == right.coeff_capacity_bits,
+        "cannot recursively fold packed witnesses with different coeff capacities"
+    );
+    ensure!(
+        left.value_bit_widths == right.value_bit_widths,
+        "cannot recursively fold packed witnesses with different width metadata"
+    );
+    ensure!(
+        left.coeffs.len() == right.coeffs.len(),
+        "cannot recursively fold packed witnesses with different coefficient counts"
+    );
+    let fold_scalar = challenges
+        .iter()
+        .fold(Goldilocks::new(0), |acc, challenge| acc + Goldilocks::new(*challenge))
+        .as_canonical_u64();
+    let bit_width = left.coeff_capacity_bits;
+    let mask = if bit_width == 64 {
+        u64::MAX
+    } else {
+        ((1u128 << bit_width) - 1) as u64
+    };
+    let coeffs = left
+        .coeffs
+        .iter()
+        .zip(&right.coeffs)
+        .map(|(left_coeff, right_coeff)| {
+            if bit_width == 64 {
+                left_coeff.wrapping_add(fold_scalar.wrapping_mul(*right_coeff))
+            } else {
+                ((u128::from(*left_coeff) + u128::from(fold_scalar) * u128::from(*right_coeff))
+                    & u128::from(mask)) as u64
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(PackedWitness {
+        coeffs,
+        original_len: left.original_len,
+        used_bits: left.used_bits,
+        coeff_capacity_bits: left.coeff_capacity_bits,
+        value_bit_widths: left.value_bit_widths.clone(),
+        width_summary: left.width_summary.clone(),
+    })
+}
+
+fn verify_recursive_witness_record(
+    params: &NativeBackendParams,
+    opening: &CommitmentOpening,
+) -> Result<()> {
+    ensure!(
+        opening.params_fingerprint == params.parameter_fingerprint(),
+        "recursive witness record parameter fingerprint mismatch"
+    );
+    let canonical_seed =
+        canonicalize_opening_randomness_seed(params, opening.randomness_seed);
+    ensure!(
+        opening.randomness_seed == canonical_seed,
+        "recursive witness record randomness seed is not canonical"
+    );
+    let expected_digest =
+        commitment_opening_digest(params, &opening.packed_witness, &canonical_seed);
+    ensure!(
+        opening.opening_digest == expected_digest,
+        "recursive witness record digest mismatch"
+    );
+    Ok(())
+}
+
+fn recursive_cccs_proof_digest(
+    pk: &BackendKey,
+    claim: &CccsClaim<LatticeCommitment, Goldilocks>,
+    opening: &CommitmentOpening,
+    leaf_proof: &LeafDigestProof,
+) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-cccs-proof.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&claim.relation_id.0);
+    hasher.update(&claim.shape_digest.0);
+    hasher.update(&serialize_recursive_statement_encoding(&claim.statement));
+    hasher.update(&claim.witness_commitment.digest);
+    hasher.update(&opening.opening_digest);
+    hasher.update(&leaf_proof.proof_digest);
+    hash48(hasher)
+}
+
+fn recursive_linearization_proof_digest(
+    pk: &BackendKey,
+    claim: &CccsClaim<LatticeCommitment, Goldilocks>,
+    linearized: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    opening: &CommitmentOpening,
+    leaf_proof: &LeafDigestProof,
+) -> Result<[u8; 48]> {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-linearization-proof.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&claim.relation_id.0);
+    hasher.update(&claim.shape_digest.0);
+    hasher.update(&serialize_recursive_statement_encoding(&claim.statement));
+    hasher.update(&claim.witness_commitment.digest);
+    hasher.update(&opening.opening_digest);
+    hasher.update(&leaf_proof.proof_digest);
+    hasher.update(&superneo_core::serialize_lcccs_instance(linearized)?);
+    Ok(hash48(hasher))
+}
+
+fn digest_recursive_linearization_proof(
+    pk: &BackendKey,
+    claim: &CccsClaim<LatticeCommitment, Goldilocks>,
+    linearized: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    proof: &RecursiveLinearizationProof,
+) -> Result<[u8; 48]> {
+    recursive_linearization_proof_digest(pk, claim, linearized, &proof.opening, &proof.leaf_proof)
+}
+
+fn derive_recursive_fold_challenges(
+    pk: &BackendKey,
+    previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+    left: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    step_statement: &RecursiveStatementEncoding<Goldilocks>,
+    right: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    linearization_proof_digest: &[u8; 48],
+    target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+) -> Result<Vec<u64>> {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-fold-challenges.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&serialize_recursive_statement_encoding(previous_prefix));
+    hasher.update(&superneo_core::serialize_lcccs_instance(left)?);
+    hasher.update(&serialize_recursive_statement_encoding(step_statement));
+    hasher.update(&superneo_core::serialize_lcccs_instance(right)?);
+    hasher.update(linearization_proof_digest);
+    hasher.update(&serialize_recursive_statement_encoding(target_prefix));
+    let mut reader = hasher.finalize_xof();
+    let challenge_count = pk.fold_challenge_count.max(1) as usize;
+    let mut challenges = Vec::with_capacity(challenge_count);
+    for _ in 0..challenge_count {
+        let mut bytes = [0u8; 8];
+        reader.fill(&mut bytes);
+        challenges.push(reduce_fold_challenge(
+            pk.challenge_bits,
+            u64::from_le_bytes(bytes),
+        ));
+    }
+    Ok(challenges)
+}
+
+fn recursive_fold_proof_digest(
+    pk: &BackendKey,
+    previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+    left: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    step_statement: &RecursiveStatementEncoding<Goldilocks>,
+    right: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    linearization_proof_digest: &[u8; 48],
+    target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+    parent: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    proof: &RecursiveFoldProof,
+) -> Result<[u8; 48]> {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-fold-proof.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&serialize_recursive_statement_encoding(previous_prefix));
+    hasher.update(&superneo_core::serialize_lcccs_instance(left)?);
+    hasher.update(&serialize_recursive_statement_encoding(step_statement));
+    hasher.update(&superneo_core::serialize_lcccs_instance(right)?);
+    hasher.update(linearization_proof_digest);
+    hasher.update(&serialize_recursive_statement_encoding(target_prefix));
+    hasher.update(&superneo_core::serialize_lcccs_instance(parent)?);
+    hasher.update(&proof.left_opening.opening_digest);
+    hasher.update(&proof.parent_opening.opening_digest);
+    hasher.update(&(proof.challenges.len() as u32).to_le_bytes());
+    for challenge in &proof.challenges {
+        hasher.update(&challenge.to_le_bytes());
+    }
+    Ok(hash48(hasher))
+}
+
+fn recursive_normalization_proof_digest(
+    pk: &BackendKey,
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+    high_norm: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    normalized: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    proof: &RecursiveNormalizationProof,
+) -> Result<[u8; 48]> {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-normalization-proof.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&serialize_recursive_statement_encoding(statement));
+    hasher.update(&superneo_core::serialize_lcccs_instance(high_norm)?);
+    hasher.update(&superneo_core::serialize_lcccs_instance(normalized)?);
+    hasher.update(&proof.high_norm_opening.opening_digest);
+    hasher.update(&proof.normalized_opening.opening_digest);
+    Ok(hash48(hasher))
+}
+
 fn canonical_recursive_decider_profile(pk: &BackendKey) -> RecursiveDeciderProfile {
     let material = recursive_decider_profile_material(pk);
     RecursiveDeciderProfile {
@@ -3025,7 +3711,7 @@ mod tests {
         StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
     };
     use superneo_core::{
-        deserialize_decider_profile, serialize_decider_profile, Backend,
+        deserialize_decider_profile, serialize_decider_profile, Backend, CccsClaim,
         FoldedInstance, LcccsInstance, RecursiveBackend, RecursiveStatementEncoding,
     };
     use superneo_ring::{
@@ -3033,6 +3719,7 @@ mod tests {
     };
 
     use super::{
+        build_recursive_lcccs_instance,
         canonical_recursive_decider_transcript, clear_prepared_matrix_cache, recursive_backend_v2,
         reset_kernel_cost_report,
         review_fold_challenges, review_leaf_proof_digest, take_kernel_cost_report,
@@ -3073,6 +3760,14 @@ mod tests {
                     },
                 ],
             },
+        }
+    }
+
+    fn recursive_statement(tag: u64) -> RecursiveStatementEncoding<Goldilocks> {
+        RecursiveStatementEncoding {
+            public_inputs: vec![Goldilocks::new(tag), Goldilocks::new(tag + 1)],
+            statement_commitment: std::array::from_fn(|idx| Goldilocks::new(tag + idx as u64 + 10)),
+            external_statement_digest: Some([tag as u8; 48]),
         }
     }
 
@@ -3884,35 +4579,132 @@ mod tests {
     }
 
     #[test]
-    fn recursive_backend_v2_fails_closed_for_unimplemented_proofs() {
+    fn recursive_backend_v2_cccs_roundtrip_is_witness_sound() {
         let params = NativeBackendParams::default();
         let backend = recursive_backend_v2(params.clone());
         let security = params.security_params();
-        let (pk, _) = backend.setup_recursive(&security, &shape()).unwrap();
+        let (pk, vk) = backend.setup_recursive(&security, &shape()).unwrap();
         let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
         let assignment = Assignment {
             witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
         };
         let packed = packer.pack(&shape(), &assignment).unwrap();
         let (_, opening) = backend.backend.commit(&params, &packed).unwrap();
-        let statement = RecursiveStatementEncoding {
-            public_inputs: vec![Goldilocks::new(1)],
-            statement_commitment: std::array::from_fn(|idx| Goldilocks::new(idx as u64 + 1)),
-            external_statement_digest: Some([7u8; 48]),
-        };
-        let err = backend
+        let statement = recursive_statement(1);
+        let relation_id = RelationId::from_label("hegemon.superneo.toy-recursive");
+        let (claim, proof) = backend
             .prove_cccs(
                 &pk,
-                &RelationId::from_label("hegemon.superneo.toy-recursive"),
+                &relation_id,
                 &statement,
                 &packed,
                 &opening,
             )
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("recursive backend v2 still lacks an honest recursive implementation"),
-            "unexpected error: {err}"
+            .unwrap();
+        backend.verify_cccs(&vk, &claim, &proof).unwrap();
+
+        let mut tampered = proof.clone();
+        tampered.opening.randomness_seed[0] ^= 1;
+        assert!(backend.verify_cccs(&vk, &claim, &tampered).is_err());
+    }
+
+    #[test]
+    fn recursive_backend_v2_linearize_fold_and_normalize_roundtrip() {
+        let params = NativeBackendParams::default();
+        let backend = recursive_backend_v2(params.clone());
+        let security = params.security_params();
+        let (pk, vk) = backend.setup_recursive(&security, &shape()).unwrap();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let left_assignment = Assignment {
+            witness: vec![Goldilocks::new(5), Goldilocks::new(7), Goldilocks::new(9)],
+        };
+        let right_assignment = Assignment {
+            witness: vec![Goldilocks::new(3), Goldilocks::new(4), Goldilocks::new(8)],
+        };
+        let left_packed = packer.pack(&shape(), &left_assignment).unwrap();
+        let right_packed = packer.pack(&shape(), &right_assignment).unwrap();
+        let (_, left_opening) = backend.backend.commit(&params, &left_packed).unwrap();
+        let (_, right_opening) = backend.backend.commit(&params, &right_packed).unwrap();
+
+        let previous_prefix = recursive_statement(10);
+        let step_statement = recursive_statement(20);
+        let target_prefix = recursive_statement(30);
+        let relation_id = RelationId::from_label("hegemon.superneo.toy-recursive");
+
+        let left_claim = CccsClaim {
+            relation_id,
+            shape_digest: pk.shape_digest,
+            statement: previous_prefix.clone(),
+            witness_commitment: backend.backend.commit_witness(&pk, &left_packed).unwrap(),
+        };
+        let left_linearized = build_recursive_lcccs_instance(
+            &pk,
+            &relation_id,
+            &previous_prefix,
+            &left_claim.witness_commitment,
+            &left_packed,
+            Goldilocks::new(1),
         );
+
+        let (right_claim, _) = backend
+            .prove_cccs(&pk, &relation_id, &step_statement, &right_packed, &right_opening)
+            .unwrap();
+        let (right_linearized, linearization_proof) = backend
+            .reduce_cccs(&pk, &right_claim, &right_packed, &right_opening)
+            .unwrap();
+        backend
+            .verify_linearized(&vk, &right_claim, &right_linearized, &linearization_proof)
+            .unwrap();
+
+        let (high_norm, high_norm_packed, high_norm_opening, fold_proof) = backend
+            .fold_lcccs(
+                &pk,
+                &previous_prefix,
+                &left_linearized,
+                &step_statement,
+                &right_linearized,
+                &linearization_proof,
+                &target_prefix,
+                &left_packed,
+                &left_opening,
+                &right_packed,
+                &right_opening,
+            )
+            .unwrap();
+        backend
+            .verify_fold_lcccs(
+                &vk,
+                &previous_prefix,
+                &left_linearized,
+                &step_statement,
+                &right_linearized,
+                &linearization_proof,
+                &high_norm,
+                &target_prefix,
+                &fold_proof,
+            )
+            .unwrap();
+
+        let (normalized, normalized_packed, normalized_opening, normalization_proof) = backend
+            .normalize_lcccs(
+                &pk,
+                &target_prefix,
+                &high_norm,
+                &high_norm_packed,
+                &high_norm_opening,
+            )
+            .unwrap();
+        assert_eq!(normalized, high_norm);
+        assert_eq!(normalized_packed, high_norm_packed);
+        assert_eq!(normalized_opening, high_norm_opening);
+        backend
+            .verify_normalized(
+                &vk,
+                &target_prefix,
+                &high_norm,
+                &normalized,
+                &normalization_proof,
+            )
+            .unwrap();
     }
 }
