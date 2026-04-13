@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1320" viewBox="0 0 1800 1320" role="img" aria-labelledby="title desc">
+  <title id="title">Hegemon constant-size recursive block proof blackboards</title>
+  <desc id="desc">Three blackboards covering the hard invariant, the fixed one-step relation plus unary CCCS/LCCCS accumulation law, and the terminal accumulator-plus-decider artifact for the constant-size recursive block proof design.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0E1C36"/>
+      <stop offset="100%" stop-color="#13284E"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#081224" flood-opacity="0.5"/>
+    </filter>
+    <style>
+      .board { fill: #F4F7FB; stroke: #E1E6EE; stroke-width: 2; rx: 28; }
+      .title { font: 700 32px 'Space Grotesk', Inter, sans-serif; fill: #0E1C36; }
+      .subtitle { font: 600 18px 'Space Grotesk', Inter, sans-serif; fill: #305177; letter-spacing: 1px; }
+      .body { font: 600 18px 'Space Grotesk', Inter, sans-serif; fill: #10233F; }
+      .mono { font: 600 18px 'JetBrains Mono', monospace; fill: #10233F; }
+      .small { font: 500 16px 'Space Grotesk', Inter, sans-serif; fill: #22415F; }
+      .chip { fill: #EAFDFF; stroke: #1BE7FF; stroke-width: 2; rx: 16; }
+      .good { fill: #ECFBF5; stroke: #19B37E; stroke-width: 2; rx: 16; }
+      .warn { fill: #FFF5E6; stroke: #F5A623; stroke-width: 2; rx: 16; }
+      .bad { fill: #FFF0F0; stroke: #FF4E4E; stroke-width: 2; rx: 16; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1320" fill="url(#bg)"/>
+  <text x="82" y="78" class="subtitle" fill="#F4F7FB">HEGEMON / CONSTANT-SIZE RECURSIVE BLOCK PROOF / THEOREM MAP</text>
+  <text x="82" y="122" class="title" fill="#F4F7FB">Invariant. Unary Accumulation. Seal.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="58" y="162" width="540" height="1110" class="board"/>
+    <rect x="630" y="162" width="540" height="1110" class="board"/>
+    <rect x="1202" y="162" width="540" height="1110" class="board"/>
+  </g>
+
+  <g>
+    <text x="96" y="220" class="subtitle">BLACKBOARD 1</text>
+    <text x="96" y="262" class="title">Hard Invariant</text>
+
+    <rect x="92" y="298" width="472" height="104" class="chip"/>
+    <text x="116" y="338" class="mono">|Pi_block(B)| = C_block</text>
+    <text x="116" y="370" class="small">one constant serialized artifact length for every</text>
+    <text x="116" y="394" class="small">admissible shielded block size; no hidden N_max</text>
+
+    <rect x="92" y="426" width="472" height="226" class="good"/>
+    <text x="116" y="464" class="body">Exact recursive public tuple:</text>
+    <text x="116" y="500" class="mono">Y_sem = (n, C_stmt, root_prev, root_new,</text>
+    <text x="116" y="530" class="mono"> kernel_prev, kernel_new, nullifier_root, da_root)</text>
+    <text x="116" y="566" class="mono">Y_rec = (Y_sem, C_leaf, C_receipt,</text>
+    <text x="116" y="596" class="mono">         Sigma_tree(T_0), Sigma_tree(T_n))</text>
+    <text x="116" y="628" class="mono">|Y_sem| = 340 bytes, |Y_rec| = 532 bytes</text>
+
+    <rect x="92" y="678" width="472" height="284" class="warn"/>
+    <text x="116" y="716" class="body">Must certify the real block truth surface:</text>
+    <text x="116" y="750" class="small">1. tx artifacts are already verified externally</text>
+    <text x="116" y="778" class="small">2. exact ordered verified leaves absorb to C_leaf</text>
+    <text x="116" y="806" class="small">3. exact ordered verified receipts absorb to C_receipt</text>
+    <text x="116" y="834" class="small">4. ordered statement hashes absorb to C_stmt</text>
+    <text x="116" y="862" class="small">5. append-only tree moves from T_0 to T_n</text>
+    <text x="116" y="890" class="small">6. anchors are in bounded root history</text>
+    <text x="116" y="918" class="small">7. each non-zero nullifier is unique</text>
+    <text x="116" y="946" class="small">8. consensus still recomputes nullifier_root and da_root</text>
+
+    <rect x="92" y="988" width="472" height="254" class="bad"/>
+    <text x="116" y="1026" class="body">Explicitly forbidden:</text>
+    <text x="116" y="1060" class="small">- per-tx proof bytes on chain</text>
+    <text x="116" y="1088" class="small">- representative child proofs or fold schedule on chain</text>
+    <text x="116" y="1116" class="small">- nullifier vectors / sorted vectors</text>
+    <text x="116" y="1144" class="small">- receipt_root record lists</text>
+    <text x="116" y="1172" class="small">- constancy by padding or fake proof-size caps</text>
+    <text x="116" y="1206" class="mono">prover work may be Theta(n);</text>
+    <text x="116" y="1232" class="mono">artifact bytes must stay O(1)</text>
+  </g>
+
+  <g>
+    <text x="668" y="220" class="subtitle">BLACKBOARD 2</text>
+    <text x="668" y="262" class="title">Step Relation And Unary Accumulation</text>
+
+    <rect x="664" y="298" width="472" height="150" class="chip"/>
+    <text x="688" y="338" class="body">Canonical base state and step summary:</text>
+    <text x="688" y="374" class="mono">S_0 = (0, lambda_0, tau_0, eta_0, T_0, z_384)</text>
+    <text x="688" y="408" class="mono">Q_i = (1, Sigma_state(S_{i-1}), Sigma_state(S_i))</text>
+    <text x="688" y="436" class="small">Q_pref[i] = (i, Sigma_state(S_0), Sigma_state(S_i))</text>
+
+    <rect x="664" y="470" width="472" height="258" class="good"/>
+    <text x="688" y="508" class="body">One fixed step relation:</text>
+    <text x="688" y="544" class="small">1. segment_len m is checked to equal 1</text>
+    <text x="688" y="572" class="small">2. Sigma_state boundaries match public statement</text>
+    <text x="688" y="600" class="small">3. i(S_i) = i(S_{i-1}) + 1</text>
+    <text x="688" y="628" class="small">4. absorb exact verified-leaf payload L_i into lambda</text>
+    <text x="688" y="656" class="small">5. absorb statement_hash into tau and receipt into eta</text>
+    <text x="688" y="684" class="small">6. anchor is in the bounded root history</text>
+    <text x="688" y="712" class="small">7. append commitments and insert nullifiers</text>
+
+    <rect x="664" y="750" width="472" height="354" class="warn"/>
+    <text x="688" y="788" class="body">Correct accumulation law:</text>
+    <text x="688" y="824" class="mono">A_0 uses x_pref[0], w=0, rho_open=0, u=1, r=0, and derived v_j values</text>
+    <text x="688" y="854" class="small">one common carrier layout z = (w, scalar, x); exact uses scalar = 1</text>
+    <text x="688" y="890" class="mono">u_i = CCCS_step(Q_i, x_i) --Pi_CCS(chi_i = FS(Q_i,C_i))--> B_i = U_i^lin</text>
+    <text x="688" y="920" class="small">RLCCCS_step is explicit: x = public_inputs(Q), mu = mu_step(Q), openings are private witness data</text>
+    <text x="688" y="956" class="mono">A_{i-1}, B_i, Q_pref[i] --Pi_RLC--> H_i(ew_i^hi,rho_i^hi) --Pi_DEC--> A_i</text>
+    <text x="688" y="986" class="small">rho_i binds ComposeCheck(...), target prefix summary, full typed carriers, and proof digest</text>
+    <text x="688" y="1022" class="small">Why parent satisfiability is true:</text>
+    <text x="688" y="1050" class="small">the paper fold is over full RLCCCS/LCCCS carriers for one</text>
+    <text x="688" y="1078" class="small">fixed CCS shape, temporary M_hi post-fold class, and injective 32-bit FS encoding</text>
+
+    <rect x="664" y="1128" width="472" height="114" class="bad"/>
+    <text x="688" y="1166" class="body">Critical correction:</text>
+    <text x="688" y="1200" class="small">no fake fold on (C_open, L, y), no self-referential</text>
+    <text x="688" y="1228" class="small">child-proof CCS, and no proof-system block-size cap</text>
+  </g>
+
+  <g>
+    <text x="1240" y="220" class="subtitle">BLACKBOARD 3</text>
+    <text x="1240" y="262" class="title">Final Artifact And Theorems</text>
+
+    <rect x="1236" y="298" width="472" height="214" class="chip"/>
+    <text x="1260" y="336" class="body">Terminal recursive artifact:</text>
+    <text x="1260" y="372" class="mono">Q_pref[n] = (n, Sigma_state(S_0), Sigma_state(S_n))</text>
+    <text x="1260" y="406" class="mono">Artifact_step = (Header_dec_step, A_n, pi_dec)</text>
+    <text x="1260" y="440" class="mono">A_n = terminal low-norm accumulator</text>
+    <text x="1260" y="474" class="small">pi_dec closes one valid unary transcript T_acc[0,n]</text>
+
+    <rect x="1236" y="538" width="472" height="314" class="good"/>
+    <text x="1260" y="576" class="body">Full verifier checks:</text>
+    <text x="1260" y="610" class="small">1. replay lambda_n, tau_n, eta_n, T_0, T_n, and</text>
+    <text x="1260" y="638" class="small">   U_n = SparseSetRoot(Set(N_pub)) after duplicate check</text>
+    <text x="1260" y="666" class="small">2. reconstruct S_0, S_n, then Q_pref[n]</text>
+    <text x="1260" y="694" class="small">3. check Header_dec_step against Q_pref[n] and the</text>
+    <text x="1260" y="722" class="small">   bound decider profile / canonical init accumulator</text>
+    <text x="1260" y="750" class="small">4. Verify_decide_step(vk_dec_step, Q_pref[n], A_n, pi_dec)</text>
+    <text x="1260" y="774" class="small">5. compare Y_rec = (Y_sem, C_leaf, C_receipt,</text>
+    <text x="1260" y="800" class="small">   Sigma_tree(T_0), Sigma_tree(T_n))</text>
+    <text x="1260" y="826" class="small">6. nullifier_root and da_root stay consensus-side</text>
+    <text x="1260" y="848" class="small">   deterministic recomputations</text>
+
+    <rect x="1236" y="878" width="472" height="202" class="warn"/>
+    <text x="1260" y="916" class="body">Theorem 1: soundness needs:</text>
+    <text x="1260" y="950" class="small">- sound external tx-artifact verifier</text>
+    <text x="1260" y="978" class="small">- binding C_leaf, C_receipt, C_stmt, Sigma_tree,</text>
+    <text x="1280" y="1004" class="small">Sigma_state, statement_digest_step, decider profile,</text>
+    <text x="1280" y="1030" class="small">canonical init accumulator, and backend digests</text>
+    <text x="1260" y="1054" class="small">- sound CCS reduction, RLC fold, normalization,</text>
+    <text x="1280" y="1076" class="small">and the terminal step decider</text>
+
+    <rect x="1236" y="1106" width="472" height="136" class="bad"/>
+    <text x="1260" y="1144" class="body">Theorem 2: constant wire size</text>
+    <text x="1260" y="1178" class="mono">|Pi_block(B)| = L_art_step(v*) + 532</text>
+    <text x="1260" y="1212" class="small">no serialized pi_ccs, pi_rlc, pi_norm, B_i, H_i, or T_acc</text>
+  </g>
+</svg>
