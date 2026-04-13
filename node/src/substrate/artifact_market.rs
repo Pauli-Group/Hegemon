@@ -12,6 +12,9 @@ pub fn consensus_proven_batch_mode_from_pallet(
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             consensus::ProvenBatchMode::ReceiptRoot
         }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            consensus::ProvenBatchMode::RecursiveBlock
+        }
     }
 }
 
@@ -27,6 +30,9 @@ pub fn consensus_proof_artifact_kind_from_pallet(
         }
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => {
             consensus::ProofArtifactKind::ReceiptRoot
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1 => {
+            consensus::ProofArtifactKind::RecursiveBlockV1
         }
         pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes) => {
             consensus::ProofArtifactKind::Custom(bytes)
@@ -93,6 +99,7 @@ mod tests {
             proof_kind,
             verifier_profile,
             receipt_root: None,
+            recursive_block: None,
         }
     }
 
@@ -133,6 +140,35 @@ mod tests {
         assert_eq!(
             verifier_profile,
             consensus::experimental_native_receipt_root_verifier_profile()
+        );
+    }
+
+    #[test]
+    fn recursive_block_mode_maps_to_recursive_block_v1() {
+        assert_eq!(
+            consensus_proven_batch_mode_from_pallet(
+                pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+            ),
+            consensus::ProvenBatchMode::RecursiveBlock
+        );
+        assert_eq!(
+            consensus_proof_artifact_kind_from_pallet(
+                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            ),
+            consensus::ProofArtifactKind::RecursiveBlockV1
+        );
+        let (kind, verifier_profile) = legacy_pallet_artifact_identity(
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
+        );
+        assert_eq!(
+            kind,
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        );
+        assert_eq!(
+            verifier_profile,
+            consensus::legacy_block_artifact_verifier_profile(
+                consensus::ProofArtifactKind::RecursiveBlockV1
+            )
         );
     }
 }

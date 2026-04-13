@@ -227,6 +227,7 @@ pub enum ProofArtifactKind {
     InlineTx,
     TxLeaf,
     ReceiptRoot,
+    RecursiveBlockV1,
     Custom([u8; 16]),
 }
 
@@ -236,6 +237,7 @@ impl ProofArtifactKind {
             Self::InlineTx => "inline_tx",
             Self::TxLeaf => "tx_leaf",
             Self::ReceiptRoot => "receipt_root",
+            Self::RecursiveBlockV1 => "recursive_block_v1",
             Self::Custom(_) => "custom",
         }
     }
@@ -245,6 +247,7 @@ pub fn proof_artifact_kind_from_mode(mode: ProvenBatchMode) -> ProofArtifactKind
     match mode {
         ProvenBatchMode::InlineTx => ProofArtifactKind::InlineTx,
         ProvenBatchMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
+        ProvenBatchMode::RecursiveBlock => ProofArtifactKind::RecursiveBlockV1,
     }
 }
 
@@ -281,6 +284,7 @@ pub struct TxValidityArtifact {
 pub enum ProvenBatchMode {
     InlineTx,
     ReceiptRoot,
+    RecursiveBlock,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

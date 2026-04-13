@@ -64,6 +64,7 @@ impl ProverRpc {
             proof_mode: match announcement.proof_mode {
                 consensus::ProvenBatchMode::InlineTx => "inline_tx".to_string(),
                 consensus::ProvenBatchMode::ReceiptRoot => "receipt_root".to_string(),
+                consensus::ProvenBatchMode::RecursiveBlock => "recursive_block".to_string(),
             },
             proof_kind: announcement.proof_kind.label().to_string(),
             verifier_profile: format!("0x{}", hex::encode(announcement.verifier_profile)),
@@ -149,4 +150,26 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
             None::<()>,
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_artifact_announcement_supports_recursive_block() {
+        let announcement = consensus::ArtifactAnnouncement {
+            artifact_hash: [1u8; 32],
+            tx_statements_commitment: [2u8; 48],
+            tx_count: 7,
+            proof_mode: consensus::ProvenBatchMode::RecursiveBlock,
+            proof_kind: consensus::ProofArtifactKind::RecursiveBlockV1,
+            verifier_profile: [3u8; 48],
+        };
+
+        let mapped = ProverRpc::map_artifact_announcement(announcement);
+        assert_eq!(mapped.proof_mode, "recursive_block");
+        assert_eq!(mapped.proof_kind, "recursive_block_v1");
+        assert_eq!(mapped.tx_count, 7);
+    }
 }

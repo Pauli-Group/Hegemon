@@ -208,6 +208,8 @@ pub enum BlockProofMode {
     InlineTx,
     /// Verify an experimental receipt root over canonical tx-validity receipts.
     ReceiptRoot,
+    /// Verify a recursive block-proof artifact over the canonical verified leaf stream.
+    RecursiveBlock,
 }
 
 /// Backend-neutral proof artifact kind. `proof_mode` remains for legacy block-payload handling,
@@ -229,6 +231,7 @@ pub enum ProofArtifactKind {
     InlineTx,
     TxLeaf,
     ReceiptRoot,
+    RecursiveBlockV1,
     Custom([u8; 16]),
 }
 
@@ -238,6 +241,7 @@ impl ProofArtifactKind {
             Self::InlineTx => "inline_tx",
             Self::TxLeaf => "tx_leaf",
             Self::ReceiptRoot => "receipt_root",
+            Self::RecursiveBlockV1 => "recursive_block_v1",
             Self::Custom(_) => "custom",
         }
     }
@@ -247,6 +251,7 @@ pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind 
     match mode {
         BlockProofMode::InlineTx => ProofArtifactKind::InlineTx,
         BlockProofMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
+        BlockProofMode::RecursiveBlock => ProofArtifactKind::RecursiveBlockV1,
     }
 }
 
@@ -267,6 +272,11 @@ pub struct ReceiptRootProofPayload {
     pub receipts: Vec<TxValidityReceipt>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct RecursiveBlockProofPayload {
+    pub proof: StarkProof,
+}
+
 /// Parent-agnostic proof object over an ordered transaction set.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct CandidateArtifact {
@@ -280,7 +290,7 @@ pub struct CandidateArtifact {
     pub da_root: [u8; 48],
     /// DA chunk count bound by the commitment proof.
     pub da_chunk_count: u32,
-    /// Commitment proof bytes.
+    /// Commitment proof bytes for the canonical statement-commitment proof.
     pub commitment_proof: StarkProof,
     /// Proof mode for this bundle.
     pub proof_mode: BlockProofMode,
@@ -290,6 +300,8 @@ pub struct CandidateArtifact {
     pub verifier_profile: VerifierProfileDigest,
     /// Optional receipt-root proof payload (required in ReceiptRoot mode).
     pub receipt_root: Option<ReceiptRootProofPayload>,
+    /// Optional recursive block-proof artifact payload (required in RecursiveBlock mode).
+    pub recursive_block: Option<RecursiveBlockProofPayload>,
 }
 
 #[allow(deprecated)]

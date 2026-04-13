@@ -2675,16 +2675,27 @@ pub mod pallet {
         }
 
         pub(crate) fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
-            let receipt_root_bytes = bundle
-                .receipt_root
-                .as_ref()
-                .map(|receipt_root| receipt_root.root_proof.data.len())
-                .unwrap_or(0);
-            let aggregation_bytes = match bundle.proof_mode {
-                types::BlockProofMode::InlineTx => 0,
-                types::BlockProofMode::ReceiptRoot => receipt_root_bytes,
-            };
-            bundle.commitment_proof.data.len() + aggregation_bytes
+            match bundle.proof_mode {
+                types::BlockProofMode::InlineTx => {
+                    bundle.commitment_proof.data.len()
+                }
+                types::BlockProofMode::RecursiveBlock => {
+                    let recursive_bytes = bundle
+                        .recursive_block
+                        .as_ref()
+                        .map(|recursive| recursive.proof.data.len())
+                        .unwrap_or(0);
+                    bundle.commitment_proof.data.len() + recursive_bytes
+                }
+                types::BlockProofMode::ReceiptRoot => {
+                    let receipt_root_bytes = bundle
+                        .receipt_root
+                        .as_ref()
+                        .map(|receipt_root| receipt_root.root_proof.data.len())
+                        .unwrap_or(0);
+                    bundle.commitment_proof.data.len() + receipt_root_bytes
+                }
+            }
         }
 
         pub(crate) fn validate_block_proof_bundle_mode(
@@ -2698,11 +2709,14 @@ pub mod pallet {
             }
             match bundle.proof_mode {
                 types::BlockProofMode::InlineTx => {
-                    if bundle.receipt_root.is_some() {
+                    if bundle.receipt_root.is_some() || bundle.recursive_block.is_some() {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
                 }
                 types::BlockProofMode::ReceiptRoot => {
+                    if bundle.recursive_block.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
                     let receipt_root = bundle
                         .receipt_root
                         .as_ref()
@@ -2724,6 +2738,20 @@ pub mod pallet {
                         if receipt.verifier_profile == [0u8; 48] {
                             return Err(Error::<T>::InvalidProofFormat);
                         }
+                    }
+                }
+                types::BlockProofMode::RecursiveBlock => {
+                    if bundle.receipt_root.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    let recursive_block = bundle
+                        .recursive_block
+                        .as_ref()
+                        .ok_or(Error::<T>::InvalidProofFormat)?;
+                    if recursive_block.proof.data.is_empty()
+                        || recursive_block.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE
+                    {
+                        return Err(Error::<T>::ProofTooLarge);
                     }
                 }
             }
@@ -3242,6 +3270,25 @@ mod tests {
                     verifier_profile: [9u8; 48],
                 }],
             }),
+            recursive_block: None,
+        }
+    }
+
+    fn dummy_recursive_candidate_artifact() -> types::CandidateArtifact {
+        types::CandidateArtifact {
+            version: types::BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: 2,
+            tx_statements_commitment: [11u8; 48],
+            da_root: [12u8; 48],
+            da_chunk_count: 3,
+            commitment_proof: types::StarkProof::from_bytes(vec![13u8; 64]),
+            proof_mode: types::BlockProofMode::RecursiveBlock,
+            proof_kind: types::ProofArtifactKind::RecursiveBlockV1,
+            verifier_profile: [14u8; 48],
+            receipt_root: None,
+            recursive_block: Some(types::RecursiveBlockProofPayload {
+                proof: types::StarkProof::from_bytes(vec![15u8; 96]),
+            }),
         }
     }
 
@@ -3593,6 +3640,19 @@ mod tests {
                 &dummy_candidate_artifact(),
             )
             .expect("candidate artifact validate path should be stateless");
+
+            assert!(!meta.propagate);
+            assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_is_accepted() {
+        mock::new_test_ext().execute_with(|| {
+            let meta = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                &dummy_recursive_candidate_artifact(),
+            )
+            .expect("recursive candidate artifact validate path should accept recursive mode");
 
             assert!(!meta.propagate);
             assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));

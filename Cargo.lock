@@ -1617,6 +1617,7 @@ dependencies = [
  "bincode",
  "blake3",
  "block-circuit",
+ "block-recursion",
  "crossbeam-channel",
  "hex",
  "network",

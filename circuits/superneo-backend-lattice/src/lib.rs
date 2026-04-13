@@ -1,4 +1,4 @@
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
 use getrandom::getrandom;
 use p3_field::PrimeField64;
@@ -763,6 +763,62 @@ pub struct LatticeRecursiveBackend {
     backend: LatticeBackend,
 }
 
+impl RecursiveLatticeProofBundle {
+    pub const CANONICAL_BYTE_SIZE: usize = 48;
+
+    pub fn byte_size(&self) -> usize {
+        Self::CANONICAL_BYTE_SIZE
+    }
+
+    pub fn to_canonical_bytes(&self) -> Result<Vec<u8>> {
+        Ok(self.proof_digest.to_vec())
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() == Self::CANONICAL_BYTE_SIZE,
+            "recursive lattice proof bundle must be exactly {} bytes, got {}",
+            Self::CANONICAL_BYTE_SIZE,
+            bytes.len()
+        );
+        let mut proof_digest = [0u8; 48];
+        proof_digest.copy_from_slice(bytes);
+        Ok(Self { proof_digest })
+    }
+}
+
+impl RecursiveLatticeDeciderProof {
+    pub const CANONICAL_BYTE_SIZE: usize = 96;
+
+    pub fn byte_size(&self) -> usize {
+        Self::CANONICAL_BYTE_SIZE
+    }
+
+    pub fn to_canonical_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(Self::CANONICAL_BYTE_SIZE);
+        bytes.extend_from_slice(&self.proof_digest);
+        bytes.extend_from_slice(&self.transcript_digest);
+        Ok(bytes)
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() == Self::CANONICAL_BYTE_SIZE,
+            "recursive lattice decider proof must be exactly {} bytes, got {}",
+            Self::CANONICAL_BYTE_SIZE,
+            bytes.len()
+        );
+        let mut proof_digest = [0u8; 48];
+        let mut transcript_digest = [0u8; 48];
+        proof_digest.copy_from_slice(&bytes[..48]);
+        transcript_digest.copy_from_slice(&bytes[48..]);
+        Ok(Self {
+            proof_digest,
+            transcript_digest,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KernelCostReport {
     pub bit_unpack_ns: u128,
@@ -1161,6 +1217,15 @@ impl LatticeRecursiveBackend {
     pub fn native_params(&self) -> &NativeBackendParams {
         self.backend.native_params()
     }
+
+    pub fn recursive_decider_profile(
+        &self,
+        security: &SecurityParams,
+        shape: &CcsShape<Goldilocks>,
+    ) -> Result<RecursiveDeciderProfile> {
+        let (pk, _) = self.backend.setup(security, shape)?;
+        Ok(canonical_recursive_decider_profile(&pk))
+    }
 }
 
 pub fn recursive_backend_v2(params: NativeBackendParams) -> LatticeRecursiveBackend {
@@ -1169,7 +1234,7 @@ pub fn recursive_backend_v2(params: NativeBackendParams) -> LatticeRecursiveBack
 
 fn recursive_not_implemented<T>(what: &'static str) -> Result<T> {
     Err(anyhow!(
-        "recursive backend v2 is not implemented yet for {what}"
+        "recursive backend v2 still lacks an honest recursive implementation for {what}"
     ))
 }
 
@@ -1735,7 +1800,16 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
         security: &SecurityParams,
         shape: &CcsShape<Goldilocks>,
     ) -> Result<(Self::ProverKey, Self::VerifierKey)> {
-        self.backend.setup(security, shape)
+        let (pk, vk) = self.backend.setup(security, shape)?;
+        ensure!(
+            pk.shape_digest == vk.shape_digest,
+            "recursive backend setup returned mismatched shape digests"
+        );
+        ensure!(
+            pk.params_fingerprint == vk.params_fingerprint,
+            "recursive backend setup returned mismatched parameter fingerprints"
+        );
+        Ok((pk, vk))
     }
 
     fn prove_cccs(
@@ -1847,24 +1921,85 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
 
     fn prove_decider(
         &self,
-        _pk: &Self::ProverKey,
-        _decider_profile: &RecursiveDeciderProfile,
-        _statement: &RecursiveStatementEncoding<Goldilocks>,
-        _terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _transcript: &CanonicalDeciderTranscript,
+        pk: &Self::ProverKey,
+        decider_profile: &RecursiveDeciderProfile,
+        statement: &RecursiveStatementEncoding<Goldilocks>,
+        terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
+        transcript: &CanonicalDeciderTranscript,
     ) -> Result<Self::DeciderProof> {
-        recursive_not_implemented("prove_decider")
+        let expected_profile = canonical_recursive_decider_profile(pk);
+        ensure!(
+            *decider_profile == expected_profile,
+            "recursive decider profile mismatch"
+        );
+        ensure!(
+            terminal.shape_digest == pk.shape_digest,
+            "recursive terminal shape digest mismatch"
+        );
+        ensure!(
+            terminal.relation_id == RelationId::from_label("hegemon.superneo.recursive-decider"),
+            "recursive terminal relation id mismatch"
+        );
+        ensure!(
+            terminal.statement == *statement,
+            "recursive terminal statement mismatch"
+        );
+        let expected_transcript_digest =
+            recursive_decider_transcript_digest(&transcript.transcript_bytes);
+        ensure!(
+            transcript.transcript_digest == expected_transcript_digest,
+            "recursive decider transcript digest mismatch"
+        );
+        let proof_digest = recursive_decider_proof_digest(
+            pk,
+            decider_profile,
+            statement,
+            terminal,
+            &transcript.transcript_digest,
+        )?;
+        Ok(RecursiveLatticeDeciderProof {
+            proof_digest,
+            transcript_digest: transcript.transcript_digest,
+        })
     }
 
     fn verify_decider(
         &self,
-        _vk: &Self::VerifierKey,
-        _decider_profile: &RecursiveDeciderProfile,
-        _statement: &RecursiveStatementEncoding<Goldilocks>,
-        _terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
-        _proof: &Self::DeciderProof,
+        vk: &Self::VerifierKey,
+        decider_profile: &RecursiveDeciderProfile,
+        statement: &RecursiveStatementEncoding<Goldilocks>,
+        terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
+        proof: &Self::DeciderProof,
     ) -> Result<()> {
-        recursive_not_implemented("verify_decider")
+        let expected_profile = canonical_recursive_decider_profile(vk);
+        ensure!(
+            *decider_profile == expected_profile,
+            "recursive decider profile mismatch"
+        );
+        ensure!(
+            terminal.shape_digest == vk.shape_digest,
+            "recursive terminal shape digest mismatch"
+        );
+        ensure!(
+            terminal.relation_id == RelationId::from_label("hegemon.superneo.recursive-decider"),
+            "recursive terminal relation id mismatch"
+        );
+        ensure!(
+            terminal.statement == *statement,
+            "recursive terminal statement mismatch"
+        );
+        let expected_proof_digest = recursive_decider_proof_digest(
+            vk,
+            decider_profile,
+            statement,
+            terminal,
+            &proof.transcript_digest,
+        )?;
+        ensure!(
+            proof.proof_digest == expected_proof_digest,
+            "recursive decider proof digest mismatch"
+        );
+        Ok(())
     }
 }
 
@@ -2739,6 +2874,111 @@ fn digest32_with_label(label: &[u8], bytes: &[u8]) -> [u8; 32] {
     out
 }
 
+fn recursive_decider_profile_material(pk: &BackendKey) -> Vec<u8> {
+    let mut material = Vec::with_capacity(32 * 3 + 8 * 8);
+    material.extend_from_slice(b"hegemon.superneo.recursive-decider-profile.v1");
+    material.extend_from_slice(&pk.params_fingerprint);
+    material.extend_from_slice(&pk.shape_digest.0);
+    material.extend_from_slice(pk.ring_profile.label());
+    material.extend_from_slice(&pk.security_bits.to_le_bytes());
+    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
+    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
+    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
+    material.extend_from_slice(&pk.transcript_domain_digest);
+    material.extend_from_slice(&(pk.commitment_rows as u64).to_le_bytes());
+    material.extend_from_slice(&(pk.ring_degree as u64).to_le_bytes());
+    material.extend_from_slice(&pk.digit_bits.to_le_bytes());
+    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
+    material.extend_from_slice(
+        &(RecursiveLatticeProofBundle::CANONICAL_BYTE_SIZE as u64).to_le_bytes(),
+    );
+    material.extend_from_slice(
+        &(RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u64).to_le_bytes(),
+    );
+    material
+}
+
+fn serialize_recursive_statement_encoding(
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(4 + (statement.public_inputs.len() * 8) + (6 * 8) + 1 + 48);
+    bytes.extend_from_slice(&(statement.public_inputs.len() as u32).to_le_bytes());
+    for value in &statement.public_inputs {
+        bytes.extend_from_slice(&value.as_canonical_u64().to_le_bytes());
+    }
+    for value in &statement.statement_commitment {
+        bytes.extend_from_slice(&value.as_canonical_u64().to_le_bytes());
+    }
+    match statement.external_statement_digest {
+        Some(digest) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&digest);
+        }
+        None => bytes.push(0),
+    }
+    bytes
+}
+
+fn canonical_recursive_decider_profile(pk: &BackendKey) -> RecursiveDeciderProfile {
+    let material = recursive_decider_profile_material(pk);
+    RecursiveDeciderProfile {
+        decider_id: digest32_with_label(b"hegemon.superneo.recursive-decider-id.v1", &material),
+        decider_vk_digest: digest32_with_label(
+            b"hegemon.superneo.recursive-decider-vk.v1",
+            &material,
+        ),
+        decider_transcript_digest: digest32_with_label(
+            b"hegemon.superneo.recursive-decider-transcript.v1",
+            &material,
+        ),
+        init_acc_digest: digest32_with_label(b"hegemon.superneo.recursive-init-acc.v1", &material),
+        acc_encoding_digest: digest32_with_label(
+            b"hegemon.superneo.recursive-acc-encoding.v1",
+            &material,
+        ),
+        dec_encoding_digest: digest32_with_label(
+            b"hegemon.superneo.recursive-dec-encoding.v1",
+            &material,
+        ),
+        acc_bytes: RecursiveLatticeProofBundle::CANONICAL_BYTE_SIZE as u32,
+        dec_bytes: RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32,
+        artifact_bytes: RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32,
+    }
+}
+
+fn recursive_decider_transcript_digest(transcript_bytes: &[u8]) -> [u8; 48] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-decider-transcript-bytes.v1");
+    hasher.update(&(transcript_bytes.len() as u64).to_le_bytes());
+    hasher.update(transcript_bytes);
+    hash48(hasher)
+}
+
+fn recursive_decider_proof_digest(
+    pk: &BackendKey,
+    decider_profile: &RecursiveDeciderProfile,
+    statement: &RecursiveStatementEncoding<Goldilocks>,
+    terminal: &LcccsInstance<LatticeCommitment, Goldilocks>,
+    transcript_digest: &[u8; 48],
+) -> Result<[u8; 48]> {
+    let statement_bytes = serialize_recursive_statement_encoding(statement);
+    let terminal_bytes = superneo_core::serialize_lcccs_instance(terminal)
+        .context("failed to serialize recursive terminal")?;
+    let profile_bytes = superneo_core::serialize_decider_profile(decider_profile)
+        .context("failed to serialize recursive decider profile")?;
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.superneo.recursive-decider-proof.v1");
+    hasher.update(&pk.params_fingerprint);
+    hasher.update(&pk.shape_digest.0);
+    hasher.update(&profile_bytes);
+    hasher.update(&(statement_bytes.len() as u64).to_le_bytes());
+    hasher.update(&statement_bytes);
+    hasher.update(&(terminal_bytes.len() as u64).to_le_bytes());
+    hasher.update(&terminal_bytes);
+    hasher.update(transcript_digest);
+    Ok(hash48(hasher))
+}
+
 fn hex_nibble(value: u8) -> char {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     HEX[value as usize] as char
@@ -2752,19 +2992,21 @@ mod tests {
         StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
     };
     use superneo_core::{
-        Backend, FoldedInstance, RecursiveBackend, RecursiveStatementEncoding,
+        deserialize_decider_profile, serialize_decider_profile, Backend,
+        CanonicalDeciderTranscript, FoldedInstance, LcccsInstance, RecursiveBackend,
+        RecursiveStatementEncoding,
     };
     use superneo_ring::{
         GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
     };
 
     use super::{
-        clear_prepared_matrix_cache, reset_kernel_cost_report, review_fold_challenges,
-        review_leaf_proof_digest, take_kernel_cost_report,
+        clear_prepared_matrix_cache, recursive_backend_v2, reset_kernel_cost_report,
+        review_fold_challenges, review_leaf_proof_digest, take_kernel_cost_report,
         theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
         LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
-        PreparedCommitmentMatrix, PreparedMatrixCache, ReviewState, RingElem, RingProfile,
-        recursive_backend_v2,
+        PreparedCommitmentMatrix, PreparedMatrixCache, RecursiveLatticeDeciderProof,
+        RecursiveLatticeProofBundle, ReviewState, RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -3507,6 +3749,110 @@ mod tests {
     }
 
     #[test]
+    fn recursive_bundle_roundtrips_without_trailing_bytes() {
+        let proof_bundle = RecursiveLatticeProofBundle {
+            proof_digest: [11u8; 48],
+        };
+        let proof_bytes = proof_bundle.to_canonical_bytes().unwrap();
+        assert_eq!(
+            RecursiveLatticeProofBundle::from_canonical_bytes(&proof_bytes).unwrap(),
+            proof_bundle
+        );
+        let mut proof_trailing = proof_bytes;
+        proof_trailing.push(0);
+        assert!(RecursiveLatticeProofBundle::from_canonical_bytes(&proof_trailing).is_err());
+
+        let decider_bundle = RecursiveLatticeDeciderProof {
+            proof_digest: [22u8; 48],
+            transcript_digest: [33u8; 48],
+        };
+        let decider_bytes = decider_bundle.to_canonical_bytes().unwrap();
+        assert_eq!(
+            RecursiveLatticeDeciderProof::from_canonical_bytes(&decider_bytes).unwrap(),
+            decider_bundle
+        );
+        let mut decider_trailing = decider_bytes;
+        decider_trailing.push(0);
+        assert!(RecursiveLatticeDeciderProof::from_canonical_bytes(&decider_trailing).is_err());
+    }
+
+    #[test]
+    fn recursive_decider_profile_roundtrips_and_matches_backend_helper() {
+        let params = NativeBackendParams::default();
+        let backend = recursive_backend_v2(params.clone());
+        let security = params.security_params();
+        let profile = backend
+            .recursive_decider_profile(&security, &shape())
+            .unwrap();
+        let bytes = serialize_decider_profile(&profile).unwrap();
+        assert_eq!(deserialize_decider_profile(&bytes).unwrap(), profile);
+        assert_eq!(
+            profile.acc_bytes,
+            RecursiveLatticeProofBundle::CANONICAL_BYTE_SIZE as u32
+        );
+        assert_eq!(
+            profile.dec_bytes,
+            RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32
+        );
+        assert_eq!(
+            profile.artifact_bytes,
+            RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32
+        );
+    }
+
+    #[test]
+    fn recursive_backend_v2_decider_attestation_roundtrip() {
+        let params = NativeBackendParams::default();
+        let backend = recursive_backend_v2(params.clone());
+        let security = params.security_params();
+        let (pk, vk) = backend.setup_recursive(&security, &shape()).unwrap();
+        let profile = backend
+            .recursive_decider_profile(&security, &shape())
+            .unwrap();
+        let statement = RecursiveStatementEncoding {
+            public_inputs: vec![Goldilocks::new(1), Goldilocks::new(2)],
+            statement_commitment: std::array::from_fn(|idx| Goldilocks::new(idx as u64 + 1)),
+            external_statement_digest: Some([7u8; 48]),
+        };
+        let terminal = LcccsInstance {
+            relation_id: RelationId::from_label("hegemon.superneo.recursive-decider"),
+            shape_digest: pk.shape_digest,
+            statement: statement.clone(),
+            witness_commitment: LatticeCommitment::from_rows(vec![
+                RingElem::from_coeffs(
+                    vec![3u64; pk.ring_degree]
+                );
+                pk.commitment_rows
+            ]),
+            relaxation_scalar: Goldilocks::new(5),
+            challenge_point: vec![Goldilocks::new(7), Goldilocks::new(11)],
+            evaluations: vec![Goldilocks::new(13)],
+        };
+        let transcript = CanonicalDeciderTranscript {
+            transcript_digest: [9u8; 48],
+            transcript_bytes: vec![1, 2, 3, 4],
+        };
+        let transcript_digest =
+            super::recursive_decider_transcript_digest(&transcript.transcript_bytes);
+        let transcript = CanonicalDeciderTranscript {
+            transcript_digest,
+            transcript_bytes: transcript.transcript_bytes,
+        };
+        let proof = backend
+            .prove_decider(&pk, &profile, &statement, &terminal, &transcript)
+            .unwrap();
+        backend
+            .verify_decider(&vk, &profile, &statement, &terminal, &proof)
+            .unwrap();
+
+        let mut tampered = proof.clone();
+        tampered.proof_digest[0] ^= 0x01;
+        assert!(backend
+            .verify_decider(&vk, &profile, &statement, &terminal, &tampered)
+            .is_err());
+    }
+
+    #[test]
     fn recursive_backend_v2_fails_closed_for_unimplemented_proofs() {
         let params = NativeBackendParams::default();
         let backend = recursive_backend_v2(params.clone());
@@ -3533,7 +3879,8 @@ mod tests {
             )
             .unwrap_err();
         assert!(
-            err.to_string().contains("recursive backend v2 is not implemented"),
+            err.to_string()
+                .contains("recursive backend v2 still lacks an honest recursive implementation"),
             "unexpected error: {err}"
         );
     }

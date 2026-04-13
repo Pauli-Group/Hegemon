@@ -2507,12 +2507,23 @@ struct PreparedArtifactSelector {
 
 impl PreparedArtifactSelector {
     fn from_mode(mode: pallet_shielded_pool::types::BlockProofMode) -> Self {
-        let (proof_kind, verifier_profile) =
-            crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
-        Self {
-            legacy_mode: mode,
-            proof_kind,
-            verifier_profile,
+        match mode {
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+            | pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+                let (proof_kind, verifier_profile) =
+                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
+                Self {
+                    legacy_mode: mode,
+                    proof_kind,
+                    verifier_profile,
+                }
+            }
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+                tracing::warn!(
+                    "recursive_block mode requested but recursive authoring backend is unavailable; forcing receipt_root selector"
+                );
+                Self::receipt_root()
+            }
         }
     }
 
@@ -2526,7 +2537,17 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     if raw.is_empty()
         || raw.eq_ignore_ascii_case("receipt_root")
         || raw.eq_ignore_ascii_case("receipt-root")
+        || raw.eq_ignore_ascii_case("recursive_block")
+        || raw.eq_ignore_ascii_case("recursive-block")
     {
+        if raw.eq_ignore_ascii_case("recursive_block")
+            || raw.eq_ignore_ascii_case("recursive-block")
+        {
+            tracing::warn!(
+                mode = raw,
+                "recursive_block HEGEMON_BLOCK_PROOF_MODE requested but recursive authoring backend is unavailable; forcing receipt_root on the product path"
+            );
+        }
         return PreparedArtifactSelector::receipt_root();
     }
     tracing::warn!(
@@ -2574,16 +2595,22 @@ fn ensure_native_only_receipt_root_selector(
     if !native_only_receipt_root_required_from_env() {
         return Ok(());
     }
-    if selector != PreparedArtifactSelector::receipt_root() {
-        return Err(format!(
+    match selector.legacy_mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            tracing::info!("native-only receipt_root lane selected");
+            Ok(())
+        }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => Err(
+            "HEGEMON_REQUIRE_NATIVE=1 requires the receipt_root lane; recursive_block authoring backend is unavailable"
+                .to_string(),
+        ),
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
             "HEGEMON_REQUIRE_NATIVE=1 requires HEGEMON_BLOCK_PROOF_MODE=receipt_root; got legacy_mode {:?}, proof_kind {:?}, verifier_profile {}",
             selector.legacy_mode,
             selector.proof_kind,
             hex::encode(selector.verifier_profile),
-        ));
+        )),
     }
-    tracing::info!("native-only receipt_root lane selected");
-    Ok(())
 }
 
 fn ensure_native_only_receipt_root_outcome(
@@ -3160,18 +3187,20 @@ fn should_store_prove_ahead_aggregation_outcome(
     selector: PreparedArtifactSelector,
     outcome: &PreparedAggregationOutcome,
 ) -> bool {
-    if selector.legacy_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
-        return true;
+    match selector.legacy_mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            matches!(
+                outcome.artifacts,
+                PreparedAggregationArtifacts::ReceiptRoot(_)
+            ) && outcome
+                .native_selection_report
+                .as_ref()
+                .map(|report| report.used_native_lane)
+                .unwrap_or(true)
+        }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => false,
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => true,
     }
-
-    matches!(
-        outcome.artifacts,
-        PreparedAggregationArtifacts::ReceiptRoot(_)
-    ) && outcome
-        .native_selection_report
-        .as_ref()
-        .map(|report| report.used_native_lane)
-        .unwrap_or(true)
 }
 
 #[derive(Clone, Debug)]
@@ -3325,6 +3354,11 @@ fn block_proof_payload_aggregation_bytes(
             .as_ref()
             .map(|receipt_root| receipt_root.root_proof.data.len())
             .unwrap_or(0),
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => payload
+            .recursive_block
+            .as_ref()
+            .map(|recursive_block| recursive_block.proof.data.len())
+            .unwrap_or(0),
     }
 }
 
@@ -3337,6 +3371,11 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
             .receipt_root
             .as_ref()
             .map(|receipt_root| receipt_root.root_proof.data.len())
+            .unwrap_or(0),
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => payload
+            .recursive_block
+            .as_ref()
+            .map(|recursive_block| recursive_block.proof.data.len())
             .unwrap_or(0),
     }
 }
@@ -3515,6 +3554,10 @@ fn prepare_block_proof_bundle(
                             prepared.outcome
                         })
                     }
+                    pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => Err(
+                        "recursive_block authoring backend is unavailable; receipt_root is the only supported native lane"
+                            .to_string(),
+                    ),
                 };
                 if let Ok(ref artifacts) = built {
                     if should_store_prove_ahead_aggregation_outcome(selected_artifact, artifacts) {
@@ -3679,6 +3722,7 @@ fn prepare_block_proof_bundle(
         proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
         verifier_profile: consensus::experimental_native_receipt_root_verifier_profile(),
         receipt_root: None,
+        recursive_block: None,
     };
     match aggregation_outcome.artifacts {
         PreparedAggregationArtifacts::InlineTx => {
@@ -4380,12 +4424,43 @@ fn verify_proof_carrying_block(
     if payload.tx_count != transactions.len() as u32 {
         return Err("proven batch tx_count mismatch".to_string());
     }
-    ensure_product_receipt_root_payload(&payload)?;
-    ensure_native_only_receipt_root_payload(&payload)?;
-    receipt_root_lane_requires_embedded_proof_bytes(
-        payload.proof_kind,
-        missing_proof_bindings.len(),
-    )?;
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            ensure_product_receipt_root_payload(&payload)?;
+            ensure_native_only_receipt_root_payload(&payload)?;
+            receipt_root_lane_requires_embedded_proof_bytes(
+                payload.proof_kind,
+                missing_proof_bindings.len(),
+            )?;
+        }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            ensure_native_only_receipt_root_payload(&payload)?;
+            if payload.proof_kind
+                != pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            {
+                return Err(format!(
+                    "recursive_block payload must use recursive_block_v1 kind; got {:?}",
+                    payload.proof_kind,
+                ));
+            }
+            if payload.receipt_root.is_some() {
+                return Err(
+                    "recursive_block payload must not carry a receipt_root proof".to_string(),
+                );
+            }
+            if payload.recursive_block.is_none() {
+                return Err(
+                    "recursive_block payload is missing the recursive block artifact".to_string(),
+                );
+            }
+        }
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+            return Err(
+                "non-empty shielded blocks require self-contained aggregation artifacts"
+                    .to_string(),
+            );
+        }
+    }
     let aggregation_payload_bytes = block_proof_payload_aggregation_bytes(&payload);
     let verification_mode = consensus::types::ProofVerificationMode::SelfContainedAggregation;
     if aggregation_payload_bytes == 0 {
@@ -4436,17 +4511,62 @@ fn verify_proof_carrying_block(
         Some(payload.da_root),
     )?;
     let tx_validity_artifacts = extracted_tx_artifacts.clone();
-    let receipt_root = payload
-        .receipt_root
-        .as_ref()
-        .ok_or_else(|| "receipt_root payload missing from canonical native bundle".to_string())?;
-    let block_artifact = Some(consensus::ProofEnvelope {
-        kind: crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-            payload.proof_kind,
-        ),
-        verifier_profile: payload.verifier_profile,
-        artifact_bytes: receipt_root.root_proof.data.clone(),
-    });
+    let (block_artifact, receipt_root_payload) = match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            let receipt_root = payload.receipt_root.as_ref().ok_or_else(|| {
+                "receipt_root payload missing from canonical native bundle".to_string()
+            })?;
+            (
+                Some(consensus::ProofEnvelope {
+                    kind:
+                        crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                            payload.proof_kind,
+                        ),
+                    verifier_profile: payload.verifier_profile,
+                    artifact_bytes: receipt_root.root_proof.data.clone(),
+                }),
+                Some(consensus::types::ReceiptRootProofPayload {
+                    root_proof: receipt_root.root_proof.data.clone(),
+                    metadata: consensus::types::ReceiptRootMetadata {
+                        params_fingerprint:
+                            consensus::experimental_native_receipt_root_params_fingerprint(),
+                        relation_id: receipt_root.metadata.relation_id,
+                        shape_digest: receipt_root.metadata.shape_digest,
+                        leaf_count: receipt_root.metadata.leaf_count,
+                        fold_count: receipt_root.metadata.fold_count,
+                    },
+                    receipts: receipt_root
+                        .receipts
+                        .iter()
+                        .cloned()
+                        .map(|receipt| consensus::types::TxValidityReceipt {
+                            statement_hash: receipt.statement_hash,
+                            proof_digest: receipt.proof_digest,
+                            public_inputs_digest: receipt.public_inputs_digest,
+                            verifier_profile: receipt.verifier_profile,
+                        })
+                        .collect(),
+                }),
+            )
+        }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            let recursive_block = payload.recursive_block.as_ref().ok_or_else(|| {
+                "recursive_block payload missing recursive artifact bytes".to_string()
+            })?;
+            (
+                Some(consensus::ProofEnvelope {
+                    kind:
+                        crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
+                            payload.proof_kind,
+                        ),
+                    verifier_profile: payload.verifier_profile,
+                    artifact_bytes: recursive_block.proof.data.clone(),
+                }),
+                None,
+            )
+        }
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => (None, None),
+    };
 
     let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
     tracing::info!(
@@ -4490,28 +4610,7 @@ fn verify_proof_carrying_block(
                     payload.proof_kind,
                 ),
             verifier_profile: payload.verifier_profile,
-            receipt_root: Some(consensus::types::ReceiptRootProofPayload {
-                root_proof: receipt_root.root_proof.data.clone(),
-                metadata: consensus::types::ReceiptRootMetadata {
-                    params_fingerprint:
-                        consensus::experimental_native_receipt_root_params_fingerprint(),
-                    relation_id: receipt_root.metadata.relation_id,
-                    shape_digest: receipt_root.metadata.shape_digest,
-                    leaf_count: receipt_root.metadata.leaf_count,
-                    fold_count: receipt_root.metadata.fold_count,
-                },
-                receipts: receipt_root
-                    .receipts
-                    .iter()
-                    .cloned()
-                    .map(|receipt| consensus::types::TxValidityReceipt {
-                        statement_hash: receipt.statement_hash,
-                        proof_digest: receipt.proof_digest,
-                        public_inputs_digest: receipt.public_inputs_digest,
-                        verifier_profile: receipt.verifier_profile,
-                    })
-                    .collect(),
-            }),
+            receipt_root: receipt_root_payload,
         }),
         tx_validity_artifacts,
         block_artifact,
@@ -4825,6 +4924,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
     let require_ready_bundle = matches!(
         selector.proof_kind,
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
     );
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
@@ -4854,6 +4954,11 @@ fn mining_pause_reason_for_pending_shielded_batch(
         pallet_shielded_pool::types::ProofArtifactKind::TxLeaf => return Ok(None),
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot => format!(
             "receipt_root shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
+            shielded_tx_count,
+            missing.len()
+        ),
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1 => format!(
+            "recursive_block shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
             shielded_tx_count,
             missing.len()
         ),
@@ -4901,6 +5006,7 @@ fn ready_bundle_trace_for_candidate(
     let require_ready_bundle = matches!(
         selector.proof_kind,
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
     );
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
@@ -10756,6 +10862,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     consensus::ProvenBatchMode::ReceiptRoot => {
                                         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
                                     }
+                                    consensus::ProvenBatchMode::RecursiveBlock => {
+                                        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+                                    }
                                 },
                                 proof_kind: match announcement.proof_kind {
                                     consensus::ProofArtifactKind::InlineTx => {
@@ -10766,6 +10875,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                     consensus::ProofArtifactKind::ReceiptRoot => {
                                         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+                                    }
+                                    consensus::ProofArtifactKind::RecursiveBlockV1 => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
                                     }
                                     consensus::ProofArtifactKind::Custom(bytes) => {
                                         pallet_shielded_pool::types::ProofArtifactKind::Custom(
@@ -10797,6 +10909,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let prepared_bundle_required_while_proving = matches!(
             selected_artifact.proof_kind,
             pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+                | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
         );
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
@@ -11876,6 +11989,7 @@ mod tests {
             )
             .1,
             receipt_root: None,
+            recursive_block: None,
         }
     }
 
@@ -11953,6 +12067,20 @@ mod tests {
         assert_eq!(
             selector.verifier_profile,
             consensus::experimental_native_receipt_root_verifier_profile()
+        );
+    }
+
+    #[test]
+    fn recursive_block_mode_is_forced_to_receipt_root() {
+        let _guard = set_block_proof_mode("recursive_block");
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.legacy_mode,
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        );
+        assert_eq!(
+            selector.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
         );
     }
 
@@ -12067,6 +12195,24 @@ mod tests {
     }
 
     #[test]
+    fn recursive_block_outcomes_are_not_cacheable() {
+        let selector = PreparedArtifactSelector {
+            legacy_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1,
+            verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+                consensus::ProofArtifactKind::RecursiveBlockV1,
+            ),
+        };
+        let outcome = PreparedAggregationOutcome::native(
+            PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
+            NativeArtifactSelectionReport::native_lane_selected(),
+        );
+        assert!(!should_store_prove_ahead_aggregation_outcome(
+            selector, &outcome
+        ));
+    }
+
+    #[test]
     fn receipt_root_cache_key_binds_tx_artifact_identity() {
         let selector = PreparedArtifactSelector::receipt_root();
         let first_artifacts = vec![dummy_native_tx_validity_artifact_variant(10)];
@@ -12173,6 +12319,20 @@ mod tests {
         let payload = dummy_block_proof_bundle();
         let err = ensure_native_only_receipt_root_payload(&payload)
             .expect_err("native-only mode must reject inline payloads on import");
+        assert!(err.contains("canonical native receipt_root is required"));
+    }
+
+    #[test]
+    fn require_native_receipt_root_rejects_recursive_block_payload() {
+        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+        let mut payload = dummy_block_proof_bundle();
+        payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
+        payload.verifier_profile = consensus::legacy_block_artifact_verifier_profile(
+            consensus::ProofArtifactKind::RecursiveBlockV1,
+        );
+        let err = ensure_native_only_receipt_root_payload(&payload)
+            .expect_err("native-only mode must reject recursive_block payloads on import");
         assert!(err.contains("canonical native receipt_root is required"));
     }
 
@@ -12763,6 +12923,7 @@ mod tests {
                     )
                     .1,
                 receipt_root: Some(dummy_receipt_root_payload()),
+                recursive_block: None,
             },
             candidate_txs.clone(),
         );
@@ -12864,6 +13025,7 @@ mod tests {
                     )
                     .1,
                 receipt_root: Some(dummy_receipt_root_payload()),
+                recursive_block: None,
             },
             candidate_txs.clone(),
         );

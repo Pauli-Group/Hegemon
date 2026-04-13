@@ -1,6 +1,13 @@
-use crate::{public_replay::RecursiveBlockPublicV1, BlockRecursionError, Digest32, Digest48};
+use crate::{
+    fold_digest32, fold_digest48, public_replay::RecursiveBlockPublicV1, BlockRecursionError,
+    Digest32, Digest48,
+};
 
 pub type CanonicalDeciderTranscript = Vec<u8>;
+
+pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V1: u16 = 1;
+pub const RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1: u16 = 1;
+pub const BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1: u16 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeaderDecStepV1 {
@@ -177,6 +184,29 @@ pub fn serialize_block_accumulation_transcript_v1(
     Ok(out)
 }
 
+pub fn block_accumulation_transcript_serializer_digest_v1() -> Digest32 {
+    fold_digest32(
+        b"block_accumulation_transcript_serializer_v1",
+        &[
+            &TRANSCRIPT_MAGIC,
+            &BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1.to_le_bytes(),
+            b"step_count:u32",
+            b"transcript_bytes_len:u32",
+            b"transcript_bytes:opaque",
+        ],
+    )
+}
+
+pub fn block_accumulation_transcript_digest_v1(
+    transcript: &BlockAccumulationTranscriptV1,
+) -> Result<Digest32, BlockRecursionError> {
+    let bytes = serialize_block_accumulation_transcript_v1(transcript)?;
+    Ok(fold_digest32(
+        b"block_accumulation_transcript_digest_v1",
+        &[&bytes],
+    ))
+}
+
 pub fn deserialize_block_accumulation_transcript_v1(
     bytes: &[u8],
 ) -> Result<BlockAccumulationTranscriptV1, BlockRecursionError> {
@@ -225,6 +255,31 @@ fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u
     put_fixed(&mut out, &public.frontier_commitment);
     put_fixed(&mut out, &public.history_commitment);
     out
+}
+
+pub fn recursive_block_public_statement_digest_v1(
+    public: &RecursiveBlockPublicV1,
+) -> Digest48 {
+    let bytes = serialize_recursive_block_public_v1(public);
+    fold_digest48(b"recursive_block_public_statement_v1", &[&bytes])
+}
+
+pub fn header_dec_step_profile_digest_v1(header: &HeaderDecStepV1) -> Digest32 {
+    fold_digest32(
+        b"header_dec_step_profile_v1",
+        &[
+            &header.version.to_le_bytes(),
+            &header.proof_kind.to_le_bytes(),
+            &header.header_bytes.to_le_bytes(),
+            &header.artifact_bytes.to_le_bytes(),
+            &header.relation_id,
+            &header.shape_digest,
+            &header.accumulator_serializer_digest,
+            &header.decider_serializer_digest,
+            &header.accumulator_bytes.to_le_bytes(),
+            &header.decider_bytes.to_le_bytes(),
+        ],
+    )
 }
 
 fn deserialize_recursive_block_public_v1(

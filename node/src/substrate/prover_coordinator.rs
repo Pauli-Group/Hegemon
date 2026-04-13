@@ -1180,7 +1180,17 @@ impl ProverCoordinator {
         if raw.is_empty()
             || raw.eq_ignore_ascii_case("receipt_root")
             || raw.eq_ignore_ascii_case("receipt-root")
+            || raw.eq_ignore_ascii_case("recursive_block")
+            || raw.eq_ignore_ascii_case("recursive-block")
         {
+            if raw.eq_ignore_ascii_case("recursive_block")
+                || raw.eq_ignore_ascii_case("recursive-block")
+            {
+                tracing::warn!(
+                    mode = raw,
+                    "recursive_block HEGEMON_BLOCK_PROOF_MODE requested but recursive authoring backend is unavailable; forcing receipt_root on the product path"
+                );
+            }
             return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         }
         tracing::warn!(
@@ -1196,6 +1206,7 @@ impl ProverCoordinator {
         matches!(
             mode,
             pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+                | pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         )
     }
 
@@ -1220,6 +1231,7 @@ fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
     match mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => 0,
         pallet_shielded_pool::types::BlockProofMode::InlineTx => 1,
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => 2,
     }
 }
 
@@ -1331,6 +1343,7 @@ mod tests {
                 },
                 receipts: Vec::new(),
             }),
+            recursive_block: None,
         }
     }
 
@@ -1364,6 +1377,22 @@ mod tests {
         let looked_up = coordinator.lookup_prepared_bundle(parent_hash, commitment, 2);
         assert!(looked_up.is_some());
         assert_eq!(coordinator.pending_transactions(8).len(), 2);
+    }
+
+    #[test]
+    fn recursive_block_mode_is_forced_to_receipt_root() {
+        let _mode = set_block_proof_mode("recursive_block");
+        assert_eq!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        );
+        assert!(ProverCoordinator::proof_mode_requires_prepared_bundles(
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+        ));
+        assert_eq!(
+            proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::RecursiveBlock),
+            2
+        );
     }
 
     #[test]
