@@ -1170,6 +1170,7 @@ dependencies = [
  "superneo-hegemon",
  "superneo-ring",
  "transaction-circuit",
+ "transaction-core",
 ]
 
 [[package]]

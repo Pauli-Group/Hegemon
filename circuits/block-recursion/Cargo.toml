@@ -19,6 +19,7 @@ superneo-ccs = { path = "../superneo-ccs" }
 superneo-core = { path = "../superneo-core" }
 superneo-hegemon = { path = "../superneo-hegemon" }
 superneo-ring = { path = "../superneo-ring" }
+transaction-core = { path = "../transaction-core" }
 transaction-circuit = { path = "../transaction" }
 protocol-versioning = { path = "../../protocol/versioning" }
 

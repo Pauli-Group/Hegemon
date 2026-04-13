@@ -1,5 +1,12 @@
 use crate::{
     BlockRecursionError, Digest32, Digest48, fold_digest32, fold_digest48,
+    local_smallwood_poseidon2::{
+        SmallwoodConfig, decs_commitment_transcript, decs_recompute_root, derive_gamma_prime,
+        ensure_no_packing_collisions, ensure_row_polynomial_arithmetization,
+        hash_challenge_opening_decs, hash_piop_transcript, lvcs_recompute_rows,
+        pcs_build_coefficients, pcs_reconstruct_combi_heads, piop_recompute_transcript,
+        validate_proof_shape, xof_decs_opening, xof_piop_opening_points,
+    },
     public_replay::{BlockLeafRecordV1, RecursiveBlockPublicV1},
     statement::{RecursivePrefixStatementV1, recursive_prefix_statement_digest_v1},
 };
@@ -14,12 +21,7 @@ use superneo_ring::{
     GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
 };
 use transaction_circuit::{
-    decs_commitment_transcript, decs_recompute_root, derive_gamma_prime,
-    ensure_no_packing_collisions, ensure_row_polynomial_arithmetization,
-    hash_challenge_opening_decs, hash_piop_transcript, lvcs_recompute_rows,
-    pcs_build_coefficients, pcs_reconstruct_combi_heads, piop_recompute_transcript,
-    validate_proof_shape, xof_decs_opening, xof_piop_opening_points, RecursiveSmallwoodProfileV1,
-    SmallwoodArithmetization, SmallwoodConfig, SmallwoodConstraintAdapter,
+    RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
     SmallwoodNonlinearEvalView, SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveRelationKindV1, SmallwoodRecursiveVerifierDescriptorV1,
     SmallwoodTranscriptBackend, TransactionCircuitError, SMALLWOOD_DECS_NB_EVALS,
@@ -27,7 +29,7 @@ use transaction_circuit::{
     decode_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_envelope_bytes_v1,
     projected_smallwood_recursive_proof_bytes_v1, recursive_binding_bytes_v1,
     recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    smallwood_binding_words_v1, smallwood_proof_from_trace_v1, verify_recursive_statement_direct_v1,
+    smallwood_binding_words_v1, verify_recursive_statement_direct_v1,
 };
 
 const RECURSIVE_BLOCK_RELATION_LABEL_V1: &str = "hegemon.superneo.block-recursive.v1";
@@ -822,8 +824,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     let cfg = SmallwoodConfig::new(relation)?;
     ensure_row_polynomial_arithmetization(relation)?;
     let proof_trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
-    let proof = smallwood_proof_from_trace_v1(&proof_trace);
-    validate_proof_shape(&cfg, &proof)?;
+    validate_proof_shape(&cfg, &proof_trace)?;
     let binding_words =
         smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
     let eval_points = xof_piop_opening_points(
@@ -871,7 +872,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         &proof_trace.salt,
         &rows,
         &decs_eval_points,
-        proof_trace.decs_proof_v1(),
+        &proof_trace,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
     let pcs_transcript_words = decs_commitment_transcript(
@@ -880,7 +881,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         &rows,
         &root_digest,
         &decs_eval_points,
-        proof_trace.decs_proof_v1(),
+        &proof_trace,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
     let mut piop_input_words = pcs_transcript_words.clone();
@@ -890,8 +891,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         relation,
         &piop_input_words,
         &eval_points,
-        &proof_trace.opened_witness_row_scalars,
-        &proof_trace.piop,
+        &proof_trace,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
     let hash_fpp = hash_piop_transcript(&piop_input_words, SmallwoodTranscriptBackend::Poseidon2);

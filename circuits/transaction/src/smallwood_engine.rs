@@ -85,6 +85,14 @@ pub struct SmallwoodProofTraceV1 {
 }
 
 impl SmallwoodProofTraceV1 {
+    pub fn piop_ppol_highs_v1(&self) -> &[Vec<u64>] {
+        &self.piop.ppol_highs
+    }
+
+    pub fn piop_plin_highs_v1(&self) -> &[Vec<u64>] {
+        &self.piop.plin_highs
+    }
+
     pub fn decs_proof_v1(&self) -> &DecsProof {
         &self.pcs.decs
     }

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod artifacts;
+mod local_smallwood_poseidon2;
 mod prover;
 mod public_replay;
 mod relation;
