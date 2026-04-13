@@ -260,7 +260,7 @@ impl<'a> PackedStatement<'a> {
     }
 }
 
-pub(crate) trait SmallwoodConstraintAdapter: Sync {
+pub trait SmallwoodConstraintAdapter: Sync {
     fn arithmetization(&self) -> SmallwoodArithmetization;
     fn row_count(&self) -> usize;
     fn packing_factor(&self) -> usize;
@@ -284,7 +284,7 @@ pub(crate) trait SmallwoodConstraintAdapter: Sync {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum SmallwoodNonlinearEvalView<'a> {
+pub enum SmallwoodNonlinearEvalView<'a> {
     RowScalars { eval_point: u64, rows: &'a [u64] },
 }
 

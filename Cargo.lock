@@ -1160,13 +1160,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "blake3",
  "p3-field",
  "p3-goldilocks",
+ "protocol-versioning",
  "superneo-backend-lattice",
  "superneo-ccs",
  "superneo-core",
  "superneo-hegemon",
  "superneo-ring",
+ "transaction-circuit",
 ]
 
 [[package]]

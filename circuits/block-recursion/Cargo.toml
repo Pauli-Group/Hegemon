@@ -11,6 +11,7 @@ description = "Recursive block-proof scaffolding for Hegemon"
 [dependencies]
 anyhow = "1"
 bincode = "1.3"
+blake3 = "1"
 p3-field = { workspace = true }
 p3-goldilocks = { workspace = true }
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
@@ -18,6 +19,8 @@ superneo-ccs = { path = "../superneo-ccs" }
 superneo-core = { path = "../superneo-core" }
 superneo-hegemon = { path = "../superneo-hegemon" }
 superneo-ring = { path = "../superneo-ring" }
+transaction-circuit = { path = "../transaction" }
+protocol-versioning = { path = "../../protocol/versioning" }
 
 [lints]
 workspace = true

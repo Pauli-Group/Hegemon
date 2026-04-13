@@ -33,12 +33,17 @@ pub use public_replay::{
 pub use relation::{
     block_leaf_inputs_v1, block_public_inputs_v1, empty_prefix_public_v1,
     ensure_expected_relation_v1, ensure_expected_shape_v1, leaf_statement_v1,
+    hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
+    hosted_step_binding_bytes_v1, verify_hosted_recursive_proof_context_components_v1,
+    verify_hosted_recursive_proof_context_v1, verify_recursive_proof_envelope_components_v1,
     pack_statement_witness_v1, prefix_statement_v1, recursive_block_relation_id_v1,
-    recursive_block_shape_digest_v1, recursive_block_shape_v1, BlockStatementKindV1,
+    recursive_block_shape_digest_v1, recursive_block_shape_v1, BaseARelationV1,
+    BlockStatementKindV1, HostedRecursiveProofContextV1, StepARelationV1, StepBRelationV1,
 };
 pub use state::{fold_digest32, fold_digest48, Digest32, Digest48};
 pub use statement::{
-    statement_digest_v1, BlockPrefixStatementV1, BlockStepStatementV1, ComposeCheckV1,
+    recursive_prefix_statement_digest_v1, statement_digest_v1, BlockPrefixStatementV1,
+    BlockStepStatementV1, ComposeCheckV1, RecursivePrefixStatementV1,
 };
 pub use verifier::verify_block_recursive_v1;
 

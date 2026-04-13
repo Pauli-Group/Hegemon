@@ -1,6 +1,35 @@
 use crate::{fold_digest48, BlockRecursionError, Digest32, Digest48};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecursivePrefixStatementV1 {
+    pub tx_count: u32,
+    pub start_state_digest: Digest48,
+    pub end_state_digest: Digest48,
+    pub verified_leaf_commitment: Digest48,
+    pub tx_statements_commitment: Digest48,
+    pub verified_receipt_commitment: Digest48,
+    pub start_tree_commitment: Digest48,
+    pub end_tree_commitment: Digest48,
+}
+
+pub fn recursive_prefix_statement_digest_v1(statement: &RecursivePrefixStatementV1) -> Digest48 {
+    let tx_count = statement.tx_count.to_le_bytes();
+    fold_digest48(
+        b"hegemon.block-recursion.recursive-prefix-statement.v1",
+        &[
+            &tx_count,
+            &statement.start_state_digest,
+            &statement.end_state_digest,
+            &statement.verified_leaf_commitment,
+            &statement.tx_statements_commitment,
+            &statement.verified_receipt_commitment,
+            &statement.start_tree_commitment,
+            &statement.end_tree_commitment,
+        ],
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockPrefixStatementV1 {
     pub tx_count: u32,
     pub tx_statements_commitment: Digest48,

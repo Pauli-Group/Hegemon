@@ -32,6 +32,7 @@ pub mod public_inputs;
 mod smallwood_engine;
 pub mod smallwood_frontend;
 pub mod smallwood_native;
+pub mod smallwood_recursive;
 mod smallwood_semantics;
 pub mod trace;
 pub mod witness;
@@ -55,6 +56,21 @@ pub use smallwood_frontend::{
     prove_smallwood_candidate_with_arithmetization, verify_smallwood_candidate_proof_bytes,
     SmallwoodCandidateProof,
 };
+pub use smallwood_recursive::{
+    decode_smallwood_recursive_proof_envelope_v1, encode_smallwood_recursive_proof_envelope_v1,
+    parse_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_envelope_bytes_v1,
+    projected_smallwood_recursive_proof_bytes_v1, prove_recursive_statement_v1,
+    recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
+    recursive_binding_bytes_v1,
+    serialize_smallwood_recursive_verifier_descriptor_v1,
+    smallwood_recursive_proof_encoding_digest_v1,
+    smallwood_recursive_verifier_descriptor_digest_v1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1,
+    SmallwoodRecursiveVerifierDescriptorV1, verify_recursive_proof_components_v1,
+    verify_recursive_proof_envelope_v1, verify_recursive_statement_direct_v1,
+    verify_recursive_statement_v1, RecursiveSmallwoodProfileV1,
+};
+pub use smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodNonlinearEvalView};
 pub use witness::TransactionWitness;
 
 // Legacy Plonky3 exports

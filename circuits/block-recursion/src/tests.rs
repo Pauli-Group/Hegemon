@@ -1,11 +1,24 @@
 use std::sync::OnceLock;
 
+use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use super::{
     deserialize_recursive_block_artifact_v1, prove_block_recursive_v1, public_replay_v1,
     serialize_recursive_block_artifact_v1, serialize_recursive_block_public_v1,
-    verify_block_recursive_v1, BlockLeafRecordV1, BlockRecursionError,
+    verify_block_recursive_v1, BaseARelationV1,
+    BlockLeafRecordV1, BlockRecursionError, RecursivePrefixStatementV1,
     BlockRecursiveProverInputV1, BlockSemanticInputsV1, RecursiveBlockArtifactV1,
-    RecursiveBlockPublicV1,
+    RecursiveBlockPublicV1, StepARelationV1, StepBRelationV1,
+    HostedRecursiveProofContextV1, hosted_base_binding_bytes_v1,
+    hosted_recursive_descriptor_v1, hosted_step_binding_bytes_v1,
+    verify_hosted_recursive_proof_context_components_v1,
+    verify_recursive_proof_envelope_components_v1,
+};
+use transaction_circuit::{
+    encode_smallwood_recursive_proof_envelope_v1,
+    prove_recursive_statement_v1, recursive_profile_a_v1,
+    recursive_profile_b_v1, verify_recursive_statement_v1, SmallwoodRecursiveProofEnvelopeV1,
+    SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
+    TransactionCircuitError,
 };
 
 fn digest32(tag: u8, idx: u32) -> [u8; 32] {
@@ -72,6 +85,52 @@ fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPub
 fn cached_two_tx_artifact() -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
     static CACHE: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
     CACHE.get_or_init(|| prove_artifact(2)).clone()
+}
+
+fn base_prefix_statement() -> RecursivePrefixStatementV1 {
+    RecursivePrefixStatementV1 {
+        tx_count: 0,
+        start_state_digest: digest48(0x01, 0),
+        end_state_digest: digest48(0x01, 0),
+        verified_leaf_commitment: [0u8; 48],
+        tx_statements_commitment: digest48(0x02, 0),
+        verified_receipt_commitment: [0u8; 48],
+        start_tree_commitment: digest48(0x03, 0),
+        end_tree_commitment: digest48(0x03, 0),
+    }
+}
+
+fn sample_leaf_record(tx_index: u32) -> BlockLeafRecordV1 {
+    BlockLeafRecordV1 {
+        tx_index,
+        receipt_statement_hash: digest48(0x10, tx_index),
+        receipt_proof_digest: digest48(0x20, tx_index),
+        receipt_public_inputs_digest: digest48(0x30, tx_index),
+        receipt_verifier_profile: digest48(0x40, tx_index),
+        leaf_params_fingerprint: digest48(0x50, tx_index),
+        leaf_spec_digest: digest32(0x60, tx_index),
+        leaf_relation_id: digest32(0x70, tx_index),
+        leaf_shape_digest: digest32(0x80, tx_index),
+        leaf_statement_digest: digest48(0x90, tx_index),
+        leaf_commitment_digest: digest48(0xa0, tx_index),
+        leaf_proof_digest: digest48(0xb0, tx_index),
+    }
+}
+
+fn step_statement_pair() -> (RecursivePrefixStatementV1, BlockLeafRecordV1, RecursivePrefixStatementV1) {
+    let previous = base_prefix_statement();
+    let leaf = sample_leaf_record(previous.tx_count);
+    let target = RecursivePrefixStatementV1 {
+        tx_count: previous.tx_count + 1,
+        start_state_digest: previous.start_state_digest,
+        end_state_digest: digest48(0x11, 1),
+        verified_leaf_commitment: digest48(0x12, 1),
+        tx_statements_commitment: previous.tx_statements_commitment,
+        verified_receipt_commitment: digest48(0x13, 1),
+        start_tree_commitment: previous.start_tree_commitment,
+        end_tree_commitment: digest48(0x14, 1),
+    };
+    (previous, leaf, target)
 }
 
 #[test]
@@ -172,4 +231,254 @@ fn proof_bytes_constant_across_tx_counts() {
         .unwrap()
         .len();
     assert_eq!(short, long);
+}
+
+#[test]
+fn base_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
+    let statement = base_prefix_statement();
+    let relation = BaseARelationV1::new(statement.clone(), statement.clone());
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let binding = hosted_base_binding_bytes_v1(&statement);
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &[0u64; 8],
+        &binding,
+    )
+    .unwrap();
+    verify_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &binding,
+        &proof,
+    )
+    .unwrap();
+}
+
+#[test]
+fn recursive_proof_envelope_component_checks_reject_tampered_envelope() {
+    let statement = base_prefix_statement();
+    let relation = BaseARelationV1::new(statement.clone(), statement.clone());
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let binding = hosted_base_binding_bytes_v1(&statement);
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &[0u64; 8],
+        &binding,
+    )
+    .unwrap();
+    let mut envelope_bytes = encode_smallwood_recursive_proof_envelope_v1(
+        &SmallwoodRecursiveProofEnvelopeV1 {
+            descriptor,
+            proof_bytes: proof,
+        },
+    )
+    .unwrap();
+    envelope_bytes[0] ^= 1;
+    let err = verify_recursive_proof_envelope_components_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &hosted_recursive_descriptor_v1(
+            SmallwoodRecursiveProfileTagV1::A,
+            SmallwoodRecursiveRelationKindV1::BaseA,
+        ),
+        &relation,
+        &binding,
+        &envelope_bytes,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        TransactionCircuitError::ConstraintViolation(_)
+            | TransactionCircuitError::ConstraintViolationOwned(_)
+    ));
+}
+
+#[test]
+fn step_b_relation_proves_and_verifies_on_recursive_smallwood_profile() {
+    let base_statement = base_prefix_statement();
+    let base_relation = BaseARelationV1::new(base_statement.clone(), base_statement.clone());
+    let base_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let base_binding = hosted_base_binding_bytes_v1(&base_statement);
+    let base_proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &base_descriptor,
+        &base_relation,
+        &[0u64; 8],
+        &base_binding,
+    )
+    .unwrap();
+    let base_envelope_bytes = encode_smallwood_recursive_proof_envelope_v1(
+        &SmallwoodRecursiveProofEnvelopeV1 {
+            descriptor: base_descriptor.clone(),
+            proof_bytes: base_proof,
+        },
+    )
+    .unwrap();
+    let base_context = HostedRecursiveProofContextV1::BaseA {
+        statement: base_statement.clone(),
+        proof_envelope_bytes: base_envelope_bytes,
+    };
+
+    let (previous, leaf, target) = step_statement_pair();
+    let relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let binding = hosted_step_binding_bytes_v1(&base_context, &previous, &leaf, &target);
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &[0u64; 8],
+        &binding,
+    )
+    .unwrap();
+    verify_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &binding,
+        &proof,
+    )
+    .unwrap();
+    let step_context = HostedRecursiveProofContextV1::StepB {
+        previous_recursive_proof: Box::new(base_context),
+        previous_statement: previous,
+        leaf_record: leaf,
+        target_statement: target,
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor,
+                proof_bytes: proof,
+            },
+        )
+        .unwrap(),
+    };
+    verify_hosted_recursive_proof_context_components_v1(&step_context).unwrap();
+}
+
+#[test]
+fn step_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
+    let base_statement = base_prefix_statement();
+    let base_relation = BaseARelationV1::new(base_statement.clone(), base_statement.clone());
+    let base_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let base_binding = hosted_base_binding_bytes_v1(&base_statement);
+    let base_proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &base_descriptor,
+        &base_relation,
+        &[0u64; 8],
+        &base_binding,
+    )
+    .unwrap();
+    let base_context = HostedRecursiveProofContextV1::BaseA {
+        statement: base_statement.clone(),
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: base_descriptor.clone(),
+                proof_bytes: base_proof,
+            },
+        )
+        .unwrap(),
+    };
+    let (previous, leaf, target) = step_statement_pair();
+    let step_b_relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let step_b_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let step_b_binding = hosted_step_binding_bytes_v1(&base_context, &previous, &leaf, &target);
+    let step_b_proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_b_descriptor,
+        &step_b_relation,
+        &[0u64; 8],
+        &step_b_binding,
+    )
+    .unwrap();
+    let step_b_context = HostedRecursiveProofContextV1::StepB {
+        previous_recursive_proof: Box::new(base_context),
+        previous_statement: previous.clone(),
+        leaf_record: leaf.clone(),
+        target_statement: target.clone(),
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: step_b_descriptor,
+                proof_bytes: step_b_proof,
+            },
+        )
+        .unwrap(),
+    };
+
+    let next_leaf = sample_leaf_record(target.tx_count);
+    let next_target = RecursivePrefixStatementV1 {
+        tx_count: target.tx_count + 1,
+        start_state_digest: target.start_state_digest,
+        end_state_digest: digest48(0x21, 2),
+        verified_leaf_commitment: digest48(0x22, 2),
+        tx_statements_commitment: target.tx_statements_commitment,
+        verified_receipt_commitment: digest48(0x23, 2),
+        start_tree_commitment: target.start_tree_commitment,
+        end_tree_commitment: digest48(0x24, 2),
+    };
+    let relation = StepARelationV1::new(
+        step_b_context.clone(),
+        target.clone(),
+        next_leaf.clone(),
+        next_target.clone(),
+    );
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::StepA,
+    );
+    let binding = hosted_step_binding_bytes_v1(&step_b_context, &target, &next_leaf, &next_target);
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &[0u64; 8],
+        &binding,
+    )
+    .unwrap();
+    let step_a_context = HostedRecursiveProofContextV1::StepA {
+        previous_recursive_proof: Box::new(step_b_context),
+        previous_statement: target,
+        leaf_record: next_leaf,
+        target_statement: next_target,
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor,
+                proof_bytes: proof,
+            },
+        )
+        .unwrap(),
+    };
+    verify_hosted_recursive_proof_context_components_v1(&step_a_context).unwrap();
 }
