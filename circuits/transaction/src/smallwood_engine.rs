@@ -84,6 +84,32 @@ pub struct SmallwoodProofTraceV1 {
     pub opened_witness_row_scalars: Vec<Vec<u64>>,
 }
 
+impl SmallwoodProofTraceV1 {
+    pub fn pcs_partial_evals_v1(&self) -> &[Vec<u64>] {
+        &self.pcs.partial_evals
+    }
+
+    pub fn pcs_rcombi_tails_v1(&self) -> &[Vec<u64>] {
+        &self.pcs.rcombi_tails
+    }
+
+    pub fn pcs_subset_evals_v1(&self) -> &[Vec<u64>] {
+        &self.pcs.subset_evals
+    }
+
+    pub fn decs_auth_paths_v1(&self) -> &[Vec<[u8; DIGEST_BYTES]>] {
+        &self.pcs.decs.auth_paths
+    }
+
+    pub fn decs_masking_evals_v1(&self) -> &[Vec<u64>] {
+        &self.pcs.decs.masking_evals
+    }
+
+    pub fn decs_high_coeffs_v1(&self) -> &[Vec<u64>] {
+        &self.pcs.decs.high_coeffs
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmallwoodPcsVerifierTraceV1 {
     pub coeffs: Vec<Vec<u64>>,
@@ -95,6 +121,15 @@ pub struct SmallwoodPcsVerifierTraceV1 {
     pub rows: Vec<Vec<u64>>,
     pub root_digest: [u8; DIGEST_BYTES],
     pub decs_commitment_transcript: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodPiopVerifierTraceV1 {
+    pub pcs_transcript_words: Vec<u64>,
+    pub piop_input_words: Vec<u64>,
+    pub piop_gamma_prime: Vec<Vec<u64>>,
+    pub piop_transcript_words: Vec<u64>,
+    pub accept: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -974,6 +1009,179 @@ pub fn build_smallwood_poseidon2_verifier_trace_v1(
         proof_bytes,
         SmallwoodTranscriptBackend::Poseidon2,
     )
+}
+
+fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> SmallwoodProof {
+    SmallwoodProof {
+        salt: trace.salt,
+        nonce: trace.nonce,
+        h_piop: trace.h_piop,
+        piop: trace.piop.clone(),
+        pcs: trace.pcs.clone(),
+        opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(
+            trace.opened_witness_row_scalars.clone(),
+        ),
+    }
+}
+
+pub fn decode_smallwood_proof_trace_v1(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodProofTraceV1, TransactionCircuitError> {
+    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to deserialize rust smallwood proof: {err}"
+        ))
+    })?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    Ok(SmallwoodProofTraceV1 {
+        salt: proof.salt,
+        nonce: proof.nonce,
+        h_piop: proof.h_piop,
+        piop: proof.piop,
+        pcs: proof.pcs,
+        opened_witness_row_scalars: row_scalars.to_vec(),
+    })
+}
+
+pub fn smallwood_binding_words_v1(
+    binded_data: &[u8],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    bytes_to_words(binded_data)
+}
+
+pub fn smallwood_poseidon2_eval_points_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let eval_points = xof_piop_opening_points(
+        &proof.nonce,
+        &proof.h_piop,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
+    Ok(eval_points)
+}
+
+pub fn smallwood_poseidon2_pcs_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    eval_points: &[u64],
+) -> Result<SmallwoodPcsVerifierTraceV1, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
+    pcs_build_coefficients(&cfg, eval_points, &mut coeffs);
+    let combi_heads =
+        pcs_reconstruct_combi_heads(&cfg, eval_points, row_scalars, &proof.pcs.partial_evals)?;
+    let decs_trans_hash = hash_challenge_opening_decs(
+        &cfg,
+        &combi_heads,
+        &proof.h_piop,
+        &proof.pcs.rcombi_tails,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
+        SMALLWOOD_DECS_NB_EVALS,
+        SMALLWOOD_DECS_NB_OPENED_EVALS,
+        SMALLWOOD_DECS_POW_BITS,
+        &decs_trans_hash,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let decs_eval_points = decs_leaf_indexes
+        .iter()
+        .map(|&idx| idx as u64)
+        .collect::<Vec<_>>();
+    let rows = lvcs_recompute_rows(
+        &cfg,
+        &coeffs,
+        &combi_heads,
+        &proof.pcs.rcombi_tails,
+        &proof.pcs.subset_evals,
+        &decs_eval_points,
+    )?;
+    let root_digest = decs_recompute_root(
+        &cfg,
+        &proof.salt,
+        &rows,
+        &decs_eval_points,
+        &proof.pcs.decs,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let decs_commitment_transcript = decs_commitment_transcript(
+        &cfg,
+        &proof.salt,
+        &rows,
+        &root_digest,
+        &decs_eval_points,
+        &proof.pcs.decs,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    Ok(SmallwoodPcsVerifierTraceV1 {
+        coeffs,
+        combi_heads,
+        decs_trans_hash,
+        decs_leaf_indexes,
+        decs_nonce,
+        decs_eval_points,
+        rows,
+        root_digest,
+        decs_commitment_transcript,
+    })
+}
+
+pub fn smallwood_poseidon2_piop_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_words: &[u64],
+    proof_trace: &SmallwoodProofTraceV1,
+    eval_points: &[u64],
+    pcs_trace: &SmallwoodPcsVerifierTraceV1,
+) -> Result<SmallwoodPiopVerifierTraceV1, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    let pcs_transcript_words = pcs_trace.decs_commitment_transcript.clone();
+    let mut piop_input_words = pcs_transcript_words.clone();
+    piop_input_words.extend_from_slice(binded_words);
+    let piop_transcript_words = piop_recompute_transcript(
+        &cfg,
+        statement,
+        &piop_input_words,
+        eval_points,
+        row_scalars,
+        &proof.piop,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let recomputed = hash_piop_transcript(&piop_transcript_words, SmallwoodTranscriptBackend::Poseidon2);
+    let hash_fpp = hash_piop(&piop_input_words, SmallwoodTranscriptBackend::Poseidon2);
+    let piop_gamma_prime = derive_gamma_prime(&cfg, &hash_fpp, SmallwoodTranscriptBackend::Poseidon2);
+    Ok(SmallwoodPiopVerifierTraceV1 {
+        pcs_transcript_words,
+        piop_input_words,
+        piop_gamma_prime,
+        piop_transcript_words,
+        accept: recomputed == proof.h_piop,
+    })
 }
 
 fn validate_proof_shape(
