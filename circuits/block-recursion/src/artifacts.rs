@@ -35,11 +35,16 @@ pub struct BlockAccumulationTranscriptV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveBlockArtifactV1 {
+pub struct RecursiveBlockInnerArtifactV1 {
     pub header: HeaderDecStepV1,
-    pub public: RecursiveBlockPublicV1,
     pub accumulator_bytes: Vec<u8>,
     pub decider_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecursiveBlockArtifactV1 {
+    pub artifact: RecursiveBlockInnerArtifactV1,
+    pub public: RecursiveBlockPublicV1,
 }
 
 const HEADER_MAGIC: [u8; 8] = *b"HBRC0001";
@@ -279,8 +284,8 @@ pub fn compress_transcript_digest_v1(transcript_digest: &Digest48) -> Digest32 {
     )
 }
 
-fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + (48 * 9) + (32 * 2));
+pub fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + (48 * 11));
     put_u32(&mut out, public.tx_count);
     put_fixed(&mut out, &public.tx_statements_commitment);
     put_fixed(&mut out, &public.verified_leaf_commitment);
@@ -291,8 +296,8 @@ fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u
     put_fixed(&mut out, &public.end_kernel_root);
     put_fixed(&mut out, &public.nullifier_root);
     put_fixed(&mut out, &public.da_root);
-    put_fixed(&mut out, &public.frontier_commitment);
-    put_fixed(&mut out, &public.history_commitment);
+    put_fixed(&mut out, &public.start_tree_commitment);
+    put_fixed(&mut out, &public.end_tree_commitment);
     out
 }
 
@@ -335,8 +340,8 @@ fn deserialize_recursive_block_public_v1(
     let end_kernel_root = read_fixed::<48>(bytes, cursor)?;
     let nullifier_root = read_fixed::<48>(bytes, cursor)?;
     let da_root = read_fixed::<48>(bytes, cursor)?;
-    let frontier_commitment = read_fixed::<32>(bytes, cursor)?;
-    let history_commitment = read_fixed::<32>(bytes, cursor)?;
+    let start_tree_commitment = read_fixed::<48>(bytes, cursor)?;
+    let end_tree_commitment = read_fixed::<48>(bytes, cursor)?;
     Ok(RecursiveBlockPublicV1 {
         tx_count,
         tx_statements_commitment,
@@ -348,15 +353,14 @@ fn deserialize_recursive_block_public_v1(
         end_kernel_root,
         nullifier_root,
         da_root,
-        frontier_commitment,
-        history_commitment,
+        start_tree_commitment,
+        end_tree_commitment,
     })
 }
 
-pub fn serialize_recursive_block_artifact_v1(
-    artifact: &RecursiveBlockArtifactV1,
+pub fn serialize_recursive_block_inner_artifact_v1(
+    artifact: &RecursiveBlockInnerArtifactV1,
 ) -> Result<Vec<u8>, BlockRecursionError> {
-    let public_bytes = serialize_recursive_block_public_v1(&artifact.public);
     let header_bytes_preview = serialize_header_dec_step_v1(&HeaderDecStepV1 {
         header_bytes: 0,
         artifact_bytes: 0,
@@ -365,7 +369,6 @@ pub fn serialize_recursive_block_artifact_v1(
     let header_len = header_bytes_preview.len() as u32;
     let artifact_len = (ARTIFACT_MAGIC.len()
         + header_bytes_preview.len()
-        + public_bytes.len()
         + 4
         + artifact.accumulator_bytes.len()
         + 4
@@ -379,7 +382,6 @@ pub fn serialize_recursive_block_artifact_v1(
     let mut out = Vec::with_capacity(artifact_len as usize);
     out.extend_from_slice(&ARTIFACT_MAGIC);
     out.extend_from_slice(&header_bytes);
-    out.extend_from_slice(&public_bytes);
     put_u32(&mut out, artifact.accumulator_bytes.len() as u32);
     out.extend_from_slice(&artifact.accumulator_bytes);
     put_u32(&mut out, artifact.decider_bytes.len() as u32);
@@ -387,9 +389,9 @@ pub fn serialize_recursive_block_artifact_v1(
     Ok(out)
 }
 
-pub fn deserialize_recursive_block_artifact_v1(
+fn parse_recursive_block_inner_artifact_v1_prefix(
     bytes: &[u8],
-) -> Result<RecursiveBlockArtifactV1, BlockRecursionError> {
+) -> Result<(RecursiveBlockInnerArtifactV1, usize), BlockRecursionError> {
     let mut cursor = 0usize;
     let magic = read_fixed::<8>(bytes, &mut cursor)?;
     if magic != ARTIFACT_MAGIC {
@@ -417,7 +419,6 @@ pub fn deserialize_recursive_block_artifact_v1(
         });
     }
     cursor = header_end;
-    let public = deserialize_recursive_block_public_v1(bytes, &mut cursor)?;
     let accumulator_len = read_u32(bytes, &mut cursor)? as usize;
     let acc_end = cursor.saturating_add(accumulator_len);
     if acc_end > bytes.len() {
@@ -440,11 +441,6 @@ pub fn deserialize_recursive_block_artifact_v1(
     }
     let decider_bytes = bytes[cursor..dec_end].to_vec();
     cursor = dec_end;
-    if cursor != bytes.len() {
-        return Err(BlockRecursionError::TrailingBytes {
-            remaining: bytes.len() - cursor,
-        });
-    }
     if header.accumulator_bytes as usize != accumulator_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "accumulator_bytes",
@@ -459,17 +455,55 @@ pub fn deserialize_recursive_block_artifact_v1(
             actual: decider_bytes.len(),
         });
     }
-    if header.artifact_bytes as usize != bytes.len() {
+    if header.artifact_bytes as usize != cursor {
         return Err(BlockRecursionError::WidthMismatch {
             what: "artifact_bytes",
             expected: header.artifact_bytes as usize,
-            actual: bytes.len(),
+            actual: cursor,
+        });
+    }
+    Ok((
+        RecursiveBlockInnerArtifactV1 {
+            header,
+            accumulator_bytes,
+            decider_bytes,
+        },
+        cursor,
+    ))
+}
+
+pub fn deserialize_recursive_block_inner_artifact_v1(
+    bytes: &[u8],
+) -> Result<RecursiveBlockInnerArtifactV1, BlockRecursionError> {
+    let (artifact, cursor) = parse_recursive_block_inner_artifact_v1_prefix(bytes)?;
+    if cursor != bytes.len() {
+        return Err(BlockRecursionError::TrailingBytes {
+            remaining: bytes.len() - cursor,
+        });
+    }
+    Ok(artifact)
+}
+
+pub fn serialize_recursive_block_artifact_v1(
+    artifact: &RecursiveBlockArtifactV1,
+) -> Result<Vec<u8>, BlockRecursionError> {
+    let mut out = serialize_recursive_block_inner_artifact_v1(&artifact.artifact)?;
+    out.extend_from_slice(&serialize_recursive_block_public_v1(&artifact.public));
+    Ok(out)
+}
+
+pub fn deserialize_recursive_block_artifact_v1(
+    bytes: &[u8],
+) -> Result<RecursiveBlockArtifactV1, BlockRecursionError> {
+    let (inner, mut cursor) = parse_recursive_block_inner_artifact_v1_prefix(bytes)?;
+    let public = deserialize_recursive_block_public_v1(bytes, &mut cursor)?;
+    if cursor != bytes.len() {
+        return Err(BlockRecursionError::TrailingBytes {
+            remaining: bytes.len() - cursor,
         });
     }
     Ok(RecursiveBlockArtifactV1 {
-        header,
+        artifact: inner,
         public,
-        accumulator_bytes,
-        decider_bytes,
     })
 }

@@ -2,8 +2,9 @@ use crate::{
     artifacts::{
         compress_transcript_digest_v1, decider_profile_digest_v1,
         recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
-        serialize_block_accumulation_transcript_v1, BlockAccumulationTranscriptV1, HeaderDecStepV1,
-        RecursiveBlockArtifactV1, BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
+        serialize_block_accumulation_transcript_v1, serialize_recursive_block_inner_artifact_v1,
+        BlockAccumulationTranscriptV1, HeaderDecStepV1, RecursiveBlockArtifactV1,
+        RecursiveBlockInnerArtifactV1, BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
         RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
     },
     public_replay::{public_replay_v1, BlockLeafRecordV1, BlockSemanticInputsV1},
@@ -199,14 +200,16 @@ pub fn prove_block_recursive_v1(
     header.header_bytes = crate::serialize_header_dec_step_v1(&header)
         .map_err(|err| static_error("serialize recursive header failed", err))?
         .len() as u32;
-    let mut artifact = RecursiveBlockArtifactV1 {
+    let mut inner_artifact = RecursiveBlockInnerArtifactV1 {
         header,
-        public,
         accumulator_bytes,
         decider_bytes,
     };
-    artifact.header.artifact_bytes = crate::serialize_recursive_block_artifact_v1(&artifact)
+    inner_artifact.header.artifact_bytes = serialize_recursive_block_inner_artifact_v1(&inner_artifact)
         .map_err(|err| static_error("serialize recursive artifact failed", err))?
         .len() as u32;
-    Ok(artifact)
+    Ok(RecursiveBlockArtifactV1 {
+        artifact: inner_artifact,
+        public,
+    })
 }

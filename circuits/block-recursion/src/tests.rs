@@ -2,9 +2,10 @@ use std::sync::OnceLock;
 
 use super::{
     deserialize_recursive_block_artifact_v1, prove_block_recursive_v1, public_replay_v1,
-    serialize_recursive_block_artifact_v1, verify_block_recursive_v1, BlockLeafRecordV1,
-    BlockRecursionError, BlockRecursiveProverInputV1, BlockSemanticInputsV1,
-    RecursiveBlockArtifactV1, RecursiveBlockPublicV1,
+    serialize_recursive_block_artifact_v1, serialize_recursive_block_public_v1,
+    verify_block_recursive_v1, BlockLeafRecordV1, BlockRecursionError,
+    BlockRecursiveProverInputV1, BlockSemanticInputsV1, RecursiveBlockArtifactV1,
+    RecursiveBlockPublicV1,
 };
 
 fn digest32(tag: u8, idx: u32) -> [u8; 32] {
@@ -54,6 +55,8 @@ fn sample_input(tx_count: u32) -> BlockRecursiveProverInputV1 {
             end_kernel_root: digest48(0xe1, tx_count),
             nullifier_root: digest48(0xf0, tx_count),
             da_root: digest48(0xf8, tx_count),
+            start_tree_commitment: digest48(0xa8, 0),
+            end_tree_commitment: digest48(0xa9, tx_count),
         },
     }
 }
@@ -89,6 +92,9 @@ fn public_replay_matches_semantic_tuple() {
     assert_eq!(public.end_kernel_root, input.semantic.end_kernel_root);
     assert_eq!(public.nullifier_root, input.semantic.nullifier_root);
     assert_eq!(public.da_root, input.semantic.da_root);
+    assert_eq!(public.start_tree_commitment, input.semantic.start_tree_commitment);
+    assert_eq!(public.end_tree_commitment, input.semantic.end_tree_commitment);
+    assert_eq!(serialize_recursive_block_public_v1(&public).len(), 532);
 }
 
 #[test]
@@ -104,7 +110,8 @@ fn recursive_artifact_roundtrips_and_exact_consumes() {
     let bytes = serialize_recursive_block_artifact_v1(&artifact).unwrap();
     let parsed = deserialize_recursive_block_artifact_v1(&bytes).unwrap();
     assert_eq!(parsed, artifact);
-    assert_eq!(parsed.header.artifact_bytes as usize, bytes.len());
+    let public_len = serialize_recursive_block_public_v1(&parsed.public).len();
+    assert_eq!(parsed.artifact.header.artifact_bytes as usize, bytes.len() - public_len);
 }
 
 #[test]
@@ -119,7 +126,8 @@ fn recursive_artifact_rejects_trailing_bytes() {
 #[test]
 fn recursive_artifact_rejects_width_mismatch() {
     let (mut artifact, _) = cached_two_tx_artifact();
-    artifact.header.accumulator_bytes = artifact.header.accumulator_bytes.saturating_add(1);
+    artifact.artifact.header.accumulator_bytes =
+        artifact.artifact.header.accumulator_bytes.saturating_add(1);
     let bytes = serialize_recursive_block_artifact_v1(&artifact).unwrap();
     let err = deserialize_recursive_block_artifact_v1(&bytes).unwrap_err();
     assert!(matches!(err, BlockRecursionError::WidthMismatch { .. }));
@@ -128,7 +136,7 @@ fn recursive_artifact_rejects_width_mismatch() {
 #[test]
 fn recursive_artifact_rejects_tampered_statement_digest() {
     let (mut artifact, public) = cached_two_tx_artifact();
-    artifact.header.statement_digest[0] ^= 1;
+    artifact.artifact.header.statement_digest[0] ^= 1;
     let err = verify_block_recursive_v1(&artifact, &public).unwrap_err();
     assert!(matches!(
         err,
@@ -150,7 +158,7 @@ fn recursive_artifact_rejects_wrong_expected_public() {
 #[test]
 fn recursive_artifact_rejects_alternate_serializer_under_same_profile() {
     let (mut artifact, public) = cached_two_tx_artifact();
-    artifact.decider_bytes[0] ^= 1;
+    artifact.artifact.decider_bytes[0] ^= 1;
     let err = verify_block_recursive_v1(&artifact, &public).unwrap_err();
     assert!(!matches!(err, BlockRecursionError::NotImplemented(_)));
 }

@@ -2,7 +2,8 @@ use crate::{
     artifacts::{
         compress_transcript_digest_v1, decider_profile_digest_v1,
         recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
-        RecursiveBlockArtifactV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+        serialize_recursive_block_inner_artifact_v1, RecursiveBlockArtifactV1,
+        RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
         RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
     },
     public_replay::RecursiveBlockPublicV1,
@@ -32,46 +33,47 @@ pub fn verify_block_recursive_v1(
             "recursive public tuple mismatch",
         ));
     }
-    if artifact.header.version != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 {
+    let inner = &artifact.artifact;
+    if inner.header.version != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 {
         return Err(BlockRecursionError::InvalidVersion {
             what: "recursive block artifact header",
-            version: artifact.header.version,
+            version: inner.header.version,
         });
     }
-    if artifact.header.proof_kind != RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1 {
+    if inner.header.proof_kind != RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1 {
         return Err(BlockRecursionError::InvalidField("proof_kind"));
     }
-    if artifact.header.accumulator_bytes as usize != artifact.accumulator_bytes.len() {
+    if inner.header.accumulator_bytes as usize != inner.accumulator_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "accumulator_bytes",
-            expected: artifact.header.accumulator_bytes as usize,
-            actual: artifact.accumulator_bytes.len(),
+            expected: inner.header.accumulator_bytes as usize,
+            actual: inner.accumulator_bytes.len(),
         });
     }
-    if artifact.header.decider_bytes as usize != artifact.decider_bytes.len() {
+    if inner.header.decider_bytes as usize != inner.decider_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "decider_bytes",
-            expected: artifact.header.decider_bytes as usize,
-            actual: artifact.decider_bytes.len(),
+            expected: inner.header.decider_bytes as usize,
+            actual: inner.decider_bytes.len(),
         });
     }
-    let canonical_artifact_len = crate::serialize_recursive_block_artifact_v1(artifact)?.len();
-    if artifact.header.artifact_bytes as usize != canonical_artifact_len {
+    let canonical_artifact_len = serialize_recursive_block_inner_artifact_v1(inner)?.len();
+    if inner.header.artifact_bytes as usize != canonical_artifact_len {
         return Err(BlockRecursionError::WidthMismatch {
             what: "artifact_bytes",
-            expected: artifact.header.artifact_bytes as usize,
+            expected: inner.header.artifact_bytes as usize,
             actual: canonical_artifact_len,
         });
     }
-    let header_bytes = crate::serialize_header_dec_step_v1(&artifact.header)?;
-    if artifact.header.header_bytes as usize != header_bytes.len() {
+    let header_bytes = crate::serialize_header_dec_step_v1(&inner.header)?;
+    if inner.header.header_bytes as usize != header_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "header_bytes",
-            expected: artifact.header.header_bytes as usize,
+            expected: inner.header.header_bytes as usize,
             actual: header_bytes.len(),
         });
     }
-    if artifact.header.statement_digest
+    if inner.header.statement_digest
         != crate::recursive_block_public_statement_digest_v1(expected_public)
     {
         return Err(BlockRecursionError::InvalidField("statement_digest"));
@@ -89,15 +91,15 @@ pub fn verify_block_recursive_v1(
         .map_err(|err| static_error("recursive decider profile failed", err))?;
     let decider_profile_bytes = serialize_decider_profile(&decider_profile)
         .map_err(|err| static_error("serialize decider profile failed", err))?;
-    if artifact.header.decider_profile_digest != decider_profile_digest_v1(&decider_profile_bytes) {
+    if inner.header.decider_profile_digest != decider_profile_digest_v1(&decider_profile_bytes) {
         return Err(BlockRecursionError::InvalidField("decider_profile_digest"));
     }
-    if artifact.header.accumulator_serializer_digest != recursive_lcccs_serializer_digest_v1() {
+    if inner.header.accumulator_serializer_digest != recursive_lcccs_serializer_digest_v1() {
         return Err(BlockRecursionError::InvalidField(
             "accumulator_serializer_digest",
         ));
     }
-    if artifact.header.decider_serializer_digest != recursive_decider_serializer_digest_v1() {
+    if inner.header.decider_serializer_digest != recursive_decider_serializer_digest_v1() {
         return Err(BlockRecursionError::InvalidField(
             "decider_serializer_digest",
         ));
@@ -106,11 +108,11 @@ pub fn verify_block_recursive_v1(
     let terminal: LcccsInstance<
         superneo_backend_lattice::LatticeCommitment,
         p3_goldilocks::Goldilocks,
-    > = deserialize_lcccs_instance(&artifact.accumulator_bytes)
+    > = deserialize_lcccs_instance(&inner.accumulator_bytes)
         .map_err(|err| static_error("deserialize terminal accumulator failed", err))?;
     let accumulator_roundtrip = serialize_lcccs_instance(&terminal)
         .map_err(|err| static_error("serialize terminal accumulator failed", err))?;
-    if accumulator_roundtrip != artifact.accumulator_bytes {
+    if accumulator_roundtrip != inner.accumulator_bytes {
         return Err(BlockRecursionError::InvalidField(
             "accumulator_bytes must use canonical serializer",
         ));
@@ -118,17 +120,17 @@ pub fn verify_block_recursive_v1(
     ensure_expected_relation_v1(terminal.relation_id)?;
     ensure_expected_shape_v1(terminal.shape_digest)?;
 
-    let decider_proof = RecursiveLatticeDeciderProof::from_canonical_bytes(&artifact.decider_bytes)
+    let decider_proof = RecursiveLatticeDeciderProof::from_canonical_bytes(&inner.decider_bytes)
         .map_err(|err| static_error("deserialize decider proof failed", err))?;
     let decider_roundtrip = decider_proof
         .to_canonical_bytes()
         .map_err(|err| static_error("serialize decider proof failed", err))?;
-    if decider_roundtrip != artifact.decider_bytes {
+    if decider_roundtrip != inner.decider_bytes {
         return Err(BlockRecursionError::InvalidField(
             "decider_bytes must use canonical serializer",
         ));
     }
-    if artifact.header.transcript_digest
+    if inner.header.transcript_digest
         != compress_transcript_digest_v1(&decider_proof.transcript_digest)
     {
         return Err(BlockRecursionError::InvalidField("transcript_digest"));

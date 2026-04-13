@@ -2522,6 +2522,7 @@ fn build_recursive_block_semantic_inputs_from_materials(
     }
 
     let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let starting_tree_commitment = tree.recursive_state_commitment();
     let starting_root = tree.root();
     for (index, (tx, binding)) in transactions.iter().zip(statement_bindings).enumerate() {
         if !tree.contains_root(&binding.anchor) {
@@ -2535,6 +2536,7 @@ fn build_recursive_block_semantic_inputs_from_materials(
         }
     }
     let ending_root = tree.root();
+    let ending_tree_commitment = tree.recursive_state_commitment();
 
     let mut nullifiers = Vec::new();
     for tx in transactions {
@@ -2553,6 +2555,8 @@ fn build_recursive_block_semantic_inputs_from_materials(
         end_kernel_root: kernel_root_from_shielded_root(&ending_root),
         nullifier_root,
         da_root,
+        start_tree_commitment: starting_tree_commitment,
+        end_tree_commitment: ending_tree_commitment,
     })
 }
 

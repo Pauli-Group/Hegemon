@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crypto::hashes::blake3_384;
 use thiserror::Error;
 use transaction_circuit::hashing_pq::merkle_node_bytes;
 
@@ -67,6 +68,29 @@ impl CommitmentTreeState {
 
     pub fn contains_root(&self, root: &Commitment) -> bool {
         self.root_history.iter().any(|value| value == root)
+    }
+
+    pub fn recursive_state_commitment(&self) -> Commitment {
+        let mut bytes = Vec::with_capacity(
+            32 + 8 + 8 + 8 + 48 + (48 * self.depth) + 8 + (48 * self.history_limit.max(1)),
+        );
+        bytes.extend_from_slice(b"hegemon.commitment-tree.recursive-state.v1");
+        bytes.extend_from_slice(&(self.depth as u64).to_le_bytes());
+        bytes.extend_from_slice(&self.leaf_count.to_le_bytes());
+        bytes.extend_from_slice(&(self.history_limit as u64).to_le_bytes());
+        bytes.extend_from_slice(&self.root);
+        for node in &self.frontier {
+            bytes.extend_from_slice(node);
+        }
+        bytes.extend_from_slice(&(self.root_history.len() as u64).to_le_bytes());
+        for root in &self.root_history {
+            bytes.extend_from_slice(root);
+        }
+        let padded_history = self.history_limit.saturating_sub(self.root_history.len());
+        for _ in 0..padded_history {
+            bytes.extend_from_slice(&[0u8; 48]);
+        }
+        blake3_384(&bytes)
     }
 
     pub fn append(&mut self, leaf: Commitment) -> Result<Commitment, CommitmentTreeError> {

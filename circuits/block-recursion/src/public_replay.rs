@@ -1,4 +1,4 @@
-use crate::{fold_digest32, fold_digest48, BlockRecursionError, Digest32, Digest48};
+use crate::{fold_digest48, BlockRecursionError, Digest32, Digest48};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockLeafRecordV1 {
@@ -25,6 +25,8 @@ pub struct BlockSemanticInputsV1 {
     pub end_kernel_root: Digest48,
     pub nullifier_root: Digest48,
     pub da_root: Digest48,
+    pub start_tree_commitment: Digest48,
+    pub end_tree_commitment: Digest48,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,8 +41,8 @@ pub struct RecursiveBlockPublicV1 {
     pub end_kernel_root: Digest48,
     pub nullifier_root: Digest48,
     pub da_root: Digest48,
-    pub frontier_commitment: Digest32,
-    pub history_commitment: Digest32,
+    pub start_tree_commitment: Digest48,
+    pub end_tree_commitment: Digest48,
 }
 
 fn put_u32(out: &mut Vec<u8>, value: u32) {
@@ -96,22 +98,8 @@ pub fn public_replay_v1(
         receipt_chunks.push(canonical_receipt_record_bytes_v1(record));
     }
 
-    let record_count = (records.len() as u32).to_le_bytes();
     let leaf_refs = leaf_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let receipt_refs = receipt_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let mut frontier_parts: Vec<&[u8]> = Vec::with_capacity(6);
-    frontier_parts.push(&record_count);
-    frontier_parts.push(&semantic.start_shielded_root);
-    frontier_parts.push(&semantic.end_shielded_root);
-    frontier_parts.push(&semantic.tx_statements_commitment);
-    frontier_parts.push(&semantic.nullifier_root);
-    frontier_parts.push(&semantic.da_root);
-    let mut history_parts: Vec<&[u8]> = Vec::with_capacity(5);
-    history_parts.push(&record_count);
-    history_parts.push(&semantic.start_kernel_root);
-    history_parts.push(&semantic.end_kernel_root);
-    history_parts.push(&semantic.start_shielded_root);
-    history_parts.push(&semantic.end_shielded_root);
 
     let verified_leaf_commitment = fold_digest48(
         b"hegemon.block-recursion.verified-leaf-commitment.v1",
@@ -120,14 +108,6 @@ pub fn public_replay_v1(
     let verified_receipt_commitment = fold_digest48(
         b"hegemon.block-recursion.verified-receipt-commitment.v1",
         &receipt_refs,
-    );
-    let frontier_commitment = fold_digest32(
-        b"hegemon.block-recursion.frontier-commitment.v1",
-        &frontier_parts,
-    );
-    let history_commitment = fold_digest32(
-        b"hegemon.block-recursion.history-commitment.v1",
-        &history_parts,
     );
 
     Ok(RecursiveBlockPublicV1 {
@@ -141,7 +121,7 @@ pub fn public_replay_v1(
         end_kernel_root: semantic.end_kernel_root,
         nullifier_root: semantic.nullifier_root,
         da_root: semantic.da_root,
-        frontier_commitment,
-        history_commitment,
+        start_tree_commitment: semantic.start_tree_commitment,
+        end_tree_commitment: semantic.end_tree_commitment,
     })
 }

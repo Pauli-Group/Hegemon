@@ -180,6 +180,8 @@ fn recursive_block_semantic_inputs_from_block(
         end_kernel_root,
         nullifier_root,
         da_root,
+        start_tree_commitment: parent_commitment_tree.recursive_state_commitment(),
+        end_tree_commitment: expected_tree.recursive_state_commitment(),
     })
 }
 
@@ -766,16 +768,16 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                     "recursive block artifact decode failed: {err}"
                 ))
             })?;
-        if parsed.header.version != 1 {
+        if parsed.artifact.header.version != 1 {
             return Err(ProofError::AggregationProofInputsMismatch(format!(
                 "recursive block header version mismatch: {}",
-                parsed.header.version
+                parsed.artifact.header.version
             )));
         }
-        if parsed.header.proof_kind != 1 {
+        if parsed.artifact.header.proof_kind != 1 {
             return Err(ProofError::AggregationProofInputsMismatch(format!(
                 "recursive block proof kind mismatch: {}",
-                parsed.header.proof_kind
+                parsed.artifact.header.proof_kind
             )));
         }
 
@@ -2306,6 +2308,8 @@ mod tests {
             end_kernel_root: [6u8; 48],
             nullifier_root: [7u8; 48],
             da_root: [8u8; 48],
+            start_tree_commitment: [9u8; 48],
+            end_tree_commitment: [10u8; 48],
         };
         block_recursion::prove_block_recursive_v1(&block_recursion::BlockRecursiveProverInputV1 {
             records,

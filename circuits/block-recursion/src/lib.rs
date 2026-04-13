@@ -14,12 +14,15 @@ pub use artifacts::{
     block_accumulation_transcript_digest_v1, block_accumulation_transcript_serializer_digest_v1,
     compress_transcript_digest_v1, decider_profile_digest_v1,
     deserialize_block_accumulation_transcript_v1, deserialize_header_dec_step_v1,
-    deserialize_recursive_block_artifact_v1, header_dec_step_profile_digest_v1,
+    deserialize_recursive_block_artifact_v1, deserialize_recursive_block_inner_artifact_v1,
+    header_dec_step_profile_digest_v1,
     recursive_block_public_statement_digest_v1, recursive_decider_serializer_digest_v1,
     recursive_lcccs_serializer_digest_v1, serialize_block_accumulation_transcript_v1,
     serialize_header_dec_step_v1, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_inner_artifact_v1, serialize_recursive_block_public_v1,
     BlockAccumulationTranscriptV1, CanonicalDeciderTranscript, HeaderDecStepV1,
-    RecursiveBlockArtifactV1, BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
+    RecursiveBlockArtifactV1, RecursiveBlockInnerArtifactV1,
+    BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
     RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
 };
 pub use prover::{prove_block_recursive_v1, BlockRecursiveProverInputV1};
