@@ -14,18 +14,20 @@ use superneo_ring::{
     GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
 };
 use transaction_circuit::{
-    RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodNonlinearEvalView, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
-    SmallwoodPcsVerifierTraceV1, SmallwoodPiopVerifierTraceV1, SmallwoodProofTraceV1,
-    SmallwoodRecursiveVerifierDescriptorV1,
-    TransactionCircuitError,
-    decode_smallwood_proof_trace_v1, smallwood_binding_words_v1,
-    smallwood_poseidon2_eval_points_v1, smallwood_poseidon2_pcs_trace_v1,
-    smallwood_poseidon2_piop_trace_v1,
+    decs_commitment_transcript, decs_recompute_root, derive_gamma_prime,
+    ensure_no_packing_collisions, ensure_row_polynomial_arithmetization,
+    hash_challenge_opening_decs, hash_piop_transcript, lvcs_recompute_rows,
+    pcs_build_coefficients, pcs_reconstruct_combi_heads, piop_recompute_transcript,
+    validate_proof_shape, xof_decs_opening, xof_piop_opening_points, RecursiveSmallwoodProfileV1,
+    SmallwoodArithmetization, SmallwoodConfig, SmallwoodConstraintAdapter,
+    SmallwoodNonlinearEvalView, SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveRelationKindV1, SmallwoodRecursiveVerifierDescriptorV1,
+    SmallwoodTranscriptBackend, TransactionCircuitError, SMALLWOOD_DECS_NB_EVALS,
+    SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_DECS_POW_BITS, decode_smallwood_proof_trace_v1,
     decode_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_envelope_bytes_v1,
     projected_smallwood_recursive_proof_bytes_v1, recursive_binding_bytes_v1,
     recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    verify_recursive_statement_direct_v1,
+    smallwood_binding_words_v1, smallwood_proof_from_trace_v1, verify_recursive_statement_direct_v1,
 };
 
 const RECURSIVE_BLOCK_RELATION_LABEL_V1: &str = "hegemon.superneo.block-recursive.v1";
@@ -525,23 +527,95 @@ fn flatten_auth_path_words_v1(paths: &[Vec<Digest32>]) -> Vec<u64> {
 }
 
 #[derive(Clone, Debug)]
-struct HostedRecursiveProofSectionsV1 {
+struct RecomputedPreviousProofComponentsV1 {
     descriptor: SmallwoodRecursiveVerifierDescriptorV1,
     binded_data: Vec<u8>,
     proof_bytes: Vec<u8>,
     proof_trace: SmallwoodProofTraceV1,
     eval_points: Vec<u64>,
-    pcs_trace: SmallwoodPcsVerifierTraceV1,
-    piop_trace: SmallwoodPiopVerifierTraceV1,
-    descriptor_words: Vec<u64>,
-    proof_words: Vec<u64>,
-    transcript_words: Vec<u64>,
-    pcs_words: Vec<u64>,
-    decs_words: Vec<u64>,
-    merkle_words: Vec<u64>,
+    coeffs: Vec<Vec<u64>>,
+    combi_heads: Vec<Vec<u64>>,
+    decs_trans_hash: Digest32,
+    decs_leaf_indexes: Vec<u32>,
+    decs_nonce: [u8; 4],
+    decs_eval_points: Vec<u64>,
+    rows: Vec<Vec<u64>>,
+    root_digest: Digest32,
+    pcs_transcript_words: Vec<u64>,
+    piop_input_words: Vec<u64>,
+    piop_gamma_prime: Vec<Vec<u64>>,
+    piop_transcript_words: Vec<u64>,
+    accept: bool,
 }
 
-impl HostedRecursiveProofSectionsV1 {
+impl RecomputedPreviousProofComponentsV1 {
+    fn descriptor_words_v1(&self) -> Vec<u64> {
+        bytes_to_witness_limbs_v1(&self.descriptor.serialized_v1())
+    }
+
+    fn proof_words_v1(&self) -> Vec<u64> {
+        bytes_to_witness_limbs_v1(&self.proof_bytes)
+    }
+
+    fn transcript_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(
+            &smallwood_binding_words_v1(
+                &recursive_binding_bytes_v1(&self.descriptor, &self.binded_data),
+            )
+            .unwrap_or_default(),
+        );
+        out.extend_from_slice(&self.eval_points);
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.piop_gamma_prime));
+        out.extend_from_slice(&self.pcs_transcript_words);
+        out.extend_from_slice(&self.piop_input_words);
+        out.extend_from_slice(&self.piop_transcript_words);
+        out.extend_from_slice(&digest_words_v1(&self.proof_trace.h_piop));
+        out.push(self.accept as u64);
+        out
+    }
+
+    fn pcs_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&flatten_matrix_words_v1(
+            &self.proof_trace.opened_witness_row_scalars,
+        ));
+        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_partial_evals_v1()));
+        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_rcombi_tails_v1()));
+        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_subset_evals_v1()));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.coeffs));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.combi_heads));
+        out.extend_from_slice(&digest_words_v1(&self.decs_trans_hash));
+        out.extend_from_slice(&self.pcs_transcript_words);
+        out
+    }
+
+    fn decs_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&digest_words_v1(&self.decs_trans_hash));
+        out.extend_from_slice(&flatten_u32_words_v1(&self.decs_leaf_indexes));
+        out.extend_from_slice(&nonce_words_v1(&self.decs_nonce));
+        out.extend_from_slice(&self.decs_eval_points);
+        out.extend_from_slice(&flatten_matrix_words_v1(
+            self.proof_trace.decs_masking_evals_v1(),
+        ));
+        out.extend_from_slice(&flatten_matrix_words_v1(
+            self.proof_trace.decs_high_coeffs_v1(),
+        ));
+        out.extend_from_slice(&self.pcs_transcript_words);
+        out
+    }
+
+    fn merkle_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.rows));
+        out.extend_from_slice(&flatten_auth_path_words_v1(
+            self.proof_trace.decs_auth_paths_v1(),
+        ));
+        out.extend_from_slice(&digest_words_v1(&self.root_digest));
+        out
+    }
+
     fn validate_transcript_section_v1(&self) -> Result<(), TransactionCircuitError> {
         let binding_words =
             smallwood_binding_words_v1(&recursive_binding_bytes_v1(&self.descriptor, &self.binded_data))?;
@@ -555,38 +629,34 @@ impl HostedRecursiveProofSectionsV1 {
                 "recursive verifier transcript row-scalar count mismatch",
             ));
         }
-        if self.piop_trace.piop_gamma_prime.len() != 2 {
+        if self.piop_gamma_prime.len() != 2 {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript gamma-prime count mismatch",
             ));
         }
-        if self.piop_trace.pcs_transcript_words != self.pcs_trace.decs_commitment_transcript {
+        if self.pcs_transcript_words.is_empty() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript PCS/DECS transcript mismatch",
             ));
         }
-        if self.piop_trace.piop_input_words.len() < binding_words.len() {
+        if self.piop_input_words.len() < binding_words.len() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript piop-input length mismatch",
             ));
         }
-        if !self
-            .piop_trace
-            .piop_input_words
-            .starts_with(&self.piop_trace.pcs_transcript_words)
+        if !self.piop_input_words.starts_with(&self.pcs_transcript_words)
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript piop-input prefix mismatch",
             ));
         }
-        if self.piop_trace.piop_input_words[self.piop_trace.pcs_transcript_words.len()..]
-            != binding_words
+        if self.piop_input_words[self.pcs_transcript_words.len()..] != binding_words
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript piop-input binding suffix mismatch",
             ));
         }
-        if self.piop_trace.piop_transcript_words.is_empty() {
+        if self.piop_transcript_words.is_empty() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier transcript piop transcript words missing",
             ));
@@ -595,13 +665,13 @@ impl HostedRecursiveProofSectionsV1 {
     }
 
     fn validate_pcs_section_v1(&self) -> Result<(), TransactionCircuitError> {
-        let opened_combi_count = self.pcs_trace.coeffs.len();
+        let opened_combi_count = self.coeffs.len();
         if self.proof_trace.opened_witness_row_scalars.len() != self.eval_points.len() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS opened-row/eval-point count mismatch",
             ));
         }
-        if opened_combi_count == 0 || opened_combi_count != self.pcs_trace.combi_heads.len() {
+        if opened_combi_count == 0 || opened_combi_count != self.combi_heads.len() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS coefficient/combi-head count mismatch",
             ));
@@ -613,46 +683,39 @@ impl HostedRecursiveProofSectionsV1 {
                 "recursive verifier PCS section count mismatch",
             ));
         }
-        if self.proof_trace.pcs_subset_evals_v1().len() != self.pcs_trace.decs_leaf_indexes.len() {
+        if self.proof_trace.pcs_subset_evals_v1().len() != self.decs_leaf_indexes.len() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS subset-eval count mismatch",
             ));
         }
-        if self.piop_trace.pcs_transcript_words != self.pcs_trace.decs_commitment_transcript {
+        if self.pcs_transcript_words.is_empty() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS transcript mismatch",
             ));
         }
-        if self.pcs_trace.rows.is_empty()
-            || self.pcs_trace.rows.len() != self.pcs_trace.decs_eval_points.len()
+        if self.rows.is_empty() || self.rows.len() != self.decs_eval_points.len()
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS opened-row count mismatch",
             ));
         }
-        if self.pcs_trace.decs_leaf_indexes.len() != self.pcs_trace.decs_eval_points.len() {
+        if self.decs_leaf_indexes.len() != self.decs_eval_points.len() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS leaf-index/decs-point count mismatch",
             ));
         }
         if self
-            .pcs_trace
             .decs_leaf_indexes
             .iter()
-            .zip(self.pcs_trace.decs_eval_points.iter())
+            .zip(self.decs_eval_points.iter())
             .any(|(leaf, point)| u64::from(*leaf) != *point)
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS leaf-index/decs-point value mismatch",
             ));
         }
-        let expected_row_width = self.pcs_trace.coeffs.first().map(Vec::len).unwrap_or_default();
-        if expected_row_width == 0
-            || self
-                .pcs_trace
-                .rows
-                .iter()
-                .any(|row| row.len() != expected_row_width)
+        let expected_row_width = self.coeffs.first().map(Vec::len).unwrap_or_default();
+        if expected_row_width == 0 || self.rows.iter().any(|row| row.len() != expected_row_width)
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier PCS opened-row width mismatch",
@@ -662,13 +725,13 @@ impl HostedRecursiveProofSectionsV1 {
     }
 
     fn validate_decs_section_v1(&self) -> Result<(), TransactionCircuitError> {
-        let opened_count = self.pcs_trace.decs_leaf_indexes.len();
+        let opened_count = self.decs_leaf_indexes.len();
         if opened_count == 0 {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier DECS opened-leaf set is empty",
             ));
         }
-        if self.pcs_trace.decs_eval_points.len() != opened_count
+        if self.decs_eval_points.len() != opened_count
             || self.proof_trace.decs_masking_evals_v1().len() != opened_count
         {
             return Err(TransactionCircuitError::ConstraintViolation(
@@ -680,7 +743,7 @@ impl HostedRecursiveProofSectionsV1 {
                 "recursive verifier DECS high-coefficient count mismatch",
             ));
         }
-        if self.piop_trace.pcs_transcript_words != self.pcs_trace.decs_commitment_transcript {
+        if self.pcs_transcript_words.is_empty() {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier DECS transcript mismatch",
             ));
@@ -703,9 +766,8 @@ impl HostedRecursiveProofSectionsV1 {
     }
 
     fn validate_merkle_section_v1(&self) -> Result<(), TransactionCircuitError> {
-        let opened_count = self.pcs_trace.decs_leaf_indexes.len();
-        if self.pcs_trace.rows.len() != opened_count
-            || self.proof_trace.decs_auth_paths_v1().len() != opened_count
+        let opened_count = self.decs_leaf_indexes.len();
+        if self.rows.len() != opened_count || self.proof_trace.decs_auth_paths_v1().len() != opened_count
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier Merkle section count mismatch",
@@ -724,13 +786,13 @@ impl HostedRecursiveProofSectionsV1 {
                 "recursive verifier Merkle auth path is empty",
             ));
         }
-        if self.pcs_trace.root_digest == [0u8; 32] {
+        if self.root_digest == [0u8; 32] {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier Merkle root digest missing",
             ));
         }
         for idx in 0..opened_count {
-            if self.pcs_trace.rows[idx].is_empty() {
+            if self.rows[idx].is_empty() {
                 return Err(TransactionCircuitError::ConstraintViolation(
                     "recursive verifier Merkle row is empty",
                 ));
@@ -745,9 +807,129 @@ impl HostedRecursiveProofSectionsV1 {
     }
 }
 
-fn build_hosted_recursive_proof_sections_v1(
+fn recompute_previous_proof_components_from_proof_bytes_v1(
+    descriptor: SmallwoodRecursiveVerifierDescriptorV1,
+    relation: &(dyn SmallwoodConstraintAdapter + Sync),
+    binding: Vec<u8>,
+    proof_bytes: Vec<u8>,
+    proof_bytes_len: usize,
+) -> Result<RecomputedPreviousProofComponentsV1, TransactionCircuitError> {
+    if proof_bytes.len() != proof_bytes_len {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive proof envelope proof length mismatch",
+        ));
+    }
+    let cfg = SmallwoodConfig::new(relation)?;
+    ensure_row_polynomial_arithmetization(relation)?;
+    let proof_trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
+    let proof = smallwood_proof_from_trace_v1(&proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let binding_words =
+        smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
+    let eval_points = xof_piop_opening_points(
+        &proof_trace.nonce,
+        &proof_trace.h_piop,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    ensure_no_packing_collisions(cfg.packing_points_v1(), &eval_points)?;
+    let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows_v1()]; cfg.nb_lvcs_opened_combi_v1()];
+    pcs_build_coefficients(&cfg, &eval_points, &mut coeffs);
+    let combi_heads = pcs_reconstruct_combi_heads(
+        &cfg,
+        &eval_points,
+        &proof_trace.opened_witness_row_scalars,
+        proof_trace.pcs_partial_evals_v1(),
+    )?;
+    let decs_trans_hash = hash_challenge_opening_decs(
+        &cfg,
+        &combi_heads,
+        &proof_trace.h_piop,
+        proof_trace.pcs_rcombi_tails_v1(),
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
+        SMALLWOOD_DECS_NB_EVALS,
+        SMALLWOOD_DECS_NB_OPENED_EVALS,
+        SMALLWOOD_DECS_POW_BITS,
+        &decs_trans_hash,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let decs_eval_points = decs_leaf_indexes
+        .iter()
+        .map(|&idx| idx as u64)
+        .collect::<Vec<_>>();
+    let rows = lvcs_recompute_rows(
+        &cfg,
+        &coeffs,
+        &combi_heads,
+        proof_trace.pcs_rcombi_tails_v1(),
+        proof_trace.pcs_subset_evals_v1(),
+        &decs_eval_points,
+    )?;
+    let root_digest = decs_recompute_root(
+        &cfg,
+        &proof_trace.salt,
+        &rows,
+        &decs_eval_points,
+        proof_trace.decs_proof_v1(),
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let pcs_transcript_words = decs_commitment_transcript(
+        &cfg,
+        &proof_trace.salt,
+        &rows,
+        &root_digest,
+        &decs_eval_points,
+        proof_trace.decs_proof_v1(),
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let mut piop_input_words = pcs_transcript_words.clone();
+    piop_input_words.extend_from_slice(&binding_words);
+    let piop_transcript_words = piop_recompute_transcript(
+        &cfg,
+        relation,
+        &piop_input_words,
+        &eval_points,
+        &proof_trace.opened_witness_row_scalars,
+        &proof_trace.piop,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let hash_fpp = hash_piop_transcript(&piop_input_words, SmallwoodTranscriptBackend::Poseidon2);
+    let piop_gamma_prime =
+        derive_gamma_prime(&cfg, &hash_fpp, SmallwoodTranscriptBackend::Poseidon2);
+    let accept = hash_piop_transcript(&piop_transcript_words, SmallwoodTranscriptBackend::Poseidon2)
+        == proof_trace.h_piop;
+
+    let components = RecomputedPreviousProofComponentsV1 {
+        descriptor,
+        binded_data: binding,
+        proof_bytes,
+        proof_trace,
+        eval_points,
+        coeffs,
+        combi_heads,
+        decs_trans_hash,
+        decs_leaf_indexes,
+        decs_nonce,
+        decs_eval_points,
+        rows,
+        root_digest,
+        pcs_transcript_words,
+        piop_input_words,
+        piop_gamma_prime,
+        piop_transcript_words,
+        accept,
+    };
+    components.validate_transcript_section_v1()?;
+    components.validate_pcs_section_v1()?;
+    components.validate_decs_section_v1()?;
+    components.validate_merkle_section_v1()?;
+    Ok(components)
+}
+
+fn recompute_previous_proof_components_v1(
     context: &HostedRecursiveProofContextV1,
-) -> Result<HostedRecursiveProofSectionsV1, TransactionCircuitError> {
+) -> Result<RecomputedPreviousProofComponentsV1, TransactionCircuitError> {
     let (profile, descriptor, relation, binding, proof_bytes_len) =
         build_expected_recursive_inputs_v1(context)?;
     let proof_bytes = verify_recursive_proof_envelope_structure_v1(
@@ -756,86 +938,13 @@ fn build_hosted_recursive_proof_sections_v1(
         relation.as_ref(),
         context.proof_envelope_bytes(),
     )?;
-    if proof_bytes.len() != proof_bytes_len {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "recursive proof envelope proof length mismatch",
-        ));
-    }
-    let proof_trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
-    let binding_words =
-        smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
-    let eval_points = smallwood_poseidon2_eval_points_v1(relation.as_ref(), &proof_trace)?;
-    let pcs_trace = smallwood_poseidon2_pcs_trace_v1(relation.as_ref(), &proof_trace, &eval_points)?;
-    let piop_trace = smallwood_poseidon2_piop_trace_v1(
-        relation.as_ref(),
-        &binding_words,
-        &proof_trace,
-        &eval_points,
-        &pcs_trace,
-    )?;
-
-    let mut transcript_words = Vec::new();
-    transcript_words.extend_from_slice(&binding_words);
-    transcript_words.extend_from_slice(&eval_points);
-    transcript_words.extend_from_slice(&flatten_matrix_words_v1(&piop_trace.piop_gamma_prime));
-    transcript_words.extend_from_slice(&piop_trace.pcs_transcript_words);
-    transcript_words.extend_from_slice(&piop_trace.piop_input_words);
-    transcript_words.extend_from_slice(&piop_trace.piop_transcript_words);
-    transcript_words.extend_from_slice(&digest_words_v1(&proof_trace.h_piop));
-    transcript_words.push(piop_trace.accept as u64);
-
-    let mut pcs_words = Vec::new();
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(
-        &proof_trace.opened_witness_row_scalars,
-    ));
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_partial_evals_v1()));
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_rcombi_tails_v1()));
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_subset_evals_v1()));
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(&pcs_trace.coeffs));
-    pcs_words.extend_from_slice(&flatten_matrix_words_v1(&pcs_trace.combi_heads));
-    pcs_words.extend_from_slice(&digest_words_v1(&pcs_trace.decs_trans_hash));
-    pcs_words.extend_from_slice(&piop_trace.pcs_transcript_words);
-
-    let mut decs_words = Vec::new();
-    decs_words.extend_from_slice(&digest_words_v1(&pcs_trace.decs_trans_hash));
-    decs_words.extend_from_slice(&flatten_u32_words_v1(&pcs_trace.decs_leaf_indexes));
-    decs_words.extend_from_slice(&nonce_words_v1(&pcs_trace.decs_nonce));
-    decs_words.extend_from_slice(&pcs_trace.decs_eval_points);
-    decs_words.extend_from_slice(&flatten_matrix_words_v1(
-        proof_trace.decs_masking_evals_v1(),
-    ));
-    decs_words.extend_from_slice(&flatten_matrix_words_v1(
-        proof_trace.decs_high_coeffs_v1(),
-    ));
-    decs_words.extend_from_slice(&pcs_trace.decs_commitment_transcript);
-
-    let mut merkle_words = Vec::new();
-    merkle_words.extend_from_slice(&flatten_matrix_words_v1(&pcs_trace.rows));
-    merkle_words.extend_from_slice(&flatten_auth_path_words_v1(
-        proof_trace.decs_auth_paths_v1(),
-    ));
-    merkle_words.extend_from_slice(&digest_words_v1(&pcs_trace.root_digest));
-
-    let sections = HostedRecursiveProofSectionsV1 {
-        descriptor_words: bytes_to_witness_limbs_v1(&descriptor.serialized_v1()),
-        proof_words: bytes_to_witness_limbs_v1(&proof_bytes),
-        transcript_words,
-        pcs_words,
-        decs_words,
-        merkle_words,
+    recompute_previous_proof_components_from_proof_bytes_v1(
         descriptor,
-        binded_data: binding,
+        relation.as_ref(),
+        binding,
         proof_bytes,
-        proof_trace,
-        eval_points,
-        pcs_trace,
-        piop_trace,
-    };
-    sections.validate_transcript_section_v1()?;
-    sections.validate_pcs_section_v1()?;
-    sections.validate_decs_section_v1()?;
-    sections.validate_merkle_section_v1()?;
-    Ok(sections)
+        proof_bytes_len,
+    )
 }
 
 pub fn verify_hosted_recursive_proof_context_binding_trace_v1(
@@ -854,25 +963,25 @@ pub fn verify_hosted_recursive_proof_context_binding_trace_v1(
     }
 
     let (_, descriptor, _, binding, _) = build_expected_recursive_inputs_v1(context)?;
-    let sections = build_hosted_recursive_proof_sections_v1(context)?;
+    let components = recompute_previous_proof_components_v1(context)?;
     let binding_words =
         smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
-    if sections.descriptor != descriptor {
+    if components.descriptor != descriptor {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace descriptor mismatch",
         ));
     }
-    if sections.binded_data != binding {
+    if components.binded_data != binding {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace binding payload mismatch",
         ));
     }
-    if !sections.transcript_words.starts_with(&binding_words) {
+    if !components.transcript_words_v1().starts_with(&binding_words) {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace binding words mismatch",
         ));
     }
-    if !sections.piop_trace.accept {
+    if !components.accept {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace accept bit mismatch",
         ));
@@ -883,44 +992,50 @@ pub fn verify_hosted_recursive_proof_context_binding_trace_v1(
 pub fn hosted_recursive_proof_witness_layout_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<PreviousProofWitnessLayoutV1, TransactionCircuitError> {
-    let sections = build_hosted_recursive_proof_sections_v1(context)?;
+    let components = recompute_previous_proof_components_v1(context)?;
     Ok(previous_proof_witness_layout_from_sections_v1(
-        sections.descriptor.serialized_v1().len(),
-        sections.proof_bytes.len(),
-        sections.transcript_words.len(),
-        sections.pcs_words.len(),
-        sections.decs_words.len(),
-        sections.merkle_words.len(),
+        components.descriptor.serialized_v1().len(),
+        components.proof_bytes.len(),
+        components.transcript_words_v1().len(),
+        components.pcs_words_v1().len(),
+        components.decs_words_v1().len(),
+        components.merkle_words_v1().len(),
     ))
 }
 
 pub fn hosted_recursive_proof_witness_words_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
-    let sections = build_hosted_recursive_proof_sections_v1(context)?;
+    let components = recompute_previous_proof_components_v1(context)?;
     let layout = hosted_recursive_proof_witness_layout_v1(context)?;
+    let descriptor_words = components.descriptor_words_v1();
+    let proof_words = components.proof_words_v1();
+    let transcript_words = components.transcript_words_v1();
+    let pcs_words = components.pcs_words_v1();
+    let decs_words = components.decs_words_v1();
+    let merkle_words = components.merkle_words_v1();
     let witness_sections = [
         (
             "descriptor",
             layout.descriptor.limb_count,
-            sections.descriptor_words.as_slice(),
+            descriptor_words.as_slice(),
         ),
         (
             "envelope",
             layout.envelope.limb_count,
-            sections.proof_words.as_slice(),
+            proof_words.as_slice(),
         ),
         (
             "transcript",
             layout.transcript.limb_count,
-            sections.transcript_words.as_slice(),
+            transcript_words.as_slice(),
         ),
-        ("pcs", layout.pcs.limb_count, sections.pcs_words.as_slice()),
-        ("decs", layout.decs.limb_count, sections.decs_words.as_slice()),
+        ("pcs", layout.pcs.limb_count, pcs_words.as_slice()),
+        ("decs", layout.decs.limb_count, decs_words.as_slice()),
         (
             "merkle",
             layout.merkle.limb_count,
-            sections.merkle_words.as_slice(),
+            merkle_words.as_slice(),
         ),
     ];
     let mut out = Vec::with_capacity(layout.total_rows() * layout.row_width);
@@ -1087,7 +1202,8 @@ fn validate_previous_proof_witness_v1(
     }
     validation.witness_ready = true;
 
-    let Ok((_, descriptor, _, binding, proof_bytes_len)) = build_expected_recursive_inputs_v1(context)
+    let Ok((_, descriptor, relation, binding, proof_bytes_len)) =
+        build_expected_recursive_inputs_v1(context)
     else {
         return validation;
     };
@@ -1115,35 +1231,45 @@ fn validate_previous_proof_witness_v1(
         return validation;
     }
 
-    let Ok(sections) = build_hosted_recursive_proof_sections_v1(context) else {
+    let Ok(components) = recompute_previous_proof_components_from_proof_bytes_v1(
+        descriptor.clone(),
+        relation.as_ref(),
+        binding.clone(),
+        proof_bytes,
+        proof_bytes_len,
+    ) else {
         return validation;
     };
+    let transcript_words = components.transcript_words_v1();
+    let pcs_words = components.pcs_words_v1();
+    let decs_words = components.decs_words_v1();
+    let merkle_words = components.merkle_words_v1();
 
     let expected_binding_words =
         smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))
             .unwrap_or_default();
-    validation.binding_trace_valid = sections.descriptor == descriptor
-        && sections.binded_data == binding
-        && sections.transcript_words.starts_with(&expected_binding_words)
-        && sections.piop_trace.accept;
+    validation.binding_trace_valid = components.descriptor == descriptor
+        && components.binded_data == binding
+        && transcript_words.starts_with(&expected_binding_words)
+        && components.accept;
 
-    validation.transcript_valid = sections.validate_transcript_section_v1().is_ok()
+    validation.transcript_valid = components.validate_transcript_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.transcript)
-            .map(|words| words == sections.transcript_words.as_slice())
+            .map(|words| words == transcript_words.as_slice())
             .unwrap_or(false);
 
-    validation.pcs_valid = sections.validate_pcs_section_v1().is_ok()
+    validation.pcs_valid = components.validate_pcs_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.pcs)
-            .map(|words| words == sections.pcs_words.as_slice())
+            .map(|words| words == pcs_words.as_slice())
             .unwrap_or(false);
 
-    validation.decs_merkle_valid = sections.validate_decs_section_v1().is_ok()
-        && sections.validate_merkle_section_v1().is_ok()
+    validation.decs_merkle_valid = components.validate_decs_section_v1().is_ok()
+        && components.validate_merkle_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.decs)
-            .map(|words| words == sections.decs_words.as_slice())
+            .map(|words| words == decs_words.as_slice())
             .unwrap_or(false)
         && witness_section_words_v1(witness_words, layout.merkle)
-            .map(|words| words == sections.merkle_words.as_slice())
+            .map(|words| words == merkle_words.as_slice())
             .unwrap_or(false);
 
     validation
@@ -1164,36 +1290,36 @@ pub fn verify_hosted_recursive_proof_context_transcript_v1(
         } => verify_hosted_recursive_proof_context_transcript_v1(previous_recursive_proof)?,
     }
 
-    let sections = build_hosted_recursive_proof_sections_v1(context)?;
-    if sections.eval_points.len() != 3 {
+    let components = recompute_previous_proof_components_v1(context)?;
+    if components.eval_points.len() != 3 {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace opening-point count mismatch",
         ));
     }
     let binding_words =
-        smallwood_binding_words_v1(&recursive_binding_bytes_v1(&sections.descriptor, &sections.binded_data))?;
-    if sections.piop_trace.piop_input_words.len() < binding_words.len() {
+        smallwood_binding_words_v1(&recursive_binding_bytes_v1(&components.descriptor, &components.binded_data))?;
+    if components.piop_input_words.len() < binding_words.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace piop input too short",
         ));
     }
-    let split = sections.piop_trace.piop_input_words.len() - binding_words.len();
-    if sections.piop_trace.piop_input_words[..split] != sections.piop_trace.pcs_transcript_words {
+    let split = components.piop_input_words.len() - binding_words.len();
+    if components.piop_input_words[..split] != components.pcs_transcript_words {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace pcs transcript prefix mismatch",
         ));
     }
-    if sections.piop_trace.piop_input_words[split..] != binding_words {
+    if components.piop_input_words[split..] != binding_words {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace binding suffix mismatch",
         ));
     }
-    if sections.piop_trace.pcs_transcript_words != sections.pcs_trace.decs_commitment_transcript {
+    if components.pcs_transcript_words.is_empty() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace decs transcript mismatch",
         ));
     }
-    if sections.piop_trace.piop_gamma_prime.is_empty() {
+    if components.piop_gamma_prime.is_empty() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "recursive verifier trace missing gamma prime values",
         ));
@@ -1202,16 +1328,16 @@ pub fn verify_hosted_recursive_proof_context_transcript_v1(
 }
 
 fn verify_pcs_trace_v1(
-    sections: &HostedRecursiveProofSectionsV1,
+    components: &RecomputedPreviousProofComponentsV1,
 ) -> Result<(), TransactionCircuitError> {
-    sections.validate_pcs_section_v1()
+    components.validate_pcs_section_v1()
 }
 
 fn verify_decs_merkle_trace_v1(
-    sections: &HostedRecursiveProofSectionsV1,
+    components: &RecomputedPreviousProofComponentsV1,
 ) -> Result<(), TransactionCircuitError> {
-    sections.validate_decs_section_v1()?;
-    sections.validate_merkle_section_v1()
+    components.validate_decs_section_v1()?;
+    components.validate_merkle_section_v1()
 }
 
 pub fn verify_hosted_recursive_proof_context_pcs_v1(
@@ -1219,7 +1345,7 @@ pub fn verify_hosted_recursive_proof_context_pcs_v1(
 ) -> Result<(), TransactionCircuitError> {
     match context {
         HostedRecursiveProofContextV1::BaseA { .. } => verify_pcs_trace_v1(
-            &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+            &recompute_previous_proof_components_v1(context).map_err(|err| {
                 TransactionCircuitError::ConstraintViolationOwned(format!(
                     "recursive verifier PCS trace invalid: {err}"
                 ))
@@ -1231,7 +1357,7 @@ pub fn verify_hosted_recursive_proof_context_pcs_v1(
         } => {
             verify_hosted_recursive_proof_context_pcs_v1(previous_recursive_proof)?;
             verify_pcs_trace_v1(
-                &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+                &recompute_previous_proof_components_v1(context).map_err(|err| {
                     TransactionCircuitError::ConstraintViolationOwned(format!(
                         "recursive verifier PCS trace invalid: {err}"
                     ))
@@ -1244,7 +1370,7 @@ pub fn verify_hosted_recursive_proof_context_pcs_v1(
         } => {
             verify_hosted_recursive_proof_context_pcs_v1(previous_recursive_proof)?;
             verify_pcs_trace_v1(
-                &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+                &recompute_previous_proof_components_v1(context).map_err(|err| {
                     TransactionCircuitError::ConstraintViolationOwned(format!(
                         "recursive verifier PCS trace invalid: {err}"
                     ))
@@ -1259,7 +1385,7 @@ pub fn verify_hosted_recursive_proof_context_decs_merkle_v1(
 ) -> Result<(), TransactionCircuitError> {
     match context {
         HostedRecursiveProofContextV1::BaseA { .. } => verify_decs_merkle_trace_v1(
-            &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+            &recompute_previous_proof_components_v1(context).map_err(|err| {
                 TransactionCircuitError::ConstraintViolationOwned(format!(
                     "recursive verifier DECS/Merkle trace invalid: {err}"
                 ))
@@ -1271,7 +1397,7 @@ pub fn verify_hosted_recursive_proof_context_decs_merkle_v1(
         } => {
             verify_hosted_recursive_proof_context_decs_merkle_v1(previous_recursive_proof)?;
             verify_decs_merkle_trace_v1(
-                &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+                &recompute_previous_proof_components_v1(context).map_err(|err| {
                     TransactionCircuitError::ConstraintViolationOwned(format!(
                         "recursive verifier DECS/Merkle trace invalid: {err}"
                     ))
@@ -1284,7 +1410,7 @@ pub fn verify_hosted_recursive_proof_context_decs_merkle_v1(
         } => {
             verify_hosted_recursive_proof_context_decs_merkle_v1(previous_recursive_proof)?;
             verify_decs_merkle_trace_v1(
-                &build_hosted_recursive_proof_sections_v1(context).map_err(|err| {
+                &recompute_previous_proof_components_v1(context).map_err(|err| {
                     TransactionCircuitError::ConstraintViolationOwned(format!(
                         "recursive verifier DECS/Merkle trace invalid: {err}"
                     ))
@@ -1424,7 +1550,6 @@ pub struct StepARelationV1 {
     pub leaf_record: BlockLeafRecordV1,
     pub target_statement: RecursivePrefixStatementV1,
     previous_proof_layout: Option<PreviousProofWitnessLayoutV1>,
-    previous_proof_validation: PreviousProofWitnessValidationV1,
     witness_row_count: usize,
     linear_offsets: Vec<u32>,
     linear_indices: Vec<u32>,
@@ -1462,22 +1587,12 @@ impl StepARelationV1 {
                 Vec::new(),
             ),
         };
-        let previous_proof_validation = previous_proof_layout
-            .map(|layout| {
-                validate_previous_proof_witness_v1(
-                    &previous_recursive_proof,
-                    layout,
-                    &linear_targets,
-                )
-            })
-            .unwrap_or_default();
         Self {
             previous_recursive_proof: Box::new(previous_recursive_proof),
             previous_statement,
             leaf_record,
             target_statement,
             previous_proof_layout,
-            previous_proof_validation,
             witness_row_count,
             linear_offsets,
             linear_indices,
@@ -1541,15 +1656,25 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
 
     fn compute_constraints_u64(
         &self,
-        _view: SmallwoodNonlinearEvalView<'_>,
+        view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
+        let _ = view;
         let structural_mismatch = step_relation_mismatch(
             &self.previous_statement,
             &self.leaf_record,
             &self.target_statement,
         );
-        let validation = self.previous_proof_validation;
+        let validation = self
+            .previous_proof_layout
+            .map(|layout| {
+                validate_previous_proof_witness_v1(
+                    &self.previous_recursive_proof,
+                    layout,
+                    &self.linear_targets,
+                )
+            })
+            .unwrap_or_default();
         let trace_mismatch = u64::from(
             !validation.witness_ready
                 || !validation.descriptor_shape_valid
@@ -1571,7 +1696,6 @@ pub struct StepBRelationV1 {
     pub leaf_record: BlockLeafRecordV1,
     pub target_statement: RecursivePrefixStatementV1,
     previous_proof_layout: Option<PreviousProofWitnessLayoutV1>,
-    previous_proof_validation: PreviousProofWitnessValidationV1,
     witness_row_count: usize,
     linear_offsets: Vec<u32>,
     linear_indices: Vec<u32>,
@@ -1609,22 +1733,12 @@ impl StepBRelationV1 {
                 Vec::new(),
             ),
         };
-        let previous_proof_validation = previous_proof_layout
-            .map(|layout| {
-                validate_previous_proof_witness_v1(
-                    &previous_recursive_proof,
-                    layout,
-                    &linear_targets,
-                )
-            })
-            .unwrap_or_default();
         Self {
             previous_recursive_proof: Box::new(previous_recursive_proof),
             previous_statement,
             leaf_record,
             target_statement,
             previous_proof_layout,
-            previous_proof_validation,
             witness_row_count,
             linear_offsets,
             linear_indices,
@@ -1688,15 +1802,25 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
 
     fn compute_constraints_u64(
         &self,
-        _view: SmallwoodNonlinearEvalView<'_>,
+        view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
+        let _ = view;
         let structural_mismatch = step_relation_mismatch(
             &self.previous_statement,
             &self.leaf_record,
             &self.target_statement,
         );
-        let validation = self.previous_proof_validation;
+        let validation = self
+            .previous_proof_layout
+            .map(|layout| {
+                validate_previous_proof_witness_v1(
+                    &self.previous_recursive_proof,
+                    layout,
+                    &self.linear_targets,
+                )
+            })
+            .unwrap_or_default();
         let trace_mismatch = u64::from(
             !validation.witness_ready
                 || !validation.descriptor_shape_valid

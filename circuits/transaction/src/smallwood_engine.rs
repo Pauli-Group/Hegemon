@@ -13,23 +13,23 @@ use crate::{error::TransactionCircuitError, smallwood_semantics::SmallwoodConstr
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
-const DIGEST_BYTES: usize = 32;
+pub const DIGEST_BYTES: usize = 32;
 const DIGEST_WORDS: usize = DIGEST_BYTES / 8;
 const SALT_BYTES: usize = 32;
 const SALT_WORDS: usize = SALT_BYTES / 8;
-const NONCE_BYTES: usize = 4;
+pub const NONCE_BYTES: usize = 4;
 
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
 const SMALLWOOD_POSEIDON2_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-compress2.v1";
-const SMALLWOOD_RHO: usize = 2;
-const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
-const SMALLWOOD_BETA: usize = 2;
-const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
-const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
+pub const SMALLWOOD_RHO: usize = 2;
+pub const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
+pub const SMALLWOOD_BETA: usize = 2;
+pub const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
 const SMALLWOOD_DECS_ETA: usize = 3;
-const SMALLWOOD_DECS_POW_BITS: u32 = 0;
+pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SmallwoodArithmetization {
@@ -38,7 +38,7 @@ pub enum SmallwoodArithmetization {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SmallwoodTranscriptBackend {
+pub enum SmallwoodTranscriptBackend {
     Blake3,
     Poseidon2,
 }
@@ -85,6 +85,10 @@ pub struct SmallwoodProofTraceV1 {
 }
 
 impl SmallwoodProofTraceV1 {
+    pub fn decs_proof_v1(&self) -> &DecsProof {
+        &self.pcs.decs
+    }
+
     pub fn pcs_partial_evals_v1(&self) -> &[Vec<u64>] {
         &self.pcs.partial_evals
     }
@@ -526,7 +530,7 @@ impl SmallwoodOpenedWitnessBundle {
 }
 
 #[derive(Clone, Debug)]
-struct SmallwoodConfig {
+pub struct SmallwoodConfig {
     row_count: usize,
     packing_factor: usize,
     constraint_degree: usize,
@@ -549,7 +553,7 @@ struct SmallwoodConfig {
     packing_points: Vec<u64>,
 }
 
-fn ensure_row_polynomial_arithmetization(
+pub fn ensure_row_polynomial_arithmetization(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<(), TransactionCircuitError> {
     match statement.arithmetization() {
@@ -1011,7 +1015,7 @@ pub fn build_smallwood_poseidon2_verifier_trace_v1(
     )
 }
 
-fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> SmallwoodProof {
+pub fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> SmallwoodProof {
     SmallwoodProof {
         salt: trace.salt,
         nonce: trace.nonce,
@@ -1068,6 +1072,198 @@ pub fn smallwood_poseidon2_eval_points_v1(
     );
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
     Ok(eval_points)
+}
+
+pub fn smallwood_poseidon2_opening_points_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    smallwood_poseidon2_eval_points_v1(statement, proof_trace)
+}
+
+pub fn smallwood_poseidon2_coeffs_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    eval_points: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
+    pcs_build_coefficients(&cfg, eval_points, &mut coeffs);
+    Ok(coeffs)
+}
+
+pub fn smallwood_poseidon2_combi_heads_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    eval_points: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    pcs_reconstruct_combi_heads(&cfg, eval_points, row_scalars, &proof.pcs.partial_evals)
+}
+
+pub fn smallwood_poseidon2_decs_trans_hash_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    combi_heads: &[Vec<u64>],
+) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    Ok(hash_challenge_opening_decs(
+        &cfg,
+        combi_heads,
+        &proof.h_piop,
+        &proof.pcs.rcombi_tails,
+        SmallwoodTranscriptBackend::Poseidon2,
+    ))
+}
+
+pub fn smallwood_poseidon2_decs_query_v1(
+    decs_trans_hash: &[u8; DIGEST_BYTES],
+) -> Result<(Vec<u32>, [u8; NONCE_BYTES], Vec<u64>), TransactionCircuitError> {
+    let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
+        SMALLWOOD_DECS_NB_EVALS,
+        SMALLWOOD_DECS_NB_OPENED_EVALS,
+        SMALLWOOD_DECS_POW_BITS,
+        decs_trans_hash,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    let decs_eval_points = decs_leaf_indexes
+        .iter()
+        .map(|&idx| idx as u64)
+        .collect::<Vec<_>>();
+    Ok((decs_leaf_indexes, decs_nonce, decs_eval_points))
+}
+
+pub fn smallwood_poseidon2_recompute_rows_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    coeffs: &[Vec<u64>],
+    combi_heads: &[Vec<u64>],
+    decs_eval_points: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    lvcs_recompute_rows(
+        &cfg,
+        coeffs,
+        combi_heads,
+        &proof.pcs.rcombi_tails,
+        &proof.pcs.subset_evals,
+        decs_eval_points,
+    )
+}
+
+pub fn smallwood_poseidon2_recompute_root_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    rows: &[Vec<u64>],
+    decs_eval_points: &[u64],
+) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    decs_recompute_root(
+        &cfg,
+        &proof.salt,
+        rows,
+        decs_eval_points,
+        &proof.pcs.decs,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )
+}
+
+pub fn smallwood_poseidon2_decs_commitment_transcript_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    rows: &[Vec<u64>],
+    root_digest: &[u8; DIGEST_BYTES],
+    decs_eval_points: &[u64],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    decs_commitment_transcript(
+        &cfg,
+        &proof.salt,
+        rows,
+        root_digest,
+        decs_eval_points,
+        &proof.pcs.decs,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )
+}
+
+pub fn smallwood_poseidon2_piop_input_words_v1(
+    pcs_transcript_words: &[u64],
+    binded_words: &[u64],
+) -> Vec<u64> {
+    let mut out = pcs_transcript_words.to_vec();
+    out.extend_from_slice(binded_words);
+    out
+}
+
+pub fn smallwood_poseidon2_piop_transcript_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    proof_trace: &SmallwoodProofTraceV1,
+    piop_input_words: &[u64],
+    eval_points: &[u64],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let proof = smallwood_proof_from_trace_v1(proof_trace);
+    validate_proof_shape(&cfg, &proof)?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    piop_recompute_transcript(
+        &cfg,
+        statement,
+        piop_input_words,
+        eval_points,
+        row_scalars,
+        &proof.piop,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )
+}
+
+pub fn smallwood_poseidon2_gamma_prime_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    piop_input_words: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let hash_fpp = hash_piop(piop_input_words, SmallwoodTranscriptBackend::Poseidon2);
+    Ok(derive_gamma_prime(
+        &cfg,
+        &hash_fpp,
+        SmallwoodTranscriptBackend::Poseidon2,
+    ))
+}
+
+pub fn smallwood_poseidon2_piop_accept_v1(
+    proof_trace: &SmallwoodProofTraceV1,
+    piop_transcript_words: &[u64],
+) -> bool {
+    hash_piop_transcript(
+        piop_transcript_words,
+        SmallwoodTranscriptBackend::Poseidon2,
+    ) == proof_trace.h_piop
 }
 
 pub fn smallwood_poseidon2_pcs_trace_v1(
@@ -1184,7 +1380,7 @@ pub fn smallwood_poseidon2_piop_trace_v1(
     })
 }
 
-fn validate_proof_shape(
+pub fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof: &SmallwoodProof,
 ) -> Result<(), TransactionCircuitError> {
@@ -1299,7 +1495,7 @@ struct PiopRunOutput {
 }
 
 impl SmallwoodConfig {
-    fn new(
+    pub fn new(
         statement: &(dyn SmallwoodConstraintAdapter + Sync),
     ) -> Result<Self, TransactionCircuitError> {
         let row_count = statement.row_count();
@@ -1369,6 +1565,18 @@ impl SmallwoodConfig {
             fullrank_cols,
             packing_points,
         })
+    }
+
+    pub fn packing_points_v1(&self) -> &[u64] {
+        &self.packing_points
+    }
+
+    pub fn nb_lvcs_rows_v1(&self) -> usize {
+        self.nb_lvcs_rows
+    }
+
+    pub fn nb_lvcs_opened_combi_v1(&self) -> usize {
+        self.nb_lvcs_opened_combi
     }
 }
 
@@ -1443,7 +1651,7 @@ fn piop_run(
     })
 }
 
-fn piop_recompute_transcript(
+pub fn piop_recompute_transcript(
     cfg: &SmallwoodConfig,
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     in_transcript: &[u64],
@@ -1801,7 +2009,7 @@ fn pcs_build_opened_evaluations(
     ))
 }
 
-fn pcs_reconstruct_combi_heads(
+pub fn pcs_reconstruct_combi_heads(
     cfg: &SmallwoodConfig,
     eval_points: &[u64],
     row_scalars: &[Vec<u64>],
@@ -2014,7 +2222,7 @@ fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) 
         .collect()
 }
 
-fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs: &mut [Vec<u64>]) {
+pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs: &mut [Vec<u64>]) {
     let m = cfg.packing_factor + SMALLWOOD_NB_OPENED_EVALS;
     for (j, &r) in eval_points.iter().enumerate() {
         let mut powers = vec![0u64; m];
@@ -2145,7 +2353,7 @@ fn lvcs_open(
     Ok((combi_heads, rcombi_tails, subset_evals, decs_proof))
 }
 
-fn lvcs_recompute_rows(
+pub fn lvcs_recompute_rows(
     cfg: &SmallwoodConfig,
     coeffs: &[Vec<u64>],
     combi_heads: &[Vec<u64>],
@@ -2341,7 +2549,7 @@ fn decs_open(
     })
 }
 
-fn decs_recompute_root(
+pub fn decs_recompute_root(
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
     evals: &[Vec<u64>],
@@ -2375,7 +2583,7 @@ fn decs_recompute_root(
     ))
 }
 
-fn decs_commitment_transcript(
+pub fn decs_commitment_transcript(
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
     evals: &[Vec<u64>],
@@ -2413,14 +2621,14 @@ fn hash_piop(words: &[u64], transcript_backend: SmallwoodTranscriptBackend) -> [
     transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, words)
 }
 
-fn hash_piop_transcript(
+pub fn hash_piop_transcript(
     words: &[u64],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
     transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, words)
 }
 
-fn hash_challenge_opening_decs(
+pub fn hash_challenge_opening_decs(
     cfg: &SmallwoodConfig,
     combi_heads: &[Vec<u64>],
     h_piop: &[u8; DIGEST_BYTES],
@@ -2500,7 +2708,7 @@ fn derive_decs_challenge(
     out
 }
 
-fn derive_gamma_prime(
+pub fn derive_gamma_prime(
     cfg: &SmallwoodConfig,
     hash_fpp: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
@@ -2605,7 +2813,7 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
         .unwrap_or(0)
 }
 
-fn ensure_no_packing_collisions(
+pub fn ensure_no_packing_collisions(
     packing_points: &[u64],
     eval_points: &[u64],
 ) -> Result<(), TransactionCircuitError> {
@@ -2629,7 +2837,7 @@ fn opening_points_are_valid(packing_points: &[u64], eval_points: &[u64]) -> bool
     true
 }
 
-fn xof_piop_opening_points(
+pub fn xof_piop_opening_points(
     nonce: &[u8; NONCE_BYTES],
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
@@ -2645,7 +2853,7 @@ fn xof_piop_opening_points(
     )
 }
 
-fn xof_decs_opening(
+pub fn xof_decs_opening(
     nb_evals: usize,
     nb_opened_evals: usize,
     pow_bits: u32,
