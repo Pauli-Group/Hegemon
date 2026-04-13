@@ -40,6 +40,7 @@ The crucial correction in this revision is that the first milestone is backend w
 - [x] (2026-04-13 03:18Z) Closed the remaining backend-interface gaps in the design note: `Pi_CCS` now explicitly consumes the exact commitment opening and is verified under the recomputed transcript `chi_i = chi_step(Q_i, C_i)`, `Pi_RLC` and `Pi_DEC` now explicitly thread the private witness/opening pairs they consume and produce, and `InitAccumulator_step` now states the actual left-identity law needed for the first fold rather than only claiming that `A_0` is a valid empty-prefix carrier.
 - [x] (2026-04-13 03:18Z) Closed the last lattice-line completeness gap in the design note by defining the temporary post-fold message class `M_hi(v*)` explicitly, stating that `Pi_RLC` outputs a running witness/opening pair in that class, and stating that `Pi_DEC` is the exact reduction back from `M_hi(v*)` into the bounded live class `M_low(v*)`.
 - [x] (2026-04-13 03:18Z) Added the final anti-cheat wire guardrails: `Header_dec_step` now binds the canonical accumulator/decider serializer digests plus exact terminal width constants, `VerifyBlockRecursive` now requires exact-consumption decoding with no trailing bytes, and the falsification criteria now treat variable-length terminal encodings or hidden sidecars as direct failures of the invariant.
+- [x] (2026-04-13 04:00Z) Reworked the ExecPlan into an implementation blueprint by naming concrete crate boundaries, exact recursive backend trait surfaces, exact artifact/header structs, canonical serializer ownership, file-by-file edit targets, and milestone test names.
 - [ ] Implement a witness-sound recursive SuperNeo backend that can prove fixed-shape CCS relations without exposing `expected_packed` to the verifier, can linearize exact `CCCS_step(Q_i)` claims, can fold one running `LCCCS_step(Q_pref[i - 1])` instance with one new temporary linearized step instance via `Pi_RLC`, can normalize the running high-norm lattice instance back into the bounded message class via `Pi_DEC`, and can close the hidden unary accumulation transcript with a constant-size decider.
 - [ ] Implement `BlockStepV1`, the hidden accumulator/decider path, and the terminal accumulator-plus-decider artifact on top of that strengthened backend while preserving the exact current semantic tuple and adding only the constant-size verified-leaf commitment, verified-receipt commitment, and two append-state digests required for soundness.
 - [ ] Replace the current linear block commitment/nullifier public-input surface with the recursive `(Header_dec_step, A_n, pi_dec, Y_rec)` path and add proof-length equality tests across different block sizes.
@@ -92,9 +93,17 @@ The crucial correction in this revision is that the first milestone is backend w
   Rationale: the sequential sponges `tau` and `eta` are carried inside constant-size hidden boundary state, so arbitrary block length can come from private accumulation over fixed-width summaries instead of embedding child proofs into the same CCS relation. That removes the proof-size fixed point and avoids any fake `N_max` cap.
   Date/Author: 2026-04-12 / Codex
 
+- Decision: implement recursion as a parallel trait family beside `Backend<F>` instead of mutating the shipped verified-leaf API in place.
+  Rationale: the current product still depends on `prove_leaf` / `verify_leaf` and `fold_pair` / `verify_fold`; recursive objects have different statements, proofs, witnesses, openings, and verifier obligations, so a sibling interface avoids corrupting the current lane before the new lane is real.
+  Date/Author: 2026-04-13 / Codex
+
+- Decision: split the new `circuits/block-recursion` crate into explicit modules for state, statements, artifacts, public replay, relation wiring, prover, verifier, and tests.
+  Rationale: the constant-size guarantee depends on typed relations, canonical serializers, and deterministic replay staying visibly separate. A monolithic file would make it too easy to hide a linear payload in “helper” code.
+  Date/Author: 2026-04-13 / Codex
+
 ## Outcomes & Retrospective
 
-The design is now materially more honest than the earlier sketch. The note no longer hides behind a fake public tuple, no longer pretends BLAKE3 is available inside recursion, no longer leaves the append-state frontier/history underbound, no longer drops either the verified-leaf binding or the verified-receipt binding that the live product already enforces, and no longer implies the current SuperNeo backend is "basically enough." The latest correction also removes the mathematically false affine-system fold law and replaces it with the actual paper object: `CCCS_step -> LCCCS_step -> Pi_RLC -> Pi_DEC` on the active lattice commitment module. The remaining gap is still large: no backend code has been written, and the current repo still ships only the native `tx_leaf -> receipt_root` verified-leaf aggregation lane.
+The design is now materially more honest than the earlier sketch. The note no longer hides behind a fake public tuple, no longer pretends BLAKE3 is available inside recursion, no longer leaves the append-state frontier/history underbound, no longer drops either the verified-leaf binding or the verified-receipt binding that the live product already enforces, and no longer implies the current SuperNeo backend is "basically enough." The latest correction also removes the mathematically false affine-system fold law and replaces it with the actual paper object: `CCCS_step -> LCCCS_step -> Pi_CCS -> Pi_RLC -> Pi_DEC` on the active lattice commitment module. The remaining gap is implementation, not theorem prose. This revision closes the handoff gap by naming the exact crate boundaries, public Rust surfaces, serializer ownership, and milestone tests required to make the backend real.
 
 ## Context and Orientation
 
@@ -115,36 +124,19 @@ The design target lives in [docs/crypto/constant_recursive_block_proof.md](/User
 
 ## Plan of Work
 
-Start in the SuperNeo backend, not in consensus.
+Start in the SuperNeo backend, not in consensus. The first deliverable is not a block proof. It is a toy recursive backend that proves one hidden-witness fixed-shape relation without `expected_packed`. Until that exists, every later milestone is dead code.
 
-First, extend `circuits/superneo-core/src/lib.rs` with a witness-sound recursive proof interface. The final backend API must allow a verifier to check a fixed-shape CCS relation from public statement data plus proof bytes, without receiving `expected_packed`. It must introduce field-native statement commitments and a field-native Fiat-Shamir transcript, not reuse the current byte-oriented `statement_digest` path. It must also provide:
+Milestone 1 is the recursive interface layer in `circuits/superneo-core/src/lib.rs`. Add a parallel trait family rather than changing `Backend<F>`. The new family must name the exact committed claim, temporary linearized claim, running accumulator, high-norm temporary accumulator, normalization proof, and terminal decider proof as first-class typed objects. This crate owns only the generic recursive carriers, digests, and decider-profile serialization. It must not define the concrete block-level wire artifact; that belongs exclusively to `circuits/block-recursion/src/artifacts.rs`.
 
-- an exact committed CCS step-claim object;
-- a `CCCS` proof API for one exact hidden-witness step claim;
-- a running `LCCCS` accumulator carrier;
-- a `Pi_CCS` linearization API;
-- a `Pi_RLC` fold API from one running `LCCCS` instance and one new temporary linearized step instance to the next running instance;
-- a `Pi_DEC` normalization proof API that restores the fixed low-norm running message class without changing semantics;
-- a final decider proof over the hidden unary accumulation transcript.
+Milestone 2 is the lattice backend implementation in `circuits/superneo-backend-lattice/src/lib.rs`. Reuse `NativeBackendParams`, `BackendKey`, the live ring profile, the live opening-randomness rules, and the existing commitment-opening machinery. Do not invent a second commitment scheme. The work here is to lift those primitives into recursive proof objects: exact step proof, CCS linearization proof, typed fold proof, normalization proof, and terminal decider. The first real proof target is a toy relation where the verifier sees only public statement data and proof bytes. Once that toy path exists, the same API is promoted to the real `BlockStepRelation_v*`.
 
-This may require a new backend trait or parallel backend family rather than mutating the existing verified-leaf API in place.
+Milestone 3 is the canonical verified-leaf boundary in `circuits/superneo-hegemon/src/lib.rs`. Expose stable helpers that return the fixed recursive payload for one verified tx leaf, the canonical receipt limb encoding, the canonical tx-leaf witness payload, and the verifier-profile / statement-hash bindings already enforced by the live validator. This milestone prevents the future block-recursion crate from re-encoding tx-leaf data in a subtly different way.
 
-Second, implement the strengthened backend in `circuits/superneo-backend-lattice/src/lib.rs` or a sibling backend crate. The key behavior to demonstrate is not performance; it is witness-soundness plus recursive composability for one fixed-shape relation. Concretely, this milestone must add the missing SuperNeo layers the current backend does not have:
+Milestone 4 is the new `circuits/block-recursion` crate plus a workspace entry in the root [Cargo.toml](/Users/pldd/Projects/Reflexivity/Hegemon/Cargo.toml). Implement it as modules, not one giant file. `state.rs` owns the raw recursive state and Poseidon2 commitments. `statement.rs` owns `Q_i`, `Q_pref[i]`, `public_inputs`, and `ComposeCheck`. `artifacts.rs` is the sole owner of the wire contract: `HeaderDecStepV1`, `RecursiveBlockArtifactV1`, `BlockAccumulationTranscriptV1`, the canonical `ser_header_dec_step_v1`, `ser_recursive_block_artifact_v1`, `ser_block_accumulation_transcript_v1` functions, and the matching exact-consumption parsers. `public_replay.rs` owns deterministic replay from verified leaf records to `C_leaf`, `C_receipt`, `C_stmt`, `Sigma_tree(T_0)`, `Sigma_tree(T_n)`, `U_n`, `Y_sem`, and `Y_rec`. `relation.rs` owns the compiled `BlockStepRelation_v*` and assignment builder. `prover.rs` owns the recursion loop `CCCS_step -> Pi_CCS -> Pi_RLC -> Pi_DEC -> pi_dec`. `verifier.rs` owns `VerifyBlockRecursive`. No other crate is allowed to define an alternate on-wire recursive block artifact or alternate private transcript serializer for this path.
 
-- one exact hidden-witness `CCCS_step(Q)` proof for a fixed relation;
-- one running `LCCCS_step(Q_pref[i])` accumulator over the active pay-per-bit Ajtai commitment module;
-- one sound `Pi_CCS` linearization from an exact step claim to a temporary linearized step instance;
-- one sound `Pi_RLC` fold from the previous running `LCCCS` instance and the new temporary linearized step instance to the next running high-norm instance;
-- one `Pi_DEC` normalization proof that brings the running high-norm instance back into the bounded message class expected by the next accumulator state;
-- one final constant-size decider over the hidden unary accumulation transcript `T_acc[0,n]`.
+Milestone 5 is consensus and node integration. Add one explicit new proof kind in `consensus/src/types.rs` rather than hiding the recursive path under `Custom([u8; 16])`. Register a recursive block verifier in `consensus/src/proof.rs` through the existing `ArtifactVerifier` registry so the old `ReceiptRoot` lane stays intact. Then wire authoring and service code in `node/src/substrate/service.rs` and the existing prover RPC surface so the recursive artifact can be produced only behind an explicit feature gate or runtime switch.
 
-A toy relation that proves a hidden witness satisfies a simple arithmetic identity is acceptable as the first proof-of-concept, but the verifier must not receive the witness itself.
-
-Third, build the block-recursion crate. Create `circuits/block-recursion/src/lib.rs` with the state types from the design note: the raw recursive state, the Poseidon2 internal state digests, the verified-leaf sponge, the receipt sponge, the internal sparse nullifier set, the fixed one-transaction `BlockStepRelation_v*`, the hidden prefix accumulator `A_i`, and the terminal accumulator-plus-decider artifact. The step relation must consume one externally verified tx-leaf record, absorb the exact canonical leaf payload into `lambda`, absorb the canonical receipt into `eta`, absorb the canonical statement hash into `tau`, update the append-only tree state, update the internal nullifier set, and enforce `i_out = i_in + 1`. The final artifact must ship the exact current semantic tuple plus the constant-size verified-leaf commitment `C_leaf(B)`, the constant-size receipt commitment `C_receipt(B)`, and the two constant-size append-state digests `Sigma_tree(T_0)` and `Sigma_tree(T_n)` required to bind the exact live truth surface, together with the terminal accumulator `A_n` and the decider proof `pi_dec[0,n]` that closes the full unary accumulation transcript `T_acc[0,n]`.
-
-Fourth, integrate a new recursive block-proof kind into consensus and authoring. `consensus/src/types.rs`, `consensus/src/proof.rs`, `node/src/substrate/service.rs`, and any runtime manifest or RPC surfaces must accept a new constant-size recursive proof kind alongside the current `receipt_root` lane. On that new path, consensus must reconstruct `Q_pref[n]` from deterministic public replay, rebuild `U_n` with `SparseSetRoot(Set(N_pub(B)))` after an explicit duplicate check, verify `(Header_dec_step, A_n, pi_dec[0,n])` directly against the decider profile bound in `Header_dec_step`, and then perform the same deterministic public recomputations it performs today for statement commitment, state roots, kernel roots, `nullifier_root`, and `da_root`.
-
-Fifth, add acceptance tests. One test must prove the exact hard invariant by generating recursive block proofs for at least two different transaction counts and asserting equality of serialized proof length. Another must tamper with one coordinate of the recursive proof-visible tuple and require verification failure. Another must ensure no serialized recursive block artifact contains legacy linear payload fields.
+Milestone 6 is hard acceptance. The implementation is not done when it compiles. It is done when proof bytes are identical across at least two block sizes, tampering any coordinate of `Y_rec(B)` or the decider header fails verification, the artifact parser rejects trailing bytes and alternate-width encodings, and a dev node imports a block carrying the recursive proof kind without changing the live semantic tuple.
 
 ## Concrete Steps
 
@@ -156,43 +148,250 @@ Work from the repository root `/Users/pldd/Projects/Reflexivity/Hegemon`.
        edit docs/assets/constant-recursive-block-proof-blackboards.svg
        edit .agent/CONSTANT_SIZE_RECURSIVE_BLOCK_PROOF_EXECPLAN.md
 
-2. Extend the backend interface:
+2. Add the recursive backend types in `circuits/superneo-core/src/lib.rs`:
 
        edit circuits/superneo-core/src/lib.rs
+
+   Add these stable public objects before any backend implementation:
+
+       pub struct RecursiveStatementEncoding<F> { ... }
+       pub struct CccsClaim<C, F> { ... }
+       pub struct LcccsInstance<C, F> { ... }
+       pub struct RecursiveDeciderProfile { ... }
+       pub struct CanonicalDeciderTranscript { ... }
+
+       pub trait RecursiveBackend<F> {
+           type ProverKey;
+           type VerifierKey;
+           type PackedWitness;
+           type Commitment;
+           type CommitmentOpening;
+           type CccsProof;
+           type LinearizationProof;
+           type FoldProof;
+           type NormalizationProof;
+           type DeciderProof;
+
+           fn setup_recursive(
+               &self,
+               security: &SecurityParams,
+               shape: &CcsShape<F>,
+           ) -> Result<(Self::ProverKey, Self::VerifierKey)>;
+
+           fn prove_cccs(
+               &self,
+               pk: &Self::ProverKey,
+               relation_id: &RelationId,
+               statement: &RecursiveStatementEncoding<F>,
+               packed: &Self::PackedWitness,
+               opening: &Self::CommitmentOpening,
+           ) -> Result<(CccsClaim<Self::Commitment, F>, Self::CccsProof)>;
+
+           fn verify_cccs(
+               &self,
+               vk: &Self::VerifierKey,
+               claim: &CccsClaim<Self::Commitment, F>,
+               proof: &Self::CccsProof,
+           ) -> Result<()>;
+
+           fn reduce_cccs(
+               &self,
+               pk: &Self::ProverKey,
+               claim: &CccsClaim<Self::Commitment, F>,
+               packed: &Self::PackedWitness,
+               opening: &Self::CommitmentOpening,
+           ) -> Result<(LcccsInstance<Self::Commitment, F>, Self::LinearizationProof)>;
+
+           fn verify_linearized(
+               &self,
+               vk: &Self::VerifierKey,
+               claim: &CccsClaim<Self::Commitment, F>,
+               linearized: &LcccsInstance<Self::Commitment, F>,
+               proof: &Self::LinearizationProof,
+           ) -> Result<()>;
+
+           fn fold_lcccs(
+               &self,
+               pk: &Self::ProverKey,
+               previous_prefix: &RecursiveStatementEncoding<F>,
+               left: &LcccsInstance<Self::Commitment, F>,
+               step_statement: &RecursiveStatementEncoding<F>,
+               right: &LcccsInstance<Self::Commitment, F>,
+               linearization_proof: &Self::LinearizationProof,
+               target_prefix: &RecursiveStatementEncoding<F>,
+               left_packed: &Self::PackedWitness,
+               left_opening: &Self::CommitmentOpening,
+               right_packed: &Self::PackedWitness,
+               right_opening: &Self::CommitmentOpening,
+           ) -> Result<(
+               LcccsInstance<Self::Commitment, F>,
+               Self::PackedWitness,
+               Self::CommitmentOpening,
+               Self::FoldProof,
+           )>;
+
+           // `fold_lcccs` must derive the fold challenge from the exact tuple
+           // `(previous_prefix, step_statement, target_prefix, DigestLCCCS_step(left),
+           //   DigestLCCCS_step(right), DigestProofCCS_step(linearization_proof))`
+           // and must reject unless `ComposeCheck(previous_prefix, step_statement, target_prefix) = 1`.
+
+           fn verify_fold_lcccs(
+               &self,
+               vk: &Self::VerifierKey,
+               previous_prefix: &RecursiveStatementEncoding<F>,
+               left: &LcccsInstance<Self::Commitment, F>,
+               step_statement: &RecursiveStatementEncoding<F>,
+               right: &LcccsInstance<Self::Commitment, F>,
+               linearization_proof: &Self::LinearizationProof,
+               parent: &LcccsInstance<Self::Commitment, F>,
+               target_prefix: &RecursiveStatementEncoding<F>,
+               proof: &Self::FoldProof,
+           ) -> Result<()>;
+
+           fn normalize_lcccs(
+               &self,
+               pk: &Self::ProverKey,
+               statement: &RecursiveStatementEncoding<F>,
+               high_norm: &LcccsInstance<Self::Commitment, F>,
+               high_norm_packed: &Self::PackedWitness,
+               high_norm_opening: &Self::CommitmentOpening,
+           ) -> Result<(
+               LcccsInstance<Self::Commitment, F>,
+               Self::PackedWitness,
+               Self::CommitmentOpening,
+               Self::NormalizationProof,
+           )>;
+
+           fn verify_normalized(
+               &self,
+               vk: &Self::VerifierKey,
+               statement: &RecursiveStatementEncoding<F>,
+               high_norm: &LcccsInstance<Self::Commitment, F>,
+               normalized: &LcccsInstance<Self::Commitment, F>,
+               proof: &Self::NormalizationProof,
+           ) -> Result<()>;
+
+           fn prove_decider(
+               &self,
+               pk: &Self::ProverKey,
+               decider_profile: &RecursiveDeciderProfile,
+               statement: &RecursiveStatementEncoding<F>,
+               terminal: &LcccsInstance<Self::Commitment, F>,
+               transcript: &CanonicalDeciderTranscript,
+           ) -> Result<Self::DeciderProof>;
+
+           fn verify_decider(
+               &self,
+               vk: &Self::VerifierKey,
+               decider_profile: &RecursiveDeciderProfile,
+               statement: &RecursiveStatementEncoding<F>,
+               terminal: &LcccsInstance<Self::Commitment, F>,
+               proof: &Self::DeciderProof,
+           ) -> Result<()>;
+       }
+
+       pub fn serialize_lcccs_instance<C, F>(...) -> Result<Vec<u8>>;
+       pub fn deserialize_lcccs_instance<C, F>(...) -> Result<LcccsInstance<C, F>>;
+       pub fn serialize_decider_profile(...) -> Result<Vec<u8>>;
+       pub fn deserialize_decider_profile(...) -> Result<RecursiveDeciderProfile>;
+
+   Expected result: the repo has a recursive proof API whose verifier never receives `expected_packed`.
+
+3. Implement the toy recursive backend in `circuits/superneo-backend-lattice/src/lib.rs`:
+
        edit circuits/superneo-backend-lattice/src/lib.rs
-
-   Expected result: a new witness-sound recursive proof API exists beside or above the current verified-leaf API.
-
-3. Prove the backend change on a toy relation before touching block logic:
+       edit circuits/superneo-backend-lattice/Cargo.toml
 
        cargo test -p superneo-backend-lattice recursive_toy_relation -- --nocapture
+       cargo test -p superneo-backend-lattice recursive_toy_relation_rejects_wrong_witness -- --nocapture
+       cargo test -p superneo-backend-lattice recursive_decider_rejects_tampered_profile -- --nocapture
 
-   Expected result: one test shows verification succeeds on the correct witness and fails when the witness changes, without passing the witness itself to the verifier.
+   Expected result: one test verifies a hidden witness successfully, one rejects the wrong witness, and one rejects a decider/profile mismatch.
 
-4. Create the block recursion crate and wire the state machine:
+4. Expose canonical verified-leaf payload helpers:
 
+       edit circuits/superneo-hegemon/src/lib.rs
+
+   Add stable helpers with fixed-width outputs:
+
+       pub struct RecursiveLeafPayloadV1 { ... }
+       pub fn recursive_leaf_payload_v1(...) -> Result<RecursiveLeafPayloadV1>;
+       pub fn recursive_leaf_payload_limbs_v1(...) -> Result<Vec<Goldilocks>>;
+       pub fn recursive_receipt_limbs_v1(...) -> [Goldilocks; 24];
+       pub fn recursive_statement_hash_v1(...) -> [u8; 48];
+
+5. Create the block recursion crate and wire the state machine:
+
+       edit Cargo.toml
        cargo new circuits/block-recursion --lib
        edit circuits/block-recursion/Cargo.toml
        edit circuits/block-recursion/src/lib.rs
+       add circuits/block-recursion/src/state.rs
+       add circuits/block-recursion/src/statement.rs
+       add circuits/block-recursion/src/artifacts.rs
+       add circuits/block-recursion/src/public_replay.rs
+       add circuits/block-recursion/src/relation.rs
+       add circuits/block-recursion/src/prover.rs
+       add circuits/block-recursion/src/verifier.rs
+       add circuits/block-recursion/src/tests.rs
 
-5. Integrate the recursive proof kind into consensus and node authoring:
+   If `circuits/block-recursion` already exists, do not run `cargo new` again; keep the existing crate and edit the files in place. `lib.rs` should only re-export the stable public API. The public surface should include:
+
+       pub struct BlockStepStatementV1 { ... }
+       pub struct BlockPrefixStatementV1 { ... }
+       pub struct RecursiveBlockPublicV1 { ... }
+       pub struct HeaderDecStepV1 { ... }
+       pub struct RecursiveBlockArtifactV1 { ... }
+       pub struct BlockAccumulationTranscriptV1 { ... }
+       pub enum BlockRecursionError { ... }
+       pub fn prove_block_recursive_v1(...) -> Result<RecursiveBlockArtifactV1, BlockRecursionError>;
+       pub fn verify_block_recursive_v1(...) -> Result<RecursiveBlockPublicV1, BlockRecursionError>;
+       pub fn serialize_recursive_block_artifact_v1(...) -> Result<Vec<u8>, BlockRecursionError>;
+       pub fn deserialize_recursive_block_artifact_v1(bytes: &[u8]) -> Result<RecursiveBlockArtifactV1, BlockRecursionError>;
+       pub fn serialize_block_accumulation_transcript_v1(...) -> Result<CanonicalDeciderTranscript, BlockRecursionError>;
+       pub fn public_replay_v1(...) -> Result<RecursiveBlockPublicV1, BlockRecursionError>;
+
+   `artifacts.rs` is the canonical owner of the on-wire recursive block artifact and the private accumulation transcript. `circuits/superneo-core` may serialize generic `LcccsInstance` carriers and decider-profile objects, but it must not define a second wire artifact schema for the block path.
+
+6. Integrate the recursive proof kind into consensus and node authoring:
 
        edit consensus/src/types.rs
        edit consensus/src/proof.rs
        edit node/src/substrate/service.rs
+       edit node/src/substrate/rpc/prover.rs
 
-6. Run focused validation:
+   Add one explicit kind:
+
+       ProofArtifactKind::RecursiveBlockV1
+
+   Add a dedicated verifier-profile helper and one new `ArtifactVerifier` implementation that calls `block_recursion::verify_block_recursive_v1`.
+
+7. Run focused validation:
 
        cargo test -p superneo-backend-lattice recursive_toy_relation -- --nocapture
-       cargo test -p block-recursion -- --nocapture
+       cargo test -p superneo-backend-lattice recursive_toy_relation_rejects_wrong_witness -- --nocapture
+       cargo test -p superneo-backend-lattice recursive_decider_rejects_tampered_profile -- --nocapture
+       cargo test -p block-recursion public_replay_matches_consensus_tuple -- --nocapture
+       cargo test -p block-recursion recursive_artifact_rejects_trailing_bytes -- --nocapture
+       cargo test -p block-recursion recursive_artifact_rejects_legacy_linear_payload -- --nocapture
+       cargo test -p block-recursion recursive_artifact_rejects_width_mismatch -- --nocapture
+       cargo test -p block-recursion recursive_artifact_rejects_alternate_serializer_under_same_profile -- --nocapture
        cargo test -p consensus recursive_block -- --nocapture
        cargo test -p hegemon-node recursive_block -- --nocapture
 
-7. Run the proof-size invariant test:
+8. Run the proof-size invariant test:
 
        cargo test -p block-recursion proof_bytes_constant_across_tx_counts -- --nocapture
 
-   Expected result: the printed serialized proof length is identical across the tested transaction counts, and the serialized artifact does not contain any legacy linear payload surface.
+   Expected result: the printed serialized proof length is identical across the tested transaction counts, the parser rejects trailing bytes, and the serialized artifact contains no legacy linear payload surface.
+
+9. Run one end-to-end node smoke once the proof kind is wired:
+
+       make setup
+       make node
+       HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
+
+   Expected result: a dev block with the recursive proof kind imports and consensus logs no mismatch on `tx_statements_commitment`, state roots, kernel roots, `nullifier_root`, or `da_root`.
 
 ## Validation and Acceptance
 
@@ -201,16 +400,24 @@ Acceptance is binary.
 The feature succeeds only if all of the following are true:
 
 1. Two recursive block proofs for different transaction counts have identical serialized length.
-2. The recursive path preserves the exact current semantic tuple and adds only one constant-size verified-leaf commitment, one constant-size verified-receipt commitment, and the two constant-size append-state digests needed to bind the exact live truth surface.
-3. The recursive artifact contains no per-transaction proof bytes, per-transaction public inputs, representative child proofs, nullifier vectors, sorted-nullifier vectors, or `receipt_root` record lists.
-4. The recursive core uses field-native Poseidon2 internal state binding, field-native recursive Fiat-Shamir, and an internal Poseidon sparse nullifier set; it does not depend on an unimplemented in-circuit BLAKE3 gadget.
-5. Consensus recomputes the ordered verified-leaf commitment, the ordered receipt commitment, `tx_statements_commitment`, the exact append-state transition, the shielded state roots, kernel roots, `nullifier_root`, and `da_root` and rejects any mismatch on the recursive path.
-6. The backend used by the recursive path is witness-sound, does not require the verifier to receive `expected_packed`, and does not push relation satisfiability back out into surrounding Rust replay logic.
+2. `deserialize_recursive_block_artifact_v1` requires exact-consumption decoding and rejects trailing bytes, alternate serializers, and width mismatches under one fixed header/profile.
+3. The recursive path preserves the exact current semantic tuple and adds only one constant-size verified-leaf commitment, one constant-size verified-receipt commitment, and the two constant-size append-state digests needed to bind the exact live truth surface.
+4. The recursive artifact contains no per-transaction proof bytes, per-transaction public inputs, representative child proofs, nullifier vectors, sorted-nullifier vectors, or `receipt_root` record lists.
+5. The recursive core uses field-native Poseidon2 internal state binding, field-native recursive Fiat-Shamir, and an internal Poseidon sparse nullifier set; it does not depend on an unimplemented in-circuit BLAKE3 gadget.
+6. Consensus recomputes the ordered verified-leaf commitment, the ordered receipt commitment, `tx_statements_commitment`, the exact append-state transition, the shielded state roots, kernel roots, `nullifier_root`, and `da_root` and rejects any mismatch on the recursive path.
+7. The backend used by the recursive path is witness-sound, does not require the verifier to receive `expected_packed`, and does not push relation satisfiability back out into surrounding Rust replay logic.
+8. One dev-node smoke run imports a recursive block artifact successfully without making the recursive path the default product lane.
 
 At minimum, run:
 
     cargo test -p superneo-backend-lattice recursive_toy_relation -- --nocapture
-    cargo test -p block-recursion
+    cargo test -p superneo-backend-lattice recursive_toy_relation_rejects_wrong_witness -- --nocapture
+    cargo test -p superneo-backend-lattice recursive_decider_rejects_tampered_profile -- --nocapture
+    cargo test -p block-recursion public_replay_matches_consensus_tuple -- --nocapture
+    cargo test -p block-recursion recursive_artifact_rejects_trailing_bytes -- --nocapture
+    cargo test -p block-recursion recursive_artifact_rejects_legacy_linear_payload -- --nocapture
+    cargo test -p block-recursion recursive_artifact_rejects_width_mismatch -- --nocapture
+    cargo test -p block-recursion recursive_artifact_rejects_alternate_serializer_under_same_profile -- --nocapture
     cargo test -p consensus recursive_block -- --nocapture
     cargo test -p hegemon-node recursive_block -- --nocapture
 
@@ -220,7 +427,7 @@ and one explicit equality-of-proof-length test:
 
 ## Idempotence and Recovery
 
-All design-document edits in this plan are additive and safe to repeat. Backend experimentation must land behind a new recursive proof API or feature gate so the current native `receipt_root` product path remains intact until the recursive path is real. If the backend milestone fails, stop there, record the blocker in this plan, and leave the recursive proof kind disabled. Do not rename the fallback as "shipped."
+All design-document edits in this plan are additive and safe to repeat. Backend experimentation must land behind a new recursive proof API or feature gate so the current native `receipt_root` product path remains intact until the recursive path is real. Add `ProofArtifactKind::RecursiveBlockV1`, but do not make it the default kind until the dev-node smoke and constant-byte tests pass. If `circuits/block-recursion` already exists, skip `cargo new` and continue with the file edits. If the backend milestone fails, stop there, record the blocker in this plan, and leave the recursive proof kind disabled. Do not rename the fallback as "shipped." If the new crate is added to the workspace before it compiles, keep its public API behind `#[cfg(feature = "recursive-block-v1")]` or an equivalent cargo feature so the workspace can still be built incrementally.
 
 ## Artifacts and Notes
 
@@ -248,44 +455,214 @@ and the design consequence is:
 
 At the end of the first backend milestone, the repository must contain a new recursive proof interface in `circuits/superneo-core/src/lib.rs` with stable names and behavior equivalent to:
 
-    pub trait RecursiveBackend<F> {
-        type ProverKey;
-        type VerifierKey;
-        type Proof;
-        type StatementCommitment;
-
-        fn prove_relation(
-            &self,
-            pk: &Self::ProverKey,
-            relation_id: &RelationId,
-            statement: &RecursiveStatementEncoding<F>,
-            witness: &[F],
-        ) -> anyhow::Result<Self::Proof>;
-
-        fn verify_relation(
-            &self,
-            vk: &Self::VerifierKey,
-            relation_id: &RelationId,
-            statement: &RecursiveStatementEncoding<F>,
-            proof: &Self::Proof,
-        ) -> anyhow::Result<()>;
-    }
-
     pub struct RecursiveStatementEncoding<F> {
         pub public_inputs: Vec<F>,
         pub statement_commitment: [F; 6],
         pub external_statement_digest: Option<[u8; 48]>,
     }
 
-At the end of the first block-recursion milestone, the repository must contain `circuits/block-recursion/src/lib.rs` with stable names and behavior equivalent to:
+    pub struct CccsClaim<C, F> {
+        pub relation_id: RelationId,
+        pub shape_digest: ShapeDigest,
+        pub statement: RecursiveStatementEncoding<F>,
+        pub witness_commitment: C,
+    }
 
-    pub struct BlockRecursiveStateV1 { ... }
-    pub struct BlockStepPublicV1 { ... }
-    pub struct BlockAccumulatorArtifactV1 { ... }
-    pub fn prove_block_step_v1(...) -> Result<Vec<u8>, BlockRecursionError>
-    pub fn prove_block_recursive_v1(...) -> Result<BlockAccumulatorArtifactV1, BlockRecursionError>
-    pub fn verify_block_recursive_v1(...) -> Result<BlockStepPublicV1, BlockRecursionError>
+    pub struct LcccsInstance<C, F> {
+        pub relation_id: RelationId,
+        pub shape_digest: ShapeDigest,
+        pub statement: RecursiveStatementEncoding<F>,
+        pub witness_commitment: C,
+        pub relaxation_scalar: F,
+        pub challenge_point: Vec<F>,
+        pub evaluations: Vec<F>,
+    }
 
-The final recursive path must also add one new proof artifact kind in consensus/runtime plumbing and one equality-of-length invariant test.
+    pub struct RecursiveDeciderProfile {
+        pub decider_id: [u8; 32],
+        pub decider_vk_digest: [u8; 32],
+        pub decider_transcript_digest: [u8; 32],
+        pub init_acc_digest: [u8; 32],
+        pub acc_encoding_digest: [u8; 32],
+        pub dec_encoding_digest: [u8; 32],
+        pub acc_bytes: u32,
+        pub dec_bytes: u32,
+        pub artifact_bytes: u32,
+    }
 
-Revision note (2026-04-13): rewritten again after hostile review to remove both the false affine-system fold law and the later seal-layer fixed point. The plan now preserves the current semantic tuple exactly while adding one constant-size verified-leaf commitment, one constant-size verified-receipt commitment, and two constant-size append-state digests to the recursive proof-visible tuple, uses Poseidon2 for internal recursion and recursive Fiat-Shamir, explicitly keeps tx-artifact verification outside the recursive block proof, replaces the dead custom accumulator sketch with the actual paper line `CCCS_step -> LCCCS_step -> Pi_CCS -> Pi_RLC -> Pi_DEC`, makes `A_0` a canonical same-family initializer, binds the decider profile in the shipped artifact header, reconstructs `U_n` publicly via `SparseSetRoot` after a duplicate check, and ships the terminal accumulator-plus-decider artifact directly instead of assuming a second wrapper proof.
+    pub struct CanonicalDeciderTranscript {
+        pub transcript_digest: [u8; 48],
+        pub transcript_bytes: Vec<u8>,
+    }
+
+    pub trait RecursiveBackend<F> {
+        type ProverKey;
+        type VerifierKey;
+        type PackedWitness;
+        type Commitment: Clone;
+        type CommitmentOpening: Clone;
+        type CccsProof: Clone;
+        type LinearizationProof: Clone;
+        type FoldProof: Clone;
+        type NormalizationProof: Clone;
+        type DeciderProof: Clone;
+
+        fn setup_recursive(
+            &self,
+            security: &SecurityParams,
+            shape: &CcsShape<F>,
+        ) -> Result<(Self::ProverKey, Self::VerifierKey)>;
+
+        fn prove_cccs(
+            &self,
+            pk: &Self::ProverKey,
+            relation_id: &RelationId,
+            statement: &RecursiveStatementEncoding<F>,
+            packed: &Self::PackedWitness,
+            opening: &Self::CommitmentOpening,
+        ) -> Result<(CccsClaim<Self::Commitment, F>, Self::CccsProof)>;
+
+        fn verify_cccs(
+            &self,
+            vk: &Self::VerifierKey,
+            claim: &CccsClaim<Self::Commitment, F>,
+            proof: &Self::CccsProof,
+        ) -> Result<()>;
+
+        fn reduce_cccs(
+            &self,
+            pk: &Self::ProverKey,
+            claim: &CccsClaim<Self::Commitment, F>,
+            packed: &Self::PackedWitness,
+            opening: &Self::CommitmentOpening,
+        ) -> Result<(LcccsInstance<Self::Commitment, F>, Self::LinearizationProof)>;
+
+        fn verify_linearized(
+            &self,
+            vk: &Self::VerifierKey,
+            claim: &CccsClaim<Self::Commitment, F>,
+            linearized: &LcccsInstance<Self::Commitment, F>,
+            proof: &Self::LinearizationProof,
+        ) -> Result<()>;
+
+        fn fold_lcccs(
+            &self,
+            pk: &Self::ProverKey,
+            previous_prefix: &RecursiveStatementEncoding<F>,
+            left: &LcccsInstance<Self::Commitment, F>,
+            step_statement: &RecursiveStatementEncoding<F>,
+            right: &LcccsInstance<Self::Commitment, F>,
+            linearization_proof: &Self::LinearizationProof,
+            target_prefix: &RecursiveStatementEncoding<F>,
+            left_packed: &Self::PackedWitness,
+            left_opening: &Self::CommitmentOpening,
+            right_packed: &Self::PackedWitness,
+            right_opening: &Self::CommitmentOpening,
+        ) -> Result<(
+            LcccsInstance<Self::Commitment, F>,
+            Self::PackedWitness,
+            Self::CommitmentOpening,
+            Self::FoldProof,
+        )>;
+
+        fn verify_fold_lcccs(
+            &self,
+            vk: &Self::VerifierKey,
+            previous_prefix: &RecursiveStatementEncoding<F>,
+            left: &LcccsInstance<Self::Commitment, F>,
+            step_statement: &RecursiveStatementEncoding<F>,
+            right: &LcccsInstance<Self::Commitment, F>,
+            linearization_proof: &Self::LinearizationProof,
+            parent: &LcccsInstance<Self::Commitment, F>,
+            target_prefix: &RecursiveStatementEncoding<F>,
+            proof: &Self::FoldProof,
+        ) -> Result<()>;
+
+        fn normalize_lcccs(
+            &self,
+            pk: &Self::ProverKey,
+            statement: &RecursiveStatementEncoding<F>,
+            high_norm: &LcccsInstance<Self::Commitment, F>,
+            high_norm_packed: &Self::PackedWitness,
+            high_norm_opening: &Self::CommitmentOpening,
+        ) -> Result<(
+            LcccsInstance<Self::Commitment, F>,
+            Self::PackedWitness,
+            Self::CommitmentOpening,
+            Self::NormalizationProof,
+        )>;
+
+        fn verify_normalized(
+            &self,
+            vk: &Self::VerifierKey,
+            statement: &RecursiveStatementEncoding<F>,
+            high_norm: &LcccsInstance<Self::Commitment, F>,
+            normalized: &LcccsInstance<Self::Commitment, F>,
+            proof: &Self::NormalizationProof,
+        ) -> Result<()>;
+
+        fn prove_decider(
+            &self,
+            pk: &Self::ProverKey,
+            decider_profile: &RecursiveDeciderProfile,
+            statement: &RecursiveStatementEncoding<F>,
+            terminal: &LcccsInstance<Self::Commitment, F>,
+            transcript: &CanonicalDeciderTranscript,
+        ) -> Result<Self::DeciderProof>;
+
+        fn verify_decider(
+            &self,
+            vk: &Self::VerifierKey,
+            decider_profile: &RecursiveDeciderProfile,
+            statement: &RecursiveStatementEncoding<F>,
+            terminal: &LcccsInstance<Self::Commitment, F>,
+            proof: &Self::DeciderProof,
+        ) -> Result<()>;
+    }
+
+    pub fn serialize_lcccs_instance<C, F>(...) -> Result<Vec<u8>>;
+    pub fn deserialize_lcccs_instance<C, F>(...) -> Result<LcccsInstance<C, F>>;
+    pub fn serialize_decider_profile(...) -> Result<Vec<u8>>;
+    pub fn deserialize_decider_profile(...) -> Result<RecursiveDeciderProfile>;
+
+At the end of the second backend milestone, `circuits/superneo-backend-lattice/src/lib.rs` must contain:
+
+    pub struct RecursiveLatticeProofBundle { ... }
+    pub struct RecursiveLatticeDeciderProof { ... }
+    pub fn recursive_backend_v2(params: NativeBackendParams) -> LatticeRecursiveBackend;
+
+and unit tests with stable names:
+
+    recursive_toy_relation
+    recursive_toy_relation_rejects_wrong_witness
+    recursive_decider_rejects_tampered_profile
+
+At the end of the block-recursion milestone, the repository must contain `circuits/block-recursion/src/lib.rs` and sibling modules with stable names and behavior equivalent to:
+
+    pub struct BlockStepStatementV1 { ... }
+    pub struct BlockPrefixStatementV1 { ... }
+    pub struct RecursiveBlockPublicV1 { ... }
+    pub struct HeaderDecStepV1 { ... }
+    pub struct RecursiveBlockArtifactV1 { ... }
+    pub struct BlockAccumulationTranscriptV1 { ... }
+    pub fn prove_block_recursive_v1(...) -> Result<RecursiveBlockArtifactV1, BlockRecursionError>;
+    pub fn verify_block_recursive_v1(...) -> Result<RecursiveBlockPublicV1, BlockRecursionError>;
+    pub fn serialize_recursive_block_artifact_v1(...) -> Result<Vec<u8>, BlockRecursionError>;
+    pub fn deserialize_recursive_block_artifact_v1(bytes: &[u8]) -> Result<RecursiveBlockArtifactV1, BlockRecursionError>;
+    pub fn serialize_block_accumulation_transcript_v1(...) -> Result<CanonicalDeciderTranscript, BlockRecursionError>;
+    pub fn public_replay_v1(...) -> Result<RecursiveBlockPublicV1, BlockRecursionError>;
+
+The final recursive path must also add:
+
+    ProofArtifactKind::RecursiveBlockV1
+
+in `consensus/src/types.rs`, one `ArtifactVerifier` implementation in `consensus/src/proof.rs`, one authoring path in `node/src/substrate/service.rs`, and the test names:
+
+    public_replay_matches_consensus_tuple
+    proof_bytes_constant_across_tx_counts
+    recursive_artifact_rejects_trailing_bytes
+    recursive_artifact_rejects_legacy_linear_payload
+    recursive_artifact_rejects_width_mismatch
+    recursive_artifact_rejects_alternate_serializer_under_same_profile
+
+Revision note (2026-04-13): rewritten again to turn the theorem note into an implementation blueprint. This revision keeps the same invariant and recursive construction, but it now names the exact crate boundaries, exact Rust trait family, exact artifact shells, exact serializer ownership, exact consensus proof kind, and the minimum milestone tests required before implementation can claim the feature is real.
