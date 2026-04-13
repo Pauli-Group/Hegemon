@@ -890,16 +890,23 @@ For statement compatibility with the repo’s `Relation<Goldilocks>` interface, 
 - `public_inputs(Q)`, the field vector returned by `encode_statement_step`;
 - `mu_step(Q) = P2Hash_F(d_rel_step; enc_vk(vk_step(v*)), public_inputs(Q)) in F^6`, the field-native statement commitment used by recursion itself.
 
-The terminal decider is a second fixed verification object over the same step family, so its identity must also be on wire. Define the decider profile:
+The terminal decider is a second fixed verification object over the same step family, so its identity must also be on wire. The on-wire contract must bind not only the decider verifier identity, but also the exact terminal encodings and exact terminal byte widths. Otherwise an implementation could keep the same relation id while silently switching to a variable-length artifact format.
 
-`decider_profile_step(v*) = (decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*))`
+Define the decider profile:
+
+`decider_profile_step(v*) = (decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*), acc_encoding_digest_step(v*), dec_encoding_digest_step(v*), acc_bytes_step(v*), dec_bytes_step(v*), art_bytes_step(v*))`
 
 where:
 
 - `decider_id_step(v*)` identifies the exact `Verify_decide_step` algorithm and proof format;
 - `decider_vk_digest_step(v*)` binds the decider verifier key and any structured decider parameters;
 - `decider_transcript_digest_step(v*)` binds the decider Fiat-Shamir domain separation;
-- `init_acc_digest_step(v*)` binds the canonical initializer `A_0`.
+- `init_acc_digest_step(v*)` binds the canonical initializer `A_0`;
+- `acc_encoding_digest_step(v*) = digest_acc_encoding(serialization_spec_lcccs(v*))` binds the exact canonical `ser_lcccs` format used for every `LCCCS_step` carrier on this recursive path;
+- `dec_encoding_digest_step(v*) = digest_dec_encoding(serialization_spec_decider(v*))` binds the exact canonical `ser_dec` format used for `pi_dec[0,n]`;
+- `acc_bytes_step(v*) = L_acc(v*)` is the exact serialized byte width of one terminal accumulator object under `ser_lcccs`;
+- `dec_bytes_step(v*) = L_dec(v*)` is the exact serialized byte width of one terminal decider proof under `ser_dec`;
+- `art_bytes_step(v*) = 322 + acc_bytes_step(v*) + dec_bytes_step(v*) = L_art_step(v*)` is the exact serialized byte width of the full `Artifact_step(B)` object under the fixed schema for `v*`.
 
 Write the full decider verifier key as:
 
@@ -909,7 +916,7 @@ The terminal on-chain decider header follows the same identity discipline as the
 
 `artifact_version_dec_step(v*) = native_backend_params().artifact_version(b"recursive-block-step-decider-v1")`
 
-`Header_dec_step(v*, Q_pref[n]) = (artifact_version_dec_step(v*), params_fingerprint_v*, spec_digest_v*, relation_id_step(v*), shape_digest_step(v*), decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*), statement_digest_step(Q_pref[n]))`
+`Header_dec_step(v*, Q_pref[n]) = (artifact_version_dec_step(v*), params_fingerprint_v*, spec_digest_v*, relation_id_step(v*), shape_digest_step(v*), decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*), acc_encoding_digest_step(v*), dec_encoding_digest_step(v*), acc_bytes_step(v*), dec_bytes_step(v*), art_bytes_step(v*), statement_digest_step(Q_pref[n]))`
 
 with exact byte widths:
 
@@ -922,9 +929,14 @@ with exact byte widths:
 - `decider_vk_digest_step(v*): [u8; 32]`;
 - `decider_transcript_digest_step(v*): [u8; 32]`;
 - `init_acc_digest_step(v*): [u8; 32]`;
+- `acc_encoding_digest_step(v*): [u8; 32]`;
+- `dec_encoding_digest_step(v*): [u8; 32]`;
+- `acc_bytes_step(v*): u32`;
+- `dec_bytes_step(v*): u32`;
+- `art_bytes_step(v*): u32`;
 - `statement_digest_step(Q_pref[n]): [u8; 48]`.
 
-The terminal accumulator object `A_n` has one fixed serialized width `L_acc(v*)` because it is one fixed-width `LCCCS_step(Q_pref[n])` instance for one fixed compiled relation. The terminal decider proof has one fixed serialized width `L_dec(v*)` for the same fixed relation and protocol line. Therefore the full terminal decider artifact
+The terminal accumulator object `A_n` has one fixed serialized width `L_acc(v*)` because it is one fixed-width `LCCCS_step(Q_pref[n])` instance for one fixed compiled relation under one fixed canonical `ser_lcccs` schema bound by `acc_encoding_digest_step(v*)`. The terminal decider proof has one fixed serialized width `L_dec(v*)` for the same fixed relation and protocol line under one fixed canonical `ser_dec` schema bound by `dec_encoding_digest_step(v*)`. Therefore the full terminal decider artifact
 
 `Artifact_step(B) = (Header_dec_step(v*, Q_pref[n]), A_n, pi_dec[0,n])`
 
@@ -933,6 +945,8 @@ has one fixed serialized length
 `|Artifact_step(B)| = L_art_step(v*)`
 
 for every admissible block size `n`.
+
+This is an exact on-wire claim, not only an abstract relation claim. Any implementation that changes `ser_lcccs`, changes `ser_dec`, changes `L_acc(v*)`, changes `L_dec(v*)`, or accepts multiple terminal byte widths for the same `(artifact_version_dec_step, params_fingerprint_v*, spec_digest_v*, relation_id_step, shape_digest_step, decider_id_step)` tuple is a new protocol line and must change the bound header/profile digests above.
 
 ### 4.3 External verified-leaf input object
 
@@ -1160,12 +1174,20 @@ Here `Artifact_step(B)` contains only the terminal step-decider header, the term
 - the hidden accumulator sequence `A_0, ..., A_n`;
 - the private unary accumulation transcript `T_acc[0,n]`.
 
+The canonical byte-level parsing rule is exact-consumption, not prefix acceptance:
+
+- `ser_artifact_step` is the unique concatenation `ser_header_dec || ser_lcccs(A_n) || ser_dec(pi_dec[0,n])`;
+- `|ser_lcccs(A_n)| = acc_bytes_step(v*)`;
+- `|ser_dec(pi_dec[0,n])| = dec_bytes_step(v*)`;
+- `|ser_artifact_step| = art_bytes_step(v*)`;
+- any trailing bytes, internal variable-length sidecars, alternate serializers, or multi-encoding acceptance under the same bound header/profile are invalid.
+
 ### 5.3 Full verifier
 
 Define `VerifyBlockRecursive(B, parent_state, verified_leaves, Pi_block)` as:
 
-1. parse `Pi_block` into `(Artifact_step, Z(B))`;
-2. parse `Artifact_step` into `(Header_dec_step, A_n, pi_dec[0,n])`;
+1. parse `Pi_block` into `(Artifact_step, Z(B))` by exact-consumption canonical decoding and reject if any byte remains unconsumed;
+2. parse `Artifact_step` into `(Header_dec_step, A_n, pi_dec[0,n])` by exact-consumption canonical decoding under the `ser_header_dec`, `ser_lcccs`, and `ser_dec` formats bound in `Header_dec_step`, and reject if `|Artifact_step| != art_bytes_step(v*)`, `|ser_lcccs(A_n)| != acc_bytes_step(v*)`, `|ser_dec(pi_dec[0,n])| != dec_bytes_step(v*)`, or any byte remains unconsumed;
 3. check that `verified_leaves = (L_1, ..., L_n)` is exactly the ordered output of the current tx-artifact verifier for block `B`;
 4. check `len(verified_leaves) = n`;
 5. replay the exact verified-leaf sponge over `verified_leaves` to obtain the full terminal state `lambda_n` and compare `proj_6(lambda_n)` against `C_leaf`;
@@ -1178,7 +1200,7 @@ Define `VerifyBlockRecursive(B, parent_state, verified_leaves, Pi_block)` as:
 12. recompute `nullifier_root(B)` with the current sorted-unique BLAKE3 rule and compare;
 13. recompute `da_root(B)` with the current DA-root rule and compare;
 14. form `S_0 = (0, lambda_0, tau_0, eta_0, T_0, z_384)` and `S_n = (n, lambda_n, tau_n, eta_n, T_n, U_n)`, then derive `Q_pref[n] = (n, Sigma_state(S_0), Sigma_state(S_n))`;
-15. check that `Header_dec_step` matches `(artifact_version_dec_step(v*), params_fingerprint_v*, spec_digest_v*, relation_id_step(v*), shape_digest_step(v*), decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*), statement_digest_step(Q_pref[n]))`;
+15. check that `Header_dec_step` matches `(artifact_version_dec_step(v*), params_fingerprint_v*, spec_digest_v*, relation_id_step(v*), shape_digest_step(v*), decider_id_step(v*), decider_vk_digest_step(v*), decider_transcript_digest_step(v*), init_acc_digest_step(v*), acc_encoding_digest_step(v*), dec_encoding_digest_step(v*), acc_bytes_step(v*), dec_bytes_step(v*), art_bytes_step(v*), statement_digest_step(Q_pref[n]))`;
 16. verify `Verify_decide_step(vk_dec_step(v*), Q_pref[n], A_n, pi_dec[0,n]) = 1`.
 
 This is the honest verifier boundary. Tx-artifact validity stays where the current product already checks it: outside the recursive block proof. The recursive proof certifies ordered absorption of the exact verified-leaf stream, ordered absorption of the verified receipt stream, ordered statement absorption, append-state evolution, anchor membership, and uniqueness. Consensus keeps deterministic public recomputations outside the proof, exactly as it does now, but now also checks the constant-size verified-leaf commitment, receipt commitment, and append-state digests so the recursive witness cannot drift to a different `(R_i, V_i, Xi_i)` stream or a different frontier/history with the same exposed roots.
@@ -1209,6 +1231,11 @@ Assume:
    - `decider_vk_digest_step`,
    - `decider_transcript_digest_step`,
    - `init_acc_digest_step`,
+   - `acc_encoding_digest_step`,
+   - `dec_encoding_digest_step`,
+   - `acc_bytes_step`,
+   - `dec_bytes_step`,
+   - `art_bytes_step`,
    - the commitment digests carried by the strengthened backend;
 3. `RecursiveBackend_v2(v*)` is sound in five senses:
    - `InitAccumulator_step(v*, Q_pref[0])` returns exactly the canonical neutral running instance from Section 4.2.4:
@@ -1239,7 +1266,7 @@ If `VerifyBlockRecursive(B, parent_state, verified_leaves, Pi_block)` accepts, t
 
 ### Theorem 6.2: constant wire size
 
-If `RecursiveBackend_v2(v*)` provides a fixed serialized terminal accumulator/decider artifact size `|Artifact_step(B)| = L_art_step(v*)`, then:
+If `RecursiveBackend_v2(v*)` provides one unique canonical terminal accumulator serializer `ser_lcccs`, one unique canonical terminal decider serializer `ser_dec`, and the bound exact byte widths `acc_bytes_step(v*) = L_acc(v*)`, `dec_bytes_step(v*) = L_dec(v*)`, `art_bytes_step(v*) = L_art_step(v*)`, then:
 
 `|Pi_block(B)| = L_art_step(v*) + 532`
 
@@ -1317,14 +1344,15 @@ The design is false if any of the following happen in implementation:
 1. `Artifact_step(B)` bytes vary with transaction count.
 2. The public tuple varies in serialized length with transaction count.
 3. The on-chain artifact serializes per-transaction objects, child proofs, nullifier vectors, sorted-nullifier vectors, or `receipt_root` records.
-4. The implementation changes the semantics of `Y_sem(B)`.
-5. The recursive arithmetic relies on in-relation BLAKE3 without an explicit arithmetization.
-6. The recursive public tuple omits `C_leaf(B)` or `C_receipt(B)` and therefore fails to bind the exact ordered verified-leaf stream or the ordered verified receipt stream that the current product already checks before block-artifact verification.
-7. The implementation claims the current checked-in `verify_leaf(..., expected_packed, ...)` / `fold_pair` API is already sufficient.
-8. The implementation leaves the sparse nullifier set or the canonical public `SparseSetRoot` rebuild underspecified relative to Section 2.9.
-9. The recursive public tuple omits `Sigma_tree(T_0)` / `Sigma_tree(T_n)` or otherwise leaves the exact append state underbound while claiming anchor-membership soundness.
-10. The implementation never instantiates `BlockStepRelation_v*` as a concrete SuperNeo relation with fixed public statement arity `13`, fails to bind the decider profile and canonical initializer in `Header_dec_step`, or reintroduces an unstated second wrapper proof system instead of shipping the terminal accumulator-plus-decider artifact directly.
-11. The implementation omits the canonical base-state constraint `S_0 = (0, lambda_0, tau_0, eta_0, T_0, z_384)`, the one-step leaf update `lambda_i = AbsorbLeaf(lambda_{i-1}, L_i)`, or the one-step counter constraint `i(S_i) = i(S_{i-1}) + 1`.
-12. The implementation claims constancy only by padding on-chain artifacts to a maximum capacity or by introducing a hidden proof-system `N_max`.
+4. The terminal accumulator or decider admits multiple serializers, multiple byte widths, or trailing-byte acceptance under one fixed header/profile.
+5. The implementation changes the semantics of `Y_sem(B)`.
+6. The recursive arithmetic relies on in-relation BLAKE3 without an explicit arithmetization.
+7. The recursive public tuple omits `C_leaf(B)` or `C_receipt(B)` and therefore fails to bind the exact ordered verified-leaf stream or the ordered verified receipt stream that the current product already checks before block-artifact verification.
+8. The implementation claims the current checked-in `verify_leaf(..., expected_packed, ...)` / `fold_pair` API is already sufficient.
+9. The implementation leaves the sparse nullifier set or the canonical public `SparseSetRoot` rebuild underspecified relative to Section 2.9.
+10. The recursive public tuple omits `Sigma_tree(T_0)` / `Sigma_tree(T_n)` or otherwise leaves the exact append state underbound while claiming anchor-membership soundness.
+11. The implementation never instantiates `BlockStepRelation_v*` as a concrete SuperNeo relation with fixed public statement arity `13`, fails to bind the decider profile, terminal encodings, terminal byte widths, and canonical initializer in `Header_dec_step`, or reintroduces an unstated second wrapper proof system instead of shipping the terminal accumulator-plus-decider artifact directly.
+12. The implementation omits the canonical base-state constraint `S_0 = (0, lambda_0, tau_0, eta_0, T_0, z_384)`, the one-step leaf update `lambda_i = AbsorbLeaf(lambda_{i-1}, L_i)`, or the one-step counter constraint `i(S_i) = i(S_{i-1}) + 1`.
+13. The implementation claims constancy only by padding on-chain artifacts to a maximum capacity or by introducing a hidden proof-system `N_max`.
 
 Those are direct failures of the invariant.

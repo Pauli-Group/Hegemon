@@ -121,31 +121,30 @@
     <text x="1260" y="440" class="mono">A_n = terminal low-norm accumulator</text>
     <text x="1260" y="474" class="small">pi_dec closes one valid unary transcript T_acc[0,n]</text>
 
-    <rect x="1236" y="538" width="472" height="314" class="good"/>
+    <rect x="1236" y="538" width="472" height="420" class="good"/>
     <text x="1260" y="576" class="body">Full verifier checks:</text>
     <text x="1260" y="610" class="small">1. replay lambda_n, tau_n, eta_n, T_0, T_n, and</text>
     <text x="1260" y="638" class="small">   U_n = SparseSetRoot(Set(N_pub)) after duplicate check</text>
     <text x="1260" y="666" class="small">2. reconstruct S_0, S_n, then Q_pref[n]</text>
     <text x="1260" y="694" class="small">3. check Header_dec_step against Q_pref[n] and the</text>
-    <text x="1260" y="722" class="small">   bound decider profile / canonical init accumulator</text>
-    <text x="1260" y="750" class="small">4. Verify_decide_step(vk_dec_step, Q_pref[n], A_n, pi_dec)</text>
-    <text x="1260" y="774" class="small">5. compare Y_rec = (Y_sem, C_leaf, C_receipt,</text>
-    <text x="1260" y="800" class="small">   Sigma_tree(T_0), Sigma_tree(T_n))</text>
-    <text x="1260" y="826" class="small">6. nullifier_root and da_root stay consensus-side</text>
-    <text x="1260" y="848" class="small">   deterministic recomputations</text>
+    <text x="1260" y="722" class="small">   bound decider profile / canonical init accumulator /</text>
+    <text x="1260" y="748" class="small">   serializer digests / exact width constants</text>
+    <text x="1260" y="774" class="small">4. exact-consumption decode: reject trailing bytes or</text>
+    <text x="1260" y="800" class="small">   alternate encodings under the same header/profile</text>
+    <text x="1260" y="826" class="small">5. Verify_decide_step(vk_dec_step, Q_pref[n], A_n, pi_dec)</text>
+    <text x="1260" y="852" class="small">6. compare Y_rec = (Y_sem, C_leaf, C_receipt,</text>
+    <text x="1260" y="878" class="small">   Sigma_tree(T_0), Sigma_tree(T_n))</text>
+    <text x="1260" y="904" class="small">7. nullifier_root and da_root stay consensus-side</text>
+    <text x="1260" y="930" class="small">   deterministic recomputations</text>
 
-    <rect x="1236" y="878" width="472" height="202" class="warn"/>
-    <text x="1260" y="916" class="body">Theorem 1: soundness needs:</text>
-    <text x="1260" y="950" class="small">- sound external tx-artifact verifier</text>
-    <text x="1260" y="978" class="small">- binding C_leaf, C_receipt, C_stmt, Sigma_tree,</text>
-    <text x="1280" y="1004" class="small">Sigma_state, statement_digest_step, decider profile,</text>
-    <text x="1280" y="1030" class="small">canonical init accumulator, and backend digests</text>
-    <text x="1260" y="1054" class="small">- sound CCS reduction, RLC fold, normalization,</text>
-    <text x="1280" y="1076" class="small">and the terminal step decider</text>
+    <rect x="1236" y="978" width="472" height="170" class="warn"/>
+    <text x="1260" y="1016" class="body">Theorem 1: soundness needs:</text>
+    <text x="1260" y="1050" class="small">- sound external tx-artifact verifier</text>
+    <text x="1260" y="1078" class="small">- binding C_leaf, C_receipt, C_stmt, Sigma_tree,</text>
+    <text x="1280" y="1104" class="small">Sigma_state, statement_digest_step, decider profile,</text>
+    <text x="1280" y="1130" class="small">canonical init accumulator, serializers, and widths</text>
 
-    <rect x="1236" y="1106" width="472" height="136" class="bad"/>
-    <text x="1260" y="1144" class="body">Theorem 2: constant wire size</text>
-    <text x="1260" y="1178" class="mono">|Pi_block(B)| = L_art_step(v*) + 532</text>
-    <text x="1260" y="1212" class="small">no serialized pi_ccs, pi_rlc, pi_norm, B_i, H_i, or T_acc</text>
+    <rect x="1236" y="1172" width="472" height="70" class="bad"/>
+    <text x="1260" y="1210" class="body">Theorem 2: |Pi_block(B)| = L_art_step(v*) + 532</text>
   </g>
 </svg>
