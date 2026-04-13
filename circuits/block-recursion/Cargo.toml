@@ -1,16 +1,14 @@
 [package]
-name = "superneo-core"
+name = "block-recursion"
 version = "0.1.0"
 edition = "2021"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+description = "Recursive block-proof scaffolding for Hegemon"
 
 [dependencies]
-anyhow = "1"
-bincode = "1.3"
-serde = { version = "1", features = ["derive"] }
-superneo-ccs = { path = "../superneo-ccs" }
 
 [lints]
 workspace = true

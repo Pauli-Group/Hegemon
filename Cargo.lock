@@ -1155,6 +1155,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-recursion"
+version = "0.1.0"
+
+[[package]]
 name = "bounded-collections"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11268,6 +11272,7 @@ name = "superneo-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "serde",
  "superneo-ccs",
 ]

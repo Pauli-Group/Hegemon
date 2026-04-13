@@ -7,6 +7,7 @@ members = [
     "circuits/tx-proof-manifest",
     "circuits/settlement",
     "circuits/block",
+    "circuits/block-recursion",
     "circuits/bench",
     "circuits/disclosure",
     "circuits/plonky3-spike",

@@ -13,7 +13,11 @@ use std::{
 use superneo_ccs::{
     digest_shape, CcsShape, RelationId, ShapeDigest, StatementDigest, StatementEncoding,
 };
-use superneo_core::{validate_fold_pair, Backend, FoldedInstance, SecurityParams};
+use superneo_core::{
+    validate_fold_pair, Backend, CanonicalDeciderTranscript, CccsClaim, FoldedInstance,
+    LcccsInstance, RecursiveBackend, RecursiveDeciderProfile, RecursiveStatementEncoding,
+    SecurityParams,
+};
 use superneo_ring::PackedWitness;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,6 +735,34 @@ pub struct LatticeBackend {
     pub params: NativeBackendParams,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveLatticeProofBundle {
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecursiveLatticeDeciderProof {
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub proof_digest: [u8; 48],
+    #[serde(
+        serialize_with = "serialize_fixed_bytes_48",
+        deserialize_with = "deserialize_fixed_bytes_48"
+    )]
+    pub transcript_digest: [u8; 48],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticeRecursiveBackend {
+    backend: LatticeBackend,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KernelCostReport {
     pub bit_unpack_ns: u128,
@@ -1117,6 +1149,28 @@ impl LatticeBackend {
         );
         Ok(())
     }
+}
+
+impl LatticeRecursiveBackend {
+    pub fn new(params: NativeBackendParams) -> Self {
+        Self {
+            backend: LatticeBackend::new(params),
+        }
+    }
+
+    pub fn native_params(&self) -> &NativeBackendParams {
+        self.backend.native_params()
+    }
+}
+
+pub fn recursive_backend_v2(params: NativeBackendParams) -> LatticeRecursiveBackend {
+    LatticeRecursiveBackend::new(params)
+}
+
+fn recursive_not_implemented<T>(what: &'static str) -> Result<T> {
+    Err(anyhow!(
+        "recursive backend v2 is not implemented yet for {what}"
+    ))
 }
 
 pub trait NativeCommitmentScheme {
@@ -1661,6 +1715,156 @@ impl Backend<Goldilocks> for LatticeBackend {
             "fold proof digest mismatch"
         );
         Ok(())
+    }
+}
+
+impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
+    type ProverKey = BackendKey;
+    type VerifierKey = BackendKey;
+    type PackedWitness = PackedWitness<u64>;
+    type Commitment = LatticeCommitment;
+    type CommitmentOpening = CommitmentOpening;
+    type CccsProof = RecursiveLatticeProofBundle;
+    type LinearizationProof = RecursiveLatticeProofBundle;
+    type FoldProof = RecursiveLatticeProofBundle;
+    type NormalizationProof = RecursiveLatticeProofBundle;
+    type DeciderProof = RecursiveLatticeDeciderProof;
+
+    fn setup_recursive(
+        &self,
+        security: &SecurityParams,
+        shape: &CcsShape<Goldilocks>,
+    ) -> Result<(Self::ProverKey, Self::VerifierKey)> {
+        self.backend.setup(security, shape)
+    }
+
+    fn prove_cccs(
+        &self,
+        _pk: &Self::ProverKey,
+        _relation_id: &RelationId,
+        _statement: &RecursiveStatementEncoding<Goldilocks>,
+        _packed: &Self::PackedWitness,
+        _opening: &Self::CommitmentOpening,
+    ) -> Result<(CccsClaim<Self::Commitment, Goldilocks>, Self::CccsProof)> {
+        recursive_not_implemented("prove_cccs")
+    }
+
+    fn verify_cccs(
+        &self,
+        _vk: &Self::VerifierKey,
+        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        _proof: &Self::CccsProof,
+    ) -> Result<()> {
+        recursive_not_implemented("verify_cccs")
+    }
+
+    fn reduce_cccs(
+        &self,
+        _pk: &Self::ProverKey,
+        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        _packed: &Self::PackedWitness,
+        _opening: &Self::CommitmentOpening,
+    ) -> Result<(
+        LcccsInstance<Self::Commitment, Goldilocks>,
+        Self::LinearizationProof,
+    )> {
+        recursive_not_implemented("reduce_cccs")
+    }
+
+    fn verify_linearized(
+        &self,
+        _vk: &Self::VerifierKey,
+        _claim: &CccsClaim<Self::Commitment, Goldilocks>,
+        _linearized: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _proof: &Self::LinearizationProof,
+    ) -> Result<()> {
+        recursive_not_implemented("verify_linearized")
+    }
+
+    fn fold_lcccs(
+        &self,
+        _pk: &Self::ProverKey,
+        _previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        _left: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _step_statement: &RecursiveStatementEncoding<Goldilocks>,
+        _right: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _linearization_proof: &Self::LinearizationProof,
+        _target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        _left_packed: &Self::PackedWitness,
+        _left_opening: &Self::CommitmentOpening,
+        _right_packed: &Self::PackedWitness,
+        _right_opening: &Self::CommitmentOpening,
+    ) -> Result<(
+        LcccsInstance<Self::Commitment, Goldilocks>,
+        Self::PackedWitness,
+        Self::CommitmentOpening,
+        Self::FoldProof,
+    )> {
+        recursive_not_implemented("fold_lcccs")
+    }
+
+    fn verify_fold_lcccs(
+        &self,
+        _vk: &Self::VerifierKey,
+        _previous_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        _left: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _step_statement: &RecursiveStatementEncoding<Goldilocks>,
+        _right: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _linearization_proof: &Self::LinearizationProof,
+        _parent: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _target_prefix: &RecursiveStatementEncoding<Goldilocks>,
+        _proof: &Self::FoldProof,
+    ) -> Result<()> {
+        recursive_not_implemented("verify_fold_lcccs")
+    }
+
+    fn normalize_lcccs(
+        &self,
+        _pk: &Self::ProverKey,
+        _statement: &RecursiveStatementEncoding<Goldilocks>,
+        _high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _high_norm_packed: &Self::PackedWitness,
+        _high_norm_opening: &Self::CommitmentOpening,
+    ) -> Result<(
+        LcccsInstance<Self::Commitment, Goldilocks>,
+        Self::PackedWitness,
+        Self::CommitmentOpening,
+        Self::NormalizationProof,
+    )> {
+        recursive_not_implemented("normalize_lcccs")
+    }
+
+    fn verify_normalized(
+        &self,
+        _vk: &Self::VerifierKey,
+        _statement: &RecursiveStatementEncoding<Goldilocks>,
+        _high_norm: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _normalized: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _proof: &Self::NormalizationProof,
+    ) -> Result<()> {
+        recursive_not_implemented("verify_normalized")
+    }
+
+    fn prove_decider(
+        &self,
+        _pk: &Self::ProverKey,
+        _decider_profile: &RecursiveDeciderProfile,
+        _statement: &RecursiveStatementEncoding<Goldilocks>,
+        _terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _transcript: &CanonicalDeciderTranscript,
+    ) -> Result<Self::DeciderProof> {
+        recursive_not_implemented("prove_decider")
+    }
+
+    fn verify_decider(
+        &self,
+        _vk: &Self::VerifierKey,
+        _decider_profile: &RecursiveDeciderProfile,
+        _statement: &RecursiveStatementEncoding<Goldilocks>,
+        _terminal: &LcccsInstance<Self::Commitment, Goldilocks>,
+        _proof: &Self::DeciderProof,
+    ) -> Result<()> {
+        recursive_not_implemented("verify_decider")
     }
 }
 
@@ -2547,7 +2751,9 @@ mod tests {
         digest_statement, Assignment, CcsShape, RelationId, ShapeDigest, SparseEntry, SparseMatrix,
         StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
     };
-    use superneo_core::{Backend, FoldedInstance};
+    use superneo_core::{
+        Backend, FoldedInstance, RecursiveBackend, RecursiveStatementEncoding,
+    };
     use superneo_ring::{
         GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
     };
@@ -2558,6 +2764,7 @@ mod tests {
         theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
         LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
         PreparedCommitmentMatrix, PreparedMatrixCache, ReviewState, RingElem, RingProfile,
+        recursive_backend_v2,
     };
     use std::sync::Arc;
 
@@ -3287,5 +3494,47 @@ mod tests {
         assert!(message.contains("exceeds native backend soundness floor"));
         assert!(message.contains(&(floor.saturating_add(1)).to_string()));
         assert!(message.contains(&floor.to_string()));
+    }
+
+    #[test]
+    fn recursive_backend_v2_setup_matches_native_shape() {
+        let params = NativeBackendParams::default();
+        let backend = recursive_backend_v2(params.clone());
+        let security = params.security_params();
+        let (pk, vk) = backend.setup_recursive(&security, &shape()).unwrap();
+        assert_eq!(pk.shape_digest, vk.shape_digest);
+        assert_eq!(pk.params_fingerprint, params.parameter_fingerprint());
+    }
+
+    #[test]
+    fn recursive_backend_v2_fails_closed_for_unimplemented_proofs() {
+        let params = NativeBackendParams::default();
+        let backend = recursive_backend_v2(params.clone());
+        let security = params.security_params();
+        let (pk, _) = backend.setup_recursive(&security, &shape()).unwrap();
+        let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+        let assignment = Assignment {
+            witness: vec![Goldilocks::new(10), Goldilocks::new(20), Goldilocks::new(3)],
+        };
+        let packed = packer.pack(&shape(), &assignment).unwrap();
+        let (_, opening) = backend.backend.commit(&params, &packed).unwrap();
+        let statement = RecursiveStatementEncoding {
+            public_inputs: vec![Goldilocks::new(1)],
+            statement_commitment: std::array::from_fn(|idx| Goldilocks::new(idx as u64 + 1)),
+            external_statement_digest: Some([7u8; 48]),
+        };
+        let err = backend
+            .prove_cccs(
+                &pk,
+                &RelationId::from_label("hegemon.superneo.toy-recursive"),
+                &statement,
+                &packed,
+                &opening,
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("recursive backend v2 is not implemented"),
+            "unexpected error: {err}"
+        );
     }
 }

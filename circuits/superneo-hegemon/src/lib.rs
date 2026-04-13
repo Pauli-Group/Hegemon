@@ -359,6 +359,13 @@ pub struct TxLeafPublicWitness {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecursiveLeafPayloadV1 {
+    pub receipt: CanonicalTxValidityReceipt,
+    pub tx: TxLeafPublicTx,
+    pub stark_public_inputs: SerializedStarkInputs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxLeafPublicRelation {
     shape: CcsShape<Goldilocks>,
 }
@@ -1407,6 +1414,70 @@ pub fn canonical_tx_validity_receipt_from_transaction_proof(
         verifier_profile: transaction_verifier_profile_digest(proof)
             .map_err(|err| anyhow::anyhow!("failed to derive tx verifier profile digest: {err}"))?,
     })
+}
+
+pub fn recursive_leaf_payload_v1(
+    receipt: &CanonicalTxValidityReceipt,
+    tx: &TxLeafPublicTx,
+    stark_public_inputs: &SerializedStarkInputs,
+) -> Result<RecursiveLeafPayloadV1> {
+    ensure!(
+        receipt.verifier_profile != [0u8; 48],
+        "recursive verified leaf verifier profile must not be empty"
+    );
+    let expected_statement_hash = tx_statement_hash_from_tx_leaf_public(tx, stark_public_inputs)?;
+    ensure!(
+        receipt.statement_hash == expected_statement_hash,
+        "recursive verified leaf statement hash mismatch"
+    );
+    let expected_public_inputs_digest =
+        transaction_public_inputs_digest_from_serialized(stark_public_inputs).map_err(|err| {
+            anyhow::anyhow!("failed to hash recursive verified leaf inputs: {err}")
+        })?;
+    ensure!(
+        receipt.public_inputs_digest == expected_public_inputs_digest,
+        "recursive verified leaf public inputs digest mismatch"
+    );
+    Ok(RecursiveLeafPayloadV1 {
+        receipt: receipt.clone(),
+        tx: tx.clone(),
+        stark_public_inputs: stark_public_inputs.clone(),
+    })
+}
+
+pub fn recursive_receipt_limbs_v1(receipt: &CanonicalTxValidityReceipt) -> [Goldilocks; 24] {
+    let mut limbs = [Goldilocks::new(0); 24];
+    let encoded = canonical_tx_validity_receipt_bytes(receipt);
+    for (slot, chunk) in encoded.chunks_exact(8).enumerate() {
+        limbs[slot] = Goldilocks::new(u64::from_le_bytes(chunk.try_into().unwrap()));
+    }
+    limbs
+}
+
+pub fn recursive_statement_hash_v1(payload: &RecursiveLeafPayloadV1) -> [u8; 48] {
+    payload.receipt.statement_hash
+}
+
+pub fn recursive_leaf_payload_limbs_v1(
+    payload: &RecursiveLeafPayloadV1,
+) -> Result<Vec<Goldilocks>> {
+    let relation = TxLeafPublicRelation::default();
+    let witness = tx_leaf_public_witness_from_parts(
+        &payload.tx,
+        &payload.stark_public_inputs,
+        TxProofBackend::Plonky3Fri,
+        None,
+    );
+    let assignment = relation.build_assignment(&payload.receipt, &witness)?;
+    ensure!(
+        assignment.witness.len() == 90,
+        "recursive verified leaf witness limb count changed: expected 90, got {}",
+        assignment.witness.len()
+    );
+    let mut limbs = Vec::with_capacity(24 + assignment.witness.len());
+    limbs.extend_from_slice(&recursive_receipt_limbs_v1(&payload.receipt));
+    limbs.extend(assignment.witness);
+    Ok(limbs)
 }
 
 pub fn native_tx_validity_statement_from_witness(
@@ -5246,6 +5317,40 @@ mod tests {
         tx.balance_tag[0] ^= 0x5a;
         let built = build_tx_leaf_artifact_bytes(&proof).unwrap();
         assert!(verify_tx_leaf_artifact_bytes(&tx, &receipt, &built.artifact_bytes).is_err());
+    }
+
+    #[test]
+    fn recursive_leaf_payload_round_trip() {
+        let proof = sample_transaction_proof(23);
+        let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let stark_public_inputs = proof
+            .stark_public_inputs
+            .clone()
+            .expect("sample tx proof must carry serialized STARK inputs");
+        let payload = recursive_leaf_payload_v1(&receipt, &tx, &stark_public_inputs).unwrap();
+        assert_eq!(
+            recursive_statement_hash_v1(&payload),
+            receipt.statement_hash
+        );
+        let receipt_limbs = recursive_receipt_limbs_v1(&payload.receipt);
+        let payload_limbs = recursive_leaf_payload_limbs_v1(&payload).unwrap();
+        assert_eq!(receipt_limbs.len(), 24);
+        assert_eq!(payload_limbs.len(), 114);
+        assert_eq!(&payload_limbs[..24], &receipt_limbs);
+    }
+
+    #[test]
+    fn recursive_leaf_payload_rejects_mismatch() {
+        let proof = sample_transaction_proof(24);
+        let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let mut stark_public_inputs = proof
+            .stark_public_inputs
+            .clone()
+            .expect("sample tx proof must carry serialized STARK inputs");
+        stark_public_inputs.fee ^= 1;
+        assert!(recursive_leaf_payload_v1(&receipt, &tx, &stark_public_inputs).is_err());
     }
 
     #[test]
