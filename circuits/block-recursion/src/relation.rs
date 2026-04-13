@@ -17,7 +17,8 @@ use transaction_circuit::{
     RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
     SmallwoodNonlinearEvalView, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
     SmallwoodRecursiveVerifierDescriptorV1, SmallwoodRecursiveVerifierTraceV1,
-    TransactionCircuitError, build_recursive_verifier_trace_v1,
+    TransactionCircuitError,
+    build_smallwood_poseidon2_verifier_trace_v1,
     decode_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_envelope_bytes_v1,
     projected_smallwood_recursive_proof_bytes_v1, recursive_binding_bytes_v1,
     recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
@@ -498,281 +499,64 @@ pub fn verify_hosted_recursive_proof_context_binding_trace_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<(), TransactionCircuitError> {
     match context {
-        HostedRecursiveProofContextV1::BaseA {
-            statement,
-            proof_envelope_bytes,
-        } => {
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::BaseA,
-            );
-            let relation = BaseARelationV1::new(statement.clone(), statement.clone());
-            let binding = hosted_base_binding_bytes_v1(statement);
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.descriptor != descriptor {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace descriptor mismatch",
-                ));
-            }
-            if trace.binded_data != binding {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding payload mismatch",
-                ));
-            }
-            if trace.trace.binding_words
-                != binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding words mismatch",
-                ));
-            }
-            if !trace.trace.accept {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace accept bit mismatch",
-                ));
-            }
-            Ok(())
-        }
+        HostedRecursiveProofContextV1::BaseA { .. } => {}
         HostedRecursiveProofContextV1::StepA {
             previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            verify_hosted_recursive_proof_context_binding_trace_v1(previous_recursive_proof)?;
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::StepA,
-            );
-            let relation = StepARelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.descriptor != descriptor {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace descriptor mismatch",
-                ));
-            }
-            if trace.binded_data != binding {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding payload mismatch",
-                ));
-            }
-            if trace.trace.binding_words
-                != binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding words mismatch",
-                ));
-            }
-            if !trace.trace.accept {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace accept bit mismatch",
-                ));
-            }
-            Ok(())
+            ..
         }
-        HostedRecursiveProofContextV1::StepB {
+        | HostedRecursiveProofContextV1::StepB {
             previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            verify_hosted_recursive_proof_context_binding_trace_v1(previous_recursive_proof)?;
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::B,
-                SmallwoodRecursiveRelationKindV1::StepB,
-            );
-            let relation = StepBRelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.descriptor != descriptor {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace descriptor mismatch",
-                ));
-            }
-            if trace.binded_data != binding {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding payload mismatch",
-                ));
-            }
-            if trace.trace.binding_words
-                != binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding words mismatch",
-                ));
-            }
-            if !trace.trace.accept {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace accept bit mismatch",
-                ));
-            }
-            Ok(())
-        }
+            ..
+        } => verify_hosted_recursive_proof_context_binding_trace_v1(previous_recursive_proof)?,
     }
+
+    let (_, descriptor, _, binding, _) = build_expected_recursive_inputs_v1(context)?;
+    let trace = build_hosted_recursive_proof_context_trace_v1(context)?;
+    if trace.descriptor != descriptor {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace descriptor mismatch",
+        ));
+    }
+    if trace.binded_data != binding {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace binding payload mismatch",
+        ));
+    }
+    if trace.trace.binding_words
+        != binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace binding words mismatch",
+        ));
+    }
+    if !trace.trace.accept {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace accept bit mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn build_hosted_recursive_proof_context_trace_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<SmallwoodRecursiveVerifierTraceV1, TransactionCircuitError> {
-    match context {
-        HostedRecursiveProofContextV1::BaseA {
-            statement,
-            proof_envelope_bytes,
-        } => {
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::BaseA,
-            );
-            let relation = BaseARelationV1::new(statement.clone(), statement.clone());
-            let binding = hosted_base_binding_bytes_v1(statement);
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )
-        }
-        HostedRecursiveProofContextV1::StepA {
-            previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::StepA,
-            );
-            let relation = StepARelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )
-        }
-        HostedRecursiveProofContextV1::StepB {
-            previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::B,
-                SmallwoodRecursiveRelationKindV1::StepB,
-            );
-            let relation = StepBRelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )
-        }
-    }
+    let (profile, descriptor, relation, binding, _) = build_expected_recursive_inputs_v1(context)?;
+    let proof_bytes = verify_recursive_proof_envelope_structure_v1(
+        &profile,
+        &descriptor,
+        relation.as_ref(),
+        context.proof_envelope_bytes(),
+    )?;
+    let trace = build_smallwood_poseidon2_verifier_trace_v1(
+        relation.as_ref(),
+        &recursive_binding_bytes_v1(&descriptor, &binding),
+        &proof_bytes,
+    )?;
+    Ok(SmallwoodRecursiveVerifierTraceV1 {
+        descriptor,
+        binded_data: binding,
+        trace,
+    })
 }
 
 pub fn hosted_recursive_proof_witness_layout_v1(
@@ -990,8 +774,7 @@ fn validate_previous_proof_witness_v1(
     }
     validation.witness_ready = true;
 
-    let Ok((profile, descriptor, relation, binding, proof_bytes_len)) =
-        build_expected_recursive_inputs_v1(context)
+    let Ok((_, descriptor, _, binding, proof_bytes_len)) = build_expected_recursive_inputs_v1(context)
     else {
         return validation;
     };
@@ -1011,21 +794,22 @@ fn validate_previous_proof_witness_v1(
     let Ok(proof_bytes) = witness_words_to_bytes_v1(proof_words, proof_bytes_len) else {
         return validation;
     };
+    let Ok(envelope) = decode_smallwood_recursive_proof_envelope_v1(context.proof_envelope_bytes())
+    else {
+        return validation;
+    };
+    if envelope.proof_bytes != proof_bytes {
+        return validation;
+    }
 
-    let Ok(trace) = build_recursive_verifier_trace_v1(
-        &profile,
-        &descriptor,
-        relation.as_ref(),
-        &binding,
-        &proof_bytes,
-    ) else {
+    let Ok(trace) = build_hosted_recursive_proof_context_trace_v1(context) else {
         return validation;
     };
 
     validation.binding_trace_valid = trace.descriptor == descriptor
         && trace.binded_data == binding
         && trace.trace.binding_words
-            == binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))
+            == binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &trace.binded_data))
                 .unwrap_or_default()
         && trace.trace.accept;
 
@@ -1055,206 +839,50 @@ pub fn verify_hosted_recursive_proof_context_transcript_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<(), TransactionCircuitError> {
     match context {
-        HostedRecursiveProofContextV1::BaseA {
-            statement,
-            proof_envelope_bytes,
-        } => {
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::BaseA,
-            );
-            let relation = BaseARelationV1::new(statement.clone(), statement.clone());
-            let binding = hosted_base_binding_bytes_v1(statement);
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.trace.eval_points.len() != 3 {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace opening-point count mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words.len() < trace.trace.binding_words.len() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace piop input too short",
-                ));
-            }
-            let split = trace.trace.piop_input_words.len() - trace.trace.binding_words.len();
-            if trace.trace.piop_input_words[..split] != trace.trace.pcs_transcript_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace pcs transcript prefix mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words[split..] != trace.trace.binding_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding suffix mismatch",
-                ));
-            }
-            if trace.trace.pcs_transcript_words != trace.trace.pcs_trace.decs_commitment_transcript
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace decs transcript mismatch",
-                ));
-            }
-            if trace.trace.piop_gamma_prime.is_empty() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace missing gamma prime values",
-                ));
-            }
-            Ok(())
-        }
+        HostedRecursiveProofContextV1::BaseA { .. } => {}
         HostedRecursiveProofContextV1::StepA {
             previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            verify_hosted_recursive_proof_context_transcript_v1(previous_recursive_proof)?;
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::A,
-                SmallwoodRecursiveRelationKindV1::StepA,
-            );
-            let relation = StepARelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.trace.eval_points.len() != 3 {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace opening-point count mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words.len() < trace.trace.binding_words.len() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace piop input too short",
-                ));
-            }
-            let split = trace.trace.piop_input_words.len() - trace.trace.binding_words.len();
-            if trace.trace.piop_input_words[..split] != trace.trace.pcs_transcript_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace pcs transcript prefix mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words[split..] != trace.trace.binding_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding suffix mismatch",
-                ));
-            }
-            if trace.trace.pcs_transcript_words != trace.trace.pcs_trace.decs_commitment_transcript
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace decs transcript mismatch",
-                ));
-            }
-            if trace.trace.piop_gamma_prime.is_empty() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace missing gamma prime values",
-                ));
-            }
-            Ok(())
+            ..
         }
-        HostedRecursiveProofContextV1::StepB {
+        | HostedRecursiveProofContextV1::StepB {
             previous_recursive_proof,
-            previous_statement,
-            leaf_record,
-            target_statement,
-            proof_envelope_bytes,
-        } => {
-            verify_hosted_recursive_proof_context_transcript_v1(previous_recursive_proof)?;
-            let descriptor = hosted_recursive_descriptor_v1(
-                SmallwoodRecursiveProfileTagV1::B,
-                SmallwoodRecursiveRelationKindV1::StepB,
-            );
-            let relation = StepBRelationV1::new(
-                (**previous_recursive_proof).clone(),
-                previous_statement.clone(),
-                leaf_record.clone(),
-                target_statement.clone(),
-            );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
-            let proof_bytes = verify_recursive_proof_envelope_structure_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                proof_envelope_bytes,
-            )?;
-            let trace = build_recursive_verifier_trace_v1(
-                &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
-                &descriptor,
-                &relation,
-                &binding,
-                &proof_bytes,
-            )?;
-            if trace.trace.eval_points.len() != 3 {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace opening-point count mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words.len() < trace.trace.binding_words.len() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace piop input too short",
-                ));
-            }
-            let split = trace.trace.piop_input_words.len() - trace.trace.binding_words.len();
-            if trace.trace.piop_input_words[..split] != trace.trace.pcs_transcript_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace pcs transcript prefix mismatch",
-                ));
-            }
-            if trace.trace.piop_input_words[split..] != trace.trace.binding_words {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace binding suffix mismatch",
-                ));
-            }
-            if trace.trace.pcs_transcript_words != trace.trace.pcs_trace.decs_commitment_transcript
-            {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace decs transcript mismatch",
-                ));
-            }
-            if trace.trace.piop_gamma_prime.is_empty() {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "recursive verifier trace missing gamma prime values",
-                ));
-            }
-            Ok(())
-        }
+            ..
+        } => verify_hosted_recursive_proof_context_transcript_v1(previous_recursive_proof)?,
     }
+
+    let trace = build_hosted_recursive_proof_context_trace_v1(context)?;
+    if trace.trace.eval_points.len() != 3 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace opening-point count mismatch",
+        ));
+    }
+    if trace.trace.piop_input_words.len() < trace.trace.binding_words.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace piop input too short",
+        ));
+    }
+    let split = trace.trace.piop_input_words.len() - trace.trace.binding_words.len();
+    if trace.trace.piop_input_words[..split] != trace.trace.pcs_transcript_words {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace pcs transcript prefix mismatch",
+        ));
+    }
+    if trace.trace.piop_input_words[split..] != trace.trace.binding_words {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace binding suffix mismatch",
+        ));
+    }
+    if trace.trace.pcs_transcript_words != trace.trace.pcs_trace.decs_commitment_transcript {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace decs transcript mismatch",
+        ));
+    }
+    if trace.trace.piop_gamma_prime.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive verifier trace missing gamma prime values",
+        ));
+    }
+    Ok(())
 }
 
 fn verify_pcs_trace_v1(

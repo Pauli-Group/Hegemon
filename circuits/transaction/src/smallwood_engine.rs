@@ -963,6 +963,19 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
     })
 }
 
+pub fn build_smallwood_poseidon2_verifier_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    build_smallwood_verifier_trace_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )
+}
+
 fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof: &SmallwoodProof,

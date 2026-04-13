@@ -50,7 +50,8 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_engine::{
-    interpolate_smallwood_consecutive_row_v1, SmallwoodArithmetization,
+    build_smallwood_poseidon2_verifier_trace_v1, interpolate_smallwood_consecutive_row_v1,
+    SmallwoodArithmetization,
     SmallwoodPcsVerifierTraceV1, SmallwoodProofTraceV1, SmallwoodVerifierTraceV1,
 };
 pub use smallwood_frontend::{
