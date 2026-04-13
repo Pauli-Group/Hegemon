@@ -286,11 +286,15 @@ pub struct CandidateArtifact {
     pub tx_count: u32,
     /// Commitment over canonical transaction statements in canonical tx order.
     pub tx_statements_commitment: [u8; 48],
-    /// DA root bound by the commitment proof.
+    /// DA root for the candidate block.
     pub da_root: [u8; 48],
-    /// DA chunk count bound by the commitment proof.
+    /// DA chunk count for the candidate block.
     pub da_chunk_count: u32,
-    /// Commitment proof bytes for the canonical statement-commitment proof.
+    /// Legacy block commitment proof bytes.
+    ///
+    /// This is required on the `ReceiptRoot` lane and must be empty on the
+    /// `RecursiveBlock` lane so no linear public-input payload can be smuggled
+    /// into the constant-size block-proof artifact.
     pub commitment_proof: StarkProof,
     /// Proof mode for this bundle.
     pub proof_mode: BlockProofMode,

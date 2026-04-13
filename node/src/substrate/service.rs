@@ -135,6 +135,9 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
+use block_recursion::{
+    prove_block_recursive_v1, BlockLeafRecordV1, BlockRecursiveProverInputV1, BlockSemanticInputsV1,
+};
 use codec::Decode;
 use codec::Encode;
 use consensus::proof::{
@@ -179,7 +182,8 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use superneo_hegemon::{
-    native_receipt_root_build_cache_stats, native_receipt_root_mini_root_size,
+    decode_native_tx_leaf_artifact_bytes, native_receipt_root_build_cache_stats,
+    native_receipt_root_mini_root_size, native_tx_leaf_record_from_artifact,
     NativeReceiptRootBuildCacheStats,
 };
 use tokio::sync::{oneshot, Mutex};
@@ -2498,6 +2502,60 @@ fn build_commitment_block_proof_from_materials(
     Ok(Some(proof))
 }
 
+fn build_recursive_block_semantic_inputs_from_materials(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    transactions: &[consensus::types::Transaction],
+    statement_bindings: &[consensus::types::TxStatementBinding],
+    tx_statements_commitment: [u8; 48],
+    da_root: DaRoot,
+) -> Result<BlockSemanticInputsV1, String> {
+    if transactions.is_empty() {
+        return Err("candidate tx set has no recursive block proof material".to_string());
+    }
+    if statement_bindings.len() != transactions.len() {
+        return Err(format!(
+            "tx statement binding count mismatch (expected {}, got {})",
+            transactions.len(),
+            statement_bindings.len()
+        ));
+    }
+
+    let mut tree = load_parent_commitment_tree_state(client, parent_hash)?;
+    let starting_root = tree.root();
+    for (index, (tx, binding)) in transactions.iter().zip(statement_bindings).enumerate() {
+        if !tree.contains_root(&binding.anchor) {
+            return Err(format!(
+                "transaction {index} anchor not found in commitment tree history"
+            ));
+        }
+        for &commitment in tx.commitments.iter().filter(|c| **c != [0u8; 48]) {
+            tree.append(commitment)
+                .map_err(|err| format!("commitment tree append failed: {err}"))?;
+        }
+    }
+    let ending_root = tree.root();
+
+    let mut nullifiers = Vec::new();
+    for tx in transactions {
+        nullifiers.extend_from_slice(&tx.nullifiers);
+        for _ in tx.nullifiers.len()..MAX_INPUTS {
+            nullifiers.push([0u8; 48]);
+        }
+    }
+    let nullifier_root = nullifier_root_from_list(&nullifiers)?;
+
+    Ok(BlockSemanticInputsV1 {
+        tx_statements_commitment,
+        start_shielded_root: starting_root,
+        end_shielded_root: ending_root,
+        start_kernel_root: kernel_root_from_shielded_root(&starting_root),
+        end_kernel_root: kernel_root_from_shielded_root(&ending_root),
+        nullifier_root,
+        da_root,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct PreparedArtifactSelector {
     legacy_mode: pallet_shielded_pool::types::BlockProofMode,
@@ -2507,54 +2565,40 @@ struct PreparedArtifactSelector {
 
 impl PreparedArtifactSelector {
     fn from_mode(mode: pallet_shielded_pool::types::BlockProofMode) -> Self {
-        match mode {
-            pallet_shielded_pool::types::BlockProofMode::InlineTx
-            | pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-                let (proof_kind, verifier_profile) =
-                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
-                Self {
-                    legacy_mode: mode,
-                    proof_kind,
-                    verifier_profile,
-                }
-            }
-            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-                tracing::warn!(
-                    "recursive_block mode requested but recursive authoring backend is unavailable; forcing receipt_root selector"
-                );
-                Self::receipt_root()
-            }
+        let (proof_kind, verifier_profile) =
+            crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
+        Self {
+            legacy_mode: mode,
+            proof_kind,
+            verifier_profile,
         }
     }
 
     fn receipt_root() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
     }
+
+    fn recursive_block() -> Self {
+        Self::from_mode(pallet_shielded_pool::types::BlockProofMode::RecursiveBlock)
+    }
 }
 
 fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
     if raw.is_empty()
-        || raw.eq_ignore_ascii_case("receipt_root")
-        || raw.eq_ignore_ascii_case("receipt-root")
         || raw.eq_ignore_ascii_case("recursive_block")
         || raw.eq_ignore_ascii_case("recursive-block")
     {
-        if raw.eq_ignore_ascii_case("recursive_block")
-            || raw.eq_ignore_ascii_case("recursive-block")
-        {
-            tracing::warn!(
-                mode = raw,
-                "recursive_block HEGEMON_BLOCK_PROOF_MODE requested but recursive authoring backend is unavailable; forcing receipt_root on the product path"
-            );
-        }
+        return PreparedArtifactSelector::recursive_block();
+    }
+    if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
         return PreparedArtifactSelector::receipt_root();
     }
     tracing::warn!(
         mode = raw,
-        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing receipt_root on the product path"
+        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing recursive_block on the product path"
     );
-    PreparedArtifactSelector::receipt_root()
+    PreparedArtifactSelector::recursive_block()
 }
 
 fn truthy_env_var(name: &str) -> bool {
@@ -2600,12 +2644,12 @@ fn ensure_native_only_receipt_root_selector(
             tracing::info!("native-only receipt_root lane selected");
             Ok(())
         }
-        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => Err(
-            "HEGEMON_REQUIRE_NATIVE=1 requires the receipt_root lane; recursive_block authoring backend is unavailable"
-                .to_string(),
-        ),
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            tracing::info!("native-only recursive_block lane selected");
+            Ok(())
+        }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
-            "HEGEMON_REQUIRE_NATIVE=1 requires HEGEMON_BLOCK_PROOF_MODE=receipt_root; got legacy_mode {:?}, proof_kind {:?}, verifier_profile {}",
+            "HEGEMON_REQUIRE_NATIVE=1 requires a native block-proof lane; got legacy_mode {:?}, proof_kind {:?}, verifier_profile {}",
             selector.legacy_mode,
             selector.proof_kind,
             hex::encode(selector.verifier_profile),
@@ -2620,23 +2664,15 @@ fn ensure_native_only_receipt_root_outcome(
         return Ok(());
     }
     let report = outcome.native_selection_report.as_ref().ok_or_else(|| {
-        "HEGEMON_REQUIRE_NATIVE=1 requires a native selection report for receipt_root authoring"
+        "HEGEMON_REQUIRE_NATIVE=1 requires a native selection report for native block-proof authoring"
             .to_string()
     })?;
     if !report.used_native_lane {
         return Err(format!(
-            "HEGEMON_REQUIRE_NATIVE=1 forbids InlineTx fallback from receipt_root: {} ({})",
+            "HEGEMON_REQUIRE_NATIVE=1 forbids InlineTx fallback from a native block-proof lane: {} ({})",
             report.fallback_reason_label(),
             report.fallback_detail(),
         ));
-    }
-    if !matches!(
-        outcome.artifacts,
-        PreparedAggregationArtifacts::ReceiptRoot(_)
-    ) {
-        return Err(
-            "HEGEMON_REQUIRE_NATIVE=1 expected a receipt_root aggregation artifact but received InlineTx fallback".to_string(),
-        );
     }
     Ok(())
 }
@@ -2694,15 +2730,49 @@ fn ensure_native_only_receipt_root_payload(
     if !native_only_receipt_root_required_from_env() {
         return Ok(());
     }
-    ensure_product_receipt_root_payload(payload).map_err(|_| {
-        format!(
-            "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical native receipt_root is required",
+    match payload.proof_mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => ensure_product_receipt_root_payload(payload)
+            .map_err(|_| {
+                format!(
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical native receipt_root is required",
+                    payload.proof_mode,
+                    payload.proof_kind,
+                    hex::encode(payload.verifier_profile),
+                )
+            }),
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            if payload.proof_kind
+                != pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            {
+                return Err(format!(
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payload kind {:?}; recursive_block_v1 is required",
+                    payload.proof_kind,
+                ));
+            }
+            if payload.recursive_block.is_none() {
+                return Err(
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads without recursive artifact bytes".to_string(),
+                );
+            }
+            if payload.receipt_root.is_some() {
+                return Err(
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads that also carry receipt_root bytes".to_string(),
+                );
+            }
+            if !payload.commitment_proof.data.is_empty() {
+                return Err(
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads that carry commitment proof bytes".to_string(),
+                );
+            }
+            Ok(())
+        }
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
+            "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; a native block-proof lane is required",
             payload.proof_mode,
             payload.proof_kind,
             hex::encode(payload.verifier_profile),
-        )
-    })?;
-    Ok(())
+        )),
+    }
 }
 
 fn receipt_root_lane_requires_embedded_proof_bytes(
@@ -2993,6 +3063,60 @@ fn build_receipt_root_proof_from_materials_with_plan(
     ))
 }
 
+fn recursive_block_payload_from_artifact(
+    artifact: block_recursion::RecursiveBlockArtifactV1,
+) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
+    let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
+        .map_err(|err| format!("serialize recursive block artifact failed: {err}"))?;
+    Ok(pallet_shielded_pool::types::RecursiveBlockProofPayload {
+        proof: pallet_shielded_pool::types::StarkProof::from_bytes(bytes),
+    })
+}
+
+fn build_recursive_block_proof_from_materials(
+    tx_artifacts: &[consensus::TxValidityArtifact],
+    semantic: &BlockSemanticInputsV1,
+) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
+    if tx_artifacts.is_empty() {
+        return Err("candidate tx set has no recursive block proof material".to_string());
+    }
+    let records = tx_artifacts
+        .iter()
+        .enumerate()
+        .map(|(tx_index, artifact)| {
+            let proof = artifact
+                .proof
+                .as_ref()
+                .ok_or_else(|| format!("tx {tx_index} is missing a tx-validity proof envelope"))?;
+            let decoded =
+                decode_native_tx_leaf_artifact_bytes(&proof.artifact_bytes).map_err(|err| {
+                    format!("failed to decode native tx_leaf artifact for tx {tx_index}: {err}")
+                })?;
+            let leaf = native_tx_leaf_record_from_artifact(&decoded);
+            Ok(BlockLeafRecordV1 {
+                tx_index: tx_index as u32,
+                receipt_statement_hash: artifact.receipt.statement_hash,
+                receipt_proof_digest: artifact.receipt.proof_digest,
+                receipt_public_inputs_digest: artifact.receipt.public_inputs_digest,
+                receipt_verifier_profile: artifact.receipt.verifier_profile,
+                leaf_params_fingerprint: leaf.params_fingerprint,
+                leaf_spec_digest: leaf.spec_digest,
+                leaf_relation_id: leaf.relation_id,
+                leaf_shape_digest: leaf.shape_digest,
+                leaf_statement_digest: leaf.statement_digest,
+                leaf_commitment_digest: leaf.commitment.digest,
+                leaf_proof_digest: leaf.proof_digest,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let artifact = prove_block_recursive_v1(&BlockRecursiveProverInputV1 {
+        records,
+        semantic: semantic.clone(),
+    })
+    .map_err(|err| format!("recursive block artifact generation failed: {err}"))?;
+    recursive_block_payload_from_artifact(artifact)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeArtifactFallbackReason {
     ArtifactsUnavailable,
@@ -3207,6 +3331,7 @@ fn should_store_prove_ahead_aggregation_outcome(
 enum PreparedAggregationArtifacts {
     InlineTx,
     ReceiptRoot(pallet_shielded_pool::types::ReceiptRootProofPayload),
+    RecursiveBlock(pallet_shielded_pool::types::RecursiveBlockProofPayload),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3493,25 +3618,35 @@ fn prepare_block_proof_bundle(
         let commitment_statement_hashes = statement_hashes.clone();
         let commitment_transactions = context.extracted_transactions.clone();
         let commitment_bindings = context.statement_bindings.clone();
-        let commitment_handle = scope.spawn(move || {
-            tracing::info!(
-                block_number,
-                tx_count,
-                "prepare_block_proof_bundle: starting commitment stage"
-            );
-            let stage_started = Instant::now();
-            let stage_result = build_commitment_block_proof_from_materials(
-                client,
-                parent_hash,
-                &commitment_statement_hashes,
-                &commitment_transactions,
-                &commitment_bindings,
-                da_root,
-            );
-            (stage_result, stage_started.elapsed().as_millis())
-        });
+        let aggregation_transactions = context.extracted_transactions.clone();
+        let aggregation_bindings = context.statement_bindings.clone();
+        let commitment_handle = if selected_artifact.legacy_mode
+            == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        {
+            Some(scope.spawn(move || {
+                tracing::info!(
+                    block_number,
+                    tx_count,
+                    "prepare_block_proof_bundle: starting commitment stage"
+                );
+                let stage_started = Instant::now();
+                let stage_result = build_commitment_block_proof_from_materials(
+                    client,
+                    parent_hash,
+                    &commitment_statement_hashes,
+                    &commitment_transactions,
+                    &commitment_bindings,
+                    da_root,
+                );
+                (stage_result, stage_started.elapsed().as_millis())
+            }))
+        } else {
+            None
+        };
 
         let aggregation_tx_artifacts = tx_artifacts_for_batching.clone();
+        let aggregation_da_root = da_root;
+        let aggregation_statement_commitment = tx_statements_commitment;
         let aggregation_handle = scope.spawn(move || {
             tracing::info!(
                 block_number,
@@ -3554,10 +3689,33 @@ fn prepare_block_proof_bundle(
                             prepared.outcome
                         })
                     }
-                    pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => Err(
-                        "recursive_block authoring backend is unavailable; receipt_root is the only supported native lane"
-                            .to_string(),
-                    ),
+                    pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+                        require_native_tx_leaf_artifacts(aggregation_tx_artifacts.as_deref())
+                            .map_err(|report| {
+                                format!(
+                                    "recursive_block requires canonical native tx_leaf artifacts: {} ({})",
+                                    report.fallback_reason_label(),
+                                    report.fallback_detail(),
+                                )
+                            })
+                            .and_then(|tx_artifacts| {
+                                let semantic = build_recursive_block_semantic_inputs_from_materials(
+                                    client,
+                                    parent_hash,
+                                    &aggregation_transactions,
+                                    &aggregation_bindings,
+                                    aggregation_statement_commitment,
+                                    aggregation_da_root,
+                                )?;
+                                build_recursive_block_proof_from_materials(tx_artifacts, &semantic)
+                            })
+                            .map(|payload| {
+                                PreparedAggregationOutcome::native(
+                                    PreparedAggregationArtifacts::RecursiveBlock(payload),
+                                    NativeArtifactSelectionReport::native_lane_selected(),
+                                )
+                            })
+                    }
                 };
                 if let Ok(ref artifacts) = built {
                     if should_store_prove_ahead_aggregation_outcome(selected_artifact, artifacts) {
@@ -3578,14 +3736,18 @@ fn prepare_block_proof_bundle(
             )
         });
 
-        (commitment_handle.join(), aggregation_handle.join())
+        (
+            commitment_handle.map(|handle| handle.join()),
+            aggregation_handle.join(),
+        )
     });
 
     let (commitment_result, commitment_stage_ms) = match commitment_join {
-        Ok(result) => result,
-        Err(_) => {
+        Some(Ok(result)) => result,
+        Some(Err(_)) => {
             return Err("prepare_block_proof_bundle: commitment stage panicked".to_string());
         }
+        None => (Ok(None), 0),
     };
     let (
         aggregation_result,
@@ -3606,11 +3768,22 @@ fn prepare_block_proof_bundle(
             commitment_stage_ms,
             "prepare_block_proof_bundle: commitment stage complete"
         ),
-        Ok(None) => tracing::warn!(
+        Ok(None)
+            if selected_artifact.legacy_mode
+                == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot =>
+        {
+            tracing::warn!(
+                block_number,
+                tx_count,
+                commitment_stage_ms,
+                "prepare_block_proof_bundle: commitment stage returned no proof material"
+            )
+        }
+        Ok(None) => tracing::info!(
             block_number,
             tx_count,
             commitment_stage_ms,
-            "prepare_block_proof_bundle: commitment stage returned no proof material"
+            "prepare_block_proof_bundle: commitment stage skipped for recursive_block"
         ),
         Err(error) => tracing::warn!(
             block_number,
@@ -3702,10 +3875,11 @@ fn prepare_block_proof_bundle(
             "prepare_block_proof_bundle: aggregation stage failed"
         ),
     }
-    let commitment_proof = commitment_result?
-        .ok_or_else(|| "candidate tx set has no commitment proof material".to_string())?;
+    let commitment_proof = commitment_result?;
     let aggregation_outcome = aggregation_result?;
-    ensure_product_receipt_root_outcome(&aggregation_outcome)?;
+    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+        ensure_product_receipt_root_outcome(&aggregation_outcome)?;
+    }
     ensure_native_only_receipt_root_outcome(&aggregation_outcome)?;
     let native_selection_report = aggregation_outcome.native_selection_report.clone();
 
@@ -3716,7 +3890,10 @@ fn prepare_block_proof_bundle(
         da_root: context.da_root,
         da_chunk_count: context.da_chunk_count,
         commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(
-            commitment_proof.proof_bytes.clone(),
+            commitment_proof
+                .as_ref()
+                .map(|proof| proof.proof_bytes.clone())
+                .unwrap_or_default(),
         ),
         proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
         proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
@@ -3735,14 +3912,25 @@ fn prepare_block_proof_bundle(
             payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
             payload.receipt_root = Some(receipt_root);
         }
+        PreparedAggregationArtifacts::RecursiveBlock(recursive_block) => {
+            payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
+            payload.commitment_proof =
+                pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
+            payload.recursive_block = Some(recursive_block);
+        }
     }
     sync_payload_artifact_identity(&mut payload);
-    ensure_product_receipt_root_payload(&payload)?;
+    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+        ensure_product_receipt_root_payload(&payload)?;
+    }
     ensure_native_only_receipt_root_payload(&payload)?;
 
     tracing::info!(
         block_number,
-        commitment_bytes = commitment_proof.proof_bytes.len(),
+        commitment_bytes = commitment_proof
+            .as_ref()
+            .map(|proof| proof.proof_bytes.len())
+            .unwrap_or(0),
         aggregation_bytes = block_proof_payload_aggregation_bytes(&payload),
         da_chunk_count = payload.da_chunk_count,
         proof_mode = ?payload.proof_mode,
@@ -4451,6 +4639,11 @@ fn verify_proof_carrying_block(
             if payload.recursive_block.is_none() {
                 return Err(
                     "recursive_block payload is missing the recursive block artifact".to_string(),
+                );
+            }
+            if !payload.commitment_proof.data.is_empty() {
+                return Err(
+                    "recursive_block payload must not carry commitment proof bytes".to_string(),
                 );
             }
         }
@@ -5999,10 +6192,10 @@ pub fn wire_block_builder_api(
                     tx_count = shielded_tx_count,
                     tx_statements_commitment = %hex::encode(tx_statements_commitment),
                     ?diagnostics,
-                    "Missing prepared receipt_root proven batch for shielded block on the product path"
+                    "Missing prepared native block-proof artifact for shielded block on the product path"
                 );
                 return Err(
-                    "shielded block requires a ready native receipt_root proven batch on the product path".to_string(),
+                    "shielded block requires a ready native block-proof artifact on the product path".to_string(),
                 );
             }
         }
@@ -11974,6 +12167,12 @@ mod tests {
         }
     }
 
+    fn dummy_recursive_block_payload() -> pallet_shielded_pool::types::RecursiveBlockProofPayload {
+        pallet_shielded_pool::types::RecursiveBlockProofPayload {
+            proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![4u8; 12]),
+        }
+    }
+
     fn dummy_block_proof_bundle() -> pallet_shielded_pool::types::BlockProofBundle {
         pallet_shielded_pool::types::BlockProofBundle {
             version: pallet_shielded_pool::types::BLOCK_PROOF_BUNDLE_SCHEMA,
@@ -12057,6 +12256,20 @@ mod tests {
     }
 
     #[test]
+    fn default_block_proof_mode_is_recursive_block() {
+        let _guard = set_block_proof_mode("");
+        let selector = prepared_artifact_selector_from_env();
+        assert_eq!(
+            selector.legacy_mode,
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+        );
+        assert_eq!(
+            selector.proof_kind,
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        );
+    }
+
+    #[test]
     fn receipt_root_mode_is_selected_from_env() {
         let _guard = set_block_proof_mode("receipt_root");
         let selector = prepared_artifact_selector_from_env();
@@ -12071,28 +12284,28 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_mode_is_forced_to_receipt_root() {
+    fn recursive_block_mode_is_selected_from_env() {
         let _guard = set_block_proof_mode("recursive_block");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
             selector.legacy_mode,
-            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert_eq!(
             selector.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
         );
     }
 
     #[test]
-    fn legacy_block_proof_mode_is_forced_to_receipt_root() {
+    fn legacy_block_proof_mode_is_forced_to_recursive_block() {
         let _guard = set_block_proof_mode_with_require_native("inline_tx", "1");
         let selector = prepared_artifact_selector_from_env();
         ensure_native_only_receipt_root_selector(selector)
-            .expect("legacy env modes should be forced onto canonical receipt_root");
+            .expect("legacy env modes should be forced onto canonical recursive_block");
         assert_eq!(
             selector.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
         );
     }
 
@@ -12101,6 +12314,13 @@ mod tests {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
         ensure_native_only_receipt_root_selector(prepared_artifact_selector_from_env())
             .expect("canonical native receipt_root mode must be accepted");
+    }
+
+    #[test]
+    fn require_native_receipt_root_accepts_recursive_block_mode() {
+        let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
+        ensure_native_only_receipt_root_selector(prepared_artifact_selector_from_env())
+            .expect("native-only mode must accept recursive_block");
     }
 
     #[test]
@@ -12319,21 +12539,37 @@ mod tests {
         let payload = dummy_block_proof_bundle();
         let err = ensure_native_only_receipt_root_payload(&payload)
             .expect_err("native-only mode must reject inline payloads on import");
-        assert!(err.contains("canonical native receipt_root is required"));
+        assert!(err.contains("native block-proof lane is required"));
     }
 
     #[test]
-    fn require_native_receipt_root_rejects_recursive_block_payload() {
-        let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
+    fn require_native_receipt_root_accepts_recursive_block_payload() {
+        let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
         payload.verifier_profile = consensus::legacy_block_artifact_verifier_profile(
             consensus::ProofArtifactKind::RecursiveBlockV1,
         );
+        payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
+        payload.recursive_block = Some(dummy_recursive_block_payload());
+        ensure_native_only_receipt_root_payload(&payload)
+            .expect("native-only mode must accept recursive_block payloads");
+    }
+
+    #[test]
+    fn require_native_receipt_root_rejects_recursive_block_commitment_bytes() {
+        let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
+        let mut payload = dummy_block_proof_bundle();
+        payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
+        payload.verifier_profile = consensus::legacy_block_artifact_verifier_profile(
+            consensus::ProofArtifactKind::RecursiveBlockV1,
+        );
+        payload.recursive_block = Some(dummy_recursive_block_payload());
         let err = ensure_native_only_receipt_root_payload(&payload)
-            .expect_err("native-only mode must reject recursive_block payloads on import");
-        assert!(err.contains("canonical native receipt_root is required"));
+            .expect_err("recursive_block payload must reject commitment proof bytes");
+        assert!(err.contains("commitment proof bytes"));
     }
 
     #[test]

@@ -1,38 +1,37 @@
 use crate::{
     artifacts::{
-        block_accumulation_transcript_digest_v1,
-        block_accumulation_transcript_serializer_digest_v1,
-        deserialize_block_accumulation_transcript_v1,
-        header_dec_step_profile_digest_v1,
-        recursive_block_public_statement_digest_v1,
-        serialize_header_dec_step_v1,
-        RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
-        RecursiveBlockArtifactV1, BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
+        compress_transcript_digest_v1, decider_profile_digest_v1,
+        recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
+        RecursiveBlockArtifactV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+        RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
     },
     public_replay::RecursiveBlockPublicV1,
-    state::{
-        deserialize_recursive_state_v1, recursive_state_serializer_digest_v1,
-        serialize_recursive_state_v1,
+    relation::{
+        ensure_expected_relation_v1, ensure_expected_shape_v1, prefix_statement_v1,
+        recursive_block_shape_v1,
     },
     BlockRecursionError,
 };
+use superneo_backend_lattice::{recursive_backend_v2, RecursiveLatticeDeciderProof};
+use superneo_core::{
+    deserialize_lcccs_instance, serialize_decider_profile, serialize_lcccs_instance, LcccsInstance,
+    RecursiveBackend,
+};
+use superneo_hegemon::native_backend_params;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlockRecursiveVerificationError {
-    pub message: &'static str,
+fn static_error(prefix: &'static str, err: impl core::fmt::Display) -> BlockRecursionError {
+    BlockRecursionError::InvalidField(Box::leak(format!("{prefix}: {err}").into_boxed_str()))
 }
-
-impl core::fmt::Display for BlockRecursiveVerificationError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for BlockRecursiveVerificationError {}
 
 pub fn verify_block_recursive_v1(
     artifact: &RecursiveBlockArtifactV1,
+    expected_public: &RecursiveBlockPublicV1,
 ) -> Result<RecursiveBlockPublicV1, BlockRecursionError> {
+    if artifact.public != *expected_public {
+        return Err(BlockRecursionError::InvalidField(
+            "recursive public tuple mismatch",
+        ));
+    }
     if artifact.header.version != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 {
         return Err(BlockRecursionError::InvalidVersion {
             what: "recursive block artifact header",
@@ -56,11 +55,6 @@ pub fn verify_block_recursive_v1(
             actual: artifact.decider_bytes.len(),
         });
     }
-    if artifact.header.artifact_bytes == 0 {
-        return Err(BlockRecursionError::InvalidField(
-            "artifact_bytes must be non-zero",
-        ));
-    }
     let canonical_artifact_len = crate::serialize_recursive_block_artifact_v1(artifact)?.len();
     if artifact.header.artifact_bytes as usize != canonical_artifact_len {
         return Err(BlockRecursionError::WidthMismatch {
@@ -69,7 +63,7 @@ pub fn verify_block_recursive_v1(
             actual: canonical_artifact_len,
         });
     }
-    let header_bytes = serialize_header_dec_step_v1(&artifact.header)?;
+    let header_bytes = crate::serialize_header_dec_step_v1(&artifact.header)?;
     if artifact.header.header_bytes as usize != header_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "header_bytes",
@@ -77,96 +71,77 @@ pub fn verify_block_recursive_v1(
             actual: header_bytes.len(),
         });
     }
-    if artifact.header.accumulator_serializer_digest != recursive_state_serializer_digest_v1() {
+    if artifact.header.statement_digest
+        != crate::recursive_block_public_statement_digest_v1(expected_public)
+    {
+        return Err(BlockRecursionError::InvalidField("statement_digest"));
+    }
+
+    let params = native_backend_params();
+    let backend = recursive_backend_v2(params.clone());
+    let shape = recursive_block_shape_v1();
+    let security = params.security_params();
+    let (_pk, vk) = backend
+        .setup_recursive(&security, &shape)
+        .map_err(|err| static_error("recursive setup failed", err))?;
+    let decider_profile = backend
+        .recursive_decider_profile(&security, &shape)
+        .map_err(|err| static_error("recursive decider profile failed", err))?;
+    let decider_profile_bytes = serialize_decider_profile(&decider_profile)
+        .map_err(|err| static_error("serialize decider profile failed", err))?;
+    if artifact.header.decider_profile_digest != decider_profile_digest_v1(&decider_profile_bytes) {
+        return Err(BlockRecursionError::InvalidField("decider_profile_digest"));
+    }
+    if artifact.header.accumulator_serializer_digest != recursive_lcccs_serializer_digest_v1() {
         return Err(BlockRecursionError::InvalidField(
             "accumulator_serializer_digest",
         ));
     }
-    if artifact.header.decider_serializer_digest
-        != block_accumulation_transcript_serializer_digest_v1()
-    {
-        return Err(BlockRecursionError::InvalidField("decider_serializer_digest"));
-    }
-    if artifact.header.statement_digest
-        != recursive_block_public_statement_digest_v1(&artifact.public)
-    {
-        return Err(BlockRecursionError::InvalidField("statement_digest"));
-    }
-    if artifact.header.decider_profile_digest
-        != header_dec_step_profile_digest_v1(&artifact.header)
-    {
-        return Err(BlockRecursionError::InvalidField("decider_profile_digest"));
+    if artifact.header.decider_serializer_digest != recursive_decider_serializer_digest_v1() {
+        return Err(BlockRecursionError::InvalidField(
+            "decider_serializer_digest",
+        ));
     }
 
-    let accumulator = deserialize_recursive_state_v1(&artifact.accumulator_bytes)?;
-    let accumulator_roundtrip = serialize_recursive_state_v1(&accumulator)?;
+    let terminal: LcccsInstance<
+        superneo_backend_lattice::LatticeCommitment,
+        p3_goldilocks::Goldilocks,
+    > = deserialize_lcccs_instance(&artifact.accumulator_bytes)
+        .map_err(|err| static_error("deserialize terminal accumulator failed", err))?;
+    let accumulator_roundtrip = serialize_lcccs_instance(&terminal)
+        .map_err(|err| static_error("serialize terminal accumulator failed", err))?;
     if accumulator_roundtrip != artifact.accumulator_bytes {
         return Err(BlockRecursionError::InvalidField(
             "accumulator_bytes must use canonical serializer",
         ));
     }
-    let transcript = deserialize_block_accumulation_transcript_v1(&artifact.decider_bytes)?;
-    let transcript_roundtrip = crate::serialize_block_accumulation_transcript_v1(&transcript)?;
-    if transcript_roundtrip != artifact.decider_bytes {
+    ensure_expected_relation_v1(terminal.relation_id)?;
+    ensure_expected_shape_v1(terminal.shape_digest)?;
+
+    let decider_proof = RecursiveLatticeDeciderProof::from_canonical_bytes(&artifact.decider_bytes)
+        .map_err(|err| static_error("deserialize decider proof failed", err))?;
+    let decider_roundtrip = decider_proof
+        .to_canonical_bytes()
+        .map_err(|err| static_error("serialize decider proof failed", err))?;
+    if decider_roundtrip != artifact.decider_bytes {
         return Err(BlockRecursionError::InvalidField(
             "decider_bytes must use canonical serializer",
         ));
     }
-    if transcript.version != BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1 {
-        return Err(BlockRecursionError::InvalidVersion {
-            what: "block accumulation transcript",
-            version: transcript.version,
-        });
-    }
-    if artifact.header.transcript_digest != block_accumulation_transcript_digest_v1(&transcript)? {
+    if artifact.header.transcript_digest
+        != compress_transcript_digest_v1(&decider_proof.transcript_digest)
+    {
         return Err(BlockRecursionError::InvalidField("transcript_digest"));
     }
-    if transcript.step_count != artifact.public.tx_count {
-        return Err(BlockRecursionError::InvalidField(
-            "transcript step_count must match public tx_count",
-        ));
-    }
-    if accumulator.step_index != artifact.public.tx_count {
-        return Err(BlockRecursionError::InvalidField(
-            "terminal accumulator step_index must match public tx_count",
-        ));
-    }
-    if accumulator.tx_count != artifact.public.tx_count {
-        return Err(BlockRecursionError::InvalidField(
-            "terminal accumulator tx_count must match public tx_count",
-        ));
-    }
-    if accumulator.statement_commitment != artifact.public.tx_statements_commitment {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator statement_commitment",
-        ));
-    }
-    if accumulator.leaf_commitment != artifact.public.verified_leaf_commitment {
-        return Err(BlockRecursionError::InvalidField("accumulator leaf_commitment"));
-    }
-    if accumulator.receipt_commitment != artifact.public.verified_receipt_commitment {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator receipt_commitment",
-        ));
-    }
-    if accumulator.frontier_commitment != artifact.public.frontier_commitment {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator frontier_commitment",
-        ));
-    }
-    if accumulator.history_commitment != artifact.public.history_commitment {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator history_commitment",
-        ));
-    }
-    if accumulator.nullifier_root != artifact.public.nullifier_root {
-        return Err(BlockRecursionError::InvalidField("accumulator nullifier_root"));
-    }
-    if accumulator.da_root != artifact.public.da_root {
-        return Err(BlockRecursionError::InvalidField("accumulator da_root"));
-    }
 
-    Err(BlockRecursionError::NotImplemented(
-        "recursive decider verification is not implemented in circuits/block-recursion; structural header/state/transcript checks passed",
-    ))
+    let statement = prefix_statement_v1(expected_public);
+    if terminal.statement != statement {
+        return Err(BlockRecursionError::InvalidField(
+            "terminal statement mismatch",
+        ));
+    }
+    backend
+        .verify_decider(&vk, &decider_profile, &statement, &terminal, &decider_proof)
+        .map_err(|err| static_error("verify recursive decider failed", err))?;
+    Ok(expected_public.clone())
 }

@@ -2,6 +2,7 @@ use crate::{
     fold_digest32, fold_digest48, public_replay::RecursiveBlockPublicV1, BlockRecursionError,
     Digest32, Digest48,
 };
+use superneo_backend_lattice::RecursiveLatticeDeciderProof;
 
 pub type CanonicalDeciderTranscript = Vec<u8>;
 
@@ -87,7 +88,10 @@ fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, BlockRecursionError
     Ok(u32::from_le_bytes(buf))
 }
 
-fn read_fixed<const N: usize>(bytes: &[u8], cursor: &mut usize) -> Result<[u8; N], BlockRecursionError> {
+fn read_fixed<const N: usize>(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<[u8; N], BlockRecursionError> {
     let end = cursor.saturating_add(N);
     if end > bytes.len() {
         return Err(BlockRecursionError::InvalidLength {
@@ -143,7 +147,9 @@ fn parse_header_dec_step_v1_prefix(
     ))
 }
 
-pub fn serialize_header_dec_step_v1(header: &HeaderDecStepV1) -> Result<Vec<u8>, BlockRecursionError> {
+pub fn serialize_header_dec_step_v1(
+    header: &HeaderDecStepV1,
+) -> Result<Vec<u8>, BlockRecursionError> {
     let mut out = Vec::with_capacity(8 + 2 + 2 + 4 + 4 + 32 + 32 + 48 + 32 + 32 + 32 + 32 + 4 + 4);
     out.extend_from_slice(&HEADER_MAGIC);
     put_u16(&mut out, header.version);
@@ -162,7 +168,9 @@ pub fn serialize_header_dec_step_v1(header: &HeaderDecStepV1) -> Result<Vec<u8>,
     Ok(out)
 }
 
-pub fn deserialize_header_dec_step_v1(bytes: &[u8]) -> Result<HeaderDecStepV1, BlockRecursionError> {
+pub fn deserialize_header_dec_step_v1(
+    bytes: &[u8],
+) -> Result<HeaderDecStepV1, BlockRecursionError> {
     let (header, cursor) = parse_header_dec_step_v1_prefix(bytes)?;
     if cursor != bytes.len() {
         return Err(BlockRecursionError::TrailingBytes {
@@ -182,29 +190,6 @@ pub fn serialize_block_accumulation_transcript_v1(
     put_u32(&mut out, transcript.transcript_bytes.len() as u32);
     out.extend_from_slice(&transcript.transcript_bytes);
     Ok(out)
-}
-
-pub fn block_accumulation_transcript_serializer_digest_v1() -> Digest32 {
-    fold_digest32(
-        b"block_accumulation_transcript_serializer_v1",
-        &[
-            &TRANSCRIPT_MAGIC,
-            &BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1.to_le_bytes(),
-            b"step_count:u32",
-            b"transcript_bytes_len:u32",
-            b"transcript_bytes:opaque",
-        ],
-    )
-}
-
-pub fn block_accumulation_transcript_digest_v1(
-    transcript: &BlockAccumulationTranscriptV1,
-) -> Result<Digest32, BlockRecursionError> {
-    let bytes = serialize_block_accumulation_transcript_v1(transcript)?;
-    Ok(fold_digest32(
-        b"block_accumulation_transcript_digest_v1",
-        &[&bytes],
-    ))
 }
 
 pub fn deserialize_block_accumulation_transcript_v1(
@@ -240,8 +225,62 @@ pub fn deserialize_block_accumulation_transcript_v1(
     })
 }
 
+pub fn block_accumulation_transcript_serializer_digest_v1() -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.accumulation-transcript-serializer.v1",
+        &[
+            &TRANSCRIPT_MAGIC,
+            &BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1.to_le_bytes(),
+            b"step_count:u32",
+            b"transcript_bytes_len:u32",
+            b"transcript_bytes:opaque",
+        ],
+    )
+}
+
+pub fn block_accumulation_transcript_digest_v1(
+    transcript: &BlockAccumulationTranscriptV1,
+) -> Result<Digest32, BlockRecursionError> {
+    let bytes = serialize_block_accumulation_transcript_v1(transcript)?;
+    Ok(fold_digest32(
+        b"hegemon.block-recursion.accumulation-transcript-digest.v1",
+        &[&bytes],
+    ))
+}
+
+pub fn recursive_lcccs_serializer_digest_v1() -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.lcccs-serializer.v1",
+        &[b"superneo_core::serialize_lcccs_instance"],
+    )
+}
+
+pub fn recursive_decider_serializer_digest_v1() -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.decider-serializer.v1",
+        &[
+            b"superneo-backend-lattice::RecursiveLatticeDeciderProof",
+            &(RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32).to_le_bytes(),
+        ],
+    )
+}
+
+pub fn decider_profile_digest_v1(profile_bytes: &[u8]) -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.decider-profile.v1",
+        &[profile_bytes],
+    )
+}
+
+pub fn compress_transcript_digest_v1(transcript_digest: &Digest48) -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.transcript-digest.v1",
+        &[transcript_digest],
+    )
+}
+
 fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 48 * 3 + 32 * 8);
+    let mut out = Vec::with_capacity(4 + (48 * 9) + (32 * 2));
     put_u32(&mut out, public.tx_count);
     put_fixed(&mut out, &public.tx_statements_commitment);
     put_fixed(&mut out, &public.verified_leaf_commitment);
@@ -257,16 +296,14 @@ fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u
     out
 }
 
-pub fn recursive_block_public_statement_digest_v1(
-    public: &RecursiveBlockPublicV1,
-) -> Digest48 {
+pub fn recursive_block_public_statement_digest_v1(public: &RecursiveBlockPublicV1) -> Digest48 {
     let bytes = serialize_recursive_block_public_v1(public);
-    fold_digest48(b"recursive_block_public_statement_v1", &[&bytes])
+    fold_digest48(b"hegemon.block-recursion.public-statement.v1", &[&bytes])
 }
 
 pub fn header_dec_step_profile_digest_v1(header: &HeaderDecStepV1) -> Digest32 {
     fold_digest32(
-        b"header_dec_step_profile_v1",
+        b"hegemon.block-recursion.header-profile.v1",
         &[
             &header.version.to_le_bytes(),
             &header.proof_kind.to_le_bytes(),
@@ -274,8 +311,10 @@ pub fn header_dec_step_profile_digest_v1(header: &HeaderDecStepV1) -> Digest32 {
             &header.artifact_bytes.to_le_bytes(),
             &header.relation_id,
             &header.shape_digest,
+            &header.statement_digest,
             &header.accumulator_serializer_digest,
             &header.decider_serializer_digest,
+            &header.transcript_digest,
             &header.accumulator_bytes.to_le_bytes(),
             &header.decider_bytes.to_le_bytes(),
         ],
@@ -290,12 +329,12 @@ fn deserialize_recursive_block_public_v1(
     let tx_statements_commitment = read_fixed::<48>(bytes, cursor)?;
     let verified_leaf_commitment = read_fixed::<48>(bytes, cursor)?;
     let verified_receipt_commitment = read_fixed::<48>(bytes, cursor)?;
-    let start_shielded_root = read_fixed::<32>(bytes, cursor)?;
-    let end_shielded_root = read_fixed::<32>(bytes, cursor)?;
-    let start_kernel_root = read_fixed::<32>(bytes, cursor)?;
-    let end_kernel_root = read_fixed::<32>(bytes, cursor)?;
-    let nullifier_root = read_fixed::<32>(bytes, cursor)?;
-    let da_root = read_fixed::<32>(bytes, cursor)?;
+    let start_shielded_root = read_fixed::<48>(bytes, cursor)?;
+    let end_shielded_root = read_fixed::<48>(bytes, cursor)?;
+    let start_kernel_root = read_fixed::<48>(bytes, cursor)?;
+    let end_kernel_root = read_fixed::<48>(bytes, cursor)?;
+    let nullifier_root = read_fixed::<48>(bytes, cursor)?;
+    let da_root = read_fixed::<48>(bytes, cursor)?;
     let frontier_commitment = read_fixed::<32>(bytes, cursor)?;
     let history_commitment = read_fixed::<32>(bytes, cursor)?;
     Ok(RecursiveBlockPublicV1 {

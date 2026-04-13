@@ -1178,26 +1178,19 @@ impl ProverCoordinator {
     fn prepared_proof_mode_from_env() -> pallet_shielded_pool::types::BlockProofMode {
         let raw = std::env::var("HEGEMON_BLOCK_PROOF_MODE").unwrap_or_default();
         if raw.is_empty()
-            || raw.eq_ignore_ascii_case("receipt_root")
-            || raw.eq_ignore_ascii_case("receipt-root")
             || raw.eq_ignore_ascii_case("recursive_block")
             || raw.eq_ignore_ascii_case("recursive-block")
         {
-            if raw.eq_ignore_ascii_case("recursive_block")
-                || raw.eq_ignore_ascii_case("recursive-block")
-            {
-                tracing::warn!(
-                    mode = raw,
-                    "recursive_block HEGEMON_BLOCK_PROOF_MODE requested but recursive authoring backend is unavailable; forcing receipt_root on the product path"
-                );
-            }
+            return pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
+        }
+        if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
             return pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         }
         tracing::warn!(
             mode = raw,
-            "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing receipt_root on the product path"
+            "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing recursive_block on the product path"
         );
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
     }
 
     fn proof_mode_requires_prepared_bundles(
@@ -1380,11 +1373,20 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_mode_is_forced_to_receipt_root() {
+    fn default_block_proof_mode_is_recursive_block() {
+        let _mode = set_block_proof_mode("");
+        assert_eq!(
+            ProverCoordinator::prepared_proof_mode_from_env(),
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+        );
+    }
+
+    #[test]
+    fn recursive_block_mode_is_selected_from_env() {
         let _mode = set_block_proof_mode("recursive_block");
         assert_eq!(
             ProverCoordinator::prepared_proof_mode_from_env(),
-            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert!(ProverCoordinator::proof_mode_requires_prepared_bundles(
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock

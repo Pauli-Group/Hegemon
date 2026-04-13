@@ -6,38 +6,38 @@ mod public_replay;
 mod relation;
 mod state;
 mod statement;
-mod verifier;
 #[cfg(test)]
 mod tests;
+mod verifier;
 
 pub use artifacts::{
-    block_accumulation_transcript_digest_v1,
-    block_accumulation_transcript_serializer_digest_v1,
+    block_accumulation_transcript_digest_v1, block_accumulation_transcript_serializer_digest_v1,
+    compress_transcript_digest_v1, decider_profile_digest_v1,
     deserialize_block_accumulation_transcript_v1, deserialize_header_dec_step_v1,
-    deserialize_recursive_block_artifact_v1, serialize_block_accumulation_transcript_v1,
+    deserialize_recursive_block_artifact_v1, header_dec_step_profile_digest_v1,
+    recursive_block_public_statement_digest_v1, recursive_decider_serializer_digest_v1,
+    recursive_lcccs_serializer_digest_v1, serialize_block_accumulation_transcript_v1,
     serialize_header_dec_step_v1, serialize_recursive_block_artifact_v1,
-    header_dec_step_profile_digest_v1, recursive_block_public_statement_digest_v1,
     BlockAccumulationTranscriptV1, CanonicalDeciderTranscript, HeaderDecStepV1,
     RecursiveBlockArtifactV1, BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1,
     RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
 };
 pub use prover::{prove_block_recursive_v1, BlockRecursiveProverInputV1};
 pub use public_replay::{
-    public_replay_v1, BlockLeafRecordV1, RecursiveBlockPublicV1,
+    canonical_receipt_record_bytes_v1, canonical_verified_leaf_record_bytes_v1, public_replay_v1,
+    BlockLeafRecordV1, BlockSemanticInputsV1, RecursiveBlockPublicV1,
 };
 pub use relation::{
-    build_block_step_relation_v1, validate_assignment_v1, validate_compose_check_v1,
-    BlockAssignmentV1, BlockStepRelationV1,
+    block_leaf_inputs_v1, block_public_inputs_v1, empty_prefix_public_v1,
+    ensure_expected_relation_v1, ensure_expected_shape_v1, leaf_statement_v1,
+    pack_statement_witness_v1, prefix_statement_v1, recursive_block_relation_id_v1,
+    recursive_block_shape_digest_v1, recursive_block_shape_v1, BlockStatementKindV1,
 };
-pub use state::{
-    deserialize_recursive_state_v1, fold_digest32, fold_digest48,
-    recursive_state_serializer_digest_v1, serialize_recursive_state_v1, RecursiveStateV1,
-    Digest32, Digest48,
-};
+pub use state::{fold_digest32, fold_digest48, Digest32, Digest48};
 pub use statement::{
     statement_digest_v1, BlockPrefixStatementV1, BlockStepStatementV1, ComposeCheckV1,
 };
-pub use verifier::{verify_block_recursive_v1, BlockRecursiveVerificationError};
+pub use verifier::verify_block_recursive_v1;
 
 use core::fmt;
 

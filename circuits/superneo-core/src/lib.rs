@@ -385,8 +385,8 @@ pub fn serialize_decider_profile(profile: &RecursiveDeciderProfile) -> Result<Ve
 
 pub fn deserialize_decider_profile(bytes: &[u8]) -> Result<RecursiveDeciderProfile> {
     let mut cursor = Cursor::new(bytes);
-    let profile = bincode::deserialize_from(&mut cursor)
-        .context("failed to deserialize decider profile")?;
+    let profile =
+        bincode::deserialize_from(&mut cursor).context("failed to deserialize decider profile")?;
     ensure!(
         cursor.position() == bytes.len() as u64,
         "trailing bytes after decider profile"
@@ -432,7 +432,10 @@ mod tests {
             evaluations: vec![17u64],
         };
         let bytes = serialize_lcccs_instance(&instance).unwrap();
-        assert_eq!(deserialize_lcccs_instance::<Vec<u8>, u64>(&bytes).unwrap(), instance);
+        assert_eq!(
+            deserialize_lcccs_instance::<Vec<u8>, u64>(&bytes).unwrap(),
+            instance
+        );
 
         let mut trailing = bytes;
         trailing.extend_from_slice(&[0u8; 4]);

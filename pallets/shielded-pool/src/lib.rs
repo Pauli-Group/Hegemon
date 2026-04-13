@@ -2676,17 +2676,12 @@ pub mod pallet {
 
         pub(crate) fn total_block_proof_bytes(bundle: &types::BlockProofBundle) -> usize {
             match bundle.proof_mode {
-                types::BlockProofMode::InlineTx => {
-                    bundle.commitment_proof.data.len()
-                }
-                types::BlockProofMode::RecursiveBlock => {
-                    let recursive_bytes = bundle
-                        .recursive_block
-                        .as_ref()
-                        .map(|recursive| recursive.proof.data.len())
-                        .unwrap_or(0);
-                    bundle.commitment_proof.data.len() + recursive_bytes
-                }
+                types::BlockProofMode::InlineTx => bundle.commitment_proof.data.len(),
+                types::BlockProofMode::RecursiveBlock => bundle
+                    .recursive_block
+                    .as_ref()
+                    .map(|recursive| recursive.proof.data.len())
+                    .unwrap_or(0),
                 types::BlockProofMode::ReceiptRoot => {
                     let receipt_root_bytes = bundle
                         .receipt_root
@@ -2742,6 +2737,9 @@ pub mod pallet {
                 }
                 types::BlockProofMode::RecursiveBlock => {
                     if bundle.receipt_root.is_some() {
+                        return Err(Error::<T>::InvalidProofFormat);
+                    }
+                    if !bundle.commitment_proof.data.is_empty() {
                         return Err(Error::<T>::InvalidProofFormat);
                     }
                     let recursive_block = bundle
@@ -3281,7 +3279,7 @@ mod tests {
             tx_statements_commitment: [11u8; 48],
             da_root: [12u8; 48],
             da_chunk_count: 3,
-            commitment_proof: types::StarkProof::from_bytes(vec![13u8; 64]),
+            commitment_proof: types::StarkProof::from_bytes(Vec::new()),
             proof_mode: types::BlockProofMode::RecursiveBlock,
             proof_kind: types::ProofArtifactKind::RecursiveBlockV1,
             verifier_profile: [14u8; 48],
@@ -3680,20 +3678,19 @@ mod tests {
 
             let bytes_without_receipt_root =
                 pallet::Pallet::<mock::Test>::total_block_proof_bytes(&recursive);
-            assert_eq!(bytes_without_receipt_root, commitment_bytes + recursive_bytes);
+            assert_eq!(commitment_bytes, 0);
+            assert_eq!(bytes_without_receipt_root, recursive_bytes);
 
             recursive.receipt_root = Some(dummy_candidate_artifact().receipt_root.unwrap());
-            let bytes_with_receipt_root = pallet::Pallet::<mock::Test>::total_block_proof_bytes(
-                &recursive,
-            );
+            let bytes_with_receipt_root =
+                pallet::Pallet::<mock::Test>::total_block_proof_bytes(&recursive);
             assert_eq!(
-                bytes_with_receipt_root,
-                commitment_bytes + recursive_bytes,
+                bytes_with_receipt_root, recursive_bytes,
                 "recursive mode must not smuggle receipt_root bytes into the proof byte total"
             );
             assert_ne!(
                 bytes_with_receipt_root,
-                commitment_bytes + recursive_bytes + receipt_root_bytes,
+                recursive_bytes + receipt_root_bytes,
                 "receipt_root bytes must not be counted for recursive mode"
             );
         });
@@ -3705,10 +3702,9 @@ mod tests {
             let mut payload = dummy_recursive_candidate_artifact();
             payload.receipt_root = Some(dummy_candidate_artifact().receipt_root.unwrap());
 
-            let err = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
-                &payload,
-            )
-            .expect_err("recursive mode must reject receipt_root");
+            let err =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect_err("recursive mode must reject receipt_root");
 
             assert!(matches!(err, InvalidTransaction::BadProof));
         });
@@ -3718,13 +3714,30 @@ mod tests {
     fn validate_submit_recursive_candidate_artifact_rejects_oversized_recursive_payload() {
         mock::new_test_ext().execute_with(|| {
             let mut payload = dummy_recursive_candidate_artifact();
-            payload.recursive_block.as_mut().expect("recursive payload").proof.data =
-                vec![0u8; types::STARK_PROOF_MAX_SIZE + 1];
+            payload
+                .recursive_block
+                .as_mut()
+                .expect("recursive payload")
+                .proof
+                .data = vec![0u8; types::STARK_PROOF_MAX_SIZE + 1];
 
-            let err = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
-                &payload,
-            )
-            .expect_err("oversized recursive payload must be rejected");
+            let err =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect_err("oversized recursive payload must be rejected");
+
+            assert!(matches!(err, InvalidTransaction::BadProof));
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_rejects_commitment_proof_bytes() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact();
+            payload.commitment_proof = types::StarkProof::from_bytes(vec![1u8; 8]);
+
+            let err =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect_err("recursive mode must reject commitment proof bytes");
 
             assert!(matches!(err, InvalidTransaction::BadProof));
         });

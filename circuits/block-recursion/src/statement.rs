@@ -21,7 +21,11 @@ pub struct ComposeCheckV1 {
 }
 
 impl ComposeCheckV1 {
-    pub fn new(previous_tx_count: u32, step_tx_count: u32, target_tx_count: u32) -> Result<Self, BlockRecursionError> {
+    pub fn new(
+        previous_tx_count: u32,
+        step_tx_count: u32,
+        target_tx_count: u32,
+    ) -> Result<Self, BlockRecursionError> {
         let is_valid = previous_tx_count.saturating_add(step_tx_count) == target_tx_count;
         Ok(Self {
             previous_tx_count,

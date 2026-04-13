@@ -1,17 +1,30 @@
-use crate::{fold_digest32, fold_digest48, Digest32, Digest48, BlockRecursionError};
+use crate::{fold_digest32, fold_digest48, BlockRecursionError, Digest32, Digest48};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockLeafRecordV1 {
     pub tx_index: u32,
-    pub tx_statement_commitment: Digest48,
-    pub verified_leaf_commitment: Digest48,
-    pub verified_receipt_commitment: Digest48,
-    pub start_shielded_root: Digest32,
-    pub end_shielded_root: Digest32,
-    pub start_kernel_root: Digest32,
-    pub end_kernel_root: Digest32,
-    pub nullifier_root: Digest32,
-    pub da_root: Digest32,
+    pub receipt_statement_hash: Digest48,
+    pub receipt_proof_digest: Digest48,
+    pub receipt_public_inputs_digest: Digest48,
+    pub receipt_verifier_profile: Digest48,
+    pub leaf_params_fingerprint: Digest48,
+    pub leaf_spec_digest: Digest32,
+    pub leaf_relation_id: Digest32,
+    pub leaf_shape_digest: Digest32,
+    pub leaf_statement_digest: Digest48,
+    pub leaf_commitment_digest: Digest48,
+    pub leaf_proof_digest: Digest48,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockSemanticInputsV1 {
+    pub tx_statements_commitment: Digest48,
+    pub start_shielded_root: Digest48,
+    pub end_shielded_root: Digest48,
+    pub start_kernel_root: Digest48,
+    pub end_kernel_root: Digest48,
+    pub nullifier_root: Digest48,
+    pub da_root: Digest48,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,31 +33,58 @@ pub struct RecursiveBlockPublicV1 {
     pub tx_statements_commitment: Digest48,
     pub verified_leaf_commitment: Digest48,
     pub verified_receipt_commitment: Digest48,
-    pub start_shielded_root: Digest32,
-    pub end_shielded_root: Digest32,
-    pub start_kernel_root: Digest32,
-    pub end_kernel_root: Digest32,
-    pub nullifier_root: Digest32,
-    pub da_root: Digest32,
+    pub start_shielded_root: Digest48,
+    pub end_shielded_root: Digest48,
+    pub start_kernel_root: Digest48,
+    pub end_kernel_root: Digest48,
+    pub nullifier_root: Digest48,
+    pub da_root: Digest48,
     pub frontier_commitment: Digest32,
     pub history_commitment: Digest32,
 }
 
-pub fn public_replay_v1(records: &[BlockLeafRecordV1]) -> Result<RecursiveBlockPublicV1, BlockRecursionError> {
-    let mut tx_statements: Vec<&[u8]> = Vec::with_capacity(records.len() + 1);
-    let mut leaf_chunks: Vec<&[u8]> = Vec::with_capacity(records.len() * 2 + 1);
-    let mut receipt_chunks: Vec<&[u8]> = Vec::with_capacity(records.len() * 2 + 1);
-    let mut frontier_chunks: Vec<&[u8]> = Vec::with_capacity(records.len() + 1);
-    let mut history_chunks: Vec<&[u8]> = Vec::with_capacity(records.len() + 1);
+fn put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
 
-    let record_count = (records.len() as u32).to_le_bytes();
-    tx_statements.push(&record_count);
-    leaf_chunks.push(&record_count);
-    receipt_chunks.push(&record_count);
-    frontier_chunks.push(&record_count);
-    history_chunks.push(&record_count);
+fn put_fixed<const N: usize>(out: &mut Vec<u8>, value: &[u8; N]) {
+    out.extend_from_slice(value);
+}
 
+pub fn canonical_receipt_record_bytes_v1(record: &BlockLeafRecordV1) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + (48 * 4));
+    put_u32(&mut out, record.tx_index);
+    put_fixed(&mut out, &record.receipt_statement_hash);
+    put_fixed(&mut out, &record.receipt_proof_digest);
+    put_fixed(&mut out, &record.receipt_public_inputs_digest);
+    put_fixed(&mut out, &record.receipt_verifier_profile);
+    out
+}
+
+pub fn canonical_verified_leaf_record_bytes_v1(record: &BlockLeafRecordV1) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + (48 * 7) + (32 * 3));
+    put_u32(&mut out, record.tx_index);
+    put_fixed(&mut out, &record.receipt_statement_hash);
+    put_fixed(&mut out, &record.receipt_proof_digest);
+    put_fixed(&mut out, &record.receipt_public_inputs_digest);
+    put_fixed(&mut out, &record.receipt_verifier_profile);
+    put_fixed(&mut out, &record.leaf_params_fingerprint);
+    put_fixed(&mut out, &record.leaf_spec_digest);
+    put_fixed(&mut out, &record.leaf_relation_id);
+    put_fixed(&mut out, &record.leaf_shape_digest);
+    put_fixed(&mut out, &record.leaf_statement_digest);
+    put_fixed(&mut out, &record.leaf_commitment_digest);
+    put_fixed(&mut out, &record.leaf_proof_digest);
+    out
+}
+
+pub fn public_replay_v1(
+    records: &[BlockLeafRecordV1],
+    semantic: &BlockSemanticInputsV1,
+) -> Result<RecursiveBlockPublicV1, BlockRecursionError> {
     let mut previous_index = None;
+    let mut leaf_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
+    let mut receipt_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
     for record in records {
         if previous_index.map_or(false, |prev| record.tx_index != prev + 1) {
             return Err(BlockRecursionError::InvalidField(
@@ -52,40 +92,55 @@ pub fn public_replay_v1(records: &[BlockLeafRecordV1]) -> Result<RecursiveBlockP
             ));
         }
         previous_index = Some(record.tx_index);
-        tx_statements.push(&record.tx_statement_commitment);
-        leaf_chunks.push(&record.verified_leaf_commitment);
-        receipt_chunks.push(&record.verified_receipt_commitment);
-        frontier_chunks.push(&record.start_shielded_root);
-        frontier_chunks.push(&record.end_shielded_root);
-        history_chunks.push(&record.start_kernel_root);
-        history_chunks.push(&record.end_kernel_root);
+        leaf_chunks.push(canonical_verified_leaf_record_bytes_v1(record));
+        receipt_chunks.push(canonical_receipt_record_bytes_v1(record));
     }
 
-    let tx_statements_commitment = fold_digest48(b"block_public_tx_statements", &tx_statements);
-    let verified_leaf_commitment = fold_digest48(b"block_public_leaf_commitment", &leaf_chunks);
-    let verified_receipt_commitment =
-        fold_digest48(b"block_public_receipt_commitment", &receipt_chunks);
-    let frontier_commitment = fold_digest32(b"block_public_frontier", &frontier_chunks);
-    let history_commitment = fold_digest32(b"block_public_history", &history_chunks);
+    let record_count = (records.len() as u32).to_le_bytes();
+    let leaf_refs = leaf_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let receipt_refs = receipt_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let mut frontier_parts: Vec<&[u8]> = Vec::with_capacity(6);
+    frontier_parts.push(&record_count);
+    frontier_parts.push(&semantic.start_shielded_root);
+    frontier_parts.push(&semantic.end_shielded_root);
+    frontier_parts.push(&semantic.tx_statements_commitment);
+    frontier_parts.push(&semantic.nullifier_root);
+    frontier_parts.push(&semantic.da_root);
+    let mut history_parts: Vec<&[u8]> = Vec::with_capacity(5);
+    history_parts.push(&record_count);
+    history_parts.push(&semantic.start_kernel_root);
+    history_parts.push(&semantic.end_kernel_root);
+    history_parts.push(&semantic.start_shielded_root);
+    history_parts.push(&semantic.end_shielded_root);
 
-    let start_shielded_root = records.first().map(|r| r.start_shielded_root).unwrap_or([0; 32]);
-    let end_shielded_root = records.last().map(|r| r.end_shielded_root).unwrap_or([0; 32]);
-    let start_kernel_root = records.first().map(|r| r.start_kernel_root).unwrap_or([0; 32]);
-    let end_kernel_root = records.last().map(|r| r.end_kernel_root).unwrap_or([0; 32]);
-    let nullifier_root = records.last().map(|r| r.nullifier_root).unwrap_or([0; 32]);
-    let da_root = records.last().map(|r| r.da_root).unwrap_or([0; 32]);
+    let verified_leaf_commitment = fold_digest48(
+        b"hegemon.block-recursion.verified-leaf-commitment.v1",
+        &leaf_refs,
+    );
+    let verified_receipt_commitment = fold_digest48(
+        b"hegemon.block-recursion.verified-receipt-commitment.v1",
+        &receipt_refs,
+    );
+    let frontier_commitment = fold_digest32(
+        b"hegemon.block-recursion.frontier-commitment.v1",
+        &frontier_parts,
+    );
+    let history_commitment = fold_digest32(
+        b"hegemon.block-recursion.history-commitment.v1",
+        &history_parts,
+    );
 
     Ok(RecursiveBlockPublicV1 {
         tx_count: records.len() as u32,
-        tx_statements_commitment,
+        tx_statements_commitment: semantic.tx_statements_commitment,
         verified_leaf_commitment,
         verified_receipt_commitment,
-        start_shielded_root,
-        end_shielded_root,
-        start_kernel_root,
-        end_kernel_root,
-        nullifier_root,
-        da_root,
+        start_shielded_root: semantic.start_shielded_root,
+        end_shielded_root: semantic.end_shielded_root,
+        start_kernel_root: semantic.start_kernel_root,
+        end_kernel_root: semantic.end_kernel_root,
+        nullifier_root: semantic.nullifier_root,
+        da_root: semantic.da_root,
         frontier_commitment,
         history_commitment,
     })

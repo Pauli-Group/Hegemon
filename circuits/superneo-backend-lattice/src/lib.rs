@@ -1890,9 +1890,9 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             "recursive CCCS opening witness does not match prover witness"
         );
         let statement_encoding = recursive_statement_encoding(statement);
-        let leaf_proof = self
-            .backend
-            .prove_leaf(pk, relation_id, &statement_encoding, packed, &commitment)?;
+        let leaf_proof =
+            self.backend
+                .prove_leaf(pk, relation_id, &statement_encoding, packed, &commitment)?;
         let claim = CccsClaim {
             relation_id: *relation_id,
             shape_digest: pk.shape_digest,
@@ -1918,7 +1918,9 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             "recursive CCCS shape digest mismatch"
         );
         verify_recursive_witness_record(self.native_params(), &proof.opening)?;
-        let commitment = self.backend.commit_witness(vk, &proof.opening.packed_witness)?;
+        let commitment = self
+            .backend
+            .commit_witness(vk, &proof.opening.packed_witness)?;
         ensure!(
             claim.witness_commitment == commitment,
             "recursive CCCS commitment mismatch"
@@ -1934,7 +1936,8 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             proof.leaf_proof == expected_leaf,
             "recursive CCCS leaf proof mismatch"
         );
-        let expected_digest = recursive_cccs_proof_digest(vk, claim, &proof.opening, &proof.leaf_proof);
+        let expected_digest =
+            recursive_cccs_proof_digest(vk, claim, &proof.opening, &proof.leaf_proof);
         ensure!(
             proof.proof_digest == expected_digest,
             "recursive CCCS proof digest mismatch"
@@ -1963,9 +1966,13 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             opening.packed_witness == *packed,
             "recursive linearization opening witness does not match prover witness"
         );
-        let leaf_proof = self
-            .backend
-            .prove_leaf(pk, &claim.relation_id, &statement_encoding, packed, &commitment)?;
+        let leaf_proof = self.backend.prove_leaf(
+            pk,
+            &claim.relation_id,
+            &statement_encoding,
+            packed,
+            &commitment,
+        )?;
         let linearized = build_recursive_lcccs_instance(
             pk,
             &claim.relation_id,
@@ -2005,7 +2012,12 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             &RecursiveCccsProof {
                 opening: proof.opening.clone(),
                 leaf_proof: proof.leaf_proof.clone(),
-                proof_digest: recursive_cccs_proof_digest(vk, claim, &proof.opening, &proof.leaf_proof),
+                proof_digest: recursive_cccs_proof_digest(
+                    vk,
+                    claim,
+                    &proof.opening,
+                    &proof.leaf_proof,
+                ),
             },
         )?;
         let expected = build_recursive_lcccs_instance(
@@ -2020,8 +2032,13 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             *linearized == expected,
             "recursive linearized LCCCS instance mismatch"
         );
-        let expected_digest =
-            recursive_linearization_proof_digest(vk, claim, linearized, &proof.opening, &proof.leaf_proof)?;
+        let expected_digest = recursive_linearization_proof_digest(
+            vk,
+            claim,
+            linearized,
+            &proof.opening,
+            &proof.leaf_proof,
+        )?;
         ensure!(
             proof.proof_digest == expected_digest,
             "recursive linearization proof digest mismatch"
@@ -2112,7 +2129,11 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             target_prefix,
             &parent_commitment,
             &parent_packed,
-            combine_relaxation_scalars(left.relaxation_scalar, right.relaxation_scalar, &challenges),
+            combine_relaxation_scalars(
+                left.relaxation_scalar,
+                right.relaxation_scalar,
+                &challenges,
+            ),
         );
         let proof = RecursiveFoldProof {
             left_opening: left_opening.clone(),
@@ -2162,7 +2183,9 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             "recursive fold target prefix statement mismatch"
         );
         verify_recursive_witness_record(self.native_params(), &proof.left_opening)?;
-        let left_commitment = self.backend.commit_witness(vk, &proof.left_opening.packed_witness)?;
+        let left_commitment = self
+            .backend
+            .commit_witness(vk, &proof.left_opening.packed_witness)?;
         let expected_left = build_recursive_lcccs_instance(
             vk,
             &left.relation_id,
@@ -2214,7 +2237,11 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             target_prefix,
             &parent_commitment,
             &parent_packed,
-            combine_relaxation_scalars(left.relaxation_scalar, right.relaxation_scalar, &proof.challenges),
+            combine_relaxation_scalars(
+                left.relaxation_scalar,
+                right.relaxation_scalar,
+                &proof.challenges,
+            ),
         );
         ensure!(
             *parent == expected_parent,
@@ -2295,7 +2322,9 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
         proof: &Self::NormalizationProof,
     ) -> Result<()> {
         verify_recursive_witness_record(self.native_params(), &proof.high_norm_opening)?;
-        let high_norm_commitment = self.backend.commit_witness(vk, &proof.high_norm_opening.packed_witness)?;
+        let high_norm_commitment = self
+            .backend
+            .commit_witness(vk, &proof.high_norm_opening.packed_witness)?;
         let expected_high_norm = build_recursive_lcccs_instance(
             vk,
             &high_norm.relation_id,
@@ -2309,8 +2338,9 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             "recursive normalization high-norm accumulator mismatch"
         );
         verify_recursive_witness_record(self.native_params(), &proof.normalized_opening)?;
-        let normalized_commitment =
-            self.backend.commit_witness(vk, &proof.normalized_opening.packed_witness)?;
+        let normalized_commitment = self
+            .backend
+            .commit_witness(vk, &proof.normalized_opening.packed_witness)?;
         let expected_normalized = build_recursive_lcccs_instance(
             vk,
             &normalized.relation_id,
@@ -3415,7 +3445,9 @@ fn combine_relaxation_scalars(
 ) -> Goldilocks {
     let scalar = challenges
         .iter()
-        .fold(Goldilocks::new(0), |acc, challenge| acc + Goldilocks::new(*challenge));
+        .fold(Goldilocks::new(0), |acc, challenge| {
+            acc + Goldilocks::new(*challenge)
+        });
     left + (scalar * right)
 }
 
@@ -3446,7 +3478,9 @@ fn combine_packed_witnesses(
     );
     let fold_scalar = challenges
         .iter()
-        .fold(Goldilocks::new(0), |acc, challenge| acc + Goldilocks::new(*challenge))
+        .fold(Goldilocks::new(0), |acc, challenge| {
+            acc + Goldilocks::new(*challenge)
+        })
         .as_canonical_u64();
     let bit_width = left.coeff_capacity_bits;
     let mask = if bit_width == 64 {
@@ -3485,8 +3519,7 @@ fn verify_recursive_witness_record(
         opening.params_fingerprint == params.parameter_fingerprint(),
         "recursive witness record parameter fingerprint mismatch"
     );
-    let canonical_seed =
-        canonicalize_opening_randomness_seed(params, opening.randomness_seed);
+    let canonical_seed = canonicalize_opening_randomness_seed(params, opening.randomness_seed);
     ensure!(
         opening.randomness_seed == canonical_seed,
         "recursive witness record randomness seed is not canonical"
@@ -3711,17 +3744,16 @@ mod tests {
         StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
     };
     use superneo_core::{
-        deserialize_decider_profile, serialize_decider_profile, Backend, CccsClaim,
-        FoldedInstance, LcccsInstance, RecursiveBackend, RecursiveStatementEncoding,
+        deserialize_decider_profile, serialize_decider_profile, Backend, CccsClaim, FoldedInstance,
+        LcccsInstance, RecursiveBackend, RecursiveStatementEncoding,
     };
     use superneo_ring::{
         GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
     };
 
     use super::{
-        build_recursive_lcccs_instance,
-        canonical_recursive_decider_transcript, clear_prepared_matrix_cache, recursive_backend_v2,
-        reset_kernel_cost_report,
+        build_recursive_lcccs_instance, canonical_recursive_decider_transcript,
+        clear_prepared_matrix_cache, recursive_backend_v2, reset_kernel_cost_report,
         review_fold_challenges, review_leaf_proof_digest, take_kernel_cost_report,
         theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
         LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
@@ -4562,8 +4594,7 @@ mod tests {
             challenge_point: vec![Goldilocks::new(7), Goldilocks::new(11)],
             evaluations: vec![Goldilocks::new(13)],
         };
-        let transcript =
-            canonical_recursive_decider_transcript(vec![1, 2, 3, 4]);
+        let transcript = canonical_recursive_decider_transcript(vec![1, 2, 3, 4]);
         let proof = backend
             .prove_decider(&pk, &profile, &statement, &terminal, &transcript)
             .unwrap();
@@ -4593,13 +4624,7 @@ mod tests {
         let statement = recursive_statement(1);
         let relation_id = RelationId::from_label("hegemon.superneo.toy-recursive");
         let (claim, proof) = backend
-            .prove_cccs(
-                &pk,
-                &relation_id,
-                &statement,
-                &packed,
-                &opening,
-            )
+            .prove_cccs(&pk, &relation_id, &statement, &packed, &opening)
             .unwrap();
         backend.verify_cccs(&vk, &claim, &proof).unwrap();
 
@@ -4647,7 +4672,13 @@ mod tests {
         );
 
         let (right_claim, _) = backend
-            .prove_cccs(&pk, &relation_id, &step_statement, &right_packed, &right_opening)
+            .prove_cccs(
+                &pk,
+                &relation_id,
+                &step_statement,
+                &right_packed,
+                &right_opening,
+            )
             .unwrap();
         let (right_linearized, linearization_proof) = backend
             .reduce_cccs(&pk, &right_claim, &right_packed, &right_opening)
