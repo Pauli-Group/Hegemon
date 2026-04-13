@@ -88,9 +88,33 @@ Milestone 2A.3 lowers descriptor/profile/shape first. Replace hosted recursive c
 
 Milestone 2A.4 lowers the recursive transcript. Materialize transcript state as witness rows and constrain Poseidon2 absorbs/squeezes, binding bytes, challenge derivation, and transcript digest equality directly in `compute_constraints_u64(...)`. At the end of this stage, no hosted helper may derive recursive transcript challenges for `Step_A` or `Step_B`.
 
+Milestone 2A.4a constrains the recursive binding bytes. Materialize the canonical descriptor bytes, canonical bound statement bytes, and the padded recursive binding byte string exactly as the host verifier builds it. Constrain byte length, field order, padding, and descriptor-to-binding consistency directly in the step relations.
+
+Milestone 2A.4b constrains the Poseidon2 transcript schedule. Materialize transcript absorbs, squeezes, and intermediate states as witness rows. Constrain the exact absorb order, rate/capacity schedule, and squeezed challenge words so the recursive transcript cannot drift from the host verifier.
+
+Milestone 2A.4c constrains challenge derivation and opening-point derivation. Materialize the recursive challenge words, `h_piop`, nonce, and opening points. Constrain the exact derivation path from transcript state to challenge values and enforce distinct, valid opening points directly in the relation.
+
+Milestone 2A.4d constrains transcript-hash equality. Materialize the recomputed transcript output words and final digest, then constrain equality with the proof-carried digest. After this step, transcript acceptance may not rely on any hosted helper.
+
 Milestone 2A.5 lowers PCS. Materialize the exact PCS verifier intermediates used by recursive Smallwood verification and constrain opened evaluation points, row-scalar consistency, reconstructed PCS transcript terms, and polynomial-evaluation equalities directly in the step relations. At the end of this stage, no hosted helper may decide PCS validity for `Step_A` or `Step_B`.
 
+Milestone 2A.5a constrains opened witness rows. Materialize the prior-proof opened witness rows exactly as the host verifier uses them and constrain row counts, row widths, and per-polynomial row-scalar placement under `Cfg_rec(v*)`.
+
+Milestone 2A.5b constrains partial evaluations and combi-head reconstruction. Materialize `partial_evals`, reconstructed unstacked vectors, and `combi_heads`, then constrain the exact reconstruction equations from row scalars and evaluation points.
+
+Milestone 2A.5c constrains `rcombi_tails`, `subset_evals`, and opened-combination consistency. Materialize the PCS tail values and subset evaluations, then constrain the same equalities the host verifier uses when rebuilding opened rows and combination heads.
+
+Milestone 2A.5d constrains the PCS transcript words. Materialize the recomputed PCS transcript and constrain equality to the witness-carried transcript words. After this step, PCS acceptance may not rely on any hosted helper.
+
 Milestone 2A.6 lowers DECS and Merkle authentication. Materialize DECS openings, masking-eval data, authentication paths, Merkle parents, and final roots as witness rows, then constrain each parent recomputation and final equality directly. At the end of this stage, no hosted helper may decide DECS or Merkle validity for `Step_A` or `Step_B`.
+
+Milestone 2A.6a constrains the DECS challenge and opened-leaf selection. Materialize the DECS challenge digest, selected leaf indices, and DECS evaluation points, then constrain the exact host-verifier derivation.
+
+Milestone 2A.6b constrains DECS row reconstruction. Materialize the DECS rows, masking evaluations, and high coefficients, then constrain the same reconstruction path the host verifier uses before Merkle authentication.
+
+Milestone 2A.6c constrains Merkle/auth path recomputation. Materialize every auth-path node and every parent digest used on the path from opened leaf to root, then constrain each parent recomputation directly.
+
+Milestone 2A.6d constrains final root and commitment-transcript equality. Materialize the recomputed root and DECS commitment transcript, then constrain equality to the expected root and expected commitment transcript words. After this step, DECS/Merkle acceptance may not rely on any hosted helper.
 
 Milestone 2A.7 removes the last hosted verifier shortcut. Delete any `verify_recursive_statement_*`, `verify_recursive_proof_*`, or equivalent hosted recursive-verification call from inside `Step_A` or `Step_B`. After this step, the only remaining host-side recursive verification should live in tests that compare the arithmetized verifier against the existing host verifier.
 
@@ -107,6 +131,8 @@ Milestone 5 removes the fake recursive product path and replaces it with the rea
 Milestone 6 validates the actual product behavior. Run a dev node, author shielded blocks with at least two different non-empty transaction counts, and prove that the full shipped recursive block-proof bytes are constant-size while the semantic tuple remains unchanged. This milestone is done only when the end-to-end node path imports those blocks successfully and the logs or tests show equal serialized `ser_pi_block(B)` lengths.
 
 Every milestone in this plan is gated by an explicit hostile-review loop. After the code for a milestone lands, stop feature work on later milestones and review the current implementation from scratch as if it were adversarial code. Fix every Critical or High finding immediately, then rerun the hostile review from scratch. Do not advance to the next milestone until there are no remaining Critical or High findings against the current milestone. Then fix any remaining Medium findings that affect soundness, completeness, typing, transcript binding, serializer exactness, wire format, verifier semantics, or constant-size enforcement. “Milestone complete” means code landed, tests passing, hostile review rerun, and no material findings left at that milestone boundary.
+
+If a milestone still contains one hard unsolved verifier/kernel translation step after a review pass, stop and decompose that hard step into explicit subparts inside this ExecPlan before continuing. Each subpart must name the exact object being lowered, the exact files it touches, and the exact acceptance test that proves it is complete. Do not keep reporting one monolithic “hard part” across turns once it is clear that it can be divided into transcript, PCS, DECS, Merkle, serializer, or witness-layout subparts.
 
 ## Concrete Steps
 

@@ -22,8 +22,7 @@ const NONCE_BYTES: usize = 4;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
-const SMALLWOOD_POSEIDON2_COMPRESS2_DOMAIN: &[u8] =
-    b"hegemon.smallwood.poseidon2-compress2.v1";
+const SMALLWOOD_POSEIDON2_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-compress2.v1";
 const SMALLWOOD_RHO: usize = 2;
 const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
 const SMALLWOOD_BETA: usize = 2;
@@ -73,6 +72,396 @@ pub struct DecsProof {
     auth_paths: Vec<Vec<[u8; DIGEST_BYTES]>>,
     masking_evals: Vec<Vec<u64>>,
     high_coeffs: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodProofTraceV1 {
+    pub salt: [u8; SALT_BYTES],
+    pub nonce: [u8; NONCE_BYTES],
+    pub h_piop: [u8; DIGEST_BYTES],
+    pub piop: PiopProof,
+    pub pcs: PcsProof,
+    pub opened_witness_row_scalars: Vec<Vec<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodPcsVerifierTraceV1 {
+    pub coeffs: Vec<Vec<u64>>,
+    pub combi_heads: Vec<Vec<u64>>,
+    pub decs_trans_hash: [u8; DIGEST_BYTES],
+    pub decs_leaf_indexes: Vec<u32>,
+    pub decs_nonce: [u8; NONCE_BYTES],
+    pub decs_eval_points: Vec<u64>,
+    pub rows: Vec<Vec<u64>>,
+    pub root_digest: [u8; DIGEST_BYTES],
+    pub decs_commitment_transcript: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodVerifierTraceV1 {
+    pub proof: SmallwoodProofTraceV1,
+    pub binding_words: Vec<u64>,
+    pub eval_points: Vec<u64>,
+    pub piop_gamma_prime: Vec<Vec<u64>>,
+    pub pcs_transcript_words: Vec<u64>,
+    pub piop_input_words: Vec<u64>,
+    pub piop_transcript_words: Vec<u64>,
+    pub pcs_trace: SmallwoodPcsVerifierTraceV1,
+    pub accept: bool,
+}
+
+fn digest_words_v1(digest: &[u8; DIGEST_BYTES]) -> [u64; DIGEST_WORDS] {
+    let mut out = [0u64; DIGEST_WORDS];
+    for (idx, chunk) in digest.chunks_exact(8).enumerate() {
+        let mut word = [0u8; 8];
+        word.copy_from_slice(chunk);
+        out[idx] = u64::from_le_bytes(word);
+    }
+    out
+}
+
+fn nonce_words_v1(nonce: &[u8; NONCE_BYTES]) -> [u64; 1] {
+    [u32::from_le_bytes(*nonce) as u64]
+}
+
+fn flatten_matrix_words_v1(matrix: &[Vec<u64>]) -> Vec<u64> {
+    let mut out = Vec::new();
+    for row in matrix {
+        out.extend_from_slice(row);
+    }
+    out
+}
+
+fn flatten_u32_words_v1(values: &[u32]) -> Vec<u64> {
+    values.iter().map(|&value| value as u64).collect()
+}
+
+fn flatten_auth_path_words_v1(paths: &[Vec<[u8; DIGEST_BYTES]>]) -> Vec<u64> {
+    let mut out = Vec::new();
+    for path in paths {
+        for node in path {
+            out.extend_from_slice(&digest_words_v1(node));
+        }
+    }
+    out
+}
+
+impl SmallwoodVerifierTraceV1 {
+    pub fn transcript_binding_words_v1(&self) -> &[u64] {
+        &self.binding_words
+    }
+
+    pub fn transcript_eval_points_v1(&self) -> &[u64] {
+        &self.eval_points
+    }
+
+    pub fn transcript_piop_gamma_prime_v1(&self) -> &[Vec<u64>] {
+        &self.piop_gamma_prime
+    }
+
+    pub fn transcript_pcs_words_v1(&self) -> &[u64] {
+        &self.pcs_transcript_words
+    }
+
+    pub fn transcript_piop_input_words_v1(&self) -> &[u64] {
+        &self.piop_input_words
+    }
+
+    pub fn transcript_piop_words_v1(&self) -> &[u64] {
+        &self.piop_transcript_words
+    }
+
+    pub fn transcript_hash_words_v1(&self) -> [u64; DIGEST_WORDS] {
+        digest_words_v1(&self.proof.h_piop)
+    }
+
+    pub fn flatten_transcript_section_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.binding_words);
+        out.extend_from_slice(&self.eval_points);
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.piop_gamma_prime));
+        out.extend_from_slice(&self.pcs_transcript_words);
+        out.extend_from_slice(&self.piop_input_words);
+        out.extend_from_slice(&self.piop_transcript_words);
+        out.extend_from_slice(&self.transcript_hash_words_v1());
+        out.push(self.accept as u64);
+        out
+    }
+
+    pub fn validate_transcript_section_v1(&self) -> Result<(), TransactionCircuitError> {
+        if self.eval_points.len() != SMALLWOOD_NB_OPENED_EVALS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace transcript eval-point count mismatch",
+            ));
+        }
+        if self.eval_points.len() != self.proof.opened_witness_row_scalars.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace transcript row-scalar count mismatch",
+            ));
+        }
+        if self.piop_gamma_prime.len() != SMALLWOOD_RHO {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace gamma-prime count mismatch",
+            ));
+        }
+        if self.piop_input_words.len() != self.pcs_transcript_words.len() + self.binding_words.len()
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace piop-input length mismatch",
+            ));
+        }
+        if !self
+            .piop_input_words
+            .starts_with(&self.pcs_transcript_words)
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace piop-input prefix mismatch",
+            ));
+        }
+        if !self.piop_input_words[self.pcs_transcript_words.len()..].eq(&self.binding_words) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace piop-input binding suffix mismatch",
+            ));
+        }
+        if self.piop_transcript_words.is_empty() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace piop transcript words missing",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn pcs_opened_witness_row_scalars_v1(&self) -> &[Vec<u64>] {
+        &self.proof.opened_witness_row_scalars
+    }
+
+    pub fn pcs_partial_evals_v1(&self) -> &[Vec<u64>] {
+        &self.proof.pcs.partial_evals
+    }
+
+    pub fn pcs_rcombi_tails_v1(&self) -> &[Vec<u64>] {
+        &self.proof.pcs.rcombi_tails
+    }
+
+    pub fn pcs_subset_evals_v1(&self) -> &[Vec<u64>] {
+        &self.proof.pcs.subset_evals
+    }
+
+    pub fn pcs_coeffs_v1(&self) -> &[Vec<u64>] {
+        &self.pcs_trace.coeffs
+    }
+
+    pub fn pcs_combi_heads_v1(&self) -> &[Vec<u64>] {
+        &self.pcs_trace.combi_heads
+    }
+
+    pub fn pcs_decs_transcript_hash_words_v1(&self) -> [u64; DIGEST_WORDS] {
+        digest_words_v1(&self.pcs_trace.decs_trans_hash)
+    }
+
+    pub fn flatten_pcs_section_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&flatten_matrix_words_v1(
+            &self.proof.opened_witness_row_scalars,
+        ));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.partial_evals));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.rcombi_tails));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.subset_evals));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.pcs_trace.coeffs));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.pcs_trace.combi_heads));
+        out.extend_from_slice(&self.pcs_decs_transcript_hash_words_v1());
+        out.extend_from_slice(&self.pcs_transcript_words);
+        out
+    }
+
+    pub fn validate_pcs_section_v1(&self) -> Result<(), TransactionCircuitError> {
+        let opened_combi_count = self.pcs_trace.coeffs.len();
+        if opened_combi_count == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace PCS coefficients missing",
+            ));
+        }
+        if self.proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
+            || self.proof.pcs.rcombi_tails.len() != opened_combi_count
+            || self.pcs_trace.combi_heads.len() != opened_combi_count
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace PCS section count mismatch",
+            ));
+        }
+        if self.proof.pcs.subset_evals.len() != self.pcs_trace.decs_leaf_indexes.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace PCS subset-eval count mismatch",
+            ));
+        }
+        if self.pcs_transcript_words != self.pcs_trace.decs_commitment_transcript {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace PCS transcript mismatch",
+            ));
+        }
+        for row in &self.proof.opened_witness_row_scalars {
+            if row.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace PCS opened row is empty",
+                ));
+            }
+        }
+        for idx in 0..opened_combi_count {
+            if self.pcs_trace.coeffs[idx].is_empty()
+                || self.pcs_trace.combi_heads[idx].is_empty()
+                || self.proof.pcs.rcombi_tails[idx].is_empty()
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace PCS subsection is empty",
+                ));
+            }
+        }
+        for row in &self.proof.pcs.partial_evals {
+            if row.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace PCS partial-eval row is empty",
+                ));
+            }
+        }
+        for row in &self.proof.pcs.subset_evals {
+            if row.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace PCS subset-eval row is empty",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn decs_leaf_indexes_v1(&self) -> &[u32] {
+        &self.pcs_trace.decs_leaf_indexes
+    }
+
+    pub fn decs_nonce_words_v1(&self) -> [u64; 1] {
+        nonce_words_v1(&self.pcs_trace.decs_nonce)
+    }
+
+    pub fn decs_eval_points_v1(&self) -> &[u64] {
+        &self.pcs_trace.decs_eval_points
+    }
+
+    pub fn decs_masking_evals_v1(&self) -> &[Vec<u64>] {
+        &self.proof.pcs.decs.masking_evals
+    }
+
+    pub fn decs_high_coeffs_v1(&self) -> &[Vec<u64>] {
+        &self.proof.pcs.decs.high_coeffs
+    }
+
+    pub fn flatten_decs_section_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.pcs_decs_transcript_hash_words_v1());
+        out.extend_from_slice(&flatten_u32_words_v1(&self.pcs_trace.decs_leaf_indexes));
+        out.extend_from_slice(&self.decs_nonce_words_v1());
+        out.extend_from_slice(&self.pcs_trace.decs_eval_points);
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.decs.masking_evals));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.decs.high_coeffs));
+        out.extend_from_slice(&self.pcs_trace.decs_commitment_transcript);
+        out
+    }
+
+    pub fn validate_decs_section_v1(&self) -> Result<(), TransactionCircuitError> {
+        let opened_count = self.pcs_trace.decs_leaf_indexes.len();
+        if opened_count == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace DECS opened-leaf set is empty",
+            ));
+        }
+        if self.pcs_trace.decs_eval_points.len() != opened_count
+            || self.proof.pcs.decs.masking_evals.len() != opened_count
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace DECS section count mismatch",
+            ));
+        }
+        if self.proof.pcs.decs.high_coeffs.len() != SMALLWOOD_DECS_ETA {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace DECS high-coefficient count mismatch",
+            ));
+        }
+        for row in &self.proof.pcs.decs.masking_evals {
+            if row.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace DECS masking-eval row is empty",
+                ));
+            }
+        }
+        for poly in &self.proof.pcs.decs.high_coeffs {
+            if poly.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace DECS high-coefficient row is empty",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn merkle_rows_v1(&self) -> &[Vec<u64>] {
+        &self.pcs_trace.rows
+    }
+
+    pub fn merkle_auth_paths_v1(&self) -> &[Vec<[u8; DIGEST_BYTES]>] {
+        &self.proof.pcs.decs.auth_paths
+    }
+
+    pub fn merkle_root_digest_words_v1(&self) -> [u64; DIGEST_WORDS] {
+        digest_words_v1(&self.pcs_trace.root_digest)
+    }
+
+    pub fn flatten_merkle_section_words_v1(&self) -> Vec<u64> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.pcs_trace.rows));
+        out.extend_from_slice(&flatten_auth_path_words_v1(&self.proof.pcs.decs.auth_paths));
+        out.extend_from_slice(&self.merkle_root_digest_words_v1());
+        out
+    }
+
+    pub fn validate_merkle_section_v1(&self) -> Result<(), TransactionCircuitError> {
+        let opened_count = self.pcs_trace.decs_leaf_indexes.len();
+        if self.pcs_trace.rows.len() != opened_count
+            || self.proof.pcs.decs.auth_paths.len() != opened_count
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace Merkle section count mismatch",
+            ));
+        }
+        let expected_path_len = self.proof.pcs.decs.auth_paths.first().map(Vec::len).ok_or(
+            TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace Merkle auth paths missing",
+            ),
+        )?;
+        if expected_path_len == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace Merkle auth path is empty",
+            ));
+        }
+        for idx in 0..opened_count {
+            if self.pcs_trace.rows[idx].is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace Merkle row is empty",
+                ));
+            }
+            if self.proof.pcs.decs.auth_paths[idx].len() != expected_path_len {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood verifier trace Merkle auth path length mismatch",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_sections_v1(&self) -> Result<(), TransactionCircuitError> {
+        self.validate_transcript_section_v1()?;
+        self.validate_pcs_section_v1()?;
+        self.validate_decs_section_v1()?;
+        self.validate_merkle_section_v1()?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -289,16 +678,16 @@ pub(crate) fn prove_statement_with_transcript_backend(
     let cfg = SmallwoodConfig::new(statement)?;
     if trace_enabled {
         eprintln!(
-                "[smallwood] cfg rows={} packing={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} projected_proof_bytes={}",
-                cfg.row_count,
-                cfg.packing_factor,
-                cfg.constraint_count,
-                cfg.linear_constraint_count,
-                cfg.nb_polys,
-                cfg.nb_lvcs_rows,
-                cfg.nb_lvcs_cols,
-                serialized_proof_size_hint(&cfg)
-            );
+            "[smallwood] cfg rows={} packing={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} projected_proof_bytes={}",
+            cfg.row_count,
+            cfg.packing_factor,
+            cfg.constraint_count,
+            cfg.linear_constraint_count,
+            cfg.nb_polys,
+            cfg.nb_lvcs_rows,
+            cfg.nb_lvcs_cols,
+            serialized_proof_size_hint(&cfg)
+        );
     }
     log_stage("statement", &mut last_stage);
     let binded_words = bytes_to_words(binded_data)?;
@@ -321,15 +710,14 @@ pub(crate) fn prove_statement_with_transcript_backend(
     log_stage("witness_polys", &mut last_stage);
 
     let salt = random_bytes::<SALT_BYTES>()?;
-    let (pcs_key, pcs_transcript_words) =
-        pcs_commit(
-            &cfg,
-            &witness_polys,
-            &mpol_ppoly,
-            &mpol_plin,
-            &salt,
-            transcript_backend,
-        )?;
+    let (pcs_key, pcs_transcript_words) = pcs_commit(
+        &cfg,
+        &witness_polys,
+        &mpol_ppoly,
+        &mpol_plin,
+        &salt,
+        transcript_backend,
+    )?;
     log_stage("pcs_commit", &mut last_stage);
     let mut piop_input = pcs_transcript_words;
     piop_input.extend_from_slice(&binded_words);
@@ -448,6 +836,131 @@ pub(crate) fn verify_statement_with_transcript_backend(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn build_smallwood_verifier_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to deserialize rust smallwood proof: {err}"
+        ))
+    })?;
+    let cfg = SmallwoodConfig::new(statement)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof missing row-scalar opened witness data",
+        ),
+    )?;
+    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof opened evaluation count mismatch",
+        ));
+    }
+    validate_proof_shape(&cfg, &proof)?;
+
+    let binding_words = bytes_to_words(binded_data)?;
+    let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop, transcript_backend);
+    ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
+
+    let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
+    pcs_build_coefficients(&cfg, &eval_points, &mut coeffs);
+    let combi_heads =
+        pcs_reconstruct_combi_heads(&cfg, &eval_points, row_scalars, &proof.pcs.partial_evals)?;
+    let decs_trans_hash = hash_challenge_opening_decs(
+        &cfg,
+        &combi_heads,
+        &proof.h_piop,
+        &proof.pcs.rcombi_tails,
+        transcript_backend,
+    );
+    let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
+        SMALLWOOD_DECS_NB_EVALS,
+        SMALLWOOD_DECS_NB_OPENED_EVALS,
+        SMALLWOOD_DECS_POW_BITS,
+        &decs_trans_hash,
+        transcript_backend,
+    )?;
+    let decs_eval_points = decs_leaf_indexes
+        .iter()
+        .map(|&idx| idx as u64)
+        .collect::<Vec<_>>();
+    let rows = lvcs_recompute_rows(
+        &cfg,
+        &coeffs,
+        &combi_heads,
+        &proof.pcs.rcombi_tails,
+        &proof.pcs.subset_evals,
+        &decs_eval_points,
+    )?;
+    let root_digest = decs_recompute_root(
+        &cfg,
+        &proof.salt,
+        &rows,
+        &decs_eval_points,
+        &proof.pcs.decs,
+        transcript_backend,
+    )?;
+    let decs_commitment_transcript = decs_commitment_transcript(
+        &cfg,
+        &proof.salt,
+        &rows,
+        &root_digest,
+        &decs_eval_points,
+        &proof.pcs.decs,
+        transcript_backend,
+    )?;
+
+    let pcs_transcript_words = decs_commitment_transcript.clone();
+    let mut piop_input_words = pcs_transcript_words.clone();
+    piop_input_words.extend_from_slice(&binding_words);
+    let piop_transcript_words = piop_recompute_transcript(
+        &cfg,
+        statement,
+        &piop_input_words,
+        &eval_points,
+        row_scalars,
+        &proof.piop,
+        transcript_backend,
+    )?;
+    let recomputed = hash_piop_transcript(&piop_transcript_words, transcript_backend);
+    let hash_fpp = hash_piop(&piop_input_words, transcript_backend);
+    let piop_gamma_prime = derive_gamma_prime(&cfg, &hash_fpp, transcript_backend);
+
+    let proof_trace = SmallwoodProofTraceV1 {
+        salt: proof.salt,
+        nonce: proof.nonce,
+        h_piop: proof.h_piop,
+        piop: proof.piop,
+        pcs: proof.pcs,
+        opened_witness_row_scalars: row_scalars.to_vec(),
+    };
+    let pcs_trace = SmallwoodPcsVerifierTraceV1 {
+        coeffs,
+        combi_heads,
+        decs_trans_hash,
+        decs_leaf_indexes,
+        decs_nonce,
+        decs_eval_points,
+        rows,
+        root_digest,
+        decs_commitment_transcript,
+    };
+    Ok(SmallwoodVerifierTraceV1 {
+        proof: proof_trace,
+        binding_words,
+        eval_points,
+        piop_gamma_prime,
+        pcs_transcript_words,
+        piop_input_words,
+        piop_transcript_words,
+        pcs_trace,
+        accept: recomputed == proof.h_piop,
+    })
 }
 
 fn validate_proof_shape(
@@ -953,14 +1466,13 @@ fn pcs_recompute_transcript(
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
     let combi_heads =
         pcs_reconstruct_combi_heads(cfg, eval_points, row_scalars, &proof.partial_evals)?;
-    let decs_trans_hash =
-        hash_challenge_opening_decs(
-            cfg,
-            &combi_heads,
-            h_piop,
-            &proof.rcombi_tails,
-            transcript_backend,
-        );
+    let decs_trans_hash = hash_challenge_opening_decs(
+        cfg,
+        &combi_heads,
+        h_piop,
+        &proof.rcombi_tails,
+        transcript_backend,
+    );
     let (decs_leaf_indexes, _decs_nonce) = xof_decs_opening(
         SMALLWOOD_DECS_NB_EVALS,
         SMALLWOOD_DECS_NB_OPENED_EVALS,
@@ -1369,13 +1881,8 @@ fn lvcs_open(
         combi_heads.push(combi[..cfg.nb_lvcs_cols].to_vec());
         rcombi_tails.push(combi[cfg.nb_lvcs_cols..].to_vec());
     }
-    let trans_hash = hash_challenge_opening_decs(
-        cfg,
-        &combi_heads,
-        h_piop,
-        &rcombi_tails,
-        transcript_backend,
-    );
+    let trans_hash =
+        hash_challenge_opening_decs(cfg, &combi_heads, h_piop, &rcombi_tails, transcript_backend);
     let (leaves_indexes, nonce) = xof_decs_opening(
         SMALLWOOD_DECS_NB_EVALS,
         SMALLWOOD_DECS_NB_OPENED_EVALS,
@@ -2609,8 +3116,7 @@ fn merkle_compute_root(
             input.extend(digest_to_words(sibling));
             input.extend(digest_to_words(&current));
         }
-        current =
-            transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input);
+        current = transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input);
         index /= 2;
     }
     current
@@ -2764,6 +3270,12 @@ fn interpolate_consecutive(evals: &[u64]) -> Result<Vec<u64>, TransactionCircuit
         }
     }
     Ok(poly)
+}
+
+pub fn interpolate_smallwood_consecutive_row_v1(
+    evals: &[u64],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    interpolate_consecutive(evals)
 }
 
 fn poly_set_vanishing(roots: &[u64]) -> Vec<u64> {

@@ -29,9 +29,11 @@ pub fn fold_digest48(tag: &[u8], chunks: &[&[u8]]) -> Digest48 {
     let digest = hasher.finalize();
     let mut out = [0u8; 48];
     out[..32].copy_from_slice(digest.as_bytes());
-    out[32..].copy_from_slice(&blake3::derive_key(
-        "hegemon.block-recursion.digest48.tail.v1",
-        digest.as_bytes(),
-    )[..16]);
+    out[32..].copy_from_slice(
+        &blake3::derive_key(
+            "hegemon.block-recursion.digest48.tail.v1",
+            digest.as_bytes(),
+        )[..16],
+    );
     out
 }

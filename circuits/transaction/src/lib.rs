@@ -49,7 +49,10 @@ pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
-pub use smallwood_engine::SmallwoodArithmetization;
+pub use smallwood_engine::{
+    interpolate_smallwood_consecutive_row_v1, SmallwoodArithmetization,
+    SmallwoodPcsVerifierTraceV1, SmallwoodProofTraceV1, SmallwoodVerifierTraceV1,
+};
 pub use smallwood_frontend::{
     projected_smallwood_candidate_proof_bytes,
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
@@ -57,18 +60,18 @@ pub use smallwood_frontend::{
     SmallwoodCandidateProof,
 };
 pub use smallwood_recursive::{
-    decode_smallwood_recursive_proof_envelope_v1, encode_smallwood_recursive_proof_envelope_v1,
-    parse_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_envelope_bytes_v1,
-    projected_smallwood_recursive_proof_bytes_v1, prove_recursive_statement_v1,
-    recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    recursive_binding_bytes_v1,
+    build_recursive_verifier_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
+    encode_smallwood_recursive_proof_envelope_v1, parse_smallwood_recursive_proof_envelope_v1,
+    projected_smallwood_recursive_envelope_bytes_v1, projected_smallwood_recursive_proof_bytes_v1,
+    prove_recursive_statement_v1, recursive_binding_bytes_v1, recursive_descriptor_v1,
+    recursive_profile_a_v1, recursive_profile_b_v1,
     serialize_smallwood_recursive_verifier_descriptor_v1,
     smallwood_recursive_proof_encoding_digest_v1,
-    smallwood_recursive_verifier_descriptor_digest_v1, SmallwoodRecursiveProfileTagV1,
-    SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1,
-    SmallwoodRecursiveVerifierDescriptorV1, verify_recursive_proof_components_v1,
+    smallwood_recursive_verifier_descriptor_digest_v1, verify_recursive_proof_components_v1,
     verify_recursive_proof_envelope_v1, verify_recursive_statement_direct_v1,
-    verify_recursive_statement_v1, RecursiveSmallwoodProfileV1,
+    verify_recursive_statement_v1, RecursiveSmallwoodProfileV1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1,
+    SmallwoodRecursiveVerifierDescriptorV1, SmallwoodRecursiveVerifierTraceV1,
 };
 pub use smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodNonlinearEvalView};
 pub use witness::TransactionWitness;

@@ -3,8 +3,7 @@ use crate::{
         compress_transcript_digest_v1, decider_profile_digest_v1,
         recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
         serialize_recursive_block_inner_artifact_v1, RecursiveBlockArtifactV1,
-        RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-        RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
+        RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
     },
     public_replay::RecursiveBlockPublicV1,
     relation::{

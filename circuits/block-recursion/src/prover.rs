@@ -205,9 +205,10 @@ pub fn prove_block_recursive_v1(
         accumulator_bytes,
         decider_bytes,
     };
-    inner_artifact.header.artifact_bytes = serialize_recursive_block_inner_artifact_v1(&inner_artifact)
-        .map_err(|err| static_error("serialize recursive artifact failed", err))?
-        .len() as u32;
+    inner_artifact.header.artifact_bytes =
+        serialize_recursive_block_inner_artifact_v1(&inner_artifact)
+            .map_err(|err| static_error("serialize recursive artifact failed", err))?
+            .len() as u32;
     Ok(RecursiveBlockArtifactV1 {
         artifact: inner_artifact,
         public,
