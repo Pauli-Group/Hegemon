@@ -3660,6 +3660,77 @@ mod tests {
     }
 
     #[test]
+    fn total_block_proof_bytes_counts_recursive_payload_and_ignores_receipt_root() {
+        mock::new_test_ext().execute_with(|| {
+            let mut recursive = dummy_recursive_candidate_artifact();
+            let recursive_bytes = recursive
+                .recursive_block
+                .as_ref()
+                .expect("recursive payload")
+                .proof
+                .data
+                .len();
+            let commitment_bytes = recursive.commitment_proof.data.len();
+            let receipt_root_bytes = dummy_candidate_artifact()
+                .receipt_root
+                .expect("receipt root")
+                .root_proof
+                .data
+                .len();
+
+            let bytes_without_receipt_root =
+                pallet::Pallet::<mock::Test>::total_block_proof_bytes(&recursive);
+            assert_eq!(bytes_without_receipt_root, commitment_bytes + recursive_bytes);
+
+            recursive.receipt_root = Some(dummy_candidate_artifact().receipt_root.unwrap());
+            let bytes_with_receipt_root = pallet::Pallet::<mock::Test>::total_block_proof_bytes(
+                &recursive,
+            );
+            assert_eq!(
+                bytes_with_receipt_root,
+                commitment_bytes + recursive_bytes,
+                "recursive mode must not smuggle receipt_root bytes into the proof byte total"
+            );
+            assert_ne!(
+                bytes_with_receipt_root,
+                commitment_bytes + recursive_bytes + receipt_root_bytes,
+                "receipt_root bytes must not be counted for recursive mode"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_rejects_receipt_root() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact();
+            payload.receipt_root = Some(dummy_candidate_artifact().receipt_root.unwrap());
+
+            let err = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                &payload,
+            )
+            .expect_err("recursive mode must reject receipt_root");
+
+            assert!(matches!(err, InvalidTransaction::BadProof));
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_rejects_oversized_recursive_payload() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact();
+            payload.recursive_block.as_mut().expect("recursive payload").proof.data =
+                vec![0u8; types::STARK_PROOF_MAX_SIZE + 1];
+
+            let err = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                &payload,
+            )
+            .expect_err("oversized recursive payload must be rejected");
+
+            assert!(matches!(err, InvalidTransaction::BadProof));
+        });
+    }
+
+    #[test]
     fn validate_unsigned_mint_coinbase_stays_valid_after_apply() {
         mock::new_test_ext().execute_with(|| {
             let height: u64 = frame_system::Pallet::<mock::Test>::block_number();

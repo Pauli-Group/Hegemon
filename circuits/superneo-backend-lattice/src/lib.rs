@@ -766,6 +766,14 @@ pub struct LatticeRecursiveBackend {
 impl RecursiveLatticeProofBundle {
     pub const CANONICAL_BYTE_SIZE: usize = 48;
 
+    pub fn new(proof_digest: [u8; 48]) -> Self {
+        Self { proof_digest }
+    }
+
+    pub fn proof_digest(&self) -> [u8; 48] {
+        self.proof_digest
+    }
+
     pub fn byte_size(&self) -> usize {
         Self::CANONICAL_BYTE_SIZE
     }
@@ -789,6 +797,21 @@ impl RecursiveLatticeProofBundle {
 
 impl RecursiveLatticeDeciderProof {
     pub const CANONICAL_BYTE_SIZE: usize = 96;
+
+    pub fn new(proof_digest: [u8; 48], transcript_digest: [u8; 48]) -> Self {
+        Self {
+            proof_digest,
+            transcript_digest,
+        }
+    }
+
+    pub fn proof_digest(&self) -> [u8; 48] {
+        self.proof_digest
+    }
+
+    pub fn transcript_digest(&self) -> [u8; 48] {
+        self.transcript_digest
+    }
 
     pub fn byte_size(&self) -> usize {
         Self::CANONICAL_BYTE_SIZE
@@ -1957,10 +1980,10 @@ impl RecursiveBackend<Goldilocks> for LatticeRecursiveBackend {
             terminal,
             &transcript.transcript_digest,
         )?;
-        Ok(RecursiveLatticeDeciderProof {
+        Ok(RecursiveLatticeDeciderProof::new(
             proof_digest,
-            transcript_digest: transcript.transcript_digest,
-        })
+            transcript.transcript_digest,
+        ))
     }
 
     fn verify_decider(
@@ -2954,6 +2977,16 @@ fn recursive_decider_transcript_digest(transcript_bytes: &[u8]) -> [u8; 48] {
     hash48(hasher)
 }
 
+pub fn canonical_recursive_decider_transcript(
+    transcript_bytes: Vec<u8>,
+) -> CanonicalDeciderTranscript {
+    let transcript_digest = recursive_decider_transcript_digest(&transcript_bytes);
+    CanonicalDeciderTranscript {
+        transcript_digest,
+        transcript_bytes,
+    }
+}
+
 fn recursive_decider_proof_digest(
     pk: &BackendKey,
     decider_profile: &RecursiveDeciderProfile,
@@ -2993,15 +3026,15 @@ mod tests {
     };
     use superneo_core::{
         deserialize_decider_profile, serialize_decider_profile, Backend,
-        CanonicalDeciderTranscript, FoldedInstance, LcccsInstance, RecursiveBackend,
-        RecursiveStatementEncoding,
+        FoldedInstance, LcccsInstance, RecursiveBackend, RecursiveStatementEncoding,
     };
     use superneo_ring::{
         GoldilocksPackingConfig, GoldilocksPayPerBitPacker, PackedWitness, WitnessPacker,
     };
 
     use super::{
-        clear_prepared_matrix_cache, recursive_backend_v2, reset_kernel_cost_report,
+        canonical_recursive_decider_transcript, clear_prepared_matrix_cache, recursive_backend_v2,
+        reset_kernel_cost_report,
         review_fold_challenges, review_leaf_proof_digest, take_kernel_cost_report,
         theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
         LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
@@ -3750,9 +3783,7 @@ mod tests {
 
     #[test]
     fn recursive_bundle_roundtrips_without_trailing_bytes() {
-        let proof_bundle = RecursiveLatticeProofBundle {
-            proof_digest: [11u8; 48],
-        };
+        let proof_bundle = RecursiveLatticeProofBundle::new([11u8; 48]);
         let proof_bytes = proof_bundle.to_canonical_bytes().unwrap();
         assert_eq!(
             RecursiveLatticeProofBundle::from_canonical_bytes(&proof_bytes).unwrap(),
@@ -3762,10 +3793,7 @@ mod tests {
         proof_trailing.push(0);
         assert!(RecursiveLatticeProofBundle::from_canonical_bytes(&proof_trailing).is_err());
 
-        let decider_bundle = RecursiveLatticeDeciderProof {
-            proof_digest: [22u8; 48],
-            transcript_digest: [33u8; 48],
-        };
+        let decider_bundle = RecursiveLatticeDeciderProof::new([22u8; 48], [33u8; 48]);
         let decider_bytes = decider_bundle.to_canonical_bytes().unwrap();
         assert_eq!(
             RecursiveLatticeDeciderProof::from_canonical_bytes(&decider_bytes).unwrap(),
@@ -3801,6 +3829,17 @@ mod tests {
     }
 
     #[test]
+    fn canonical_recursive_decider_transcript_matches_hash_helper() {
+        let transcript_bytes = vec![1, 2, 3, 4, 5];
+        let transcript = canonical_recursive_decider_transcript(transcript_bytes.clone());
+        assert_eq!(
+            transcript.transcript_digest,
+            super::recursive_decider_transcript_digest(&transcript_bytes)
+        );
+        assert_eq!(transcript.transcript_bytes, transcript_bytes);
+    }
+
+    #[test]
     fn recursive_backend_v2_decider_attestation_roundtrip() {
         let params = NativeBackendParams::default();
         let backend = recursive_backend_v2(params.clone());
@@ -3828,16 +3867,8 @@ mod tests {
             challenge_point: vec![Goldilocks::new(7), Goldilocks::new(11)],
             evaluations: vec![Goldilocks::new(13)],
         };
-        let transcript = CanonicalDeciderTranscript {
-            transcript_digest: [9u8; 48],
-            transcript_bytes: vec![1, 2, 3, 4],
-        };
-        let transcript_digest =
-            super::recursive_decider_transcript_digest(&transcript.transcript_bytes);
-        let transcript = CanonicalDeciderTranscript {
-            transcript_digest,
-            transcript_bytes: transcript.transcript_bytes,
-        };
+        let transcript =
+            canonical_recursive_decider_transcript(vec![1, 2, 3, 4]);
         let proof = backend
             .prove_decider(&pk, &profile, &statement, &terminal, &transcript)
             .unwrap();
