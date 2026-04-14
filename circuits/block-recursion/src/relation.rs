@@ -1,5 +1,5 @@
 use crate::{
-    BlockRecursionError, Digest32, Digest48, fold_digest32, fold_digest48,
+    BlockRecursionError, Digest32, Digest48, fold_digest32,
     local_smallwood_poseidon2::{
         SmallwoodConfig, decs_commitment_transcript, decs_recompute_root, derive_gamma_prime,
         ensure_no_packing_collisions, ensure_row_polynomial_arithmetization,
@@ -8,7 +8,7 @@ use crate::{
         validate_proof_shape, xof_decs_opening, xof_piop_opening_points,
     },
     public_replay::{BlockLeafRecordV1, RecursiveBlockPublicV1},
-    statement::{RecursivePrefixStatementV1, recursive_prefix_statement_digest_v1},
+    statement::{RecursivePrefixStatementV1, recursive_prefix_statement_bytes_v1},
 };
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -290,31 +290,13 @@ pub fn hosted_recursive_descriptor_v1(
 }
 
 pub fn hosted_base_binding_bytes_v1(statement: &RecursivePrefixStatementV1) -> Vec<u8> {
-    recursive_prefix_statement_digest_v1(statement).to_vec()
+    recursive_prefix_statement_bytes_v1(statement)
 }
 
 pub fn hosted_step_binding_bytes_v1(
-    previous_recursive_proof: &HostedRecursiveProofContextV1,
-    previous_statement: &RecursivePrefixStatementV1,
-    leaf_record: &BlockLeafRecordV1,
     target_statement: &RecursivePrefixStatementV1,
 ) -> Vec<u8> {
-    let previous_proof_digest = fold_digest48(
-        b"hegemon.block-recursion.hosted-recursive.previous-proof.v1",
-        &[previous_recursive_proof.proof_envelope_bytes()],
-    );
-    let previous_statement_digest = recursive_prefix_statement_digest_v1(previous_statement);
-    let leaf_digest = fold_digest48(
-        b"hegemon.block-recursion.hosted-recursive.step-leaf.v1",
-        &[&crate::public_replay::canonical_verified_leaf_record_bytes_v1(leaf_record)],
-    );
-    let target_statement_digest = recursive_prefix_statement_digest_v1(target_statement);
-    let mut out = Vec::with_capacity(48 * 4);
-    out.extend_from_slice(&previous_proof_digest);
-    out.extend_from_slice(&previous_statement_digest);
-    out.extend_from_slice(&leaf_digest);
-    out.extend_from_slice(&target_statement_digest);
-    out
+    recursive_prefix_statement_bytes_v1(target_statement)
 }
 
 fn verify_recursive_proof_envelope_structure_v1(
@@ -439,12 +421,7 @@ pub fn verify_hosted_recursive_proof_context_descriptor_shape_v1(
                 leaf_record.clone(),
                 target_statement.clone(),
             );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
+            let binding = hosted_step_binding_bytes_v1(target_statement);
             let _ = verify_recursive_proof_envelope_structure_v1(
                 &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
                 &descriptor,
@@ -472,12 +449,7 @@ pub fn verify_hosted_recursive_proof_context_descriptor_shape_v1(
                 leaf_record.clone(),
                 target_statement.clone(),
             );
-            let binding = hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            );
+            let binding = hosted_step_binding_bytes_v1(target_statement);
             let _ = verify_recursive_proof_envelope_structure_v1(
                 &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
                 &descriptor,
@@ -1150,12 +1122,7 @@ fn build_expected_recursive_inputs_v1(
                 leaf_record.clone(),
                 target_statement.clone(),
             )),
-            hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            ),
+            hosted_step_binding_bytes_v1(target_statement),
             decode_smallwood_recursive_proof_envelope_v1(proof_envelope_bytes)?
                 .proof_bytes
                 .len(),
@@ -1178,12 +1145,7 @@ fn build_expected_recursive_inputs_v1(
                 leaf_record.clone(),
                 target_statement.clone(),
             )),
-            hosted_step_binding_bytes_v1(
-                previous_recursive_proof,
-                previous_statement,
-                leaf_record,
-                target_statement,
-            ),
+            hosted_step_binding_bytes_v1(target_statement),
             decode_smallwood_recursive_proof_envelope_v1(proof_envelope_bytes)?
                 .proof_bytes
                 .len(),

@@ -53,8 +53,9 @@ pub use relation::{
 };
 pub use state::{fold_digest32, fold_digest48, Digest32, Digest48};
 pub use statement::{
-    recursive_prefix_statement_digest_v1, statement_digest_v1, BlockPrefixStatementV1,
-    BlockStepStatementV1, ComposeCheckV1, RecursivePrefixStatementV1,
+    recursive_prefix_statement_bytes_v1, recursive_prefix_statement_digest_v1,
+    statement_digest_v1, BlockPrefixStatementV1, BlockStepStatementV1, ComposeCheckV1,
+    RecursivePrefixStatementV1,
 };
 pub use verifier::verify_block_recursive_v1;
 

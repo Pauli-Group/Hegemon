@@ -629,7 +629,7 @@ fn step_b_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveProfileTagV1::B,
         SmallwoodRecursiveRelationKindV1::StepB,
     );
-    let binding = hosted_step_binding_bytes_v1(&base_context, &previous, &leaf, &target);
+    let binding = hosted_step_binding_bytes_v1(&target);
     let witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
     let proof = prove_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
@@ -701,7 +701,7 @@ fn step_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveProfileTagV1::B,
         SmallwoodRecursiveRelationKindV1::StepB,
     );
-    let step_b_binding = hosted_step_binding_bytes_v1(&base_context, &previous, &leaf, &target);
+    let step_b_binding = hosted_step_binding_bytes_v1(&target);
     let step_b_witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
     let step_b_proof = prove_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
@@ -746,7 +746,7 @@ fn step_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveProfileTagV1::A,
         SmallwoodRecursiveRelationKindV1::StepA,
     );
-    let binding = hosted_step_binding_bytes_v1(&step_b_context, &target, &next_leaf, &next_target);
+    let binding = hosted_step_binding_bytes_v1(&next_target);
     let witness = hosted_recursive_proof_witness_words_v1(&step_b_context).unwrap();
     let proof = prove_recursive_statement_v1(
         &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
@@ -810,7 +810,7 @@ fn step_b_relation_rejects_wrong_previous_proof_witness() {
         SmallwoodRecursiveProfileTagV1::B,
         SmallwoodRecursiveRelationKindV1::StepB,
     );
-    let binding = hosted_step_binding_bytes_v1(&base_context, &previous, &leaf, &target);
+    let binding = hosted_step_binding_bytes_v1(&target);
     let wrong_witness = vec![
         0u64;
         hosted_recursive_proof_witness_words_v1(&base_context)
@@ -838,4 +838,72 @@ fn step_b_relation_rejects_wrong_previous_proof_witness() {
             || err.to_string().contains("transcript hash mismatch"),
         "unexpected wrong-witness verification error: {err}"
     );
+}
+
+#[test]
+fn step_b_relation_verification_depends_on_external_previous_context() {
+    let base_context = base_a_context_v1();
+    let alternative_base_context = base_a_context_v1();
+    assert_ne!(
+        base_context.proof_envelope_bytes(),
+        alternative_base_context.proof_envelope_bytes(),
+        "expected two valid base proofs with the same public statement to serialize differently"
+    );
+
+    let (previous, leaf, target) = step_statement_pair();
+    let relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let binding = hosted_step_binding_bytes_v1(&target);
+    let witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &witness,
+        &binding,
+    )
+    .unwrap();
+
+    let alternative_relation = StepBRelationV1::new(
+        alternative_base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let alternative_binding = hosted_step_binding_bytes_v1(&target);
+    let err = verify_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &alternative_relation,
+        &alternative_binding,
+        &proof,
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("transcript")
+            || err.to_string().contains("constraint")
+            || err.to_string().contains("mismatch"),
+        "unexpected external-context verification error: {err}"
+    );
+}
+
+#[test]
+fn step_binding_bytes_depend_only_on_target_statement() {
+    let (_, _, target) = step_statement_pair();
+    let next_target = RecursivePrefixStatementV1 {
+        tx_count: target.tx_count + 1,
+        ..target.clone()
+    };
+
+    let binding = hosted_step_binding_bytes_v1(&target);
+    assert_eq!(binding, super::recursive_prefix_statement_bytes_v1(&target));
+    assert_ne!(binding, hosted_step_binding_bytes_v1(&next_target));
 }

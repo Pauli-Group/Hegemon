@@ -13,20 +13,24 @@ pub struct RecursivePrefixStatementV1 {
 }
 
 pub fn recursive_prefix_statement_digest_v1(statement: &RecursivePrefixStatementV1) -> Digest48 {
-    let tx_count = statement.tx_count.to_le_bytes();
+    let encoded = recursive_prefix_statement_bytes_v1(statement);
     fold_digest48(
         b"hegemon.block-recursion.recursive-prefix-statement.v1",
-        &[
-            &tx_count,
-            &statement.start_state_digest,
-            &statement.end_state_digest,
-            &statement.verified_leaf_commitment,
-            &statement.tx_statements_commitment,
-            &statement.verified_receipt_commitment,
-            &statement.start_tree_commitment,
-            &statement.end_tree_commitment,
-        ],
+        &[&encoded],
     )
+}
+
+pub fn recursive_prefix_statement_bytes_v1(statement: &RecursivePrefixStatementV1) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + (48 * 7));
+    out.extend_from_slice(&statement.tx_count.to_le_bytes());
+    out.extend_from_slice(&statement.start_state_digest);
+    out.extend_from_slice(&statement.end_state_digest);
+    out.extend_from_slice(&statement.verified_leaf_commitment);
+    out.extend_from_slice(&statement.tx_statements_commitment);
+    out.extend_from_slice(&statement.verified_receipt_commitment);
+    out.extend_from_slice(&statement.start_tree_commitment);
+    out.extend_from_slice(&statement.end_tree_commitment);
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
