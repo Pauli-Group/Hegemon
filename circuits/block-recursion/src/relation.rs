@@ -25,7 +25,7 @@ use superneo_ring::{
 };
 use transaction_circuit::{
     RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodNonlinearEvalView, SmallwoodProof, SmallwoodProofTraceV1,
+    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView, SmallwoodProof, SmallwoodProofTraceV1,
     SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveRelationKindV1, SmallwoodRecursiveVerifierDescriptorV1,
     SmallwoodTranscriptBackend, TransactionCircuitError, SMALLWOOD_DECS_NB_EVALS,
@@ -2575,6 +2575,10 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
         self.step_witness_layout.map(|layout| layout.total_limbs())
     }
 
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::IdentityWitness
+    }
+
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
@@ -2802,6 +2806,10 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
 
     fn auxiliary_witness_limb_count(&self) -> Option<usize> {
         self.step_witness_layout.map(|layout| layout.total_limbs())
+    }
+
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::IdentityWitness
     }
 
     fn nonlinear_eval_view<'a>(

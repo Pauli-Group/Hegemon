@@ -91,7 +91,9 @@ pub use smallwood_recursive::{
     SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1,
     SmallwoodRecursiveVerifierDescriptorV1, SmallwoodRecursiveVerifierTraceV1,
 };
-pub use smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodNonlinearEvalView};
+pub use smallwood_semantics::{
+    SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
+};
 pub use witness::TransactionWitness;
 
 // Legacy Plonky3 exports

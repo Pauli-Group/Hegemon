@@ -6,8 +6,8 @@ use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 use transaction_circuit::{
     DIGEST_BYTES, NONCE_BYTES, SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS,
     SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
-    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodProofTraceV1,
-    SmallwoodTranscriptBackend, TransactionCircuitError,
+    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
+    SmallwoodProofTraceV1, SmallwoodTranscriptBackend, TransactionCircuitError,
 };
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
@@ -792,6 +792,17 @@ fn get_constraint_linear_evals(
         for col in 0..cfg.packing_factor {
             lag_evals[num][col] = poly_eval(&lag[col], eval_point);
         }
+    }
+    if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
+        let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
+        for num in 0..eval_points.len() {
+            for check in 0..cfg.linear_constraint_count {
+                let row = check / cfg.packing_factor;
+                let col = check % cfg.packing_factor;
+                out[num][check] = mul_mod(witness_evals[num][row], lag_evals[num][col]);
+            }
+        }
+        return Ok(out);
     }
     let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
     for num in 0..eval_points.len() {

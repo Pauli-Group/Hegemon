@@ -9,7 +9,10 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 
-use crate::{error::TransactionCircuitError, smallwood_semantics::SmallwoodConstraintAdapter};
+use crate::{
+    error::TransactionCircuitError,
+    smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm},
+};
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
@@ -2231,6 +2234,39 @@ fn get_constraint_linear_polynomials_batched(
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let out_degree = cfg.wit_poly_degree + (cfg.packing_factor - 1);
+    if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
+        return (0..SMALLWOOD_RHO)
+            .into_par_iter()
+            .map(|rep| {
+                let mut tmp_out = vec![0u64; out_degree + 1];
+                let mut tmp = vec![0u64; out_degree + 1];
+                let mut lag_combo = vec![0u64; cfg.packing_factor];
+                for row in 0..cfg.row_count {
+                    let weights = &gammas[rep]
+                        [row * cfg.packing_factor..(row + 1) * cfg.packing_factor];
+                    if weights.iter().all(|weight| *weight == 0) {
+                        continue;
+                    }
+                    lag_combo.fill(0);
+                    for col in 0..cfg.packing_factor {
+                        let weight = weights[col];
+                        if weight != 0 {
+                            poly_add_assign_scaled(&mut lag_combo, &lag[col], weight);
+                        }
+                    }
+                    poly_mul_into(
+                        &mut tmp,
+                        &witness_polys[row],
+                        &lag_combo,
+                        cfg.wit_poly_degree,
+                        cfg.packing_factor - 1,
+                    );
+                    poly_add_assign(&mut tmp_out, &tmp);
+                }
+                Ok::<_, TransactionCircuitError>(tmp_out)
+            })
+            .collect::<Result<Vec<_>, _>>();
+    }
     (0..SMALLWOOD_RHO)
         .into_par_iter()
         .map(|rep| {
@@ -2296,6 +2332,17 @@ fn get_constraint_linear_evals(
         for col in 0..cfg.packing_factor {
             lag_evals[num][col] = poly_eval(&lag[col], eval_point);
         }
+    }
+    if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
+        let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
+        for num in 0..eval_points.len() {
+            for check in 0..cfg.linear_constraint_count {
+                let row = check / cfg.packing_factor;
+                let col = check % cfg.packing_factor;
+                out[num][check] = mul_mod(witness_evals[num][row], lag_evals[num][col]);
+            }
+        }
+        return Ok(out);
     }
     let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
     for num in 0..eval_points.len() {

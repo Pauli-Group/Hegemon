@@ -273,6 +273,9 @@ pub trait SmallwoodConstraintAdapter: Sync {
     fn linear_targets(&self) -> &[u64];
     fn auxiliary_witness_words(&self) -> &[u64];
     fn auxiliary_witness_limb_count(&self) -> Option<usize>;
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::Generic
+    }
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
@@ -284,6 +287,12 @@ pub trait SmallwoodConstraintAdapter: Sync {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmallwoodLinearConstraintForm {
+    Generic,
+    IdentityWitness,
 }
 
 #[derive(Clone, Copy, Debug)]
