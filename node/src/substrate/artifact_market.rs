@@ -34,6 +34,9 @@ pub fn consensus_proof_artifact_kind_from_pallet(
         pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1 => {
             consensus::ProofArtifactKind::RecursiveBlockV1
         }
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2 => {
+            consensus::ProofArtifactKind::RecursiveBlockV2
+        }
         pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes) => {
             consensus::ProofArtifactKind::Custom(bytes)
         }

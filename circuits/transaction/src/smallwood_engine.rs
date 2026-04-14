@@ -830,9 +830,9 @@ pub(crate) fn prove_statement_with_transcript_backend(
     )?;
     log_stage("pcs_open", &mut last_stage);
     let auxiliary_witness_words = statement.auxiliary_witness_words().to_vec();
-    let auxiliary_witness_limb_count = statement.auxiliary_witness_limb_count().unwrap_or(
-        auxiliary_witness_words.len(),
-    );
+    let auxiliary_witness_limb_count = statement
+        .auxiliary_witness_limb_count()
+        .unwrap_or(auxiliary_witness_words.len());
     let proof = SmallwoodProof {
         salt,
         nonce,
@@ -896,10 +896,7 @@ pub(crate) fn verify_statement_with_transcript_backend(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
-    let auxiliary_words = proof
-        .opened_witness
-        .auxiliary_words_ref()
-        .unwrap_or(&[]);
+    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
     if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
@@ -957,10 +954,7 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
-    let auxiliary_words = proof
-        .opened_witness
-        .auxiliary_words_ref()
-        .unwrap_or(&[]);
+    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
     if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
@@ -1128,9 +1122,7 @@ pub fn decode_smallwood_proof_trace_v1(
     })
 }
 
-pub fn smallwood_binding_words_v1(
-    binded_data: &[u8],
-) -> Result<Vec<u64>, TransactionCircuitError> {
+pub fn smallwood_binding_words_v1(binded_data: &[u8]) -> Result<Vec<u64>, TransactionCircuitError> {
     bytes_to_words(binded_data)
 }
 
@@ -1308,10 +1300,7 @@ pub fn smallwood_poseidon2_piop_transcript_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
-    let auxiliary_words = proof
-        .opened_witness
-        .auxiliary_words_ref()
-        .unwrap_or(&[]);
+    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
     piop_recompute_transcript(
         &cfg,
         statement,
@@ -1342,10 +1331,8 @@ pub fn smallwood_poseidon2_piop_accept_v1(
     proof_trace: &SmallwoodProofTraceV1,
     piop_transcript_words: &[u64],
 ) -> bool {
-    hash_piop_transcript(
-        piop_transcript_words,
-        SmallwoodTranscriptBackend::Poseidon2,
-    ) == proof_trace.h_piop
+    hash_piop_transcript(piop_transcript_words, SmallwoodTranscriptBackend::Poseidon2)
+        == proof_trace.h_piop
 }
 
 pub fn smallwood_poseidon2_pcs_trace_v1(
@@ -1438,10 +1425,7 @@ pub fn smallwood_poseidon2_piop_trace_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
-    let auxiliary_words = proof
-        .opened_witness
-        .auxiliary_words_ref()
-        .unwrap_or(&[]);
+    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
     let pcs_transcript_words = pcs_trace.decs_commitment_transcript.clone();
     let mut piop_input_words = pcs_transcript_words.clone();
     piop_input_words.extend_from_slice(binded_words);
@@ -1455,9 +1439,13 @@ pub fn smallwood_poseidon2_piop_trace_v1(
         &proof.piop,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
-    let recomputed = hash_piop_transcript(&piop_transcript_words, SmallwoodTranscriptBackend::Poseidon2);
+    let recomputed = hash_piop_transcript(
+        &piop_transcript_words,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
     let hash_fpp = hash_piop(&piop_input_words, SmallwoodTranscriptBackend::Poseidon2);
-    let piop_gamma_prime = derive_gamma_prime(&cfg, &hash_fpp, SmallwoodTranscriptBackend::Poseidon2);
+    let piop_gamma_prime =
+        derive_gamma_prime(&cfg, &hash_fpp, SmallwoodTranscriptBackend::Poseidon2);
     Ok(SmallwoodPiopVerifierTraceV1 {
         pcs_transcript_words,
         piop_input_words,
@@ -1827,13 +1815,8 @@ pub fn piop_recompute_transcript(
         .iter()
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
-    let in_epol = get_constraint_polynomial_evals(
-        cfg,
-        statement,
-        eval_points,
-        &wit_evals,
-        auxiliary_words,
-    )?;
+    let in_epol =
+        get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
     let in_elin =
         get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
     let linear_targets = effective_linear_targets(statement, auxiliary_words);
@@ -2289,8 +2272,8 @@ fn get_constraint_linear_polynomials_batched(
                 let mut tmp = vec![0u64; out_degree + 1];
                 let mut lag_combo = vec![0u64; cfg.packing_factor];
                 for row in 0..cfg.row_count {
-                    let weights = &gammas[rep]
-                        [row * cfg.packing_factor..(row + 1) * cfg.packing_factor];
+                    let weights =
+                        &gammas[rep][row * cfg.packing_factor..(row + 1) * cfg.packing_factor];
                     if weights.iter().all(|weight| *weight == 0) {
                         continue;
                     }
@@ -3019,10 +3002,11 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig, auxiliary_words_len: usize)
                 high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
             },
         },
-        opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(vec![
-            vec![0u64; cfg.nb_polys];
-            SMALLWOOD_NB_OPENED_EVALS
-        ], vec![0u64; auxiliary_words_len], auxiliary_words_len),
+        opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(
+            vec![vec![0u64; cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS],
+            vec![0u64; auxiliary_words_len],
+            auxiliary_words_len,
+        ),
     };
     bincode::serialize(&proof)
         .map(|bytes| bytes.len())

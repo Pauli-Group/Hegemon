@@ -9,6 +9,7 @@ mod state;
 mod statement;
 #[cfg(test)]
 mod tests;
+mod tree_v2;
 mod verifier;
 
 pub use artifacts::{
@@ -27,7 +28,8 @@ pub use artifacts::{
 };
 pub use prover::{prove_block_recursive_v1, BlockRecursiveProverInputV1};
 pub use public_replay::{
-    canonical_receipt_record_bytes_v1, canonical_verified_leaf_record_bytes_v1, public_replay_v1,
+    canonical_receipt_record_bytes_v1, canonical_verified_leaf_record_bytes_v1, prefix_public_v1,
+    prefix_statement_for_records_v1, public_replay_v1, segment_statement_for_interval_v1,
     BlockLeafRecordV1, BlockSemanticInputsV1, RecursiveBlockPublicV1,
 };
 pub use relation::{
@@ -38,9 +40,8 @@ pub use relation::{
     pack_statement_witness_v1, prefix_statement_v1, previous_proof_rows_for_limbs_v1,
     previous_proof_trace_limbs_v1, previous_proof_witness_layout_from_envelope_v1,
     previous_proof_witness_layout_from_sizes_v1, recursive_block_relation_id_v1,
-    recursive_block_shape_digest_v1, recursive_block_shape_v1,
-    step_recursive_witness_layout_v1, step_recursive_witness_words_v1,
-    verify_hosted_recursive_proof_context_binding_trace_v1,
+    recursive_block_shape_digest_v1, recursive_block_shape_v1, step_recursive_witness_layout_v1,
+    step_recursive_witness_words_v1, verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
     verify_hosted_recursive_proof_context_descriptor_shape_v1,
@@ -48,19 +49,35 @@ pub use relation::{
     verify_hosted_recursive_proof_context_transcript_v1, verify_hosted_recursive_proof_context_v1,
     verify_recursive_proof_envelope_components_v1, BaseARelationV1, BlockStatementKindV1,
     HostedRecursiveProofContextV1, PreviousProofWitnessLayoutV1, PreviousProofWitnessSectionV1,
-    StepARelationV1, StepBRelationV1, StepWitnessLayoutV1, PREVIOUS_PROOF_DECS_LIMBS_V1, PREVIOUS_PROOF_MERKLE_LIMBS_V1,
-    PREVIOUS_PROOF_PCS_LIMBS_V1, PREVIOUS_PROOF_TRANSCRIPT_LIMBS_V1,
-    PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1, PREVIOUS_PROOF_WITNESS_ROW_WIDTH_LIMBS_V1,
+    StepARelationV1, StepBRelationV1, StepWitnessLayoutV1, PREVIOUS_PROOF_DECS_LIMBS_V1,
+    PREVIOUS_PROOF_MERKLE_LIMBS_V1, PREVIOUS_PROOF_PCS_LIMBS_V1,
+    PREVIOUS_PROOF_TRANSCRIPT_LIMBS_V1, PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1,
+    PREVIOUS_PROOF_WITNESS_ROW_WIDTH_LIMBS_V1,
 };
 pub use state::{fold_digest32, fold_digest48, Digest32, Digest48};
 pub use statement::{
-    recursive_prefix_base_statement_v1, recursive_prefix_end_state_digest_v1,
-    recursive_prefix_progress_tree_commitment_v1, recursive_prefix_start_state_digest_v1,
-    recursive_prefix_statement_bytes_v1, recursive_prefix_statement_digest32_v1,
-    recursive_prefix_statement_digest_v1, recursive_prefix_statement_from_parts_v1,
-    recursive_prefix_statement_from_public_v1,
+    compose_recursive_segment_statements_v1, recursive_prefix_base_statement_v1,
+    recursive_prefix_end_state_digest_v1, recursive_prefix_progress_tree_commitment_v1,
+    recursive_prefix_start_state_digest_v1, recursive_prefix_statement_bytes_v1,
+    recursive_prefix_statement_digest32_v1, recursive_prefix_statement_digest_v1,
+    recursive_prefix_statement_from_parts_v1, recursive_prefix_statement_from_public_v1,
+    recursive_segment_statement_bytes_v1, recursive_segment_statement_digest32_v1,
+    recursive_segment_statement_digest_v1, recursive_segment_statement_from_prefixes_v1,
     statement_digest_v1, BlockPrefixStatementV1, BlockStepStatementV1, ComposeCheckV1,
-    RecursivePrefixStatementV1,
+    RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
+};
+pub use tree_v2::{
+    compose_recursive_segment_statements_v2, deserialize_recursive_block_artifact_v2,
+    project_tree_proof_bytes_v2 as recursive_block_proof_bytes_v2, public_replay_v2,
+    prove_block_recursive_v2, recursive_block_artifact_verifier_profile_v2,
+    recursive_block_proof_encoding_digest_v2, recursive_block_public_bytes_v2,
+    recursive_block_tx_line_digest_v2, recursive_segment_end_state_digest_v2,
+    recursive_segment_start_state_digest_v2, recursive_segment_statement_bytes_v2,
+    recursive_segment_statement_digest32_v2, serialize_recursive_block_artifact_v2,
+    serialize_recursive_block_public_v2, verify_block_recursive_v2,
+    BlockRecursiveProverInputV2, HeaderRecTreeV2, RecursiveBlockArtifactV2,
+    RecursiveBlockInnerArtifactV2, RecursiveBlockPublicV2, RecursiveSegmentStatementV2,
+    RECURSIVE_BLOCK_ARTIFACT_VERSION_V2, TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 pub use verifier::verify_block_recursive_v1;
 

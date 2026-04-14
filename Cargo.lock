@@ -1164,6 +1164,7 @@ dependencies = [
  "p3-field",
  "p3-goldilocks",
  "protocol-versioning",
+ "rayon",
  "superneo-backend-lattice",
  "superneo-ccs",
  "superneo-core",

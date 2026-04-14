@@ -2,13 +2,13 @@ use std::cmp::min;
 
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
-use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 use transaction_circuit::{
-    DIGEST_BYTES, NONCE_BYTES, SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS,
-    SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
     SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
-    SmallwoodProofTraceV1, SmallwoodTranscriptBackend, TransactionCircuitError,
+    SmallwoodProofTraceV1, SmallwoodTranscriptBackend, TransactionCircuitError, DIGEST_BYTES,
+    NONCE_BYTES, SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS,
+    SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
 };
+use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
@@ -427,7 +427,11 @@ pub fn xof_decs_opening(
         let mut additional_bits = vec![0u32; opening_challenge_size];
         let mut current_w = 0f64;
         for i in 0..opening_challenge_size {
-            nb_queries[i] = if i < nb_at_max { max_queries } else { min_queries };
+            nb_queries[i] = if i < nb_at_max {
+                max_queries
+            } else {
+                min_queries
+            };
             let exact = log2_order - (nb_queries[i] as f64) * log2_nb_evals;
             additional_bits[i] = exact.floor() as u32;
             current_w += exact - additional_bits[i] as f64;
@@ -457,14 +461,22 @@ pub fn xof_decs_opening(
         for i in nb_at_max..opening_challenge_size {
             let mut value = acc;
             value = (value << additional_bits[i]) % FIELD_ORDER;
-            max_keep[i] = if value == 0 { FIELD_ORDER - 1 } else { value - 1 };
+            max_keep[i] = if value == 0 {
+                FIELD_ORDER - 1
+            } else {
+                value - 1
+            };
         }
         if nb_at_max > 0 {
             acc = mul_mod(acc, nb_evals as u64);
             for i in 0..nb_at_max {
                 let mut value = acc;
                 value = (value << additional_bits[i]) % FIELD_ORDER;
-                max_keep[i] = if value == 0 { FIELD_ORDER - 1 } else { value - 1 };
+                max_keep[i] = if value == 0 {
+                    FIELD_ORDER - 1
+                } else {
+                    value - 1
+                };
             }
         }
         let mut nonce_counter = 0u32;
@@ -729,13 +741,8 @@ pub fn piop_recompute_transcript(
         .iter()
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
-    let in_epol = get_constraint_polynomial_evals(
-        cfg,
-        statement,
-        eval_points,
-        &wit_evals,
-        auxiliary_words,
-    )?;
+    let in_epol =
+        get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
     let in_elin =
         get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
     let linear_targets = effective_linear_targets(statement, auxiliary_words);
@@ -879,7 +886,12 @@ fn get_constraint_linear_evals(
 }
 
 fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) -> Vec<u64> {
-    statement.linear_targets().iter().copied().map(canon).collect()
+    statement
+        .linear_targets()
+        .iter()
+        .copied()
+        .map(canon)
+        .collect()
 }
 
 fn effective_linear_targets(

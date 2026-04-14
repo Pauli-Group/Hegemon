@@ -10,9 +10,9 @@ use crate::{
         BlockSemanticInputsV1,
     },
     relation::{
-        hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
-        hosted_step_binding_bytes_v1, BaseARelationV1, HostedRecursiveProofContextV1,
-        StepARelationV1, StepBRelationV1, recursive_block_shape_digest_v1,
+        hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1, hosted_step_binding_bytes_v1,
+        recursive_block_shape_digest_v1, BaseARelationV1, HostedRecursiveProofContextV1,
+        StepARelationV1, StepBRelationV1,
     },
     statement::{
         recursive_prefix_base_statement_v1, recursive_prefix_progress_tree_commitment_v1,
@@ -21,12 +21,12 @@ use crate::{
     },
     BlockRecursionError,
 };
+use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     encode_smallwood_recursive_proof_envelope_v1, prove_recursive_statement_v1,
     recursive_profile_a_v1, recursive_profile_b_v1, SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1,
 };
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockRecursiveProverInputV1 {
@@ -103,13 +103,12 @@ fn prove_base_context_v1(
         &binding,
     )
     .map_err(|err| static_error("prove base recursive statement failed", err))?;
-    let proof_envelope_bytes = encode_smallwood_recursive_proof_envelope_v1(
-        &SmallwoodRecursiveProofEnvelopeV1 {
+    let proof_envelope_bytes =
+        encode_smallwood_recursive_proof_envelope_v1(&SmallwoodRecursiveProofEnvelopeV1 {
             descriptor,
             proof_bytes: proof,
-        },
-    )
-    .map_err(|err| static_error("encode base recursive proof envelope failed", err))?;
+        })
+        .map_err(|err| static_error("encode base recursive proof envelope failed", err))?;
     Ok(HostedRecursiveProofContextV1::BaseA {
         statement: statement.clone(),
         proof_envelope_bytes,
@@ -149,13 +148,12 @@ fn prove_step_context_v1(
             &binding,
         )
         .map_err(|err| static_error("prove StepB recursive statement failed", err))?;
-        let proof_envelope_bytes = encode_smallwood_recursive_proof_envelope_v1(
-            &SmallwoodRecursiveProofEnvelopeV1 {
+        let proof_envelope_bytes =
+            encode_smallwood_recursive_proof_envelope_v1(&SmallwoodRecursiveProofEnvelopeV1 {
                 descriptor,
                 proof_bytes: proof.clone(),
-            },
-        )
-        .map_err(|err| static_error("encode StepB recursive proof envelope failed", err))?;
+            })
+            .map_err(|err| static_error("encode StepB recursive proof envelope failed", err))?;
         Ok((
             HostedRecursiveProofContextV1::StepB {
                 previous_recursive_proof: Box::new(previous_recursive_proof),
@@ -187,13 +185,12 @@ fn prove_step_context_v1(
             &binding,
         )
         .map_err(|err| static_error("prove StepA recursive statement failed", err))?;
-        let proof_envelope_bytes = encode_smallwood_recursive_proof_envelope_v1(
-            &SmallwoodRecursiveProofEnvelopeV1 {
+        let proof_envelope_bytes =
+            encode_smallwood_recursive_proof_envelope_v1(&SmallwoodRecursiveProofEnvelopeV1 {
                 descriptor,
                 proof_bytes: proof.clone(),
-            },
-        )
-        .map_err(|err| static_error("encode StepA recursive proof envelope failed", err))?;
+            })
+            .map_err(|err| static_error("encode StepA recursive proof envelope failed", err))?;
         Ok((
             HostedRecursiveProofContextV1::StepA {
                 previous_recursive_proof: Box::new(previous_recursive_proof),

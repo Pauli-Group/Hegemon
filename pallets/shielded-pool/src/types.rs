@@ -30,14 +30,14 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// currently `512KiB` on the shipped `v8` product lane.
 pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 
-/// Maximum size of the shipped `recursive_block_v1` artifact payload.
+/// Maximum size of the shipped `recursive_block` artifact payload.
 ///
-/// This is the full serialized `Pi_block(B)` object carried on the recursive lane:
-/// `Header_rec_step || pi_n || Y_rec(B)`.
+/// This is the full serialized `Pi_block(B)` object carried on the recursive lane.
+/// It is intentionally kept as one fail-closed upper bound for both `v1` and `v2`
+/// recursive block artifacts during migration.
 /// It must stay aligned with:
-/// `block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1 +
-///  block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1 +
-///  block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1`.
+/// `block_recursion`'s shipped recursive artifact geometry. The current
+/// product lane is `recursive_block_v1`, with total size `699_404`.
 pub const RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE: usize = 699_404;
 
 /// Maximum size of a native `tx_leaf` artifact payload submitted on the unsigned
@@ -242,6 +242,7 @@ pub enum ProofArtifactKind {
     TxLeaf,
     ReceiptRoot,
     RecursiveBlockV1,
+    RecursiveBlockV2,
     Custom([u8; 16]),
 }
 
@@ -252,6 +253,7 @@ impl ProofArtifactKind {
             Self::TxLeaf => "tx_leaf",
             Self::ReceiptRoot => "receipt_root",
             Self::RecursiveBlockV1 => "recursive_block_v1",
+            Self::RecursiveBlockV2 => "recursive_block_v2",
             Self::Custom(_) => "custom",
         }
     }

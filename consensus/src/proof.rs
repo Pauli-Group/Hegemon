@@ -10,7 +10,9 @@ use crate::types::{
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use block_recursion::{
     BlockLeafRecordV1, BlockSemanticInputsV1, deserialize_recursive_block_artifact_v1,
-    public_replay_v1, recursive_block_artifact_verifier_profile_v1, verify_block_recursive_v1,
+    deserialize_recursive_block_artifact_v2, public_replay_v1, public_replay_v2,
+    recursive_block_artifact_verifier_profile_v1, recursive_block_artifact_verifier_profile_v2,
+    verify_block_recursive_v1, verify_block_recursive_v2,
 };
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
@@ -92,37 +94,6 @@ fn verify_recursive_block_artifact_against_verified_records(
     semantic: &BlockSemanticInputsV1,
     envelope: &ProofEnvelope,
 ) -> Result<BlockArtifactVerifyReport, ProofError> {
-    if envelope.kind != ProofArtifactKind::RecursiveBlockV1 {
-        return Err(ProofError::UnsupportedProofArtifact(format!(
-            "expected {} block artifact, got {}",
-            ProofArtifactKind::RecursiveBlockV1.label(),
-            envelope.kind.label()
-        )));
-    }
-    if envelope.verifier_profile != recursive_block_artifact_verifier_profile() {
-        return Err(ProofError::AggregationProofInputsMismatch(
-            "recursive block requires the recursive verifier profile".to_string(),
-        ));
-    }
-    let parsed =
-        deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes).map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "recursive block artifact decode failed: {err}"
-            ))
-        })?;
-    if parsed.public.tx_count as usize != txs.len() {
-        return Err(ProofError::AggregationProofInputsMismatch(format!(
-            "recursive block tx_count mismatch (payload {}, expected {})",
-            parsed.public.tx_count,
-            txs.len()
-        )));
-    }
-    if parsed.public.tx_statements_commitment != *expected_commitment {
-        return Err(ProofError::AggregationProofInputsMismatch(
-            "recursive block statement commitment mismatch".to_string(),
-        ));
-    }
-
     let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
     let block_records = verified_records
         .iter()
@@ -131,29 +102,101 @@ fn verify_recursive_block_artifact_against_verified_records(
             recursive_block_leaf_record_from_verified(tx_index as u32, record)
         })
         .collect::<Vec<_>>();
-    let expected_public = public_replay_v1(&block_records, semantic).map_err(|err| {
-        ProofError::AggregationProofVerification(format!(
-            "recursive block public replay failed: {err}"
-        ))
-    })?;
-
     let start_verify = Instant::now();
-    verify_block_recursive_v1(&parsed, &expected_public).map_err(|err| {
-        ProofError::AggregationProofVerification(format!(
-            "recursive block verification failed: {err}"
-        ))
-    })?;
-    let verify_ms = start_verify.elapsed().as_millis();
-
-    Ok(BlockArtifactVerifyReport {
-        tx_count: txs.len(),
-        verified_statement_commitment: *expected_commitment,
-        verify_ms,
-        verify_batch_ms: 0,
-        cache_hit: None,
-        cache_build_ms: None,
-        root_verify_mode: Some(ProofArtifactKind::RecursiveBlockV1.label()),
-    })
+    match envelope.kind {
+        ProofArtifactKind::RecursiveBlockV1 => {
+            if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v1() {
+                return Err(ProofError::AggregationProofInputsMismatch(
+                    "recursive_block_v1 requires the v1 verifier profile".to_string(),
+                ));
+            }
+            let parsed =
+                deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes).map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "recursive_block_v1 artifact decode failed: {err}"
+                    ))
+                })?;
+            if parsed.public.tx_count as usize != txs.len() {
+                return Err(ProofError::AggregationProofInputsMismatch(format!(
+                    "recursive_block_v1 tx_count mismatch (payload {}, expected {})",
+                    parsed.public.tx_count,
+                    txs.len()
+                )));
+            }
+            if parsed.public.tx_statements_commitment != *expected_commitment {
+                return Err(ProofError::AggregationProofInputsMismatch(
+                    "recursive_block_v1 statement commitment mismatch".to_string(),
+                ));
+            }
+            let expected_public = public_replay_v1(&block_records, semantic).map_err(|err| {
+                ProofError::AggregationProofVerification(format!(
+                    "recursive_block_v1 public replay failed: {err}"
+                ))
+            })?;
+            verify_block_recursive_v1(&parsed, &expected_public).map_err(|err| {
+                ProofError::AggregationProofVerification(format!(
+                    "recursive_block_v1 verification failed: {err}"
+                ))
+            })?;
+            Ok(BlockArtifactVerifyReport {
+                tx_count: txs.len(),
+                verified_statement_commitment: *expected_commitment,
+                verify_ms: start_verify.elapsed().as_millis(),
+                verify_batch_ms: 0,
+                cache_hit: None,
+                cache_build_ms: None,
+                root_verify_mode: Some(ProofArtifactKind::RecursiveBlockV1.label()),
+            })
+        }
+        ProofArtifactKind::RecursiveBlockV2 => {
+            if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v2() {
+                return Err(ProofError::AggregationProofInputsMismatch(
+                    "recursive_block_v2 requires the v2 verifier profile".to_string(),
+                ));
+            }
+            let parsed =
+                deserialize_recursive_block_artifact_v2(&envelope.artifact_bytes).map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "recursive_block_v2 artifact decode failed: {err}"
+                    ))
+                })?;
+            if parsed.public.tx_count as usize != txs.len() {
+                return Err(ProofError::AggregationProofInputsMismatch(format!(
+                    "recursive_block_v2 tx_count mismatch (payload {}, expected {})",
+                    parsed.public.tx_count,
+                    txs.len()
+                )));
+            }
+            if parsed.public.tx_statements_commitment != *expected_commitment {
+                return Err(ProofError::AggregationProofInputsMismatch(
+                    "recursive_block_v2 statement commitment mismatch".to_string(),
+                ));
+            }
+            let expected_public = public_replay_v2(&block_records, semantic).map_err(|err| {
+                ProofError::AggregationProofVerification(format!(
+                    "recursive_block_v2 public replay failed: {err}"
+                ))
+            })?;
+            verify_block_recursive_v2(&parsed, &expected_public).map_err(|err| {
+                ProofError::AggregationProofVerification(format!(
+                    "recursive_block_v2 verification failed: {err}"
+                ))
+            })?;
+            Ok(BlockArtifactVerifyReport {
+                tx_count: txs.len(),
+                verified_statement_commitment: *expected_commitment,
+                verify_ms: start_verify.elapsed().as_millis(),
+                verify_batch_ms: 0,
+                cache_hit: None,
+                cache_build_ms: None,
+                root_verify_mode: Some(ProofArtifactKind::RecursiveBlockV2.label()),
+            })
+        }
+        _ => Err(ProofError::UnsupportedProofArtifact(format!(
+            "expected recursive_block_v1 or recursive_block_v2 artifact, got {}",
+            envelope.kind.label()
+        ))),
+    }
 }
 
 fn recursive_block_semantic_inputs_from_block(
@@ -346,7 +389,12 @@ impl Default for VerifierRegistry {
         registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(NativeTxLeafVerifier));
         registry.register(Arc::new(ReceiptRootVerifier));
-        registry.register(Arc::new(RecursiveBlockVerifier));
+        registry.register(Arc::new(RecursiveBlockVerifier {
+            kind: ProofArtifactKind::RecursiveBlockV1,
+        }));
+        registry.register(Arc::new(RecursiveBlockVerifier {
+            kind: ProofArtifactKind::RecursiveBlockV2,
+        }));
         registry
     }
 }
@@ -730,15 +778,25 @@ pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
     recursive_block_artifact_verifier_profile_v1()
 }
 
-struct RecursiveBlockVerifier;
+struct RecursiveBlockVerifier {
+    kind: ProofArtifactKind,
+}
 
 impl ArtifactVerifier for RecursiveBlockVerifier {
     fn kind(&self) -> ProofArtifactKind {
-        ProofArtifactKind::RecursiveBlockV1
+        self.kind
     }
 
     fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
-        verifier_profile == recursive_block_artifact_verifier_profile()
+        match self.kind {
+            ProofArtifactKind::RecursiveBlockV1 => {
+                verifier_profile == recursive_block_artifact_verifier_profile_v1()
+            }
+            ProofArtifactKind::RecursiveBlockV2 => {
+                verifier_profile == recursive_block_artifact_verifier_profile_v2()
+            }
+            _ => false,
+        }
     }
 
     fn verify_block_artifact(
@@ -755,46 +813,90 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                 envelope.kind.label()
             )));
         }
-        if envelope.verifier_profile != recursive_block_artifact_verifier_profile() {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "recursive block requires the recursive verifier profile".to_string(),
-            ));
+        match self.kind {
+            ProofArtifactKind::RecursiveBlockV1 => {
+                if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v1() {
+                    return Err(ProofError::AggregationProofInputsMismatch(
+                        "recursive_block_v1 requires the v1 verifier profile".to_string(),
+                    ));
+                }
+                let parsed = deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes)
+                    .map_err(|err| {
+                        ProofError::AggregationProofVerification(format!(
+                            "recursive_block_v1 artifact decode failed: {err}"
+                        ))
+                    })?;
+                if parsed.artifact.header.artifact_version_rec
+                    != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V1
+                {
+                    return Err(ProofError::AggregationProofInputsMismatch(format!(
+                        "recursive_block_v1 header version mismatch: {}",
+                        parsed.artifact.header.artifact_version_rec
+                    )));
+                }
+                if parsed.public.tx_count as usize != txs.len() {
+                    return Err(ProofError::AggregationProofInputsMismatch(format!(
+                        "recursive_block_v1 tx_count mismatch (payload {}, expected {})",
+                        parsed.public.tx_count,
+                        txs.len()
+                    )));
+                }
+                if parsed.public.tx_statements_commitment != *expected_commitment {
+                    return Err(ProofError::AggregationProofInputsMismatch(
+                        "recursive_block_v1 statement commitment mismatch".to_string(),
+                    ));
+                }
+                verify_block_recursive_v1(&parsed, &parsed.public).map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "recursive_block_v1 verification failed: {err}"
+                    ))
+                })?;
+            }
+            ProofArtifactKind::RecursiveBlockV2 => {
+                if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v2() {
+                    return Err(ProofError::AggregationProofInputsMismatch(
+                        "recursive_block_v2 requires the v2 verifier profile".to_string(),
+                    ));
+                }
+                let parsed = deserialize_recursive_block_artifact_v2(&envelope.artifact_bytes)
+                    .map_err(|err| {
+                        ProofError::AggregationProofVerification(format!(
+                            "recursive_block_v2 artifact decode failed: {err}"
+                        ))
+                    })?;
+                if parsed.artifact.header.artifact_version_rec
+                    != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V2
+                {
+                    return Err(ProofError::AggregationProofInputsMismatch(format!(
+                        "recursive_block_v2 header version mismatch: {}",
+                        parsed.artifact.header.artifact_version_rec
+                    )));
+                }
+                if parsed.public.tx_count as usize != txs.len() {
+                    return Err(ProofError::AggregationProofInputsMismatch(format!(
+                        "recursive_block_v2 tx_count mismatch (payload {}, expected {})",
+                        parsed.public.tx_count,
+                        txs.len()
+                    )));
+                }
+                if parsed.public.tx_statements_commitment != *expected_commitment {
+                    return Err(ProofError::AggregationProofInputsMismatch(
+                        "recursive_block_v2 statement commitment mismatch".to_string(),
+                    ));
+                }
+                verify_block_recursive_v2(&parsed, &parsed.public).map_err(|err| {
+                    ProofError::AggregationProofVerification(format!(
+                        "recursive_block_v2 verification failed: {err}"
+                    ))
+                })?;
+            }
+            _ => {
+                return Err(ProofError::UnsupportedProofArtifact(format!(
+                    "proof kind {} does not support recursive block verification",
+                    self.kind.label()
+                )))
+            }
         }
-
-        let parsed =
-            deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes).map_err(|err| {
-                ProofError::AggregationProofVerification(format!(
-                    "recursive block artifact decode failed: {err}"
-                ))
-            })?;
-        if parsed.artifact.header.artifact_version_rec
-            != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V1
-        {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "recursive block header version mismatch: {}",
-                parsed.artifact.header.artifact_version_rec
-            )));
-        }
-
-        let public = &parsed.public;
-        if public.tx_count as usize != txs.len() {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "recursive block tx_count mismatch (payload {}, expected {})",
-                public.tx_count,
-                txs.len()
-            )));
-        }
-        if public.tx_statements_commitment != *expected_commitment {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "recursive block statement commitment mismatch".to_string(),
-            ));
-        }
-
-        verify_block_recursive_v1(&parsed, public).map_err(|err| {
-            ProofError::AggregationProofVerification(format!(
-                "recursive block verification failed: {err}"
-            ))
-        })?;
 
         Ok(BlockArtifactVerifyReport {
             tx_count: txs.len(),
@@ -2278,8 +2380,8 @@ mod tests {
         );
     }
 
-    fn sample_recursive_block_artifact(tx_count: u32) -> block_recursion::RecursiveBlockArtifactV1 {
-        let records = (0..tx_count)
+    fn sample_recursive_records(tx_count: u32) -> Vec<block_recursion::BlockLeafRecordV1> {
+        (0..tx_count)
             .map(|tx_index| block_recursion::BlockLeafRecordV1 {
                 tx_index,
                 receipt_statement_hash: [0x10u8.wrapping_add(tx_index as u8); 48],
@@ -2294,8 +2396,11 @@ mod tests {
                 leaf_commitment_digest: [0xa0u8.wrapping_add(tx_index as u8); 48],
                 leaf_proof_digest: [0xb0u8.wrapping_add(tx_index as u8); 48],
             })
-            .collect::<Vec<_>>();
-        let semantic = block_recursion::BlockSemanticInputsV1 {
+            .collect::<Vec<_>>()
+    }
+
+    fn sample_recursive_semantic() -> block_recursion::BlockSemanticInputsV1 {
+        block_recursion::BlockSemanticInputsV1 {
             tx_statements_commitment: [0u8; 48],
             start_shielded_root: [3u8; 48],
             end_shielded_root: [4u8; 48],
@@ -2305,24 +2410,65 @@ mod tests {
             da_root: [8u8; 48],
             start_tree_commitment: [9u8; 48],
             end_tree_commitment: [10u8; 48],
-        };
+        }
+    }
+
+    fn sample_recursive_block_artifact_v1(
+        tx_count: u32,
+    ) -> block_recursion::RecursiveBlockArtifactV1 {
+        let records = sample_recursive_records(tx_count);
+        let semantic = sample_recursive_semantic();
         block_recursion::prove_block_recursive_v1(&block_recursion::BlockRecursiveProverInputV1 {
             records,
             semantic,
         })
-        .expect("prove recursive artifact")
+        .expect("prove recursive_block_v1 artifact")
+    }
+
+    fn sample_recursive_block_artifact_v2(
+        tx_count: u32,
+    ) -> block_recursion::RecursiveBlockArtifactV2 {
+        let records = sample_recursive_records(tx_count);
+        let semantic = sample_recursive_semantic();
+        block_recursion::prove_block_recursive_v2(&block_recursion::BlockRecursiveProverInputV2 {
+            records,
+            semantic,
+        })
+        .expect("prove recursive_block_v2 artifact")
     }
 
     #[test]
-    fn recursive_block_verifier_is_registered_and_accepts_valid_artifact() {
+    #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+    fn recursive_block_v2_verifier_is_registered_and_accepts_valid_artifact() {
         let registry = VerifierRegistry::default();
         let verifier_profile = recursive_block_artifact_verifier_profile();
         let verifier = registry
+            .resolve(ProofArtifactKind::RecursiveBlockV2, verifier_profile)
+            .expect("recursive_block_v2 verifier registered");
+        let artifact = sample_recursive_block_artifact_v2(1);
+        let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+            .expect("serialize recursive_block_v2 artifact");
+        let envelope = ProofEnvelope {
+            kind: ProofArtifactKind::RecursiveBlockV2,
+            verifier_profile,
+            artifact_bytes: bytes,
+        };
+        let report = verifier
+            .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
+            .expect("recursive_block_v2 verifier should accept a structurally valid artifact");
+        assert_eq!(report.tx_count, 1);
+    }
+
+    #[test]
+    fn recursive_block_v1_verifier_is_registered_and_accepts_valid_artifact() {
+        let registry = VerifierRegistry::default();
+        let verifier_profile = recursive_block_artifact_verifier_profile_v1();
+        let verifier = registry
             .resolve(ProofArtifactKind::RecursiveBlockV1, verifier_profile)
-            .expect("recursive verifier registered");
-        let artifact = sample_recursive_block_artifact(1);
+            .expect("recursive_block_v1 verifier registered");
+        let artifact = sample_recursive_block_artifact_v1(1);
         let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
-            .expect("serialize recursive artifact");
+            .expect("serialize recursive_block_v1 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
             verifier_profile,
@@ -2335,14 +2481,36 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_verifier_rejects_tx_count_mismatch() {
-        let verifier = RecursiveBlockVerifier;
-        let artifact = sample_recursive_block_artifact(1);
+    fn recursive_block_v1_verifier_rejects_tx_count_mismatch() {
+        let verifier = RecursiveBlockVerifier {
+            kind: ProofArtifactKind::RecursiveBlockV1,
+        };
+        let artifact = sample_recursive_block_artifact_v1(1);
         let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
             .expect("serialize recursive artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
-            verifier_profile: recursive_block_artifact_verifier_profile(),
+            verifier_profile: recursive_block_artifact_verifier_profile_v1(),
+            artifact_bytes: bytes,
+        };
+        let err = verifier
+            .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
+            .expect_err("tx_count mismatch");
+        assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+    }
+
+    #[test]
+    #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+    fn recursive_block_v2_verifier_rejects_tx_count_mismatch() {
+        let verifier = RecursiveBlockVerifier {
+            kind: ProofArtifactKind::RecursiveBlockV2,
+        };
+        let artifact = sample_recursive_block_artifact_v2(1);
+        let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+            .expect("serialize recursive_block_v2 artifact");
+        let envelope = ProofEnvelope {
+            kind: ProofArtifactKind::RecursiveBlockV2,
+            verifier_profile: recursive_block_artifact_verifier_profile_v2(),
             artifact_bytes: bytes,
         };
         let err = verifier

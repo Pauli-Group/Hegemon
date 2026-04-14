@@ -2,36 +2,43 @@ use std::sync::OnceLock;
 
 use crate::local_smallwood_poseidon2::SmallwoodConfig as LocalSmallwoodConfig;
 use crate::relation::{
-    debug_step_witness_validation_reason_from_words_with_limb_count_v1,
     debug_step_witness_validation_from_words_with_limb_count_v1,
+    debug_step_witness_validation_reason_from_words_with_limb_count_v1,
     debug_step_witness_validation_v1,
 };
 
 use super::{
-    deserialize_recursive_block_artifact_v1, hosted_base_binding_bytes_v1,
-    hosted_recursive_descriptor_v1, hosted_recursive_proof_witness_layout_v1,
-    hosted_recursive_proof_witness_words_v1, hosted_step_binding_bytes_v1,
-    previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, public_replay_v1,
-    serialize_recursive_block_artifact_v1, serialize_recursive_block_public_v1,
-    step_recursive_witness_layout_v1, step_recursive_witness_words_v1,
-    verify_block_recursive_v1, verify_hosted_recursive_proof_context_binding_trace_v1,
+    compose_recursive_segment_statements_v1, deserialize_recursive_block_artifact_v1,
+    deserialize_recursive_block_artifact_v2,
+    hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
+    hosted_recursive_proof_witness_layout_v1, hosted_recursive_proof_witness_words_v1,
+    hosted_step_binding_bytes_v1, prefix_statement_for_records_v1,
+    previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, prove_block_recursive_v2,
+    public_replay_v1, public_replay_v2,
+    recursive_block_artifact_verifier_profile_v2, serialize_recursive_block_artifact_v2,
+    segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_public_v1, step_recursive_witness_layout_v1,
+    step_recursive_witness_words_v1, verify_block_recursive_v1,
+    verify_block_recursive_v2, BlockRecursiveProverInputV2, RecursiveBlockArtifactV2,
+    RecursiveBlockPublicV2,
+    verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
     verify_hosted_recursive_proof_context_descriptor_shape_v1,
     verify_hosted_recursive_proof_context_pcs_v1, verify_recursive_proof_envelope_components_v1,
     BaseARelationV1, BlockLeafRecordV1, BlockRecursionError, BlockRecursiveProverInputV1,
     BlockSemanticInputsV1, HostedRecursiveProofContextV1, RecursiveBlockArtifactV1,
-    RecursiveBlockPublicV1, RecursivePrefixStatementV1, StepARelationV1, StepBRelationV1,
+    RecursiveBlockPublicV1, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
+    StepARelationV1, StepBRelationV1,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
-    decode_smallwood_proof_trace_v1,
-    decode_smallwood_recursive_proof_envelope_v1, encode_smallwood_recursive_proof_envelope_v1,
-    prove_recursive_statement_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    verify_recursive_statement_v1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
-    SmallwoodRecursiveProfileTagV1,
-    SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
+    decode_smallwood_proof_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
+    encode_smallwood_recursive_proof_envelope_v1, prove_recursive_statement_v1,
+    recursive_profile_a_v1, recursive_profile_b_v1, verify_recursive_statement_v1,
+    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
+    SmallwoodNonlinearEvalView, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveProofEnvelopeV1,
+    SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
 };
 
 fn digest32(tag: u8, idx: u32) -> [u8; 32] {
@@ -183,8 +190,7 @@ fn prove_artifact_uncached(tx_count: u32) -> (RecursiveBlockArtifactV1, Recursiv
 fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
     static ONE_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
     static TWO_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
-    static FIVE_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> =
-        OnceLock::new();
+    static FIVE_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
 
     match tx_count {
         1 => ONE_TX.get_or_init(|| prove_artifact_uncached(1)).clone(),
@@ -196,6 +202,29 @@ fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPub
 
 fn cached_two_tx_artifact() -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
     prove_artifact(2)
+}
+
+fn prove_artifact_v2_uncached(tx_count: u32) -> (RecursiveBlockArtifactV2, RecursiveBlockPublicV2) {
+    let input = sample_input(tx_count);
+    let public = public_replay_v2(&input.records, &input.semantic).unwrap();
+    let artifact = prove_block_recursive_v2(&BlockRecursiveProverInputV2 {
+        records: input.records.clone(),
+        semantic: input.semantic.clone(),
+    })
+    .unwrap();
+    assert_eq!(artifact.public, public);
+    (artifact, public)
+}
+
+fn prove_artifact_v2(tx_count: u32) -> (RecursiveBlockArtifactV2, RecursiveBlockPublicV2) {
+    static ONE_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> = OnceLock::new();
+    static FIVE_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> = OnceLock::new();
+
+    match tx_count {
+        1 => ONE_TX.get_or_init(|| prove_artifact_v2_uncached(1)).clone(),
+        5 => FIVE_TX.get_or_init(|| prove_artifact_v2_uncached(5)).clone(),
+        _ => prove_artifact_v2_uncached(tx_count),
+    }
 }
 
 fn base_prefix_statement() -> RecursivePrefixStatementV1 {
@@ -246,6 +275,22 @@ fn step_statement_pair() -> (
         end_tree_commitment: digest48(0x14, 1),
     };
     (previous, leaf, target)
+}
+
+fn compose_segment_chain_v1(
+    segments: &[RecursiveSegmentStatementV1],
+) -> Result<RecursiveSegmentStatementV1, BlockRecursionError> {
+    let mut iter = segments.iter();
+    let mut acc = iter
+        .next()
+        .cloned()
+        .ok_or(BlockRecursionError::ComposeCheckFailed(
+            "empty segment chain",
+        ))?;
+    for segment in iter {
+        acc = compose_recursive_segment_statements_v1(&acc, segment)?;
+    }
+    Ok(acc)
 }
 
 fn base_a_context_v1() -> HostedRecursiveProofContextV1 {
@@ -442,10 +487,138 @@ fn public_replay_matches_semantic_tuple() {
 }
 
 #[test]
+fn segment_statement_matches_direct_full_interval_replay() {
+    let input = sample_input(5);
+    let left = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 2).unwrap();
+    let right = segment_statement_for_interval_v1(&input.records, &input.semantic, 2, 5).unwrap();
+    let composed = compose_recursive_segment_statements_v1(&left, &right).unwrap();
+    let direct = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 5).unwrap();
+    assert_eq!(composed, direct);
+    assert_eq!(direct.segment_len, 5);
+    assert_eq!(direct.start_index, 0);
+    assert_eq!(direct.end_index, 5);
+}
+
+#[test]
+fn segment_statement_multi_partition_composition_matches_direct_replay() {
+    let input = sample_input(5);
+    let segments = vec![
+        segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 1).unwrap(),
+        segment_statement_for_interval_v1(&input.records, &input.semantic, 1, 3).unwrap(),
+        segment_statement_for_interval_v1(&input.records, &input.semantic, 3, 5).unwrap(),
+    ];
+    let composed = compose_segment_chain_v1(&segments).unwrap();
+    let direct = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 5).unwrap();
+    assert_eq!(composed, direct);
+}
+
+#[test]
+fn segment_statement_rejects_gap() {
+    let input = sample_input(5);
+    let left = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 2).unwrap();
+    let right = segment_statement_for_interval_v1(&input.records, &input.semantic, 3, 5).unwrap();
+    let err = compose_recursive_segment_statements_v1(&left, &right).unwrap_err();
+    assert!(matches!(
+        err,
+        BlockRecursionError::ComposeCheckFailed("segment statements must be adjacent")
+    ));
+}
+
+#[test]
+fn segment_statement_rejects_overlap() {
+    let input = sample_input(5);
+    let left = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 3).unwrap();
+    let right = segment_statement_for_interval_v1(&input.records, &input.semantic, 2, 5).unwrap();
+    let err = compose_recursive_segment_statements_v1(&left, &right).unwrap_err();
+    assert!(matches!(
+        err,
+        BlockRecursionError::ComposeCheckFailed("segment statements must be adjacent")
+    ));
+}
+
+#[test]
+fn segment_statement_rejects_reordered_children() {
+    let input = sample_input(5);
+    let left = segment_statement_for_interval_v1(&input.records, &input.semantic, 0, 2).unwrap();
+    let right = segment_statement_for_interval_v1(&input.records, &input.semantic, 2, 5).unwrap();
+    let err = compose_recursive_segment_statements_v1(&right, &left).unwrap_err();
+    assert!(matches!(
+        err,
+        BlockRecursionError::ComposeCheckFailed("segment statements must be adjacent")
+    ));
+}
+
+#[test]
+fn segment_statement_prefix_builder_matches_interval_start_boundary() {
+    let input = sample_input(5);
+    let prefix =
+        prefix_statement_for_records_v1(&input.records[..2], &input.semantic, false).unwrap();
+    let segment = segment_statement_for_interval_v1(&input.records, &input.semantic, 2, 5).unwrap();
+    assert_eq!(segment.start_index, 2);
+    assert_eq!(segment.start_state_digest, prefix.end_state_digest);
+    assert_eq!(
+        segment.start_verified_leaf_commitment,
+        prefix.verified_leaf_commitment
+    );
+    assert_eq!(
+        segment.start_verified_receipt_commitment,
+        prefix.verified_receipt_commitment
+    );
+    assert_eq!(segment.start_tree_commitment, prefix.end_tree_commitment);
+}
+
+#[test]
 fn prove_and_verify_recursive_artifact_succeeds() {
     let (artifact, public) = cached_two_tx_artifact();
     let verified = verify_block_recursive_v1(&artifact, &public).unwrap();
     assert_eq!(verified, public);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn prove_and_verify_recursive_artifact_v2_succeeds() {
+    let (artifact, public) = prove_artifact_v2(5);
+    let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
+    assert_eq!(verified, public);
+    assert_eq!(
+        recursive_block_artifact_verifier_profile_v2(),
+        recursive_block_artifact_verifier_profile_v2()
+    );
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v2_constant_size_across_tx_counts() {
+    let short = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
+        .unwrap()
+        .len();
+    let long = serialize_recursive_block_artifact_v2(&prove_artifact_v2(5).0)
+        .unwrap()
+        .len();
+    assert_eq!(short, long);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v2_matches_shipped_constant_width() {
+    let width = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
+        .unwrap()
+        .len();
+    assert_eq!(width, 699_404);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v1_and_v2_fail_closed_cross_version() {
+    let (artifact_v1, _public_v1) = cached_two_tx_artifact();
+    let bytes_v1 = serialize_recursive_block_artifact_v1(&artifact_v1).unwrap();
+    let parsed_v2 = deserialize_recursive_block_artifact_v2(&bytes_v1);
+    assert!(parsed_v2.is_err());
+
+    let (artifact_v2, _public_v2) = prove_artifact_v2(1);
+    let bytes_v2 = serialize_recursive_block_artifact_v2(&artifact_v2).unwrap();
+    let parsed_v1 = deserialize_recursive_block_artifact_v1(&bytes_v2);
+    assert!(parsed_v1.is_err());
 }
 
 #[test]

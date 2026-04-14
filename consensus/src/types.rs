@@ -228,6 +228,7 @@ pub enum ProofArtifactKind {
     TxLeaf,
     ReceiptRoot,
     RecursiveBlockV1,
+    RecursiveBlockV2,
     Custom([u8; 16]),
 }
 
@@ -238,6 +239,7 @@ impl ProofArtifactKind {
             Self::TxLeaf => "tx_leaf",
             Self::ReceiptRoot => "receipt_root",
             Self::RecursiveBlockV1 => "recursive_block_v1",
+            Self::RecursiveBlockV2 => "recursive_block_v2",
             Self::Custom(_) => "custom",
         }
     }

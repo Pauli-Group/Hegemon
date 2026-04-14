@@ -3669,10 +3669,9 @@ mod tests {
                 .proof
                 .data = vec![0u8; types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE];
 
-            let meta = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
-                &payload,
-            )
-            .expect("recursive product lane size cap should be accepted");
+            let meta =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect("recursive product lane size cap should be accepted");
 
             assert!(!meta.propagate);
             assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));

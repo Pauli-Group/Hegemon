@@ -136,7 +136,8 @@ use crate::substrate::transaction_pool::{
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use block_recursion::{
-    prove_block_recursive_v1, BlockLeafRecordV1, BlockRecursiveProverInputV1, BlockSemanticInputsV1,
+    prove_block_recursive_v1, BlockLeafRecordV1, BlockRecursiveProverInputV1,
+    BlockSemanticInputsV1, RecursiveBlockArtifactV1,
 };
 use codec::Decode;
 use codec::Encode;
@@ -3068,10 +3069,10 @@ fn build_receipt_root_proof_from_materials_with_plan(
 }
 
 fn recursive_block_payload_from_artifact(
-    artifact: block_recursion::RecursiveBlockArtifactV1,
+    artifact: RecursiveBlockArtifactV1,
 ) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
     let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
-        .map_err(|err| format!("serialize recursive block artifact failed: {err}"))?;
+        .map_err(|err| format!("serialize recursive_block_v1 artifact failed: {err}"))?;
     Ok(pallet_shielded_pool::types::RecursiveBlockProofPayload {
         proof: pallet_shielded_pool::types::StarkProof::from_bytes(bytes),
     })
@@ -3117,7 +3118,7 @@ fn build_recursive_block_proof_from_materials(
         records,
         semantic: semantic.clone(),
     })
-    .map_err(|err| format!("recursive block artifact generation failed: {err}"))?;
+    .map_err(|err| format!("recursive_block_v1 artifact generation failed: {err}"))?;
     recursive_block_payload_from_artifact(artifact)
 }
 
@@ -5122,6 +5123,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
         selector.proof_kind,
         pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
             | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
     );
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
@@ -5154,7 +5156,8 @@ fn mining_pause_reason_for_pending_shielded_batch(
             shielded_tx_count,
             missing.len()
         ),
-        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1 => format!(
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2 => format!(
             "recursive_block shielded batch waiting for prepared bundle (tx_count={}, missing_bindings={})",
             shielded_tx_count,
             missing.len()
@@ -11076,6 +11079,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     consensus::ProofArtifactKind::RecursiveBlockV1 => {
                                         pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
                                     }
+                                    consensus::ProofArtifactKind::RecursiveBlockV2 => {
+                                        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+                                    }
                                     consensus::ProofArtifactKind::Custom(bytes) => {
                                         pallet_shielded_pool::types::ProofArtifactKind::Custom(
                                             bytes,
@@ -11107,6 +11113,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             selected_artifact.proof_kind,
             pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
                 | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+                | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();

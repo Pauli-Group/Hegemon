@@ -241,7 +241,11 @@ pub fn deserialize_header_rec_step_v1(
         value if value == SmallwoodRecursiveRelationKindV1::BaseA.tag() => {}
         value if value == SmallwoodRecursiveRelationKindV1::StepA.tag() => {}
         value if value == SmallwoodRecursiveRelationKindV1::StepB.tag() => {}
-        _ => return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k")),
+        _ => {
+            return Err(BlockRecursionError::InvalidField(
+                "terminal_relation_kind_k",
+            ))
+        }
     }
     if header.proof_bytes_rec != RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32 {
         return Err(BlockRecursionError::InvalidField("proof_bytes_rec"));
@@ -283,7 +287,9 @@ pub fn deserialize_recursive_block_inner_artifact_v1(
     let header = deserialize_header_rec_step_v1(&bytes[..RECURSIVE_BLOCK_HEADER_BYTES_V1])?;
     let proof_end = RECURSIVE_BLOCK_HEADER_BYTES_V1
         .checked_add(header.proof_bytes_rec as usize)
-        .ok_or(BlockRecursionError::InvalidField("proof_bytes_rec overflow"))?;
+        .ok_or(BlockRecursionError::InvalidField(
+            "proof_bytes_rec overflow",
+        ))?;
     if proof_end > bytes.len() {
         return Err(BlockRecursionError::InvalidLength {
             what: "recursive_block_inner_proof_bytes",
@@ -297,7 +303,10 @@ pub fn deserialize_recursive_block_inner_artifact_v1(
             remaining: bytes.len() - proof_end,
         });
     }
-    Ok(RecursiveBlockInnerArtifactV1 { header, proof_bytes })
+    Ok(RecursiveBlockInnerArtifactV1 {
+        header,
+        proof_bytes,
+    })
 }
 
 pub fn deserialize_recursive_block_artifact_rec_v1(
@@ -328,10 +337,14 @@ pub fn deserialize_recursive_block_artifact_v1(
     let header = deserialize_header_rec_step_v1(&bytes[..RECURSIVE_BLOCK_HEADER_BYTES_V1])?;
     let proof_end = RECURSIVE_BLOCK_HEADER_BYTES_V1
         .checked_add(header.proof_bytes_rec as usize)
-        .ok_or(BlockRecursionError::InvalidField("proof_bytes_rec overflow"))?;
+        .ok_or(BlockRecursionError::InvalidField(
+            "proof_bytes_rec overflow",
+        ))?;
     let public_end = proof_end
         .checked_add(RECURSIVE_BLOCK_PUBLIC_BYTES_V1)
-        .ok_or(BlockRecursionError::InvalidField("recursive artifact length overflow"))?;
+        .ok_or(BlockRecursionError::InvalidField(
+            "recursive artifact length overflow",
+        ))?;
     if public_end > bytes.len() {
         return Err(BlockRecursionError::InvalidLength {
             what: "recursive_block_artifact_bytes",
@@ -348,7 +361,10 @@ pub fn deserialize_recursive_block_artifact_v1(
         });
     }
     Ok(RecursiveBlockArtifactV1 {
-        artifact: RecursiveBlockInnerArtifactV1 { header, proof_bytes },
+        artifact: RecursiveBlockInnerArtifactV1 {
+            header,
+            proof_bytes,
+        },
         public,
     })
 }

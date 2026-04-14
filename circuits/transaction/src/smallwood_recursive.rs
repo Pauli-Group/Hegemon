@@ -42,6 +42,11 @@ pub enum SmallwoodRecursiveRelationKindV1 {
     BaseA,
     StepA,
     StepB,
+    ChunkA,
+    MergeA,
+    MergeB,
+    CarryA,
+    CarryB,
 }
 
 impl SmallwoodRecursiveRelationKindV1 {
@@ -50,6 +55,11 @@ impl SmallwoodRecursiveRelationKindV1 {
             Self::BaseA => 1,
             Self::StepA => 2,
             Self::StepB => 3,
+            Self::ChunkA => 4,
+            Self::MergeA => 5,
+            Self::MergeB => 6,
+            Self::CarryA => 7,
+            Self::CarryB => 8,
         }
     }
 }

@@ -7,19 +7,19 @@ use crate::{
     },
     public_replay::RecursiveBlockPublicV1,
     relation::{
-        hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
-        hosted_step_binding_bytes_v1, recursive_block_shape_digest_v1, BaseARelationV1,
-        StepARelationV1, StepBRelationV1,
+        hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1, hosted_step_binding_bytes_v1,
+        recursive_block_shape_digest_v1, BaseARelationV1, StepARelationV1, StepBRelationV1,
     },
-    statement::{recursive_prefix_statement_digest32_v1, recursive_prefix_statement_from_public_v1},
+    statement::{
+        recursive_prefix_statement_digest32_v1, recursive_prefix_statement_from_public_v1,
+    },
     BlockRecursionError,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
     recursive_profile_a_v1, recursive_profile_b_v1, verify_recursive_statement_v1,
-    SmallwoodConstraintAdapter, SmallwoodRecursiveProfileTagV1,
-    SmallwoodRecursiveRelationKindV1,
+    SmallwoodConstraintAdapter, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
 };
 
 fn static_error(prefix: &'static str, err: impl core::fmt::Display) -> BlockRecursionError {
@@ -85,6 +85,13 @@ fn expected_terminal_proof_bytes_v1(
         SmallwoodRecursiveRelationKindV1::BaseA => Err(BlockRecursionError::InvalidField(
             "terminal_relation_kind_k",
         )),
+        SmallwoodRecursiveRelationKindV1::ChunkA
+        | SmallwoodRecursiveRelationKindV1::MergeA
+        | SmallwoodRecursiveRelationKindV1::MergeB
+        | SmallwoodRecursiveRelationKindV1::CarryA
+        | SmallwoodRecursiveRelationKindV1::CarryB => Err(BlockRecursionError::InvalidField(
+            "terminal_relation_kind_k",
+        )),
     }
 }
 
@@ -107,8 +114,12 @@ fn build_terminal_relation_v1(
         .map_err(|err| static_error("decode recursive proof trace failed", err))?;
     let descriptor = hosted_recursive_descriptor_v1(profile_tag, relation_kind);
     let profile = match profile_tag {
-        SmallwoodRecursiveProfileTagV1::A => recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
-        SmallwoodRecursiveProfileTagV1::B => recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        SmallwoodRecursiveProfileTagV1::A => {
+            recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+        }
+        SmallwoodRecursiveProfileTagV1::B => {
+            recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+        }
     };
     let relation: Box<dyn SmallwoodConstraintAdapter + Sync> = match relation_kind {
         SmallwoodRecursiveRelationKindV1::BaseA => {
@@ -130,11 +141,25 @@ fn build_terminal_relation_v1(
             )
             .map_err(|err| static_error("rebuild StepB relation from proof witness failed", err))?,
         ),
+        SmallwoodRecursiveRelationKindV1::ChunkA
+        | SmallwoodRecursiveRelationKindV1::MergeA
+        | SmallwoodRecursiveRelationKindV1::MergeB
+        | SmallwoodRecursiveRelationKindV1::CarryA
+        | SmallwoodRecursiveRelationKindV1::CarryB => {
+            return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k"))
+        }
     };
     let binding = match relation_kind {
         SmallwoodRecursiveRelationKindV1::BaseA => hosted_base_binding_bytes_v1(&statement),
         SmallwoodRecursiveRelationKindV1::StepA | SmallwoodRecursiveRelationKindV1::StepB => {
             hosted_step_binding_bytes_v1(&statement)
+        }
+        SmallwoodRecursiveRelationKindV1::ChunkA
+        | SmallwoodRecursiveRelationKindV1::MergeA
+        | SmallwoodRecursiveRelationKindV1::MergeB
+        | SmallwoodRecursiveRelationKindV1::CarryA
+        | SmallwoodRecursiveRelationKindV1::CarryB => {
+            return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k"))
         }
     };
     Ok((profile, descriptor, relation, binding))
@@ -174,18 +199,15 @@ pub fn verify_block_recursive_v1(
         return Err(BlockRecursionError::InvalidField("proof_bytes_rec padding"));
     }
 
-    let (profile, descriptor, relation, binding) =
-        build_terminal_relation_v1(
-            relation_kind,
-            profile_tag,
-            expected_public,
-            &inner.proof_bytes[..actual_proof_bytes],
-        )?;
-    let projected_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
-        &profile,
-        relation.as_ref(),
-    )
-    .map_err(|err| static_error("project recursive proof bytes failed", err))?;
+    let (profile, descriptor, relation, binding) = build_terminal_relation_v1(
+        relation_kind,
+        profile_tag,
+        expected_public,
+        &inner.proof_bytes[..actual_proof_bytes],
+    )?;
+    let projected_proof_bytes =
+        projected_smallwood_recursive_proof_bytes_v1(&profile, relation.as_ref())
+            .map_err(|err| static_error("project recursive proof bytes failed", err))?;
     if actual_proof_bytes != projected_proof_bytes {
         return Err(BlockRecursionError::WidthMismatch {
             what: "proof_bytes_rec",

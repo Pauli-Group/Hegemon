@@ -1,4 +1,12 @@
-use crate::{fold_digest48, BlockRecursionError, Digest32, Digest48};
+use crate::{
+    fold_digest48,
+    statement::{
+        recursive_prefix_progress_tree_commitment_v1, recursive_prefix_statement_from_public_v1,
+        recursive_segment_statement_from_prefixes_v1, RecursivePrefixStatementV1,
+        RecursiveSegmentStatementV1,
+    },
+    BlockRecursionError, Digest32, Digest48,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockLeafRecordV1 {
@@ -118,6 +126,94 @@ pub fn public_replay_v1(
         start_tree_commitment: semantic.start_tree_commitment,
         end_tree_commitment: semantic.end_tree_commitment,
     })
+}
+
+pub fn prefix_public_v1(
+    records: &[BlockLeafRecordV1],
+    semantic: &BlockSemanticInputsV1,
+    terminal: bool,
+) -> Result<RecursiveBlockPublicV1, BlockRecursionError> {
+    let mut previous_index = None;
+    let mut leaf_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
+    let mut receipt_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
+    for record in records {
+        if previous_index.map_or(false, |prev| record.tx_index != prev + 1) {
+            return Err(BlockRecursionError::InvalidField(
+                "verified leaf records must be ordered by tx_index",
+            ));
+        }
+        previous_index = Some(record.tx_index);
+        leaf_chunks.push(canonical_verified_leaf_record_bytes_v1(record));
+        receipt_chunks.push(canonical_receipt_record_bytes_v1(record));
+    }
+
+    let leaf_refs = leaf_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let receipt_refs = receipt_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let tx_count = records.len() as u32;
+    let (verified_leaf_commitment, verified_receipt_commitment) =
+        fold_verified_record_commitments_v1(&leaf_refs, &receipt_refs);
+    let end_tree_commitment = if terminal {
+        semantic.end_tree_commitment
+    } else if tx_count == 0 {
+        semantic.start_tree_commitment
+    } else {
+        recursive_prefix_progress_tree_commitment_v1(
+            tx_count,
+            semantic.start_tree_commitment,
+            verified_leaf_commitment,
+            verified_receipt_commitment,
+        )
+    };
+
+    Ok(RecursiveBlockPublicV1 {
+        tx_count,
+        tx_statements_commitment: semantic.tx_statements_commitment,
+        verified_leaf_commitment,
+        verified_receipt_commitment,
+        start_shielded_root: semantic.start_shielded_root,
+        end_shielded_root: semantic.end_shielded_root,
+        start_kernel_root: semantic.start_kernel_root,
+        end_kernel_root: semantic.end_kernel_root,
+        nullifier_root: semantic.nullifier_root,
+        da_root: semantic.da_root,
+        start_tree_commitment: semantic.start_tree_commitment,
+        end_tree_commitment,
+    })
+}
+
+pub fn prefix_statement_for_records_v1(
+    records: &[BlockLeafRecordV1],
+    semantic: &BlockSemanticInputsV1,
+    terminal: bool,
+) -> Result<RecursivePrefixStatementV1, BlockRecursionError> {
+    let public = prefix_public_v1(records, semantic, terminal)?;
+    Ok(recursive_prefix_statement_from_public_v1(&public))
+}
+
+pub fn segment_statement_for_interval_v1(
+    records: &[BlockLeafRecordV1],
+    semantic: &BlockSemanticInputsV1,
+    start: usize,
+    end: usize,
+) -> Result<RecursiveSegmentStatementV1, BlockRecursionError> {
+    if start > end {
+        return Err(BlockRecursionError::ComposeCheckFailed(
+            "segment interval start must be <= end",
+        ));
+    }
+    if end > records.len() {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "segment interval end",
+            expected: records.len(),
+            actual: end,
+        });
+    }
+
+    let start_prefix =
+        prefix_statement_for_records_v1(&records[..start], semantic, start == records.len())?;
+    let end_prefix =
+        prefix_statement_for_records_v1(&records[..end], semantic, end == records.len())?;
+    recursive_segment_statement_from_prefixes_v1(&start_prefix, &end_prefix)
 }
 
 pub fn fold_verified_record_commitments_v1(
