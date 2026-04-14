@@ -30,15 +30,29 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// currently `512KiB` on the shipped `v8` product lane.
 pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 
-/// Maximum size of the shipped `recursive_block` artifact payload.
+/// Maximum size of a `recursive_block_v1` artifact payload.
 ///
-/// This is the full serialized `Pi_block(B)` object carried on the recursive lane.
-/// It is intentionally kept as one fail-closed upper bound for both `v1` and `v2`
-/// recursive block artifacts during migration.
-/// It must stay aligned with:
-/// `block_recursion`'s shipped recursive artifact geometry. The current
-/// product lane is `recursive_block_v1`, with total size `699_404`.
-pub const RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE: usize = 699_404;
+/// This is the full serialized `Pi_block(B)` object carried on the `v1`
+/// recursive lane. It must stay aligned with `block_recursion`'s
+/// `recursive_block_artifact_bytes_v1()` geometry.
+pub const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE: usize = 699_404;
+
+/// Maximum size of a `recursive_block_v2` artifact payload.
+///
+/// `v2` is the bounded-domain tree lane. The current cap is derived from:
+/// - `TREE_RECURSIVE_CHUNK_SIZE_V2 = 32`
+/// - `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`
+/// - the level-capped recursive proof report in `block_recursion`
+///
+/// The current full serialized `Pi_block_v2(B)` size is `3_643_556`.
+pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 3_643_556;
+
+/// Maximum size of any accepted recursive block artifact payload.
+///
+/// This remains the fail-closed upper bound for generic recursive lane plumbing
+/// during `v1`/`v2` coexistence. Kind-specific validation must still use
+/// `recursive_block_artifact_max_size`.
+pub const RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE: usize = RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE;
 
 /// Maximum size of a native `tx_leaf` artifact payload submitted on the unsigned
 /// shielded transfer path.
@@ -256,6 +270,21 @@ impl ProofArtifactKind {
             Self::RecursiveBlockV2 => "recursive_block_v2",
             Self::Custom(_) => "custom",
         }
+    }
+}
+
+pub const fn is_recursive_block_artifact_kind(kind: ProofArtifactKind) -> bool {
+    matches!(
+        kind,
+        ProofArtifactKind::RecursiveBlockV1 | ProofArtifactKind::RecursiveBlockV2
+    )
+}
+
+pub const fn recursive_block_artifact_max_size(kind: ProofArtifactKind) -> Option<usize> {
+    match kind {
+        ProofArtifactKind::RecursiveBlockV1 => Some(RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE),
+        ProofArtifactKind::RecursiveBlockV2 => Some(RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE),
+        _ => None,
     }
 }
 

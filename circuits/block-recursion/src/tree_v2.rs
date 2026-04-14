@@ -9,6 +9,7 @@ use crate::{
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use rayon::prelude::*;
+use std::sync::OnceLock;
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
     prove_recursive_statement_v1, recursive_descriptor_v1, recursive_profile_a_v1,
@@ -19,11 +20,11 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 4;
+pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 32;
+pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
 const TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2: usize = 64;
 const RECURSIVE_BLOCK_HEADER_BYTES_V2: usize = 112;
-const RECURSIVE_BLOCK_PROOF_BYTES_V2: usize = 698_616;
 const RECURSIVE_BLOCK_PUBLIC_BYTES_V2: usize = 4 + (48 * 14);
 const TREE_SEGMENT_STATEMENT_BYTES_V2: usize = (4 * 3) + (48 * 8);
 const TREE_PREFIX_STATEMENT_BYTES_V2: usize = 4 + (48 * 7);
@@ -32,6 +33,21 @@ const CHUNK_SLOT_BYTES_V2: usize = CHUNK_RECORD_BYTES_V2;
 const CHUNK_WITNESS_HEADER_WORDS_V2: usize = 1;
 const MERGE_WITNESS_HEADER_WORDS_V2: usize = 6;
 const EMPTY_LINEAR_OFFSETS_V2: [u32; 1] = [0];
+static TREE_PROOF_CAP_REPORT_V2: OnceLock<TreeProofCapReportV2> = OnceLock::new();
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeProofCapReportV2 {
+    pub max_supported_txs: usize,
+    pub max_chunk_count: usize,
+    pub max_tree_level: usize,
+    pub p_chunk_a: usize,
+    pub p_merge_a: usize,
+    pub p_merge_b: usize,
+    pub p_carry_a: usize,
+    pub p_carry_b: usize,
+    pub level_caps: Vec<usize>,
+    pub root_proof_cap: usize,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecursiveBlockPublicV2 {
@@ -98,6 +114,7 @@ pub struct BlockRecursiveProverInputV2 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TreeProofNodeV2 {
+    level: usize,
     statement: RecursiveSegmentStatementV2,
     profile: SmallwoodRecursiveProfileTagV1,
     relation_kind: SmallwoodRecursiveRelationKindV1,
@@ -151,6 +168,7 @@ impl TreeWitnessKindV2 {
 
 #[derive(Clone, Debug)]
 struct TreeRelationV2 {
+    tree_level: usize,
     relation_kind: SmallwoodRecursiveRelationKindV1,
     target_statement: RecursiveSegmentStatementV2,
     auxiliary_witness_words: Vec<u64>,
@@ -187,6 +205,7 @@ impl TreeRelationV2 {
         }
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
+            tree_level: 0,
             relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
@@ -200,17 +219,25 @@ impl TreeRelationV2 {
         left: &TreeProofNodeV2,
         right: &TreeProofNodeV2,
     ) -> Result<Self, BlockRecursionError> {
+        if left.level != right.level {
+            return Err(BlockRecursionError::ComposeCheckFailed(
+                "tree_v2 merge children must have the same level",
+            ));
+        }
+        let tree_level = left.level.saturating_add(1);
         Self::new_merge_with_child_cap(
             relation_kind,
+            tree_level,
             target_statement,
             left,
             right,
-            tree_recursive_child_proof_bytes_v2(),
+            tree_recursive_child_proof_bytes_v2(tree_level),
         )
     }
 
     fn new_merge_with_child_cap(
         relation_kind: SmallwoodRecursiveRelationKindV1,
+        tree_level: usize,
         target_statement: RecursiveSegmentStatementV2,
         left: &TreeProofNodeV2,
         right: &TreeProofNodeV2,
@@ -219,8 +246,7 @@ impl TreeRelationV2 {
         let left_kind = TreeWitnessKindV2::from_relation_kind(left.relation_kind)?;
         let right_kind = TreeWitnessKindV2::from_relation_kind(right.relation_kind)?;
         let left_padded = pad_child_proof_bytes_with_cap_v2(&left.proof_bytes, child_proof_cap)?;
-        let right_padded =
-            pad_child_proof_bytes_with_cap_v2(&right.proof_bytes, child_proof_cap)?;
+        let right_padded = pad_child_proof_bytes_with_cap_v2(&right.proof_bytes, child_proof_cap)?;
         let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
         let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
         let mut bytes = Vec::with_capacity(
@@ -241,6 +267,7 @@ impl TreeRelationV2 {
         bytes.extend_from_slice(&right_padded);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
+            tree_level,
             relation_kind,
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
@@ -253,16 +280,19 @@ impl TreeRelationV2 {
         target_statement: RecursiveSegmentStatementV2,
         child: &TreeProofNodeV2,
     ) -> Result<Self, BlockRecursionError> {
+        let tree_level = child.level.saturating_add(1);
         Self::new_carry_with_child_cap(
             relation_kind,
+            tree_level,
             target_statement,
             child,
-            tree_recursive_child_proof_bytes_v2(),
+            tree_recursive_child_proof_bytes_v2(tree_level),
         )
     }
 
     fn new_carry_with_child_cap(
         relation_kind: SmallwoodRecursiveRelationKindV1,
+        tree_level: usize,
         target_statement: RecursiveSegmentStatementV2,
         child: &TreeProofNodeV2,
         child_proof_cap: usize,
@@ -271,9 +301,7 @@ impl TreeRelationV2 {
         let child_padded = pad_child_proof_bytes_with_cap_v2(&child.proof_bytes, child_proof_cap)?;
         let child_statement_bytes = recursive_segment_statement_bytes_v2(&child.statement);
         let mut bytes = Vec::with_capacity(
-            (MERGE_WITNESS_HEADER_WORDS_V2 / 2 * 8)
-                + child_statement_bytes.len()
-                + child_proof_cap,
+            (MERGE_WITNESS_HEADER_WORDS_V2 / 2 * 8) + child_statement_bytes.len() + child_proof_cap,
         );
         bytes.extend_from_slice(&(child.profile.tag() as u64).to_le_bytes());
         bytes.extend_from_slice(&(child_kind as u64).to_le_bytes());
@@ -282,6 +310,7 @@ impl TreeRelationV2 {
         bytes.extend_from_slice(&child_padded);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
+            tree_level,
             relation_kind,
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
@@ -290,6 +319,7 @@ impl TreeRelationV2 {
     }
 
     fn from_witness_words_with_limb_count(
+        tree_level: usize,
         relation_kind: SmallwoodRecursiveRelationKindV1,
         target_statement: RecursiveSegmentStatementV2,
         words: &[u64],
@@ -303,6 +333,7 @@ impl TreeRelationV2 {
             });
         }
         Ok(Self {
+            tree_level,
             relation_kind,
             target_statement,
             auxiliary_witness_words: words[..limb_count].to_vec(),
@@ -386,22 +417,33 @@ impl SmallwoodConstraintAdapter for TreeRelationV2 {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        let SmallwoodNonlinearEvalView::RowScalars { auxiliary_words, .. } = view;
-        let mismatch = match self.relation_kind {
-            SmallwoodRecursiveRelationKindV1::ChunkA => {
-                chunk_relation_mismatch_v2(&self.target_statement, auxiliary_words)
+        let SmallwoodNonlinearEvalView::RowScalars {
+            auxiliary_words, ..
+        } = view;
+        let mismatch =
+            match self.relation_kind {
+                SmallwoodRecursiveRelationKindV1::ChunkA => {
+                    chunk_relation_mismatch_v2(&self.target_statement, auxiliary_words)
+                }
+                SmallwoodRecursiveRelationKindV1::MergeA
+                | SmallwoodRecursiveRelationKindV1::MergeB => merge_relation_mismatch_v2(
+                    self.relation_kind,
+                    self.tree_level,
+                    &self.target_statement,
+                    auxiliary_words,
+                ),
+                SmallwoodRecursiveRelationKindV1::CarryA
+                | SmallwoodRecursiveRelationKindV1::CarryB => carry_relation_mismatch_v2(
+                    self.relation_kind,
+                    self.tree_level,
+                    &self.target_statement,
+                    auxiliary_words,
+                ),
+                _ => Err(BlockRecursionError::InvalidField(
+                    "tree_v2 compute relation_kind",
+                )),
             }
-            SmallwoodRecursiveRelationKindV1::MergeA
-            | SmallwoodRecursiveRelationKindV1::MergeB => {
-                merge_relation_mismatch_v2(self.relation_kind, &self.target_statement, auxiliary_words)
-            }
-            SmallwoodRecursiveRelationKindV1::CarryA
-            | SmallwoodRecursiveRelationKindV1::CarryB => {
-                carry_relation_mismatch_v2(self.relation_kind, &self.target_statement, auxiliary_words)
-            }
-            _ => Err(BlockRecursionError::InvalidField("tree_v2 compute relation_kind")),
-        }
-        .map_err(block_recursion_to_tx_error_v2)?;
+            .map_err(block_recursion_to_tx_error_v2)?;
         out[0] = mismatch.saturating_mul(mismatch);
         Ok(())
     }
@@ -422,7 +464,10 @@ fn bytes_to_limbs_v2(bytes: &[u8]) -> Vec<u64> {
         .collect()
 }
 
-fn limbs_to_exact_bytes_v2(words: &[u64], limb_count: usize) -> Result<Vec<u8>, BlockRecursionError> {
+fn limbs_to_exact_bytes_v2(
+    words: &[u64],
+    limb_count: usize,
+) -> Result<Vec<u8>, BlockRecursionError> {
     if limb_count > words.len() {
         return Err(BlockRecursionError::InvalidLength {
             what: "tree_v2 witness limbs",
@@ -450,11 +495,13 @@ fn read_exact_fixed_v2<const N: usize>(
     cursor: &mut usize,
 ) -> Result<[u8; N], BlockRecursionError> {
     let end = cursor.saturating_add(N);
-    let slice = bytes.get(*cursor..end).ok_or(BlockRecursionError::InvalidLength {
-        what: "tree_v2 fixed bytes",
-        expected: N,
-        actual: bytes.len().saturating_sub(*cursor),
-    })?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or(BlockRecursionError::InvalidLength {
+            what: "tree_v2 fixed bytes",
+            expected: N,
+            actual: bytes.len().saturating_sub(*cursor),
+        })?;
     let mut out = [0u8; N];
     out.copy_from_slice(slice);
     *cursor = end;
@@ -591,10 +638,7 @@ fn leaf_digest_from_records_v2(records: &[BlockLeafRecordV1]) -> Digest48 {
         .map(canonical_verified_leaf_record_bytes_v1)
         .collect::<Vec<_>>();
     let refs = chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    fold_digest48(
-        b"hegemon.block-recursion.segment-leaf-tree-leaf.v2",
-        &refs,
-    )
+    fold_digest48(b"hegemon.block-recursion.segment-leaf-tree-leaf.v2", &refs)
 }
 
 fn receipt_digest_from_records_v2(records: &[BlockLeafRecordV1]) -> Digest48 {
@@ -739,7 +783,8 @@ fn recursive_segment_statement_for_interval_v2(
         return Err(BlockRecursionError::InvalidField("tree_v2 interval bounds"));
     }
     let start_prefix = prefix_statement_for_records_v1(&records[..start], semantic, false)?;
-    let end_prefix = prefix_statement_for_records_v1(&records[..end], semantic, end == records.len())?;
+    let end_prefix =
+        prefix_statement_for_records_v1(&records[..end], semantic, end == records.len())?;
     recursive_segment_statement_from_interval_parts_v2(
         &start_prefix,
         &end_prefix,
@@ -832,7 +877,9 @@ pub fn compose_recursive_segment_statements_v2(
     })
 }
 
-fn decode_leaf_record_from_bytes_v2(bytes: &[u8]) -> Result<BlockLeafRecordV1, BlockRecursionError> {
+fn decode_leaf_record_from_bytes_v2(
+    bytes: &[u8],
+) -> Result<BlockLeafRecordV1, BlockRecursionError> {
     let mut cursor = 0usize;
     let record = BlockLeafRecordV1 {
         tx_index: read_exact_u32_v2(bytes, &mut cursor)?,
@@ -870,37 +917,39 @@ fn decode_chunk_witness_v2(
     let mut cursor = 0usize;
     let active_len = read_exact_u64_v2(&bytes, &mut cursor)? as usize;
     if active_len == 0 || active_len > TREE_RECURSIVE_CHUNK_SIZE_V2 {
-        return Err(BlockRecursionError::InvalidField("tree_v2 chunk active_len"));
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 chunk active_len",
+        ));
     }
     let start_prefix = decode_recursive_prefix_statement_from_bytes_v2(
-        bytes.get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2).ok_or(
-            BlockRecursionError::InvalidLength {
+        bytes
+            .get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2)
+            .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 chunk start prefix",
                 expected: TREE_PREFIX_STATEMENT_BYTES_V2,
                 actual: bytes.len().saturating_sub(cursor),
-            },
-        )?,
+            })?,
     )?;
     cursor += TREE_PREFIX_STATEMENT_BYTES_V2;
     let end_prefix = decode_recursive_prefix_statement_from_bytes_v2(
-        bytes.get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2).ok_or(
-            BlockRecursionError::InvalidLength {
+        bytes
+            .get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2)
+            .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 chunk end prefix",
                 expected: TREE_PREFIX_STATEMENT_BYTES_V2,
                 actual: bytes.len().saturating_sub(cursor),
-            },
-        )?,
+            })?,
     )?;
     cursor += TREE_PREFIX_STATEMENT_BYTES_V2;
     let mut records = Vec::with_capacity(active_len);
     for idx in 0..TREE_RECURSIVE_CHUNK_SIZE_V2 {
-        let slot = bytes
-            .get(cursor..cursor + CHUNK_SLOT_BYTES_V2)
-            .ok_or(BlockRecursionError::InvalidLength {
+        let slot = bytes.get(cursor..cursor + CHUNK_SLOT_BYTES_V2).ok_or(
+            BlockRecursionError::InvalidLength {
                 what: "tree_v2 chunk slot",
                 expected: CHUNK_SLOT_BYTES_V2,
                 actual: bytes.len().saturating_sub(cursor),
-            })?;
+            },
+        )?;
         cursor += CHUNK_SLOT_BYTES_V2;
         if idx < active_len {
             records.push(decode_leaf_record_from_bytes_v2(slot)?);
@@ -921,11 +970,15 @@ fn decode_chunk_witness_v2(
     Ok((start_prefix, end_prefix, records))
 }
 
-fn profile_tag_from_u32_v2(value: u32) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
+fn profile_tag_from_u32_v2(
+    value: u32,
+) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
     match value {
         1 => Ok(SmallwoodRecursiveProfileTagV1::A),
         2 => Ok(SmallwoodRecursiveProfileTagV1::B),
-        _ => Err(BlockRecursionError::InvalidField("tree_v2 child profile tag")),
+        _ => Err(BlockRecursionError::InvalidField(
+            "tree_v2 child profile tag",
+        )),
     }
 }
 
@@ -949,10 +1002,20 @@ fn pad_child_proof_bytes_with_cap_v2(
 fn decode_merge_child_v2(
     bytes: &[u8],
     cursor: &mut usize,
-) -> Result<(SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1, RecursiveSegmentStatementV2, Vec<u8>), BlockRecursionError> {
-    let child_proof_cap = tree_recursive_child_proof_bytes_v2();
+    tree_level: usize,
+) -> Result<
+    (
+        SmallwoodRecursiveProfileTagV1,
+        SmallwoodRecursiveRelationKindV1,
+        RecursiveSegmentStatementV2,
+        Vec<u8>,
+    ),
+    BlockRecursionError,
+> {
+    let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
     let profile = profile_tag_from_u32_v2(read_exact_u64_v2(bytes, cursor)? as u32)?;
-    let kind = TreeWitnessKindV2::from_u32(read_exact_u64_v2(bytes, cursor)? as u32)?.relation_kind();
+    let kind =
+        TreeWitnessKindV2::from_u32(read_exact_u64_v2(bytes, cursor)? as u32)?.relation_kind();
     let proof_len = read_exact_u64_v2(bytes, cursor)? as usize;
     if proof_len > child_proof_cap {
         return Err(BlockRecursionError::WidthMismatch {
@@ -962,22 +1025,22 @@ fn decode_merge_child_v2(
         });
     }
     let statement = decode_recursive_segment_statement_from_bytes_v2(
-        bytes.get(*cursor..*cursor + TREE_SEGMENT_STATEMENT_BYTES_V2).ok_or(
-            BlockRecursionError::InvalidLength {
+        bytes
+            .get(*cursor..*cursor + TREE_SEGMENT_STATEMENT_BYTES_V2)
+            .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 child statement bytes",
                 expected: TREE_SEGMENT_STATEMENT_BYTES_V2,
                 actual: bytes.len().saturating_sub(*cursor),
-            },
-        )?,
+            })?,
     )?;
     *cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
-    let proof_slice = bytes
-        .get(*cursor..*cursor + child_proof_cap)
-        .ok_or(BlockRecursionError::InvalidLength {
+    let proof_slice = bytes.get(*cursor..*cursor + child_proof_cap).ok_or(
+        BlockRecursionError::InvalidLength {
             what: "tree_v2 child proof bytes",
             expected: child_proof_cap,
             actual: bytes.len().saturating_sub(*cursor),
-        })?;
+        },
+    )?;
     *cursor += child_proof_cap;
     if proof_slice[proof_len..].iter().any(|byte| *byte != 0) {
         return Err(BlockRecursionError::InvalidField(
@@ -1049,16 +1112,26 @@ fn tree_recursive_profile_v2(
     profile: SmallwoodRecursiveProfileTagV1,
 ) -> transaction_circuit::RecursiveSmallwoodProfileV1 {
     match profile {
-        SmallwoodRecursiveProfileTagV1::A => recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
-        SmallwoodRecursiveProfileTagV1::B => recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        SmallwoodRecursiveProfileTagV1::A => {
+            recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+        }
+        SmallwoodRecursiveProfileTagV1::B => {
+            recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+        }
     }
 }
 
 fn tree_recursive_descriptor_v2(
     profile: SmallwoodRecursiveProfileTagV1,
     relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
 ) -> SmallwoodRecursiveVerifierDescriptorV1 {
     let profile_cfg = tree_recursive_profile_v2(profile);
+    let child_proof_cap = if tree_level == 0 {
+        0u32
+    } else {
+        tree_recursive_child_proof_bytes_v2(tree_level) as u32
+    };
     let tag = match relation_kind {
         SmallwoodRecursiveRelationKindV1::ChunkA => b"chunk-a".as_slice(),
         SmallwoodRecursiveRelationKindV1::MergeA => b"merge-a".as_slice(),
@@ -1069,26 +1142,31 @@ fn tree_recursive_descriptor_v2(
     };
     let relation_id = fold_digest32(
         b"hegemon.block-recursion.tree-v2.relation-id",
-        &[tag],
+        &[tag, &(tree_level as u32).to_le_bytes()],
     );
     let shape_digest = fold_digest32(
         b"hegemon.block-recursion.tree-v2.shape",
         &[
             tag,
+            &(tree_level as u32).to_le_bytes(),
             &(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32).to_le_bytes(),
-            &(tree_recursive_child_proof_bytes_v2() as u32).to_le_bytes(),
+            &child_proof_cap.to_le_bytes(),
         ],
     );
-    let vk_digest = fold_digest32(
-        b"hegemon.block-recursion.tree-v2.vk",
-        &[tag, &shape_digest],
-    );
-    recursive_descriptor_v1(&profile_cfg, relation_kind, relation_id, shape_digest, vk_digest)
+    let vk_digest = fold_digest32(b"hegemon.block-recursion.tree-v2.vk", &[tag, &shape_digest]);
+    recursive_descriptor_v1(
+        &profile_cfg,
+        relation_kind,
+        relation_id,
+        shape_digest,
+        vk_digest,
+    )
 }
 
 fn rebuild_tree_relation_from_proof_v2(
     profile: SmallwoodRecursiveProfileTagV1,
     relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
     statement: RecursiveSegmentStatementV2,
     proof_bytes: &[u8],
 ) -> Result<TreeRelationV2, BlockRecursionError> {
@@ -1096,6 +1174,7 @@ fn rebuild_tree_relation_from_proof_v2(
     let proof_trace = decode_smallwood_proof_trace_v1(proof_bytes)
         .map_err(|_| BlockRecursionError::InvalidField("tree_v2 proof trace decode"))?;
     TreeRelationV2::from_witness_words_with_limb_count(
+        tree_level,
         relation_kind,
         statement,
         &proof_trace.auxiliary_witness_words,
@@ -1106,12 +1185,19 @@ fn rebuild_tree_relation_from_proof_v2(
 fn verify_tree_child_v2(
     profile: SmallwoodRecursiveProfileTagV1,
     relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
     statement: &RecursiveSegmentStatementV2,
     proof_bytes: &[u8],
 ) -> Result<(), BlockRecursionError> {
-    let relation = rebuild_tree_relation_from_proof_v2(profile, relation_kind, statement.clone(), proof_bytes)?;
+    let relation = rebuild_tree_relation_from_proof_v2(
+        profile,
+        relation_kind,
+        tree_level,
+        statement.clone(),
+        proof_bytes,
+    )?;
     let profile_cfg = tree_recursive_profile_v2(profile);
-    let descriptor = tree_recursive_descriptor_v2(profile, relation_kind);
+    let descriptor = tree_recursive_descriptor_v2(profile, relation_kind, tree_level);
     verify_recursive_statement_direct_v1(
         &profile_cfg,
         &descriptor,
@@ -1119,19 +1205,31 @@ fn verify_tree_child_v2(
         &tree_binding_bytes_v2(statement),
         proof_bytes,
     )
-    .map_err(|err| BlockRecursionError::InvalidField(Box::leak(format!("tree_v2 child verify: {err}").into_boxed_str())))
+    .map_err(|err| {
+        BlockRecursionError::InvalidField(Box::leak(
+            format!("tree_v2 child verify: {err}").into_boxed_str(),
+        ))
+    })
 }
 
 fn merge_relation_mismatch_v2(
     relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
     target_statement: &RecursiveSegmentStatementV2,
     auxiliary_words: &[u64],
 ) -> Result<u64, BlockRecursionError> {
+    if tree_level == 0 {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 merge level must be nonzero",
+        ));
+    }
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
     let mut cursor = 0usize;
-    let (left_profile, left_kind, left_statement, left_proof) = decode_merge_child_v2(&bytes, &mut cursor)?;
+    let child_level = tree_level - 1;
+    let (left_profile, left_kind, left_statement, left_proof) =
+        decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
     let (right_profile, right_kind, right_statement, right_proof) =
-        decode_merge_child_v2(&bytes, &mut cursor)?;
+        decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
     if cursor != bytes.len() && bytes[cursor..].iter().any(|byte| *byte != 0) {
         return Err(BlockRecursionError::TrailingBytes {
             remaining: bytes.len() - cursor,
@@ -1149,10 +1247,26 @@ fn merge_relation_mismatch_v2(
     if &composed != target_statement {
         mismatch += 1;
     }
-    if verify_tree_child_v2(left_profile, left_kind, &left_statement, &left_proof).is_err() {
+    if verify_tree_child_v2(
+        left_profile,
+        left_kind,
+        child_level,
+        &left_statement,
+        &left_proof,
+    )
+    .is_err()
+    {
         mismatch += 1;
     }
-    if verify_tree_child_v2(right_profile, right_kind, &right_statement, &right_proof).is_err() {
+    if verify_tree_child_v2(
+        right_profile,
+        right_kind,
+        child_level,
+        &right_statement,
+        &right_proof,
+    )
+    .is_err()
+    {
         mismatch += 1;
     }
     Ok(mismatch)
@@ -1160,33 +1274,41 @@ fn merge_relation_mismatch_v2(
 
 fn carry_relation_mismatch_v2(
     relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
     target_statement: &RecursiveSegmentStatementV2,
     auxiliary_words: &[u64],
 ) -> Result<u64, BlockRecursionError> {
+    if tree_level == 0 {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 carry level must be nonzero",
+        ));
+    }
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
-    let child_proof_cap = tree_recursive_child_proof_bytes_v2();
+    let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
+    let child_level = tree_level - 1;
     let mut cursor = 0usize;
     let profile = profile_tag_from_u32_v2(read_exact_u64_v2(&bytes, &mut cursor)? as u32)?;
-    let child_kind =
-        TreeWitnessKindV2::from_u32(read_exact_u64_v2(&bytes, &mut cursor)? as u32)?.relation_kind();
+    let child_kind = TreeWitnessKindV2::from_u32(read_exact_u64_v2(&bytes, &mut cursor)? as u32)?
+        .relation_kind();
     let proof_len = read_exact_u64_v2(&bytes, &mut cursor)? as usize;
     let child_statement = decode_recursive_segment_statement_from_bytes_v2(
-        bytes.get(cursor..cursor + TREE_SEGMENT_STATEMENT_BYTES_V2).ok_or(
-            BlockRecursionError::InvalidLength {
+        bytes
+            .get(cursor..cursor + TREE_SEGMENT_STATEMENT_BYTES_V2)
+            .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 carry child statement bytes",
                 expected: TREE_SEGMENT_STATEMENT_BYTES_V2,
                 actual: bytes.len().saturating_sub(cursor),
-            },
-        )?,
+            })?,
     )?;
     cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
-    let proof_slice = bytes
-        .get(cursor..cursor + child_proof_cap)
-        .ok_or(BlockRecursionError::InvalidLength {
-            what: "tree_v2 carry child proof bytes",
-            expected: child_proof_cap,
-            actual: bytes.len().saturating_sub(cursor),
-        })?;
+    let proof_slice =
+        bytes
+            .get(cursor..cursor + child_proof_cap)
+            .ok_or(BlockRecursionError::InvalidLength {
+                what: "tree_v2 carry child proof bytes",
+                expected: child_proof_cap,
+                actual: bytes.len().saturating_sub(cursor),
+            })?;
     if proof_len > child_proof_cap {
         return Err(BlockRecursionError::WidthMismatch {
             what: "tree_v2 carry child proof len",
@@ -1207,7 +1329,14 @@ fn carry_relation_mismatch_v2(
     if &child_statement != target_statement {
         mismatch += 1;
     }
-    if verify_tree_child_v2(profile, child_kind, &child_statement, &proof_slice[..proof_len]).is_err()
+    if verify_tree_child_v2(
+        profile,
+        child_kind,
+        child_level,
+        &child_statement,
+        &proof_slice[..proof_len],
+    )
+    .is_err()
     {
         mismatch += 1;
     }
@@ -1238,12 +1367,45 @@ fn tree_merge_kind_for_level_v2(level: usize) -> SmallwoodRecursiveRelationKindV
     }
 }
 
+fn ensure_supported_tree_tx_count_v2(tx_count: u32) -> Result<(), BlockRecursionError> {
+    let actual = tx_count as usize;
+    if actual == 0 || actual > TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "recursive_block_v2 tx_count",
+            expected: TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+fn tree_chunk_count_for_tx_count_v2(tx_count: u32) -> Result<usize, BlockRecursionError> {
+    ensure_supported_tree_tx_count_v2(tx_count)?;
+    Ok((tx_count as usize).div_ceil(TREE_RECURSIVE_CHUNK_SIZE_V2))
+}
+
+fn tree_root_level_for_chunk_count_v2(mut chunk_count: usize) -> usize {
+    let mut level = 0usize;
+    while chunk_count > 1 {
+        level += 1;
+        chunk_count = chunk_count.div_ceil(2);
+    }
+    level
+}
+
+fn tree_root_level_for_tx_count_v2(tx_count: u32) -> Result<usize, BlockRecursionError> {
+    Ok(tree_root_level_for_chunk_count_v2(
+        tree_chunk_count_for_tx_count_v2(tx_count)?,
+    ))
+}
+
 fn prove_tree_relation_v2(
     profile: SmallwoodRecursiveProfileTagV1,
     relation: &TreeRelationV2,
 ) -> Result<Vec<u8>, BlockRecursionError> {
     let profile_cfg = tree_recursive_profile_v2(profile);
-    let descriptor = tree_recursive_descriptor_v2(profile, relation.relation_kind);
+    let descriptor =
+        tree_recursive_descriptor_v2(profile, relation.relation_kind, relation.tree_level);
     prove_recursive_statement_v1(
         &profile_cfg,
         &descriptor,
@@ -1251,29 +1413,258 @@ fn prove_tree_relation_v2(
         &relation.witness_values(),
         &tree_binding_bytes_v2(&relation.target_statement),
     )
-    .map_err(|err| BlockRecursionError::InvalidField(Box::leak(format!("tree_v2 prove: {err}").into_boxed_str())))
+    .map_err(|err| {
+        BlockRecursionError::InvalidField(Box::leak(
+            format!("tree_v2 prove: {err}").into_boxed_str(),
+        ))
+    })
 }
 
 fn expected_child_profile_for_parent_kind_v2(
     relation_kind: SmallwoodRecursiveRelationKindV1,
 ) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
     match relation_kind {
-        SmallwoodRecursiveRelationKindV1::MergeA
-        | SmallwoodRecursiveRelationKindV1::CarryA => Ok(SmallwoodRecursiveProfileTagV1::B),
-        SmallwoodRecursiveRelationKindV1::MergeB
-        | SmallwoodRecursiveRelationKindV1::CarryB => Ok(SmallwoodRecursiveProfileTagV1::A),
+        SmallwoodRecursiveRelationKindV1::MergeA | SmallwoodRecursiveRelationKindV1::CarryA => {
+            Ok(SmallwoodRecursiveProfileTagV1::B)
+        }
+        SmallwoodRecursiveRelationKindV1::MergeB | SmallwoodRecursiveRelationKindV1::CarryB => {
+            Ok(SmallwoodRecursiveProfileTagV1::A)
+        }
         _ => Err(BlockRecursionError::InvalidField(
             "tree_v2 parent relation kind",
         )),
     }
 }
 
-fn tree_recursive_child_proof_bytes_v2() -> usize {
-    RECURSIVE_BLOCK_PROOF_BYTES_V2
+fn profile_for_relation_kind_v2(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
+    match relation_kind {
+        SmallwoodRecursiveRelationKindV1::ChunkA
+        | SmallwoodRecursiveRelationKindV1::MergeA
+        | SmallwoodRecursiveRelationKindV1::CarryA => Ok(SmallwoodRecursiveProfileTagV1::A),
+        SmallwoodRecursiveRelationKindV1::MergeB | SmallwoodRecursiveRelationKindV1::CarryB => {
+            Ok(SmallwoodRecursiveProfileTagV1::B)
+        }
+        _ => Err(BlockRecursionError::InvalidField(
+            "tree_v2 relation kind profile mapping",
+        )),
+    }
+}
+
+fn dummy_digest32_v2(seed: u8) -> Digest32 {
+    [seed; 32]
+}
+
+fn dummy_digest48_v2(seed: u8) -> Digest48 {
+    [seed; 48]
+}
+
+fn dummy_prefix_statement_v2(tx_count: u32, seed: u8) -> RecursivePrefixStatementV1 {
+    RecursivePrefixStatementV1 {
+        tx_count,
+        start_state_digest: dummy_digest48_v2(seed),
+        end_state_digest: dummy_digest48_v2(seed.wrapping_add(1)),
+        verified_leaf_commitment: dummy_digest48_v2(seed.wrapping_add(2)),
+        tx_statements_commitment: dummy_digest48_v2(seed.wrapping_add(3)),
+        verified_receipt_commitment: dummy_digest48_v2(seed.wrapping_add(4)),
+        start_tree_commitment: dummy_digest48_v2(seed.wrapping_add(5)),
+        end_tree_commitment: dummy_digest48_v2(seed.wrapping_add(6)),
+    }
+}
+
+fn dummy_segment_statement_v2(
+    start_index: u32,
+    end_index: u32,
+    seed: u8,
+) -> RecursiveSegmentStatementV2 {
+    RecursiveSegmentStatementV2 {
+        start_index,
+        end_index,
+        segment_len: end_index.saturating_sub(start_index),
+        tx_statements_commitment: dummy_digest48_v2(seed),
+        start_state_digest: dummy_digest48_v2(seed.wrapping_add(1)),
+        end_state_digest: dummy_digest48_v2(seed.wrapping_add(2)),
+        start_tree_commitment: dummy_digest48_v2(seed.wrapping_add(3)),
+        end_tree_commitment: dummy_digest48_v2(seed.wrapping_add(4)),
+        statement_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(5)),
+        verified_leaf_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(6)),
+        verified_receipt_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(7)),
+    }
+}
+
+fn dummy_leaf_record_v2(tx_index: u32, seed: u8) -> BlockLeafRecordV1 {
+    BlockLeafRecordV1 {
+        tx_index,
+        receipt_statement_hash: dummy_digest48_v2(seed),
+        receipt_proof_digest: dummy_digest48_v2(seed.wrapping_add(1)),
+        receipt_public_inputs_digest: dummy_digest48_v2(seed.wrapping_add(2)),
+        receipt_verifier_profile: dummy_digest48_v2(seed.wrapping_add(3)),
+        leaf_params_fingerprint: dummy_digest48_v2(seed.wrapping_add(4)),
+        leaf_spec_digest: dummy_digest32_v2(seed.wrapping_add(5)),
+        leaf_relation_id: dummy_digest32_v2(seed.wrapping_add(6)),
+        leaf_shape_digest: dummy_digest32_v2(seed.wrapping_add(7)),
+        leaf_statement_digest: dummy_digest48_v2(seed.wrapping_add(8)),
+        leaf_commitment_digest: dummy_digest48_v2(seed.wrapping_add(9)),
+        leaf_proof_digest: dummy_digest48_v2(seed.wrapping_add(10)),
+    }
+}
+
+fn dummy_tree_node_v2(
+    level: usize,
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+    statement: RecursiveSegmentStatementV2,
+) -> Result<TreeProofNodeV2, BlockRecursionError> {
+    Ok(TreeProofNodeV2 {
+        level,
+        statement,
+        profile: profile_for_relation_kind_v2(relation_kind)?,
+        relation_kind,
+        proof_bytes: Vec::new(),
+    })
+}
+
+fn projected_tree_relation_proof_bytes_v2(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+    relation: &TreeRelationV2,
+) -> Result<usize, BlockRecursionError> {
+    let profile = profile_for_relation_kind_v2(relation_kind)?;
+    projected_smallwood_recursive_proof_bytes_v1(&tree_recursive_profile_v2(profile), relation)
+        .map_err(|err| {
+            BlockRecursionError::InvalidField(Box::leak(
+                format!("tree_v2 projected proof bytes: {err}").into_boxed_str(),
+            ))
+        })
+}
+
+fn projected_chunk_proof_bytes_v2() -> Result<usize, BlockRecursionError> {
+    let start_prefix = dummy_prefix_statement_v2(0, 0x10);
+    let end_prefix = dummy_prefix_statement_v2(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x20);
+    let records = (0..TREE_RECURSIVE_CHUNK_SIZE_V2)
+        .map(|idx| dummy_leaf_record_v2(idx as u32, 0x30u8.wrapping_add(idx as u8)))
+        .collect::<Vec<_>>();
+    let relation = TreeRelationV2::new_chunk(
+        dummy_segment_statement_v2(0, TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x40),
+        &start_prefix,
+        &end_prefix,
+        &records,
+    )?;
+    projected_tree_relation_proof_bytes_v2(SmallwoodRecursiveRelationKindV1::ChunkA, &relation)
+}
+
+fn projected_merge_proof_bytes_v2(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
+    child_proof_cap: usize,
+) -> Result<usize, BlockRecursionError> {
+    let left = dummy_tree_node_v2(
+        tree_level.saturating_sub(1),
+        SmallwoodRecursiveRelationKindV1::ChunkA,
+        dummy_segment_statement_v2(0, TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x50),
+    )?;
+    let right = dummy_tree_node_v2(
+        tree_level.saturating_sub(1),
+        SmallwoodRecursiveRelationKindV1::ChunkA,
+        dummy_segment_statement_v2(
+            TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+            (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32,
+            0x60,
+        ),
+    )?;
+    let relation = TreeRelationV2::new_merge_with_child_cap(
+        relation_kind,
+        tree_level,
+        dummy_segment_statement_v2(0, (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32, 0x70),
+        &left,
+        &right,
+        child_proof_cap,
+    )?;
+    projected_tree_relation_proof_bytes_v2(relation_kind, &relation)
+}
+
+fn projected_carry_proof_bytes_v2(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+    tree_level: usize,
+    child_proof_cap: usize,
+) -> Result<usize, BlockRecursionError> {
+    let child = dummy_tree_node_v2(
+        tree_level.saturating_sub(1),
+        SmallwoodRecursiveRelationKindV1::ChunkA,
+        dummy_segment_statement_v2(0, TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x80),
+    )?;
+    let relation = TreeRelationV2::new_carry_with_child_cap(
+        relation_kind,
+        tree_level,
+        child.statement.clone(),
+        &child,
+        child_proof_cap,
+    )?;
+    projected_tree_relation_proof_bytes_v2(relation_kind, &relation)
+}
+
+pub fn derive_tree_proof_cap_v2() -> Result<TreeProofCapReportV2, BlockRecursionError> {
+    let p_chunk_a = projected_chunk_proof_bytes_v2()?;
+    let max_chunk_count =
+        TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2.div_ceil(TREE_RECURSIVE_CHUNK_SIZE_V2);
+    let max_tree_level = tree_root_level_for_chunk_count_v2(max_chunk_count);
+    let mut p_merge_a = 0usize;
+    let mut p_merge_b = 0usize;
+    let mut p_carry_a = 0usize;
+    let mut p_carry_b = 0usize;
+    let mut level_caps = vec![p_chunk_a];
+    for tree_level in 1..=max_tree_level {
+        let child_cap = level_caps[tree_level - 1];
+        let merge_kind = tree_merge_kind_for_level_v2(tree_level);
+        let carry_kind = tree_carry_kind_for_level_v2(tree_level);
+        let merge_cap = projected_merge_proof_bytes_v2(merge_kind, tree_level, child_cap)?;
+        let carry_cap = projected_carry_proof_bytes_v2(carry_kind, tree_level, child_cap)?;
+        match merge_kind {
+            SmallwoodRecursiveRelationKindV1::MergeA => p_merge_a = p_merge_a.max(merge_cap),
+            SmallwoodRecursiveRelationKindV1::MergeB => p_merge_b = p_merge_b.max(merge_cap),
+            _ => {}
+        }
+        match carry_kind {
+            SmallwoodRecursiveRelationKindV1::CarryA => p_carry_a = p_carry_a.max(carry_cap),
+            SmallwoodRecursiveRelationKindV1::CarryB => p_carry_b = p_carry_b.max(carry_cap),
+            _ => {}
+        }
+        level_caps.push(merge_cap.max(carry_cap));
+    }
+    let root_proof_cap = *level_caps.last().ok_or(BlockRecursionError::InvalidField(
+        "tree_v2 proof cap level_caps",
+    ))?;
+    Ok(TreeProofCapReportV2 {
+        max_supported_txs: TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2,
+        max_chunk_count,
+        max_tree_level,
+        p_chunk_a,
+        p_merge_a,
+        p_merge_b,
+        p_carry_a,
+        p_carry_b,
+        level_caps,
+        root_proof_cap,
+    })
+}
+
+pub fn tree_proof_cap_report_v2() -> &'static TreeProofCapReportV2 {
+    TREE_PROOF_CAP_REPORT_V2
+        .get_or_init(|| derive_tree_proof_cap_v2().expect("tree_v2 proof cap must derive"))
+}
+
+fn tree_recursive_child_proof_bytes_v2(tree_level: usize) -> usize {
+    debug_assert!(tree_level > 0);
+    tree_proof_cap_report_v2().level_caps[tree_level - 1]
 }
 
 pub fn project_tree_proof_bytes_v2() -> usize {
-    RECURSIVE_BLOCK_PROOF_BYTES_V2
+    tree_proof_cap_report_v2().root_proof_cap
+}
+
+pub fn recursive_block_artifact_bytes_v2() -> usize {
+    RECURSIVE_BLOCK_HEADER_BYTES_V2
+        + project_tree_proof_bytes_v2()
+        + recursive_block_public_bytes_v2()
 }
 
 fn pad_terminal_proof_bytes_v2(proof_bytes: Vec<u8>) -> Result<Vec<u8>, BlockRecursionError> {
@@ -1348,7 +1739,10 @@ pub fn recursive_block_tx_line_digest_v2() -> Digest32 {
 pub fn recursive_block_proof_encoding_digest_v2() -> Digest32 {
     fold_digest32(
         b"hegemon.block-recursion.proof-encoding-digest.v2",
-        &[b"smallwood-recursive-proof-v1", &(project_tree_proof_bytes_v2() as u32).to_le_bytes()],
+        &[
+            b"smallwood-recursive-proof-v1",
+            &(project_tree_proof_bytes_v2() as u32).to_le_bytes(),
+        ],
     )
 }
 
@@ -1431,7 +1825,10 @@ pub fn deserialize_recursive_block_artifact_v2(
         });
     }
     Ok(RecursiveBlockArtifactV2 {
-        artifact: RecursiveBlockInnerArtifactV2 { header, proof_bytes },
+        artifact: RecursiveBlockInnerArtifactV2 {
+            header,
+            proof_bytes,
+        },
         public,
     })
 }
@@ -1451,11 +1848,7 @@ fn build_header_rec_tree_v2(node: &TreeProofNodeV2) -> HeaderRecTreeV2 {
 pub fn prove_block_recursive_v2(
     input: &BlockRecursiveProverInputV2,
 ) -> Result<RecursiveBlockArtifactV2, BlockRecursionError> {
-    if input.records.is_empty() {
-        return Err(BlockRecursionError::InvalidField(
-            "recursive_block_v2 requires non-empty records",
-        ));
-    }
+    ensure_supported_tree_tx_count_v2(input.records.len() as u32)?;
     let public = public_replay_v2(&input.records, &input.semantic)?;
     let mut level = 0usize;
     let mut current = input
@@ -1465,16 +1858,24 @@ pub fn prove_block_recursive_v2(
         .map(|(chunk_idx, chunk)| {
             let start = chunk_idx * TREE_RECURSIVE_CHUNK_SIZE_V2;
             let end = start + chunk.len();
-            let statement =
-                recursive_segment_statement_for_interval_v2(&input.records, &input.semantic, start, end)?;
+            let statement = recursive_segment_statement_for_interval_v2(
+                &input.records,
+                &input.semantic,
+                start,
+                end,
+            )?;
             let start_prefix =
                 prefix_statement_for_records_v1(&input.records[..start], &input.semantic, false)?;
-            let end_prefix =
-                prefix_statement_for_records_v1(&input.records[..end], &input.semantic, end == input.records.len())?;
+            let end_prefix = prefix_statement_for_records_v1(
+                &input.records[..end],
+                &input.semantic,
+                end == input.records.len(),
+            )?;
             let relation =
                 TreeRelationV2::new_chunk(statement.clone(), &start_prefix, &end_prefix, chunk)?;
             let proof_bytes = prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &relation)?;
             Ok(TreeProofNodeV2 {
+                level,
                 statement,
                 profile: SmallwoodRecursiveProfileTagV1::A,
                 relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
@@ -1488,9 +1889,7 @@ pub fn prove_block_recursive_v2(
         let profile = tree_profile_for_level_v2(level);
         let merge_kind = tree_merge_kind_for_level_v2(level);
         let carry_kind = tree_carry_kind_for_level_v2(level);
-        let pairs = (0..current.len())
-            .step_by(2)
-            .collect::<Vec<_>>();
+        let pairs = (0..current.len()).step_by(2).collect::<Vec<_>>();
         current = pairs
             .into_par_iter()
             .map(|idx| {
@@ -1500,6 +1899,7 @@ pub fn prove_block_recursive_v2(
                         TreeRelationV2::new_carry(carry_kind, child.statement.clone(), child)?;
                     let proof_bytes = prove_tree_relation_v2(profile, &relation)?;
                     Ok(TreeProofNodeV2 {
+                        level,
                         statement: child.statement.clone(),
                         profile,
                         relation_kind: carry_kind,
@@ -1508,14 +1908,13 @@ pub fn prove_block_recursive_v2(
                 } else {
                     let left = &current[idx];
                     let right = &current[idx + 1];
-                    let statement = compose_recursive_segment_statements_v2(
-                        &left.statement,
-                        &right.statement,
-                    )?;
+                    let statement =
+                        compose_recursive_segment_statements_v2(&left.statement, &right.statement)?;
                     let relation =
                         TreeRelationV2::new_merge(merge_kind, statement.clone(), left, right)?;
                     let proof_bytes = prove_tree_relation_v2(profile, &relation)?;
                     Ok(TreeProofNodeV2 {
+                        level,
                         statement,
                         profile,
                         relation_kind: merge_kind,
@@ -1547,10 +1946,12 @@ pub fn prove_block_recursive_v2(
     })
 }
 
-fn expected_root_terminal_kind_v2(tx_count: u32) -> SmallwoodRecursiveRelationKindV1 {
-    let mut node_count = tx_count.div_ceil(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32) as usize;
+fn expected_root_terminal_kind_v2(
+    tx_count: u32,
+) -> Result<SmallwoodRecursiveRelationKindV1, BlockRecursionError> {
+    let mut node_count = tree_chunk_count_for_tx_count_v2(tx_count)?;
     if node_count == 1 {
-        return SmallwoodRecursiveRelationKindV1::ChunkA;
+        return Ok(SmallwoodRecursiveRelationKindV1::ChunkA);
     }
     let mut level = 0usize;
     let mut last_kind = SmallwoodRecursiveRelationKindV1::ChunkA;
@@ -1564,11 +1965,13 @@ fn expected_root_terminal_kind_v2(tx_count: u32) -> SmallwoodRecursiveRelationKi
             tree_merge_kind_for_level_v2(level)
         };
     }
-    last_kind
+    Ok(last_kind)
 }
 
-fn expected_root_terminal_profile_v2(tx_count: u32) -> SmallwoodRecursiveProfileTagV1 {
-    match expected_root_terminal_kind_v2(tx_count) {
+fn expected_root_terminal_profile_v2(
+    tx_count: u32,
+) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
+    Ok(match expected_root_terminal_kind_v2(tx_count)? {
         SmallwoodRecursiveRelationKindV1::ChunkA => SmallwoodRecursiveProfileTagV1::A,
         SmallwoodRecursiveRelationKindV1::MergeA | SmallwoodRecursiveRelationKindV1::CarryA => {
             SmallwoodRecursiveProfileTagV1::A
@@ -1577,7 +1980,7 @@ fn expected_root_terminal_profile_v2(tx_count: u32) -> SmallwoodRecursiveProfile
             SmallwoodRecursiveProfileTagV1::B
         }
         _ => SmallwoodRecursiveProfileTagV1::A,
-    }
+    })
 }
 
 pub fn verify_block_recursive_v2(
@@ -1597,8 +2000,9 @@ pub fn verify_block_recursive_v2(
             actual: artifact.artifact.proof_bytes.len(),
         });
     }
-    let expected_kind = expected_root_terminal_kind_v2(expected_public.tx_count);
-    let expected_profile = expected_root_terminal_profile_v2(expected_public.tx_count);
+    let expected_kind = expected_root_terminal_kind_v2(expected_public.tx_count)?;
+    let expected_profile = expected_root_terminal_profile_v2(expected_public.tx_count)?;
+    let expected_level = tree_root_level_for_tx_count_v2(expected_public.tx_count)?;
     let expected_statement = recursive_segment_statement_from_public_v2(expected_public);
     let expected_header = HeaderRecTreeV2 {
         artifact_version_rec: RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
@@ -1619,11 +2023,16 @@ pub fn verify_block_recursive_v2(
         &rebuild_tree_relation_from_proof_v2(
             expected_profile,
             expected_kind,
+            expected_level,
             expected_statement.clone(),
             &artifact.artifact.proof_bytes,
         )?,
     )
-    .map_err(|err| BlockRecursionError::InvalidField(Box::leak(format!("tree_v2 project proof bytes: {err}").into_boxed_str())))?;
+    .map_err(|err| {
+        BlockRecursionError::InvalidField(Box::leak(
+            format!("tree_v2 project proof bytes: {err}").into_boxed_str(),
+        ))
+    })?;
     if actual_proof_bytes > artifact.artifact.proof_bytes.len() {
         return Err(BlockRecursionError::WidthMismatch {
             what: "recursive_block_v2 proof bytes",
@@ -1642,6 +2051,7 @@ pub fn verify_block_recursive_v2(
     verify_tree_child_v2(
         expected_profile,
         expected_kind,
+        expected_level,
         &expected_statement,
         &artifact.artifact.proof_bytes[..actual_proof_bytes],
     )?;

@@ -110,8 +110,8 @@ fn verify_recursive_block_artifact_against_verified_records(
                     "recursive_block_v1 requires the v1 verifier profile".to_string(),
                 ));
             }
-            let parsed =
-                deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes).map_err(|err| {
+            let parsed = deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes)
+                .map_err(|err| {
                     ProofError::AggregationProofVerification(format!(
                         "recursive_block_v1 artifact decode failed: {err}"
                     ))
@@ -154,8 +154,8 @@ fn verify_recursive_block_artifact_against_verified_records(
                     "recursive_block_v2 requires the v2 verifier profile".to_string(),
                 ));
             }
-            let parsed =
-                deserialize_recursive_block_artifact_v2(&envelope.artifact_bytes).map_err(|err| {
+            let parsed = deserialize_recursive_block_artifact_v2(&envelope.artifact_bytes)
+                .map_err(|err| {
                     ProofError::AggregationProofVerification(format!(
                         "recursive_block_v2 artifact decode failed: {err}"
                     ))
@@ -894,7 +894,7 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                 return Err(ProofError::UnsupportedProofArtifact(format!(
                     "proof kind {} does not support recursive block verification",
                     self.kind.label()
-                )))
+                )));
             }
         }
 
@@ -2441,7 +2441,7 @@ mod tests {
     #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
     fn recursive_block_v2_verifier_is_registered_and_accepts_valid_artifact() {
         let registry = VerifierRegistry::default();
-        let verifier_profile = recursive_block_artifact_verifier_profile();
+        let verifier_profile = recursive_block_artifact_verifier_profile_v2();
         let verifier = registry
             .resolve(ProofArtifactKind::RecursiveBlockV2, verifier_profile)
             .expect("recursive_block_v2 verifier registered");

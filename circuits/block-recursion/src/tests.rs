@@ -9,26 +9,25 @@ use crate::relation::{
 
 use super::{
     compose_recursive_segment_statements_v1, deserialize_recursive_block_artifact_v1,
-    deserialize_recursive_block_artifact_v2,
-    hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
-    hosted_recursive_proof_witness_layout_v1, hosted_recursive_proof_witness_words_v1,
-    hosted_step_binding_bytes_v1, prefix_statement_for_records_v1,
-    previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, prove_block_recursive_v2,
-    public_replay_v1, public_replay_v2,
-    recursive_block_artifact_verifier_profile_v2, serialize_recursive_block_artifact_v2,
+    deserialize_recursive_block_artifact_v2, hosted_base_binding_bytes_v1,
+    hosted_recursive_descriptor_v1, hosted_recursive_proof_witness_layout_v1,
+    hosted_recursive_proof_witness_words_v1, hosted_step_binding_bytes_v1,
+    prefix_statement_for_records_v1, previous_proof_rows_for_limbs_v1, prove_block_recursive_v1,
+    prove_block_recursive_v2, public_replay_v1, public_replay_v2,
+    recursive_block_artifact_bytes_v2, recursive_block_artifact_verifier_profile_v2,
     segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
-    serialize_recursive_block_public_v1, step_recursive_witness_layout_v1,
-    step_recursive_witness_words_v1, verify_block_recursive_v1,
-    verify_block_recursive_v2, BlockRecursiveProverInputV2, RecursiveBlockArtifactV2,
-    RecursiveBlockPublicV2,
+    serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
+    step_recursive_witness_layout_v1, step_recursive_witness_words_v1, tree_proof_cap_report_v2,
+    verify_block_recursive_v1, verify_block_recursive_v2,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
     verify_hosted_recursive_proof_context_descriptor_shape_v1,
     verify_hosted_recursive_proof_context_pcs_v1, verify_recursive_proof_envelope_components_v1,
     BaseARelationV1, BlockLeafRecordV1, BlockRecursionError, BlockRecursiveProverInputV1,
-    BlockSemanticInputsV1, HostedRecursiveProofContextV1, RecursiveBlockArtifactV1,
-    RecursiveBlockPublicV1, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
+    BlockRecursiveProverInputV2, BlockSemanticInputsV1, HostedRecursiveProofContextV1,
+    RecursiveBlockArtifactV1, RecursiveBlockArtifactV2, RecursiveBlockPublicV1,
+    RecursiveBlockPublicV2, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
     StepARelationV1, StepBRelationV1,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -222,7 +221,9 @@ fn prove_artifact_v2(tx_count: u32) -> (RecursiveBlockArtifactV2, RecursiveBlock
 
     match tx_count {
         1 => ONE_TX.get_or_init(|| prove_artifact_v2_uncached(1)).clone(),
-        5 => FIVE_TX.get_or_init(|| prove_artifact_v2_uncached(5)).clone(),
+        5 => FIVE_TX
+            .get_or_init(|| prove_artifact_v2_uncached(5))
+            .clone(),
         _ => prove_artifact_v2_uncached(tx_count),
     }
 }
@@ -575,6 +576,25 @@ fn prove_and_verify_recursive_artifact_succeeds() {
 }
 
 #[test]
+fn tree_v2_proof_cap_report_is_self_consistent() {
+    let report = tree_proof_cap_report_v2();
+    assert_eq!(report.max_supported_txs, 1000);
+    assert_eq!(report.max_chunk_count, 250);
+    assert_eq!(report.max_tree_level + 1, report.level_caps.len());
+    assert!(report.p_chunk_a <= report.root_proof_cap);
+    assert!(report.p_merge_a <= report.root_proof_cap);
+    assert!(report.p_merge_b <= report.root_proof_cap);
+    assert!(report.p_carry_a <= report.root_proof_cap);
+    assert!(report.p_carry_b <= report.root_proof_cap);
+    assert!(report.root_proof_cap > 0);
+    assert!(recursive_block_artifact_bytes_v2() > report.root_proof_cap);
+    assert_eq!(
+        report.root_proof_cap,
+        *report.level_caps.last().expect("tree_v2 root cap"),
+    );
+}
+
+#[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_succeeds() {
     let (artifact, public) = prove_artifact_v2(5);
@@ -600,11 +620,11 @@ fn recursive_artifact_v2_constant_size_across_tx_counts() {
 
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
-fn recursive_artifact_v2_matches_shipped_constant_width() {
+fn recursive_artifact_v2_matches_derived_constant_width() {
     let width = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
         .unwrap()
         .len();
-    assert_eq!(width, 699_404);
+    assert_eq!(width, recursive_block_artifact_bytes_v2());
 }
 
 #[test]

@@ -10,11 +10,15 @@ After this change, the recursive block-proof lane will still ship one constant-s
 
 The user-visible win is prover latency and throughput. Large blocks should stop paying an `O(n)` recursive critical path where every step waits for the previous proof. The final shipped artifact must remain fixed-width and consensus-visible semantics must remain unchanged. A successful implementation is observable by proving the same block through both the old serial lane and the new tree-reduced lane, verifying both against the same canonical public tuple, and showing that the new lane reaches the same constant-size product boundary with lower wall-clock latency on multi-core machines.
 
+Yes, this can be implemented. The repository already contains enough proof-system surface to do it: the current serial recursive lane in `circuits/block-recursion`, the experimental `tree_v2` scratch path, the segment-statement helpers already added to `statement.rs` / `public_replay.rs`, and the versioned artifact plumbing in consensus, node, and pallet code. The missing work is not “invent a new proof system from nothing.” It is replacing the current oversize experimental tree lane with a versioned, cap-sound, fail-closed implementation that satisfies the fixed-width artifact invariant.
+
 ## Progress
 
 - [x] (2026-04-14 15:50Z) Draft the tree-reduction design against the current shipped prefix-proof lane.
 - [x] (2026-04-14 16:12Z) Run hostile review on the draft and fix the first critical/high design issues: explicit artifact versioning, deterministic tree schedule, and composable public boundary fields.
 - [x] (2026-04-14 16:26Z) Run a second hostile review and fix the next high issues: explicit recursion-profile schedule and fixed-shape handling for short final chunks.
+- [x] (2026-04-14 18:45Z) Run another hostile review and fix the next high issues: versioned fixed-width invariant, recursive fixed-point cap derivation, version-bound `K_chunk`, and explicit runtime-cap migration requirements.
+- [x] (2026-04-14 19:20Z) Expand the design note into an implementation-grade ExecPlan with concrete steps, validation, interfaces, recovery rules, and consistent `v2` naming.
 - [ ] Define the segment public statement, witness model, and exact merge invariants.
 - [ ] Prototype a binary merge relation over contiguous intervals without changing the shipped artifact contract.
 - [ ] Replace the serial prover loop in `circuits/block-recursion/src/prover.rs` with chunk proving plus merge proving.
@@ -44,6 +48,18 @@ The user-visible win is prover latency and throughput. Large blocks should stop 
 
 - Observation: the draft treated the last short chunk as if it would naturally preserve proof shape.
   Evidence: a final chunk with fewer than `K_chunk` leaves changes witness length unless the relation explicitly uses one fixed `K_chunk` witness schema plus inactive-slot constraints. Without that, proof shape and proof width can drift by chunk length.
+
+- Observation: the current experimental `tree_v2` lane violates the constant-size artifact invariant in live code.
+  Evidence: [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs#L26) fixes `RECURSIVE_BLOCK_PROOF_BYTES_V2 = 698_616`, but the end-to-end `v2` proof run produced `actual: 1447264` before terminal padding rejected it with `WidthMismatch`; the oversize check is enforced in [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs#L1279). So the current `tree_v2` line is only an intended constant-size design, not a real one.
+
+- Observation: a simple `max(relation proof widths)` rule is not sufficient to size the tree-lane proof cap.
+  Evidence: merge and carry relations witness fixed-width child proof slots, so their own serialized proof width depends on the chosen child-proof cap. The cap must therefore be solved as a recursive closure condition, not guessed from one non-recursive measurement per relation kind.
+
+- Observation: the draft still described `K_chunk` as a proving parameter instead of a version-bound verifier constant.
+  Evidence: if two honest provers can choose different `K_chunk` values under one artifact version, they are no longer producing one canonical recursive proof language. That conflicts with the canonical-schedule requirement and with fail-closed verifier semantics.
+
+- Observation: a fixed artifact cap cannot safely rest on informal benchmark measurements alone.
+  Evidence: “largest proof observed so far” is not a proof of a worst-case bound. For a shipped constant-size product lane, the cap must come from relation geometry and recursive child-slot rules, with measurements used only to validate that derivation against live prover output.
 
 ## Decision Log
 
@@ -79,6 +95,22 @@ The user-visible win is prover latency and throughput. Large blocks should stop 
   Rationale: the final short chunk must not create a second proof shape. A fixed-width chunk witness plus exact active-len checks keeps the tree lane descriptor-stable and artifact-width-stable.
   Date/Author: 2026-04-14 / Codex
 
+- Decision: the correct artifact invariant is version-specific fixed width, not accidental equality with `recursive_block_v1`.
+  Rationale: tree reduction changes the relation family and likely the proof cap. A correct `v2` lane may be larger than `v1` and still be valid, but only if the width is fixed by a proven per-version upper bound and the verifier accepts exactly that width.
+  Date/Author: 2026-04-14 / Codex
+
+- Decision: the `v2` proof cap must be defined by a recursive fixed-point bound over the whole relation family, not by a guessed inherited constant or a one-pass maximum over direct relation widths.
+  Rationale: merge and carry proofs carry fixed-width child proof slots in their witness language. That means the admissible terminal proof width is self-referential and must be solved as one least sound cap for the full recursive family.
+  Date/Author: 2026-04-14 / Codex
+
+- Decision: `K_chunk` is a version-bound verifier constant, not a free prover tuning knob.
+  Rationale: changing `K_chunk` changes the chunk relation language, scheduler, and likely the proof cap. If that value changes, the artifact version or verifier profile must also change.
+  Date/Author: 2026-04-14 / Codex
+
+- Decision: the `v2` proof cap must be derived or exhaustively bounded from the relation family, with live measurements used only as validation.
+  Rationale: the shipped artifact width is a soundness boundary, not a benchmark summary. Observed proof sizes can confirm a cap derivation, but they cannot replace it.
+  Date/Author: 2026-04-14 / Codex
+
 ## Outcomes & Retrospective
 
 - Outcome: initial design document created.
@@ -92,6 +124,14 @@ The user-visible win is prover latency and throughput. Large blocks should stop 
 - Outcome: second hostile review completed.
   Gap: implementation work still has not started, but the plan now fixes both the recursion-profile schedule and the short-final-chunk shape issue.
   Lesson: tree proving needs a deterministic proof-language schedule, not just a deterministic leaf partition.
+
+- Outcome: third hostile review completed.
+  Gap: implementation work still has not started, but the plan now fails closed on the biggest remaining design errors in the `v2` artifact story: guessed inherited caps, prover-chosen `K_chunk`, and benchmark-defined width claims.
+  Lesson: for a constant-size recursive artifact, the proof cap is part of the protocol meaning. It must be derived from the recursive family and wired through versioned verifier and runtime limits, not guessed from experiments.
+
+- Outcome: implementation-grade rewrite completed.
+  Gap: code implementation still has not started, but the document is now executable as a real build plan rather than only a design note.
+  Lesson: if an ExecPlan does not name exact files, interfaces, commands, validation, and recovery rules, it is still a research memo. The hostile review is only truly useful once those implementation surfaces are explicit.
 
 ## Context and Orientation
 
@@ -113,6 +153,374 @@ Three terms matter here:
 `segment proof` means a recursive proof whose public statement says “the contiguous interval of verified leaves from logical index `a` up to but not including logical index `b` transforms one exact boundary state into another exact boundary state.” This is the design required for tree reduction.
 
 The hard product constraint does not change: one final `recursive_block` artifact must still verify the same public block tuple and must still have fixed serialized width independent of transaction count. The theorem note is explicit that constant size constrains only the shipped artifact, not prover work; see [docs/crypto/constant_recursive_block_proof.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/constant_recursive_block_proof.md#L55).
+
+Two more facts matter for implementation:
+
+First, the current experimental `tree_v2` code in [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs) is a feasibility spike, not a shippable implementation. It demonstrates that the codebase can express chunk, merge, and carry relations, but it does not yet satisfy the fixed-width artifact invariant.
+
+Second, the shipped recursive product lane is back on `recursive_block_v1`. That is deliberate and must stay true until the full `v2` plan below is completed and validated.
+
+## Plan of Work
+
+The implementation must proceed in seven stages, in this exact order.
+
+Stage 1 stabilizes the statement and replay surface. In [circuits/block-recursion/src/statement.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/statement.rs), finalize one versioned `RecursiveSegmentStatementV2` type and its canonical byte encoding. In [circuits/block-recursion/src/public_replay.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/public_replay.rs), add pure helpers that compute boundary handles for `[a,b)` and compose adjacent segments only by adjacency checks plus copied boundary fields. Nothing in this stage proves recursively yet. The result is one pure, deterministic segment-language surface.
+
+Stage 2 replaces the current ad hoc tree scratch relations with one explicit relation family in [circuits/block-recursion/src/relation.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/relation.rs) and [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs). Define one concrete family:
+
+    ChunkARelationV2
+    MergeARelationV2
+    MergeBRelationV2
+    CarryARelationV2
+    CarryBRelationV2
+
+Each relation must expose one exact `SmallwoodConstraintAdapter` implementation, one canonical witness schema, and one explicit terminal relation-kind tag. Do not reuse `V1` names for the new family because the old serial prefix line must remain readable and testable in parallel.
+
+Stage 3 derives the real `v2` proof cap. Add one helper module in [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs) that computes the relation-family fixed-point bound:
+
+    pub struct TreeProofCapReportV2 {
+        pub p_chunk_a: usize,
+        pub p_merge_a: usize,
+        pub p_merge_b: usize,
+        pub p_carry_a: usize,
+        pub p_carry_b: usize,
+        pub fixed_point_cap: usize,
+    }
+
+    pub fn derive_tree_proof_cap_v2() -> Result<TreeProofCapReportV2, BlockRecursionError>
+
+This helper is not optional. The `v2` artifact width must come from this derivation. No hardcoded inherited guess from `v1` is allowed.
+
+Stage 4 builds the real tree scheduler and prover. Replace the current serial loop only inside the `v2` path. Keep `v1` untouched. In [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs), implement deterministic chunking, parallel chunk proving, level-by-level merge proving, and canonical orphan carry. Use Rayon only for same-level parallelism. Never reorder leaves for load balancing. The root output must be one terminal proof against `[0,n)`.
+
+Stage 5 finalizes the `v2` artifact, verifier, and parser surface. In [circuits/block-recursion/src/artifacts.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/artifacts.rs) or [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs), define the final `RecursiveBlockArtifactV2` object using the derived `C_v2`. In [circuits/block-recursion/src/verifier.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/verifier.rs), add exact-width, exact-kind, exact-profile verification with fail-closed padding checks and cross-version rejection.
+
+Stage 6 wires the version through consensus, node, and pallet code, but still keeps `v1` as the shipped default until the full validation bar is met. That work lives in:
+
+- [consensus/src/types.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/types.rs)
+- [consensus/src/proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/consensus/src/proof.rs)
+- [node/src/substrate/service.rs](/Users/pldd/Projects/Reflexivity/Hegemon/node/src/substrate/service.rs)
+- [node/src/substrate/artifact_market.rs](/Users/pldd/Projects/Reflexivity/Hegemon/node/src/substrate/artifact_market.rs)
+- [node/src/substrate/rpc/prover.rs](/Users/pldd/Projects/Reflexivity/Hegemon/node/src/substrate/rpc/prover.rs)
+- [pallets/shielded-pool/src/types.rs](/Users/pldd/Projects/Reflexivity/Hegemon/pallets/shielded-pool/src/types.rs)
+- [pallets/shielded-pool/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/pallets/shielded-pool/src/lib.rs)
+
+That stage is complete only when the repo can parse and verify both `v1` and `v2`, but the shipped default is still guarded by the acceptance bar below.
+
+Stage 7 is promotion or rejection. Run the full equivalence, redteam, fixed-width, and runtime-cap suites. If `v2` passes all of them and materially improves wall-clock latency, then and only then change the shipped default selector from `v1` to `v2`. If it fails the cap or latency bar, keep `v2` experimental and leave `v1` shipped.
+
+## Concrete Steps
+
+Run all commands from the repository root, `/Users/pldd/Projects/Reflexivity/Hegemon`.
+
+Before touching the tree lane, confirm the shipped lane is still clean:
+
+    cargo test -p block-recursion --lib
+    cargo test -p consensus recursive_block_v1_verifier_ -- --nocapture
+    cargo test -p pallet-shielded-pool validate_submit_recursive_candidate_artifact_ -- --nocapture
+
+Then implement and validate each stage in sequence:
+
+1. Segment-language stage:
+
+       cargo test -p block-recursion segment_statement_ -- --nocapture
+
+   Expected result: all segment adjacency, gap, overlap, and reordering tests pass.
+
+2. Chunk-relation stage:
+
+       cargo test -p block-recursion chunk_relation_ -- --nocapture
+
+   Expected result: chunk proofs verify for valid contiguous intervals and fail for tampered boundary states or leaf-order changes.
+
+3. Merge/carry stage:
+
+       cargo test -p block-recursion merge_relation_ -- --nocapture
+
+   Expected result: adjacent children merge, non-adjacent children fail, reordered children fail, and orphan carry uses the canonical next-level profile.
+
+4. Tree scheduler stage:
+
+       cargo test -p block-recursion tree_scheduler_matches_serial_prefix_lane -- --nocapture
+
+   Expected result: serial `v1` replay and tree `v2` replay agree on the final public tuple for the same ordered block.
+
+5. Fixed-width artifact stage:
+
+       cargo test -p block-recursion recursive_artifact_v2_ -- --nocapture
+       cargo test -p consensus recursive_block_v2_verifier_ -- --nocapture
+
+   Expected result: exact-width `v2` artifacts verify, oversize and malformed ones fail closed, and `v1`/`v2` cross-version parsing fails closed.
+
+6. Runtime-cap and product-lane stage:
+
+       cargo test -p pallet-shielded-pool validate_submit_recursive_candidate_artifact_ -- --nocapture
+       cargo test -p hegemon-node recursive_block_ -- --nocapture
+
+   Expected result: runtime admission accepts the exact `v2` cap only when `v2` is enabled, rejects oversize `v2`, and node mode mapping remains correct.
+
+7. Performance comparison stage:
+
+       /usr/bin/time -lp cargo test -p block-recursion prove_and_verify_recursive_artifact_succeeds -- --nocapture
+       /usr/bin/time -lp cargo test -p block-recursion prove_and_verify_recursive_artifact_v2_succeeds -- --nocapture
+
+   Run those measurements at several tx counts after adding dedicated test entry points. Record wall-clock time, max RSS, and serialized artifact width for both lanes.
+
+After every document or code edit that affects the plan, run:
+
+    git diff --check -- .agent/TREE_REDUCED_RECURSIVE_BLOCK_PROOF_EXECPLAN.md
+
+and after every code edit in the tree lane, run at least:
+
+    cargo check -p block-recursion -p consensus -p pallet-shielded-pool -p hegemon-node
+
+## Validation and Acceptance
+
+The implementation is accepted only if all of the following are observable in this repository:
+
+The `v1` shipped lane still verifies exactly as before until the promotion step. A clean implementation must not regress the live recursive product lane while `v2` is experimental.
+
+The `v2` tree lane proves the same ordered block semantics as `v1`. For the same ordered verified-leaf stream and parent semantic inputs, both lanes must verify against the same terminal public tuple.
+
+The `v2` artifact is genuinely fixed-width. Two non-empty blocks with different transaction counts must serialize to exactly the same `recursive_block_v2` byte length, and any artifact with the wrong width, wrong padding, wrong relation kind, wrong profile, alternate serializer, or cross-version envelope must be rejected.
+
+The `v2` proof cap is derived or exhaustively bounded, not guessed. The implementation must emit one report or test-visible structure showing the inputs and result of the cap derivation, and live proof output must fit under that bound.
+
+The runtime and node surfaces enforce the exact `v2` artifact cap before deep verification. This prevents the current oversize failure mode from ever becoming a shipped-lane runtime regression.
+
+The tree lane must also earn its existence. Multi-core proving on larger blocks must materially improve wall-clock latency over the serial prefix lane. If that does not happen, `v2` remains experimental even if it is otherwise sound.
+
+## Idempotence and Recovery
+
+This plan is safe to execute incrementally because `v1` remains the shipped default until the final promotion step. If any `v2` milestone fails, leave `v2` behind explicit version selection and keep the shipped selector on `v1`.
+
+Do not delete `v1` code during the `v2` buildout. Keep both parsers, both verifiers, and both artifact selectors until the final promotion milestone is complete and validated.
+
+If a proof-cap derivation attempt produces a `v2` cap that exceeds current runtime limits, do not widen the runtime cap blindly. First decide whether the relation family must be redesigned, whether `K_chunk` must change under a new version/profile, or whether the tree lane should remain experimental. A runtime-cap increase without a new full validation pass is not a valid recovery path.
+
+If an implementation branch leaves `v2` tests flaky or long-running, mark those tests explicitly experimental while the lane remains off the shipped path. Do not present ignored or quarantined `v2` tests as shipped-path coverage.
+
+## Artifacts and Notes
+
+The most important artifacts the implementation must leave behind are:
+
+- one versioned `RecursiveSegmentStatementV2` byte surface,
+- one derived `TreeProofCapReportV2`,
+- one exact-width `RecursiveBlockArtifactV2` serializer/parser pair,
+- one cross-version fail-closed test suite for `v1` and `v2`,
+- one benchmark note in this ExecPlan recording measured `v1` vs `v2` wall-clock and width results.
+
+When recording benchmark evidence in this plan, keep it concise. A good entry looks like:
+
+    recursive_block_v1, 16 tx, real 88.46s, max RSS 186515456, artifact 699404 bytes
+    recursive_block_v2, 16 tx, real 41.12s, max RSS 201003008, artifact 742112 bytes
+
+That is enough to prove whether the design earned promotion.
+
+## Interfaces and Dependencies
+
+At the end of Milestone 1, these interfaces must exist in [circuits/block-recursion/src/statement.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/statement.rs) and [circuits/block-recursion/src/public_replay.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/public_replay.rs):
+
+    pub struct RecursiveSegmentStatementV2 { ... }
+    pub fn recursive_segment_statement_bytes_v2(statement: &RecursiveSegmentStatementV2) -> Vec<u8>
+    pub fn segment_statement_for_interval_v2(
+        records: &[BlockLeafRecordV1],
+        semantic: &BlockSemanticInputsV1,
+        start_index: usize,
+        end_index: usize,
+    ) -> Result<RecursiveSegmentStatementV2, BlockRecursionError>
+    pub fn compose_segment_statements_v2(
+        left: &RecursiveSegmentStatementV2,
+        right: &RecursiveSegmentStatementV2,
+    ) -> Result<RecursiveSegmentStatementV2, BlockRecursionError>
+
+At the end of Milestones 2 and 3, these relation types must exist in [circuits/block-recursion/src/relation.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/relation.rs) or [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs):
+
+    pub struct ChunkARelationV2 { ... }
+    pub struct MergeARelationV2 { ... }
+    pub struct MergeBRelationV2 { ... }
+    pub struct CarryARelationV2 { ... }
+    pub struct CarryBRelationV2 { ... }
+
+Each of those must implement `SmallwoodConstraintAdapter`.
+
+At the end of the cap-derivation stage, these interfaces must exist in [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs):
+
+    pub struct TreeProofCapReportV2 {
+        pub p_chunk_a: usize,
+        pub p_merge_a: usize,
+        pub p_merge_b: usize,
+        pub p_carry_a: usize,
+        pub p_carry_b: usize,
+        pub fixed_point_cap: usize,
+    }
+
+    pub fn derive_tree_proof_cap_v2() -> Result<TreeProofCapReportV2, BlockRecursionError>
+
+At the end of the artifact stage, these interfaces must exist:
+
+    pub struct RecursiveBlockArtifactV2 { ... }
+    pub fn serialize_recursive_block_artifact_v2(
+        artifact: &RecursiveBlockArtifactV2,
+    ) -> Result<Vec<u8>, BlockRecursionError>
+    pub fn deserialize_recursive_block_artifact_v2(
+        bytes: &[u8],
+    ) -> Result<RecursiveBlockArtifactV2, BlockRecursionError>
+    pub fn verify_block_recursive_v2(
+        artifact: &RecursiveBlockArtifactV2,
+        records: &[BlockLeafRecordV1],
+        semantic: &BlockSemanticInputsV1,
+    ) -> Result<(), BlockRecursionError>
+
+The implementation must continue to depend on:
+
+- `transaction_circuit::prove_recursive_statement_v1`
+- `transaction_circuit::verify_recursive_statement_direct_v1`
+- the existing `SmallwoodConstraintAdapter` proof-system seam
+- the existing consensus/node/pallet block-proof mode/version routing
+
+Do not add a second proof backend or a host-side verifier shortcut. This plan only changes the recursive relation family and scheduler.
+
+## Correct Constant-Size Invariant
+
+The correct invariant for the tree lane is not “make `recursive_block_v2` the same size as `recursive_block_v1`.” The correct invariant is:
+
+For artifact version `recursive_block_v2`, there exists one version-specific constant `C_v2` such that for every accepted block `B` in the supported `v2` domain,
+
+    |ser_pi_block_v2(B)| = C_v2
+
+and the verifier accepts only artifacts of exactly that width.
+
+More concretely, the shipped object
+
+    Pi_block_v2(B) = (Header_rec_tree_v2(B), proof_rec_v2(B), Y_rec_v2(B))
+
+must satisfy:
+
+    |ser(Header_rec_tree_v2)| = H_v2
+    |proof_rec_v2(B)| = P_v2
+    |ser(Y_rec_v2(B))| = Y_v2
+    C_v2 = H_v2 + P_v2 + Y_v2
+
+where `H_v2`, `P_v2`, and `Y_v2` are fixed by the protocol version, not by the block. The verifier must fail closed if any artifact deviates from those exact widths.
+
+This top-level invariant is only real if four lower invariants hold.
+
+### 1. Relation-Family Width Invariant
+
+Every recursive relation kind admitted by the tree lane must have a proven worst-case serialized proof bound under one fixed verifier profile family.
+
+If the allowed relation kinds are:
+
+- `ChunkA`
+- `MergeA`
+- `MergeB`
+- `CarryA`
+- `CarryB`
+
+then there must be fixed bounds:
+
+- `P_chunk_a`
+- `P_merge_a`
+- `P_merge_b`
+- `P_carry_a`
+- `P_carry_b`
+
+such that every valid proof of that relation kind serializes to at most that many bytes when all fixed-width recursive child slots are themselves bounded by the same canonical `v2` child-proof cap.
+
+The shipped `v2` proof cap is therefore not just:
+
+    P_v2 = max(P_chunk_a, P_merge_a, P_merge_b, P_carry_a, P_carry_b)
+
+until those per-kind bounds are themselves computed against one recursive child-slot cap. The actual design requirement is:
+
+1. define one monotone bound function `F_v2(P)` that returns the maximum serialized width produced by any admitted `v2` relation kind when every recursive child proof slot has fixed width `P`,
+2. choose one sound fixed point `P_v2` such that `F_v2(P_v2) <= P_v2`,
+3. reject any implementation that uses a child-proof slot width different from that same `P_v2`.
+
+The preferred target is the least sound fixed point, because any larger cap bloats the shipped constant object for no reason.
+
+The current experimental `tree_v2` line is wrong because [circuits/block-recursion/src/tree_v2.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/tree_v2.rs#L26) hardcodes `RECURSIVE_BLOCK_PROOF_BYTES_V2 = 698_616` without proving that the full recursive family closes under that cap.
+
+### 2. Inductive Child-Cap Invariant
+
+Every non-leaf relation must consume child proofs under one canonical child-proof cap, and that child cap must be the same cap used recursively throughout the whole tree.
+
+For every merge or carry proof:
+
+- each child proof occupies one fixed-width slot,
+- child slots are padded only by one canonical function,
+- oversize child proof is immediate failure,
+- undersize child proof is right-padded with zero bytes only,
+- decode must reject any nonzero padding or alternate-width child encoding.
+
+The cap used for those child slots is not an implementation detail. It is the same protocol constant `P_v2` that defines the final terminal proof field.
+
+Without this inductive child-cap rule, the top-level constant-size claim is fake because variable-width child encodings can still leak into the recursive witness language.
+
+### 3. Canonical Schedule Invariant
+
+The prover is not allowed to choose the tree shape.
+
+For one ordered verified-leaf stream, the following must be deterministic:
+
+- chunk size `K_chunk`,
+- chunk partitioning,
+- orphan carry rule,
+- per-level profile schedule,
+- terminal relation kind.
+
+If two honest provers can choose different legal trees for the same block, then one protocol version is silently admitting multiple recursive proof languages. That breaks the constant-size object claim at the design level even before serialization.
+
+`K_chunk` is therefore part of the accepted `v2` verifier meaning. It must be fixed by the artifact version or verifier profile and must not vary per prover invocation.
+
+### 4. Fixed Public-Surface Invariant
+
+The public statement carried by the terminal tree proof must itself remain fixed-width independent of transaction count.
+
+That means:
+
+- all variable-length leaf/segment data stays in recursive witness only,
+- the terminal public tuple contains only fixed-width boundary handles and commitments,
+- no segment-local variable-length transcript, child list, or serializer-specific blob may leak into the shipped public surface.
+
+Tree reduction is only compatible with a constant-size product boundary if the public proof object stays fixed-width while the variable work remains purely internal to the recursive witness.
+
+## Verifier Obligations
+
+The `v2` verifier must reject all of the following:
+
+- total artifact width not equal to `C_v2`,
+- proof field width not equal to `P_v2`,
+- nonzero padding in the terminal proof field,
+- nonzero padding in any fixed-width child proof slot,
+- wrong terminal relation kind,
+- wrong profile tag,
+- alternate serializer,
+- trailing bytes,
+- cross-version parse/verify,
+- any artifact whose measured proof width exceeds the proven `v2` cap even if all other fields are well-formed.
+
+If any one of those conditions is not fail-closed, the constant-size claim is not enforceable in production.
+
+## Acceptance Rule For The Tree Lane
+
+`tree_v2` is only correctly designed when all of the following are true in code:
+
+1. The real worst-case proof width is derived or exhaustively bounded for every admitted tree relation kind, and live prover measurements validate that bound against actual emitted proofs.
+2. `P_v2` is set to that true maximum, not inherited from `v1` or guessed from partial runs.
+3. Child-proof slots and the terminal proof slot use that one canonical `v2` cap.
+4. End-to-end tests prove
+   - equal serialized width across different non-empty transaction counts,
+   - exact-width acceptance,
+   - oversize rejection,
+   - undersize/nonzero-padding rejection,
+   - alternate-serializer rejection,
+   - cross-version fail-closed behavior.
+5. Consensus, node, and runtime admission logic are updated to a version-specific `v2` artifact cap `C_v2`, and shipped-path tests prove that exact cap is accepted while any oversize `v2` artifact is rejected before verification.
+6. Only after those tests pass is `recursive_block_v2` allowed onto the shipped product lane.
+
+Until then, `tree_v2` is experimental and must remain off the shipped path.
 
 ## Why The Current Prefix Design Is Serial
 
@@ -177,7 +585,7 @@ The final terminal artifact still contains one constant-size recursive proof plu
 
 ## Exact Segment Statement
 
-Define a new public recursive statement `SegmentStatementV1(a,b)` for a contiguous interval `[a,b)` with `0 <= a <= b <= n`.
+Define a new public recursive statement `SegmentStatementV2(a,b)` for a contiguous interval `[a,b)` with `0 <= a <= b <= n`.
 
 It must contain enough public information to make composition exact and order-preserving. The minimum public fields are:
 
@@ -255,7 +663,7 @@ Without that, a malicious prover could splice two valid subproofs that happen to
 
 The scheduler must be deterministic. The same ordered verified-leaf stream must induce the same chunk partition and the same merge tree on every honest prover.
 
-Fix one proving parameter `K_chunk`, a positive power of two measured in leaves. The first implementation should choose one concrete value, for example `8`, and record it in the descriptor/config surface of the tree-reduced relation family.
+Fix one version-bound constant `K_chunk`, a positive power of two measured in leaves. The first implementation should choose one concrete value, for example `8`, and record it in the descriptor/config surface of the tree-reduced relation family. `K_chunk` must be verifier-visible through the accepted `v2` descriptor/profile meaning; it is not a free prover-side tuning knob.
 
 The canonical chunk partition is:
 
@@ -294,7 +702,7 @@ That terminal-kind mapping must be encoded in the new artifact-version header an
 
 ## Chunk Relation
 
-Define `Chunk_tau_v1(P[a,b))` as the recursion-friendly Smallwood relation that proves a contiguous interval directly from raw witness material.
+Define `Chunk_tau_v2(P[a,b))` as the recursion-friendly Smallwood relation that proves a contiguous interval directly from raw witness material.
 
 Its witness contains:
 
@@ -315,13 +723,13 @@ Its checks are:
 6. replay of the one-step transition relation over that interval transforms `S_a` into `S_b`.
 7. the derived boundary projections and tree commitments equal the public boundary fields.
 
-The chunk size is a proving parameter, not a consensus parameter. A first implementation should choose one fixed small power of two, for example `8` or `16` leaves, because that gives a stable merge fanout and stable benchmark surface.
+The chunk size is a version-bound proving-system constant. A first implementation should choose one fixed small power of two, for example `8` or `16` leaves, because that gives a stable merge fanout and stable benchmark surface. If `K_chunk` changes, the verifier profile or artifact version must change too.
 
 Every chunk relation must use one fixed witness schema for exactly `K_chunk` leaves. The statement carries the true `segment_len`; the witness carries `K_chunk` leaf slots; and any slot beyond `segment_len` is canonically zero-padded and constrained inactive. No implementation is allowed to generate a smaller proof shape for the short final chunk.
 
 ## Merge Relation
 
-Define `Merge_tau_v1(P[a,b))` as the recursion-friendly Smallwood relation that verifies two child interval proofs:
+Define `Merge_tau_v2(P[a,b))` as the recursion-friendly Smallwood relation that verifies two child interval proofs:
 
 - left child proves `[a,m)`
 - right child proves `[m,b)`
@@ -360,7 +768,7 @@ This is the crucial point: merge is not a generic “hash two proofs together”
 
 ## Carry Relation
 
-Define `Carry_tau_v1(P[a,b))` as the recursion-friendly Smallwood relation that verifies one child interval proof and republishes the same interval statement under the next level’s profile.
+Define `Carry_tau_v2(P[a,b))` as the recursion-friendly Smallwood relation that verifies one child interval proof and republishes the same interval statement under the next level’s profile.
 
 Its witness contains:
 
@@ -435,7 +843,7 @@ Replace or supplement [circuits/block-recursion/src/statement.rs](/Users/pldd/Pr
 
 Add:
 
-- `RecursiveSegmentStatementV1`
+- `RecursiveSegmentStatementV2`
 - canonical byte encoding
 - canonical digest helpers
 - exact ordered segment-composition helpers
@@ -453,11 +861,11 @@ Extend [circuits/block-recursion/src/public_replay.rs](/Users/pldd/Projects/Refl
 
 Extend [circuits/block-recursion/src/relation.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/block-recursion/src/relation.rs) with:
 
-- `ChunkARelationV1`
-- `MergeARelationV1`
-- `MergeBRelationV1`
-- `CarryARelationV1`
-- `CarryBRelationV1`
+- `ChunkARelationV2`
+- `MergeARelationV2`
+- `MergeBRelationV2`
+- `CarryARelationV2`
+- `CarryBRelationV2`
 
 or equivalent names.
 
@@ -472,7 +880,7 @@ Replace the serial loop in [circuits/block-recursion/src/prover.rs](/Users/pldd/
 3. merge adjacent chunk proofs in parallel level by level,
 4. continue until one root proof remains,
 5. pad the terminal proof to the fixed artifact width,
-6. emit the same outer artifact contract.
+6. emit the versioned `recursive_block_v2` outer artifact contract.
 
 The chunk scheduler must preserve exact order. It must never reorder leaves for load balancing.
 
@@ -482,6 +890,7 @@ Update [circuits/block-recursion/src/verifier.rs](/Users/pldd/Projects/Reflexivi
 
 - add one explicit new artifact version for the tree-reduced line,
 - recognize the new relation ids / verification keys / terminal relation kinds,
+- bind the accepted `K_chunk` and `P_v2` constants to the `v2` verifier meaning,
 - preserve one fixed-width artifact per version,
 - fail closed on old/new mismatch.
 
@@ -501,7 +910,7 @@ After the relation family exists, update the recursive artifact preparation path
 
 ## Milestone 1: Segment Statement Prototype
 
-Introduce `RecursiveSegmentStatementV1` and pure Rust helpers that:
+Introduce `RecursiveSegmentStatementV2` and pure Rust helpers that:
 
 - construct segment statements for `[a,b)`,
 - compose adjacent segments,
@@ -574,11 +983,12 @@ Capture:
 - peak RSS,
 - final proof size,
 - artifact version and proof cap,
+- measured fixed-point proof-cap derivation inputs and resulting `P_v2`,
 - chunk proof count,
 - merge proof count,
 - critical path estimate.
 
-The tree design should only be kept as the shipped default if it materially improves wall-clock latency on multi-core systems without breaking the constant-size artifact contract or pushing the proof field past the runtime cap.
+The tree design should only be kept as the shipped default if it materially improves wall-clock latency on multi-core systems without breaking the constant-size artifact contract or pushing the proof field past the runtime cap. Benchmark output is validation data, not the definition of the cap.
 
 ## Milestone 6: Redteam
 
@@ -627,3 +1037,5 @@ This plan does not try to:
 - introduce external prover markets or distributed scheduling.
 
 The goal is narrower: keep the same product truth surface, but replace the recursive proving schedule with one that can exploit parallel hardware.
+
+Revision note (2026-04-14): this plan was expanded from a design note into an implementation-grade ExecPlan. The update added explicit work sequencing, concrete commands, interface targets, validation rules, recovery rules, and stricter `v2` naming so a novice can implement the tree lane without relying on prior chat context.

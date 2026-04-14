@@ -146,7 +146,9 @@ fn build_terminal_relation_v1(
         | SmallwoodRecursiveRelationKindV1::MergeB
         | SmallwoodRecursiveRelationKindV1::CarryA
         | SmallwoodRecursiveRelationKindV1::CarryB => {
-            return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k"))
+            return Err(BlockRecursionError::InvalidField(
+                "terminal_relation_kind_k",
+            ))
         }
     };
     let binding = match relation_kind {
@@ -159,7 +161,9 @@ fn build_terminal_relation_v1(
         | SmallwoodRecursiveRelationKindV1::MergeB
         | SmallwoodRecursiveRelationKindV1::CarryA
         | SmallwoodRecursiveRelationKindV1::CarryB => {
-            return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k"))
+            return Err(BlockRecursionError::InvalidField(
+                "terminal_relation_kind_k",
+            ))
         }
     };
     Ok((profile, descriptor, relation, binding))

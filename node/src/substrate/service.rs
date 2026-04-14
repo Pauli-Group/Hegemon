@@ -2746,11 +2746,13 @@ fn ensure_native_only_receipt_root_payload(
                 )
             }),
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-            if payload.proof_kind
-                != pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-            {
+            if !matches!(
+                payload.proof_kind,
+                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+                    | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+            ) {
                 return Err(format!(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payload kind {:?}; recursive_block_v1 is required",
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payload kind {:?}; recursive_block_v1 or recursive_block_v2 is required",
                     payload.proof_kind,
                 ));
             }
@@ -4628,11 +4630,13 @@ fn verify_proof_carrying_block(
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
             ensure_native_only_receipt_root_payload(&payload)?;
-            if payload.proof_kind
-                != pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-            {
+            if !matches!(
+                payload.proof_kind,
+                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+                    | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+            ) {
                 return Err(format!(
-                    "recursive_block payload must use recursive_block_v1 kind; got {:?}",
+                    "recursive_block payload must use recursive_block_v1 or recursive_block_v2 kind; got {:?}",
                     payload.proof_kind,
                 ));
             }
@@ -12562,6 +12566,19 @@ mod tests {
         payload.recursive_block = Some(dummy_recursive_block_payload());
         ensure_native_only_receipt_root_payload(&payload)
             .expect("native-only mode must accept recursive_block payloads");
+    }
+
+    #[test]
+    fn require_native_receipt_root_accepts_recursive_block_v2_payload() {
+        let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
+        let mut payload = dummy_block_proof_bundle();
+        payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
+        payload.verifier_profile = block_recursion::recursive_block_artifact_verifier_profile_v2();
+        payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
+        payload.recursive_block = Some(dummy_recursive_block_payload());
+        ensure_native_only_receipt_root_payload(&payload)
+            .expect("native-only mode must accept recursive_block_v2 payloads");
     }
 
     #[test]

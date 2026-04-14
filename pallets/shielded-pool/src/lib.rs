@@ -2696,7 +2696,12 @@ pub mod pallet {
         pub(crate) fn validate_block_proof_bundle_mode(
             bundle: &types::BlockProofBundle,
         ) -> Result<(), Error<T>> {
-            if bundle.proof_kind != types::proof_artifact_kind_from_mode(bundle.proof_mode) {
+            if match bundle.proof_mode {
+                types::BlockProofMode::RecursiveBlock => {
+                    !types::is_recursive_block_artifact_kind(bundle.proof_kind)
+                }
+                _ => bundle.proof_kind != types::proof_artifact_kind_from_mode(bundle.proof_mode),
+            } {
                 return Err(Error::<T>::InvalidProofFormat);
             }
             if bundle.verifier_profile == [0u8; 48] {
@@ -2746,9 +2751,10 @@ pub mod pallet {
                         .recursive_block
                         .as_ref()
                         .ok_or(Error::<T>::InvalidProofFormat)?;
+                    let recursive_max = types::recursive_block_artifact_max_size(bundle.proof_kind)
+                        .ok_or(Error::<T>::InvalidProofFormat)?;
                     if recursive_block.proof.data.is_empty()
-                        || recursive_block.proof.data.len()
-                            > crate::types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE
+                        || recursive_block.proof.data.len() > recursive_max
                     {
                         return Err(Error::<T>::ProofTooLarge);
                     }
@@ -3274,6 +3280,12 @@ mod tests {
     }
 
     fn dummy_recursive_candidate_artifact() -> types::CandidateArtifact {
+        dummy_recursive_candidate_artifact_with_kind(types::ProofArtifactKind::RecursiveBlockV1)
+    }
+
+    fn dummy_recursive_candidate_artifact_with_kind(
+        proof_kind: types::ProofArtifactKind,
+    ) -> types::CandidateArtifact {
         types::CandidateArtifact {
             version: types::BLOCK_PROOF_BUNDLE_SCHEMA,
             tx_count: 2,
@@ -3282,7 +3294,7 @@ mod tests {
             da_chunk_count: 3,
             commitment_proof: types::StarkProof::from_bytes(Vec::new()),
             proof_mode: types::BlockProofMode::RecursiveBlock,
-            proof_kind: types::ProofArtifactKind::RecursiveBlockV1,
+            proof_kind,
             verifier_profile: [14u8; 48],
             receipt_root: None,
             recursive_block: Some(types::RecursiveBlockProofPayload {
@@ -3667,11 +3679,45 @@ mod tests {
                 .as_mut()
                 .expect("recursive payload")
                 .proof
-                .data = vec![0u8; types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE];
+                .data = vec![
+                0u8;
+                types::recursive_block_artifact_max_size(
+                    types::ProofArtifactKind::RecursiveBlockV1
+                )
+                .expect("v1 recursive size cap")
+            ];
 
             let meta =
                 pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
                     .expect("recursive product lane size cap should be accepted");
+
+            assert!(!meta.propagate);
+            assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_v2_accepts_derived_size_cap() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact_with_kind(
+                types::ProofArtifactKind::RecursiveBlockV2,
+            );
+            payload
+                .recursive_block
+                .as_mut()
+                .expect("recursive payload")
+                .proof
+                .data = vec![
+                0u8;
+                types::recursive_block_artifact_max_size(
+                    types::ProofArtifactKind::RecursiveBlockV2
+                )
+                .expect("v2 recursive size cap")
+            ];
+
+            let meta =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect("recursive v2 size cap should be accepted");
 
             assert!(!meta.propagate);
             assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
@@ -3740,11 +3786,46 @@ mod tests {
                 .as_mut()
                 .expect("recursive payload")
                 .proof
-                .data = vec![0u8; types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE + 1];
+                .data = vec![
+                0u8;
+                types::recursive_block_artifact_max_size(
+                    types::ProofArtifactKind::RecursiveBlockV1
+                )
+                .expect("v1 recursive size cap")
+                    + 1
+            ];
 
             let err =
                 pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
                     .expect_err("oversized recursive payload must be rejected");
+
+            assert!(matches!(err, InvalidTransaction::BadProof));
+        });
+    }
+
+    #[test]
+    fn validate_submit_recursive_candidate_artifact_v2_rejects_oversized_recursive_payload() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact_with_kind(
+                types::ProofArtifactKind::RecursiveBlockV2,
+            );
+            payload
+                .recursive_block
+                .as_mut()
+                .expect("recursive payload")
+                .proof
+                .data = vec![
+                0u8;
+                types::recursive_block_artifact_max_size(
+                    types::ProofArtifactKind::RecursiveBlockV2
+                )
+                .expect("v2 recursive size cap")
+                    + 1
+            ];
+
+            let err =
+                pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
+                    .expect_err("oversized recursive v2 payload must be rejected");
 
             assert!(matches!(err, InvalidTransaction::BadProof));
         });
