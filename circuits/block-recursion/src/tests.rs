@@ -6,6 +6,7 @@ use super::{
     hosted_recursive_proof_witness_words_v1, hosted_step_binding_bytes_v1,
     previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, public_replay_v1,
     serialize_recursive_block_artifact_v1, serialize_recursive_block_public_v1,
+    step_recursive_witness_layout_v1, step_recursive_witness_words_v1,
     verify_block_recursive_v1, verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
@@ -485,6 +486,31 @@ fn previous_proof_layout_matches_trace_len_for_base_envelope() {
 }
 
 #[test]
+fn step_witness_layout_matches_trace_len_for_base_context() {
+    let context = base_a_context_v1();
+    let (previous, leaf, _) = step_statement_pair();
+    let witness_words = step_recursive_witness_words_v1(&context, &previous, &leaf).unwrap();
+    let layout = step_recursive_witness_layout_v1(&context).unwrap();
+    assert_eq!(layout.total_rows() * layout.row_width, witness_words.len());
+    assert_eq!(
+        layout.leaf_record.limb_start,
+        layout.previous_statement.limb_start + layout.previous_statement.limb_count
+    );
+    assert_eq!(
+        layout.descriptor.limb_start,
+        layout.leaf_record.limb_start + layout.leaf_record.limb_count
+    );
+    assert_eq!(
+        layout.envelope.limb_start,
+        layout.descriptor.limb_start + layout.descriptor.limb_count
+    );
+    assert_eq!(
+        layout.merkle.limb_start,
+        layout.decs.limb_start + layout.decs.limb_count
+    );
+}
+
+#[test]
 fn hosted_recursive_context_descriptor_shape_checks_reject_wrong_descriptor() {
     let statement = base_prefix_statement();
     let relation = BaseARelationV1::new(statement.clone(), statement.clone());
@@ -630,7 +656,7 @@ fn step_b_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveRelationKindV1::StepB,
     );
     let binding = hosted_step_binding_bytes_v1(&target);
-    let witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
+    let witness = step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
     let proof = prove_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         &descriptor,
@@ -702,7 +728,7 @@ fn step_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveRelationKindV1::StepB,
     );
     let step_b_binding = hosted_step_binding_bytes_v1(&target);
-    let step_b_witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
+    let step_b_witness = step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
     let step_b_proof = prove_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         &step_b_descriptor,
@@ -747,7 +773,7 @@ fn step_a_relation_proves_and_verifies_on_recursive_smallwood_profile() {
         SmallwoodRecursiveRelationKindV1::StepA,
     );
     let binding = hosted_step_binding_bytes_v1(&next_target);
-    let witness = hosted_recursive_proof_witness_words_v1(&step_b_context).unwrap();
+    let witness = step_recursive_witness_words_v1(&step_b_context, &target, &next_leaf).unwrap();
     let proof = prove_recursive_statement_v1(
         &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         &descriptor,
@@ -813,7 +839,7 @@ fn step_b_relation_rejects_wrong_previous_proof_witness() {
     let binding = hosted_step_binding_bytes_v1(&target);
     let wrong_witness = vec![
         0u64;
-        hosted_recursive_proof_witness_words_v1(&base_context)
+        step_recursive_witness_words_v1(&base_context, &previous, &leaf)
             .unwrap()
             .len()
     ];
@@ -862,7 +888,7 @@ fn step_b_relation_verification_depends_on_external_previous_context() {
         SmallwoodRecursiveRelationKindV1::StepB,
     );
     let binding = hosted_step_binding_bytes_v1(&target);
-    let witness = hosted_recursive_proof_witness_words_v1(&base_context).unwrap();
+    let witness = step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
     let proof = prove_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         &descriptor,

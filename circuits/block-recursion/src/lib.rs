@@ -39,6 +39,7 @@ pub use relation::{
     previous_proof_trace_limbs_v1, previous_proof_witness_layout_from_envelope_v1,
     previous_proof_witness_layout_from_sizes_v1, recursive_block_relation_id_v1,
     recursive_block_shape_digest_v1, recursive_block_shape_v1,
+    step_recursive_witness_layout_v1, step_recursive_witness_words_v1,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
@@ -47,7 +48,7 @@ pub use relation::{
     verify_hosted_recursive_proof_context_transcript_v1, verify_hosted_recursive_proof_context_v1,
     verify_recursive_proof_envelope_components_v1, BaseARelationV1, BlockStatementKindV1,
     HostedRecursiveProofContextV1, PreviousProofWitnessLayoutV1, PreviousProofWitnessSectionV1,
-    StepARelationV1, StepBRelationV1, PREVIOUS_PROOF_DECS_LIMBS_V1, PREVIOUS_PROOF_MERKLE_LIMBS_V1,
+    StepARelationV1, StepBRelationV1, StepWitnessLayoutV1, PREVIOUS_PROOF_DECS_LIMBS_V1, PREVIOUS_PROOF_MERKLE_LIMBS_V1,
     PREVIOUS_PROOF_PCS_LIMBS_V1, PREVIOUS_PROOF_TRANSCRIPT_LIMBS_V1,
     PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1, PREVIOUS_PROOF_WITNESS_ROW_WIDTH_LIMBS_V1,
 };
