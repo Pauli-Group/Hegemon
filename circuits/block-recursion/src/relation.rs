@@ -12,8 +12,9 @@ use crate::{
     },
     statement::{RecursivePrefixStatementV1, recursive_prefix_statement_bytes_v1},
 };
+use std::io::Cursor;
 use p3_goldilocks::Goldilocks;
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+use protocol_versioning::{SMALLWOOD_CANDIDATE_VERSION_BINDING, VersionBinding};
 use superneo_ccs::{
     Assignment, CcsShape, RelationId, ShapeDigest, SparseMatrix, WitnessField, WitnessSchema,
     digest_shape,
@@ -24,7 +25,8 @@ use superneo_ring::{
 };
 use transaction_circuit::{
     RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodNonlinearEvalView, SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodNonlinearEvalView, SmallwoodProof, SmallwoodProofTraceV1,
+    SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveRelationKindV1, SmallwoodRecursiveVerifierDescriptorV1,
     SmallwoodTranscriptBackend, TransactionCircuitError, SMALLWOOD_DECS_NB_EVALS,
     SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_DECS_POW_BITS, decode_smallwood_proof_trace_v1,
@@ -40,6 +42,7 @@ const SMALLWOOD_BASE_A_ROW_COUNT_V1: usize = 1;
 const SMALLWOOD_BASE_A_PACKING_FACTOR_V1: usize = 64;
 const SMALLWOOD_STEP_ROW_COUNT_V1: usize = 1;
 const SMALLWOOD_STEP_PACKING_FACTOR_V1: usize = 64;
+const STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1: usize = 6;
 
 pub const PREVIOUS_PROOF_WITNESS_ROW_WIDTH_LIMBS_V1: usize = SMALLWOOD_STEP_PACKING_FACTOR_V1;
 pub const PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1: usize = 8;
@@ -98,6 +101,7 @@ pub struct StepWitnessLayoutV1 {
     pub row_width: usize,
     pub previous_statement: PreviousProofWitnessSectionV1,
     pub leaf_record: PreviousProofWitnessSectionV1,
+    pub layout_header: PreviousProofWitnessSectionV1,
     pub descriptor: PreviousProofWitnessSectionV1,
     pub envelope: PreviousProofWitnessSectionV1,
     pub transcript: PreviousProofWitnessSectionV1,
@@ -224,7 +228,24 @@ fn previous_proof_witness_layout_from_sections_v1(
 ) -> PreviousProofWitnessLayoutV1 {
     let descriptor_limbs = previous_proof_limbs_for_bytes_v1(descriptor_bytes_len);
     let envelope_limbs = previous_proof_limbs_for_bytes_v1(proof_bytes_len);
+    previous_proof_witness_layout_from_limb_counts_v1(
+        descriptor_limbs,
+        envelope_limbs,
+        transcript_limbs,
+        pcs_limbs,
+        decs_limbs,
+        merkle_limbs,
+    )
+}
 
+fn previous_proof_witness_layout_from_limb_counts_v1(
+    descriptor_limbs: usize,
+    envelope_limbs: usize,
+    transcript_limbs: usize,
+    pcs_limbs: usize,
+    decs_limbs: usize,
+    merkle_limbs: usize,
+) -> PreviousProofWitnessLayoutV1 {
     let descriptor = PreviousProofWitnessSectionV1::new(0, descriptor_limbs, 0);
     let envelope = PreviousProofWitnessSectionV1::new(
         descriptor.limb_start + descriptor.limb_count,
@@ -308,10 +329,15 @@ fn step_witness_layout_from_previous_proof_v1(
         leaf_record_limbs,
         previous_statement.row_start + previous_statement.row_count,
     );
-    let descriptor = PreviousProofWitnessSectionV1::new(
+    let layout_header = PreviousProofWitnessSectionV1::new(
         leaf_record.limb_start + leaf_record.limb_count,
-        previous_proof_layout.descriptor.limb_count,
+        STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1,
         leaf_record.row_start + leaf_record.row_count,
+    );
+    let descriptor = PreviousProofWitnessSectionV1::new(
+        layout_header.limb_start + layout_header.limb_count,
+        previous_proof_layout.descriptor.limb_count,
+        layout_header.row_start + layout_header.row_count,
     );
     let envelope = PreviousProofWitnessSectionV1::new(
         descriptor.limb_start + descriptor.limb_count,
@@ -344,6 +370,7 @@ fn step_witness_layout_from_previous_proof_v1(
         row_width: PREVIOUS_PROOF_WITNESS_ROW_WIDTH_LIMBS_V1,
         previous_statement,
         leaf_record,
+        layout_header,
         descriptor,
         envelope,
         transcript,
@@ -368,6 +395,44 @@ struct StepWitnessV1 {
     previous_statement: RecursivePrefixStatementV1,
     leaf_record: BlockLeafRecordV1,
     previous_proof_words: Vec<u64>,
+}
+
+fn step_witness_layout_header_words_v1(
+    previous_proof_layout: PreviousProofWitnessLayoutV1,
+) -> [u64; STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1] {
+    [
+        previous_proof_layout.descriptor.limb_count as u64,
+        previous_proof_layout.envelope.limb_count as u64,
+        previous_proof_layout.transcript.limb_count as u64,
+        previous_proof_layout.pcs.limb_count as u64,
+        previous_proof_layout.decs.limb_count as u64,
+        previous_proof_layout.merkle.limb_count as u64,
+    ]
+}
+
+fn previous_proof_layout_from_step_header_words_v1(
+    header_words: &[u64],
+) -> Result<PreviousProofWitnessLayoutV1, TransactionCircuitError> {
+    if header_words.len() != STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive step witness layout header width mismatch",
+        ));
+    }
+    let decode = |idx: usize, name: &str| -> Result<usize, TransactionCircuitError> {
+        usize::try_from(header_words[idx]).map_err(|_| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "recursive step witness layout header {name} limb count overflow"
+            ))
+        })
+    };
+    Ok(previous_proof_witness_layout_from_limb_counts_v1(
+        decode(0, "descriptor")?,
+        decode(1, "envelope")?,
+        decode(2, "transcript")?,
+        decode(3, "pcs")?,
+        decode(4, "decs")?,
+        decode(5, "merkle")?,
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1037,6 +1102,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         &piop_input_words,
         &eval_points,
         &proof_trace,
+        &proof_trace.auxiliary_witness_words,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
     let hash_fpp = hash_piop_transcript(&piop_input_words, SmallwoodTranscriptBackend::Poseidon2);
@@ -1307,6 +1373,7 @@ pub fn step_recursive_witness_words_v1(
     let leaf_record_words =
         bytes_to_witness_limbs_v1(&canonical_verified_leaf_record_bytes_v1(leaf_record));
     let previous_proof_layout = layout.previous_proof_layout_v1();
+    let layout_header_words = step_witness_layout_header_words_v1(previous_proof_layout);
     let witness_sections = [
         (
             "previous_statement",
@@ -1314,6 +1381,11 @@ pub fn step_recursive_witness_words_v1(
             previous_statement_words.as_slice(),
         ),
         ("leaf_record", layout.leaf_record.limb_count, leaf_record_words.as_slice()),
+        (
+            "layout_header",
+            layout.layout_header.limb_count,
+            layout_header_words.as_slice(),
+        ),
         (
             "previous_proof",
             previous_proof_layout.total_rows() * previous_proof_layout.row_width,
@@ -1399,6 +1471,207 @@ fn fixed_witness_linear_constraints_v1(
     )
 }
 
+fn recursive_descriptor_serialized_len_v1() -> usize {
+    hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    )
+    .serialized_v1()
+    .len()
+}
+
+fn decode_recursive_descriptor_from_bytes_v1(
+    bytes: &[u8],
+) -> Result<SmallwoodRecursiveVerifierDescriptorV1, TransactionCircuitError> {
+    const RECURSIVE_DESCRIPTOR_DOMAIN: &[u8] = b"hegemon.smallwood.recursive-descriptor.v1";
+    let mut cursor = 0usize;
+    let domain = bytes.get(..RECURSIVE_DESCRIPTOR_DOMAIN.len()).ok_or(
+        TransactionCircuitError::ConstraintViolation("recursive descriptor bytes truncated"),
+    )?;
+    if domain != RECURSIVE_DESCRIPTOR_DOMAIN {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive descriptor domain mismatch",
+        ));
+    }
+    cursor += RECURSIVE_DESCRIPTOR_DOMAIN.len();
+    let version = VersionBinding {
+        circuit: u16::from_le_bytes(read_exact_fixed_v1::<2>(bytes, &mut cursor)?),
+        crypto: u16::from_le_bytes(read_exact_fixed_v1::<2>(bytes, &mut cursor)?),
+    };
+    let arithmetization = match read_exact_u32_v1(bytes, &mut cursor)? {
+        0 => SmallwoodArithmetization::Bridge64V1,
+        1 => SmallwoodArithmetization::DirectPacked64V1,
+        _ => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive descriptor arithmetization tag mismatch",
+            ))
+        }
+    };
+    let profile = match read_exact_u32_v1(bytes, &mut cursor)? {
+        1 => SmallwoodRecursiveProfileTagV1::A,
+        2 => SmallwoodRecursiveProfileTagV1::B,
+        _ => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive descriptor profile tag mismatch",
+            ))
+        }
+    };
+    let relation_kind = match read_exact_u32_v1(bytes, &mut cursor)? {
+        1 => SmallwoodRecursiveRelationKindV1::BaseA,
+        2 => SmallwoodRecursiveRelationKindV1::StepA,
+        3 => SmallwoodRecursiveRelationKindV1::StepB,
+        _ => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive descriptor relation-kind tag mismatch",
+            ))
+        }
+    };
+    let descriptor = SmallwoodRecursiveVerifierDescriptorV1 {
+        version,
+        arithmetization,
+        profile,
+        relation_kind,
+        relation_id: read_exact_fixed_v1::<32>(bytes, &mut cursor)?,
+        shape_digest: read_exact_fixed_v1::<32>(bytes, &mut cursor)?,
+        vk_digest: read_exact_fixed_v1::<32>(bytes, &mut cursor)?,
+    };
+    if cursor != bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive descriptor bytes must exact-consume",
+        ));
+    }
+    Ok(descriptor)
+}
+
+fn decode_canonical_proof_from_witness_words_v1(
+    proof_words: &[u64],
+) -> Result<(Vec<u8>, SmallwoodProofTraceV1), TransactionCircuitError> {
+    let max_len = proof_words.len() * PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1;
+    let min_len = max_len.saturating_sub(PREVIOUS_PROOF_WITNESS_LIMB_BYTES_V1 - 1);
+    for proof_len in (min_len..=max_len).rev() {
+        let Ok(proof_bytes) = witness_words_to_bytes_v1(proof_words, proof_len) else {
+            continue;
+        };
+        let mut cursor = Cursor::new(proof_bytes.as_slice());
+        let Ok(decoded) = bincode::deserialize_from::<_, SmallwoodProof>(&mut cursor) else {
+            continue;
+        };
+        let Ok(roundtrip) = bincode::serialize(&decoded) else {
+            continue;
+        };
+        if roundtrip == proof_bytes && cursor.position() as usize == proof_bytes.len() {
+            let trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
+            return Ok((proof_bytes, trace));
+        }
+    }
+    Err(TransactionCircuitError::ConstraintViolation(
+        "recursive previous-proof witness bytes do not decode to a canonical proof",
+    ))
+}
+
+fn recursive_profile_from_descriptor_v1(
+    descriptor: &SmallwoodRecursiveVerifierDescriptorV1,
+) -> RecursiveSmallwoodProfileV1 {
+    RecursiveSmallwoodProfileV1 {
+        version: descriptor.version,
+        profile: descriptor.profile,
+        arithmetization: descriptor.arithmetization,
+    }
+}
+
+fn step_witness_layout_from_witness_words_with_limb_count_v1(
+    witness_words: &[u64],
+    auxiliary_limb_count: Option<usize>,
+) -> Result<StepWitnessLayoutV1, TransactionCircuitError> {
+    let previous_statement_limbs =
+        previous_proof_limbs_for_bytes_v1(RECURSIVE_PREFIX_STATEMENT_BYTES_LEN_V1);
+    let leaf_record_limbs =
+        previous_proof_limbs_for_bytes_v1(VERIFIED_LEAF_RECORD_BYTES_LEN_V1);
+    let header_start = previous_statement_limbs + leaf_record_limbs;
+    let header_end = header_start + STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1;
+    let fixed_sections =
+        previous_statement_limbs + leaf_record_limbs + STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1;
+    if witness_words.len() < fixed_sections {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive step witness words are too short",
+        ));
+    }
+
+    let previous_statement_bytes = witness_words_to_bytes_v1(
+        &witness_words[..previous_statement_limbs],
+        RECURSIVE_PREFIX_STATEMENT_BYTES_LEN_V1,
+    )?;
+    let _previous_statement =
+        decode_recursive_prefix_statement_from_bytes_v1(&previous_statement_bytes)?;
+    let previous_proof_layout =
+        previous_proof_layout_from_step_header_words_v1(&witness_words[header_start..header_end])?;
+    let layout = step_witness_layout_from_previous_proof_v1(previous_proof_layout);
+    if let Some(total_limbs) = auxiliary_limb_count {
+        if layout.total_limbs() != total_limbs {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step witness total limb count mismatch",
+            ));
+        }
+    }
+    if layout.total_rows() * layout.row_width != witness_words.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recursive step witness words do not match reconstructed layout",
+        ));
+    }
+    let proof_words = witness_section_words_v1(witness_words, layout.envelope)?;
+    if decode_canonical_proof_from_witness_words_v1(proof_words).is_ok() {
+        return Ok(layout);
+    }
+
+    Err(TransactionCircuitError::ConstraintViolation(
+        "failed to reconstruct recursive step witness layout from proof-carried words",
+    ))
+}
+
+fn build_recursive_inputs_from_descriptor_v1(
+    descriptor: &SmallwoodRecursiveVerifierDescriptorV1,
+    target_statement: &RecursivePrefixStatementV1,
+    auxiliary_witness_words: &[u64],
+    auxiliary_witness_limb_count: usize,
+) -> Result<
+    (
+        RecursiveSmallwoodProfileV1,
+        Box<dyn SmallwoodConstraintAdapter + Sync>,
+        Vec<u8>,
+        usize,
+    ),
+    TransactionCircuitError,
+> {
+    let profile = recursive_profile_from_descriptor_v1(descriptor);
+    let relation: Box<dyn SmallwoodConstraintAdapter + Sync> = match descriptor.relation_kind {
+        SmallwoodRecursiveRelationKindV1::BaseA => {
+            Box::new(BaseARelationV1::new(target_statement.clone(), target_statement.clone()))
+        }
+        SmallwoodRecursiveRelationKindV1::StepA => Box::new(
+            StepARelationV1::from_witness_words_with_limb_count(
+                target_statement.clone(),
+                auxiliary_witness_words,
+                auxiliary_witness_limb_count,
+            )?,
+        ),
+        SmallwoodRecursiveRelationKindV1::StepB => Box::new(
+            StepBRelationV1::from_witness_words_with_limb_count(
+                target_statement.clone(),
+                auxiliary_witness_words,
+                auxiliary_witness_limb_count,
+            )?,
+        ),
+    };
+    let binding = match descriptor.relation_kind {
+        SmallwoodRecursiveRelationKindV1::BaseA => hosted_base_binding_bytes_v1(target_statement),
+        SmallwoodRecursiveRelationKindV1::StepA | SmallwoodRecursiveRelationKindV1::StepB => {
+            hosted_step_binding_bytes_v1(target_statement)
+        }
+    };
+    let proof_bytes_len = projected_smallwood_recursive_proof_bytes_v1(&profile, relation.as_ref())?;
+    Ok((profile, relation, binding, proof_bytes_len))
+}
+
 fn build_expected_recursive_inputs_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<
@@ -1477,7 +1750,7 @@ fn build_expected_recursive_inputs_v1(
 }
 
 fn validate_previous_proof_witness_v1(
-    context: &HostedRecursiveProofContextV1,
+    previous_statement: &RecursivePrefixStatementV1,
     layout: PreviousProofWitnessLayoutV1,
     witness_words: &[u64],
 ) -> PreviousProofWitnessValidationV1 {
@@ -1486,17 +1759,19 @@ fn validate_previous_proof_witness_v1(
         return validation;
     }
     validation.witness_ready = true;
-
-    let Ok((_, descriptor, relation, binding, proof_bytes_len)) =
-        build_expected_recursive_inputs_v1(context)
-    else {
-        return validation;
-    };
-
-    let expected_descriptor_words = bytes_to_witness_limbs_v1(&descriptor.serialized_v1());
     let Ok(descriptor_words) = witness_section_words_v1(witness_words, layout.descriptor) else {
         return validation;
     };
+    let Ok(descriptor_bytes) = witness_words_to_bytes_v1(
+        descriptor_words,
+        recursive_descriptor_serialized_len_v1(),
+    ) else {
+        return validation;
+    };
+    let Ok(descriptor) = decode_recursive_descriptor_from_bytes_v1(&descriptor_bytes) else {
+        return validation;
+    };
+    let expected_descriptor_words = bytes_to_witness_limbs_v1(&descriptor.serialized_v1());
     validation.descriptor_shape_valid = descriptor_words == expected_descriptor_words.as_slice();
     if !validation.descriptor_shape_valid {
         return validation;
@@ -1505,14 +1780,20 @@ fn validate_previous_proof_witness_v1(
     let Ok(proof_words) = witness_section_words_v1(witness_words, layout.envelope) else {
         return validation;
     };
-    let Ok(proof_bytes) = witness_words_to_bytes_v1(proof_words, proof_bytes_len) else {
-        return validation;
-    };
-    let Ok(envelope) = decode_smallwood_recursive_proof_envelope_v1(context.proof_envelope_bytes())
+    let Ok((proof_bytes, proof_trace)) = decode_canonical_proof_from_witness_words_v1(proof_words)
     else {
         return validation;
     };
-    if envelope.proof_bytes != proof_bytes {
+    let Ok((_, relation, binding, proof_bytes_len)) = build_recursive_inputs_from_descriptor_v1(
+        &descriptor,
+        previous_statement,
+        &proof_trace.auxiliary_witness_words,
+        proof_trace.auxiliary_witness_limb_count,
+    )
+    else {
+        return validation;
+    };
+    if proof_bytes.len() != proof_bytes_len {
         return validation;
     }
 
@@ -1558,6 +1839,133 @@ fn validate_previous_proof_witness_v1(
             .unwrap_or(false);
 
     validation
+}
+
+#[cfg(test)]
+pub(crate) fn debug_previous_proof_witness_validation_reason_v1(
+    previous_statement: &RecursivePrefixStatementV1,
+    layout: PreviousProofWitnessLayoutV1,
+    witness_words: &[u64],
+) -> String {
+    if witness_words.len() < layout.total_rows() * layout.row_width {
+        return "witness words truncated".to_string();
+    }
+    let Ok(descriptor_words) = witness_section_words_v1(witness_words, layout.descriptor) else {
+        return "descriptor section missing".to_string();
+    };
+    let Ok(descriptor_bytes) = witness_words_to_bytes_v1(
+        descriptor_words,
+        recursive_descriptor_serialized_len_v1(),
+    ) else {
+        return "descriptor bytes truncated".to_string();
+    };
+    let Ok(descriptor) = decode_recursive_descriptor_from_bytes_v1(&descriptor_bytes) else {
+        return "descriptor decode failed".to_string();
+    };
+    let expected_descriptor_words = bytes_to_witness_limbs_v1(&descriptor.serialized_v1());
+    if descriptor_words != expected_descriptor_words.as_slice() {
+        return "descriptor words mismatch".to_string();
+    }
+
+    let Ok(proof_words) = witness_section_words_v1(witness_words, layout.envelope) else {
+        return "proof section missing".to_string();
+    };
+    let Ok((proof_bytes, proof_trace)) = decode_canonical_proof_from_witness_words_v1(proof_words)
+    else {
+        return "proof bytes do not decode canonically".to_string();
+    };
+    let Ok((_, relation, binding, proof_bytes_len)) = build_recursive_inputs_from_descriptor_v1(
+        &descriptor,
+        previous_statement,
+        &proof_trace.auxiliary_witness_words,
+        proof_trace.auxiliary_witness_limb_count,
+    ) else {
+        return "recursive inputs reconstruction failed".to_string();
+    };
+    if proof_bytes.len() != proof_bytes_len {
+        return format!(
+            "proof length mismatch actual={} projected={}",
+            proof_bytes.len(),
+            proof_bytes_len
+        );
+    }
+
+    match recompute_previous_proof_components_from_proof_bytes_v1(
+        descriptor,
+        relation.as_ref(),
+        binding,
+        proof_bytes,
+        proof_bytes_len,
+    ) {
+        Ok(_) => "ok".to_string(),
+        Err(err) => format!("recompute failed: {err}"),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn debug_step_witness_validation_v1(
+    layout: StepWitnessLayoutV1,
+    target_statement: &RecursivePrefixStatementV1,
+    witness_words: &[u64],
+) -> Result<(u64, [bool; 6]), TransactionCircuitError> {
+    let witness = decode_step_witness_v1(layout, witness_words)?;
+    let structural_mismatch =
+        step_relation_mismatch(&witness.previous_statement, &witness.leaf_record, target_statement);
+    let validation = validate_previous_proof_witness_v1(
+        &witness.previous_statement,
+        layout.previous_proof_layout_v1(),
+        &witness.previous_proof_words,
+    );
+    Ok((
+        structural_mismatch,
+        [
+            validation.witness_ready,
+            validation.descriptor_shape_valid,
+            validation.binding_trace_valid,
+            validation.transcript_valid,
+            validation.pcs_valid,
+            validation.decs_merkle_valid,
+        ],
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn debug_step_witness_validation_from_words_with_limb_count_v1(
+    target_statement: &RecursivePrefixStatementV1,
+    witness_words: &[u64],
+    auxiliary_limb_count: usize,
+) -> Result<(u64, [bool; 6]), TransactionCircuitError> {
+    let layout = step_witness_layout_from_witness_words_with_limb_count_v1(
+        witness_words,
+        Some(auxiliary_limb_count),
+    )?;
+    debug_step_witness_validation_v1(layout, target_statement, witness_words)
+}
+
+#[cfg(test)]
+pub(crate) fn debug_step_witness_validation_reason_from_words_with_limb_count_v1(
+    target_statement: &RecursivePrefixStatementV1,
+    witness_words: &[u64],
+    auxiliary_limb_count: usize,
+) -> Result<String, TransactionCircuitError> {
+    let layout = step_witness_layout_from_witness_words_with_limb_count_v1(
+        witness_words,
+        Some(auxiliary_limb_count),
+    )?;
+    let witness = decode_step_witness_v1(layout, witness_words)?;
+    if step_relation_mismatch(
+        &witness.previous_statement,
+        &witness.leaf_record,
+        target_statement,
+    ) != 0
+    {
+        return Ok("structural mismatch".to_string());
+    }
+    Ok(debug_previous_proof_witness_validation_reason_v1(
+        &witness.previous_statement,
+        layout.previous_proof_layout_v1(),
+        &witness.previous_proof_words,
+    ))
 }
 
 pub fn verify_hosted_recursive_proof_context_transcript_v1(
@@ -1775,14 +2183,24 @@ impl SmallwoodConstraintAdapter for BaseARelationV1 {
         &[]
     }
 
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &[]
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        None
+    }
+
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
         row_scalars: &'a [u64],
+        auxiliary_words: &'a [u64],
     ) -> SmallwoodNonlinearEvalView<'a> {
         SmallwoodNonlinearEvalView::RowScalars {
             eval_point,
             rows: row_scalars,
+            auxiliary_words,
         }
     }
 
@@ -1830,7 +2248,7 @@ fn step_relation_mismatch(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StepARelationV1 {
-    pub previous_recursive_proof: Box<HostedRecursiveProofContextV1>,
+    pub previous_recursive_proof: Option<Box<HostedRecursiveProofContextV1>>,
     pub target_statement: RecursivePrefixStatementV1,
     step_witness_layout: Option<StepWitnessLayoutV1>,
     witness_row_count: usize,
@@ -1841,6 +2259,33 @@ pub struct StepARelationV1 {
 }
 
 impl StepARelationV1 {
+    fn build_from_witness_words(
+        previous_recursive_proof: Option<HostedRecursiveProofContextV1>,
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: Vec<u64>,
+        auxiliary_limb_count: Option<usize>,
+    ) -> Self {
+        let step_witness_layout =
+            step_witness_layout_from_witness_words_with_limb_count_v1(
+                &witness_words,
+                auxiliary_limb_count,
+            )
+            .ok();
+        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
+        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
+            fixed_witness_linear_constraints_v1(&witness_words);
+        Self {
+            previous_recursive_proof: previous_recursive_proof.map(Box::new),
+            target_statement,
+            step_witness_layout,
+            witness_row_count: row_count,
+            linear_offsets,
+            linear_indices,
+            linear_coefficients,
+            linear_targets,
+        }
+    }
+
     pub fn new(
         previous_recursive_proof: HostedRecursiveProofContextV1,
         previous_statement: RecursivePrefixStatementV1,
@@ -1848,41 +2293,77 @@ impl StepARelationV1 {
         target_statement: RecursivePrefixStatementV1,
     ) -> Self {
         let step_witness_layout = step_recursive_witness_layout_v1(&previous_recursive_proof).ok();
-        let (
-            witness_row_count,
-            linear_offsets,
-            linear_indices,
-            linear_coefficients,
-            linear_targets,
-        ) = match step_recursive_witness_words_v1(
+        let witness_words = step_recursive_witness_words_v1(
             &previous_recursive_proof,
             &previous_statement,
             &leaf_record,
-        ) {
-            Ok(witness_words) => {
-                let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
-                let (offsets, indices, coefficients, targets) =
-                    fixed_witness_linear_constraints_v1(&witness_words);
-                (row_count, offsets, indices, coefficients, targets)
-            }
-            Err(_) => (
-                SMALLWOOD_STEP_ROW_COUNT_V1,
-                vec![0],
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
-        };
+        )
+        .unwrap_or_default();
+        if witness_words.is_empty() {
+            return Self {
+                previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
+                target_statement,
+                step_witness_layout,
+                witness_row_count: SMALLWOOD_STEP_ROW_COUNT_V1,
+                linear_offsets: vec![0],
+                linear_indices: Vec::new(),
+                linear_coefficients: Vec::new(),
+                linear_targets: Vec::new(),
+            };
+        }
+        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
+        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
+            fixed_witness_linear_constraints_v1(&witness_words);
         Self {
-            previous_recursive_proof: Box::new(previous_recursive_proof),
+            previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
             target_statement,
             step_witness_layout,
-            witness_row_count,
+            witness_row_count: row_count,
             linear_offsets,
             linear_indices,
             linear_coefficients,
             linear_targets,
         }
+    }
+
+    pub fn from_witness_words(
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: &[u64],
+    ) -> Result<Self, TransactionCircuitError> {
+        if witness_words.is_empty() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires proof-carried witness words",
+            ));
+        }
+        Ok(Self::build_from_witness_words(
+            None,
+            target_statement,
+            witness_words.to_vec(),
+            None,
+        ))
+    }
+
+    pub fn from_witness_words_with_limb_count(
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: &[u64],
+        auxiliary_limb_count: usize,
+    ) -> Result<Self, TransactionCircuitError> {
+        if witness_words.is_empty() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires proof-carried witness words",
+            ));
+        }
+        if auxiliary_limb_count == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires nonzero proof-carried limb count",
+            ));
+        }
+        Ok(Self::build_from_witness_words(
+            None,
+            target_statement,
+            witness_words.to_vec(),
+            Some(auxiliary_limb_count),
+        ))
     }
 }
 
@@ -1927,12 +2408,25 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
         &self.linear_targets
     }
 
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &self.linear_targets
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        self.step_witness_layout.map(|layout| layout.total_limbs())
+    }
+
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
         row_scalars: &'a [u64],
+        auxiliary_words: &'a [u64],
     ) -> SmallwoodNonlinearEvalView<'a> {
-        SmallwoodNonlinearEvalView::RowScalars { eval_point, rows: row_scalars }
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point,
+            rows: row_scalars,
+            auxiliary_words,
+        }
     }
 
     fn compute_constraints_u64(
@@ -1940,10 +2434,17 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        let _ = view;
+        let SmallwoodNonlinearEvalView::RowScalars {
+            auxiliary_words, ..
+        } = view;
+        let witness_words = if auxiliary_words.is_empty() {
+            self.linear_targets.as_slice()
+        } else {
+            auxiliary_words
+        };
         let witness = self
             .step_witness_layout
-            .and_then(|layout| decode_step_witness_v1(layout, &self.linear_targets).ok());
+            .and_then(|layout| decode_step_witness_v1(layout, witness_words).ok());
         let structural_mismatch = witness
             .as_ref()
             .map(|witness| {
@@ -1959,7 +2460,7 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
             .and_then(|layout| {
                 witness.as_ref().map(|witness| {
                     validate_previous_proof_witness_v1(
-                        &self.previous_recursive_proof,
+                        &witness.previous_statement,
                         layout.previous_proof_layout_v1(),
                         &witness.previous_proof_words,
                     )
@@ -1982,7 +2483,7 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StepBRelationV1 {
-    pub previous_recursive_proof: Box<HostedRecursiveProofContextV1>,
+    pub previous_recursive_proof: Option<Box<HostedRecursiveProofContextV1>>,
     pub target_statement: RecursivePrefixStatementV1,
     step_witness_layout: Option<StepWitnessLayoutV1>,
     witness_row_count: usize,
@@ -1993,6 +2494,33 @@ pub struct StepBRelationV1 {
 }
 
 impl StepBRelationV1 {
+    fn build_from_witness_words(
+        previous_recursive_proof: Option<HostedRecursiveProofContextV1>,
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: Vec<u64>,
+        auxiliary_limb_count: Option<usize>,
+    ) -> Self {
+        let step_witness_layout =
+            step_witness_layout_from_witness_words_with_limb_count_v1(
+                &witness_words,
+                auxiliary_limb_count,
+            )
+            .ok();
+        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
+        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
+            fixed_witness_linear_constraints_v1(&witness_words);
+        Self {
+            previous_recursive_proof: previous_recursive_proof.map(Box::new),
+            target_statement,
+            step_witness_layout,
+            witness_row_count: row_count,
+            linear_offsets,
+            linear_indices,
+            linear_coefficients,
+            linear_targets,
+        }
+    }
+
     pub fn new(
         previous_recursive_proof: HostedRecursiveProofContextV1,
         previous_statement: RecursivePrefixStatementV1,
@@ -2000,41 +2528,77 @@ impl StepBRelationV1 {
         target_statement: RecursivePrefixStatementV1,
     ) -> Self {
         let step_witness_layout = step_recursive_witness_layout_v1(&previous_recursive_proof).ok();
-        let (
-            witness_row_count,
-            linear_offsets,
-            linear_indices,
-            linear_coefficients,
-            linear_targets,
-        ) = match step_recursive_witness_words_v1(
+        let witness_words = step_recursive_witness_words_v1(
             &previous_recursive_proof,
             &previous_statement,
             &leaf_record,
-        ) {
-            Ok(witness_words) => {
-                let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
-                let (offsets, indices, coefficients, targets) =
-                    fixed_witness_linear_constraints_v1(&witness_words);
-                (row_count, offsets, indices, coefficients, targets)
-            }
-            Err(_) => (
-                SMALLWOOD_STEP_ROW_COUNT_V1,
-                vec![0],
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
-        };
+        )
+        .unwrap_or_default();
+        if witness_words.is_empty() {
+            return Self {
+                previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
+                target_statement,
+                step_witness_layout,
+                witness_row_count: SMALLWOOD_STEP_ROW_COUNT_V1,
+                linear_offsets: vec![0],
+                linear_indices: Vec::new(),
+                linear_coefficients: Vec::new(),
+                linear_targets: Vec::new(),
+            };
+        }
+        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
+        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
+            fixed_witness_linear_constraints_v1(&witness_words);
         Self {
-            previous_recursive_proof: Box::new(previous_recursive_proof),
+            previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
             target_statement,
             step_witness_layout,
-            witness_row_count,
+            witness_row_count: row_count,
             linear_offsets,
             linear_indices,
             linear_coefficients,
             linear_targets,
         }
+    }
+
+    pub fn from_witness_words(
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: &[u64],
+    ) -> Result<Self, TransactionCircuitError> {
+        if witness_words.is_empty() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires proof-carried witness words",
+            ));
+        }
+        Ok(Self::build_from_witness_words(
+            None,
+            target_statement,
+            witness_words.to_vec(),
+            None,
+        ))
+    }
+
+    pub fn from_witness_words_with_limb_count(
+        target_statement: RecursivePrefixStatementV1,
+        witness_words: &[u64],
+        auxiliary_limb_count: usize,
+    ) -> Result<Self, TransactionCircuitError> {
+        if witness_words.is_empty() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires proof-carried witness words",
+            ));
+        }
+        if auxiliary_limb_count == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step verifier requires nonzero proof-carried limb count",
+            ));
+        }
+        Ok(Self::build_from_witness_words(
+            None,
+            target_statement,
+            witness_words.to_vec(),
+            Some(auxiliary_limb_count),
+        ))
     }
 }
 
@@ -2079,12 +2643,25 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
         &self.linear_targets
     }
 
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &self.linear_targets
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        self.step_witness_layout.map(|layout| layout.total_limbs())
+    }
+
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
         row_scalars: &'a [u64],
+        auxiliary_words: &'a [u64],
     ) -> SmallwoodNonlinearEvalView<'a> {
-        SmallwoodNonlinearEvalView::RowScalars { eval_point, rows: row_scalars }
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point,
+            rows: row_scalars,
+            auxiliary_words,
+        }
     }
 
     fn compute_constraints_u64(
@@ -2092,10 +2669,17 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        let _ = view;
+        let SmallwoodNonlinearEvalView::RowScalars {
+            auxiliary_words, ..
+        } = view;
+        let witness_words = if auxiliary_words.is_empty() {
+            self.linear_targets.as_slice()
+        } else {
+            auxiliary_words
+        };
         let witness = self
             .step_witness_layout
-            .and_then(|layout| decode_step_witness_v1(layout, &self.linear_targets).ok());
+            .and_then(|layout| decode_step_witness_v1(layout, witness_words).ok());
         let structural_mismatch = witness
             .as_ref()
             .map(|witness| {
@@ -2111,7 +2695,7 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
             .and_then(|layout| {
                 witness.as_ref().map(|witness| {
                     validate_previous_proof_witness_v1(
-                        &self.previous_recursive_proof,
+                        &witness.previous_statement,
                         layout.previous_proof_layout_v1(),
                         &witness.previous_proof_words,
                     )

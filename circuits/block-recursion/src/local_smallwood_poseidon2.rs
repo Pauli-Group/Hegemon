@@ -649,6 +649,7 @@ pub fn piop_recompute_transcript(
     in_transcript: &[u64],
     eval_points: &[u64],
     proof_trace: &SmallwoodProofTraceV1,
+    auxiliary_words: &[u64],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let hash_fpp = hash_piop(in_transcript, transcript_backend);
@@ -668,10 +669,16 @@ pub fn piop_recompute_transcript(
         .iter()
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
-    let in_epol = get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals)?;
+    let in_epol = get_constraint_polynomial_evals(
+        cfg,
+        statement,
+        eval_points,
+        &wit_evals,
+        auxiliary_words,
+    )?;
     let in_elin =
         get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
-    let linear_targets = linear_targets_as_field(statement);
+    let linear_targets = effective_linear_targets(statement, auxiliary_words);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
     let eval_points_with_zero = {
@@ -749,10 +756,11 @@ fn get_constraint_polynomial_evals(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     eval_points: &[u64],
     witness_evals: &[Vec<u64>],
+    auxiliary_words: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut out = vec![vec![0u64; cfg.constraint_count]; eval_points.len()];
     for (row_idx, rows) in witness_evals.iter().enumerate() {
-        let view = statement.nonlinear_eval_view(eval_points[row_idx], rows);
+        let view = statement.nonlinear_eval_view(eval_points[row_idx], rows, auxiliary_words);
         statement.compute_constraints_u64(view, &mut out[row_idx])?;
     }
     Ok(out)
@@ -801,6 +809,17 @@ fn get_constraint_linear_evals(
 
 fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) -> Vec<u64> {
     statement.linear_targets().iter().copied().map(canon).collect()
+}
+
+fn effective_linear_targets(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    auxiliary_words: &[u64],
+) -> Vec<u64> {
+    if auxiliary_words.is_empty() {
+        linear_targets_as_field(statement)
+    } else {
+        auxiliary_words.iter().copied().map(canon).collect()
+    }
 }
 
 fn bytes_to_words_unchecked(bytes: &[u8]) -> Vec<u64> {

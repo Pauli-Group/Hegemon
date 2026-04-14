@@ -491,14 +491,24 @@ mod tests {
             &[]
         }
 
+        fn auxiliary_witness_words(&self) -> &[u64] {
+            &[]
+        }
+
+        fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+            None
+        }
+
         fn nonlinear_eval_view<'a>(
             &self,
             eval_point: u64,
             row_scalars: &'a [u64],
+            auxiliary_words: &'a [u64],
         ) -> SmallwoodNonlinearEvalView<'a> {
             SmallwoodNonlinearEvalView::RowScalars {
                 eval_point,
                 rows: row_scalars,
+                auxiliary_words,
             }
         }
 

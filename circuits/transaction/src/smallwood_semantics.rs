@@ -271,10 +271,13 @@ pub trait SmallwoodConstraintAdapter: Sync {
     fn linear_constraint_indices(&self) -> &[u32];
     fn linear_constraint_coefficients(&self) -> &[u64];
     fn linear_targets(&self) -> &[u64];
+    fn auxiliary_witness_words(&self) -> &[u64];
+    fn auxiliary_witness_limb_count(&self) -> Option<usize>;
     fn nonlinear_eval_view<'a>(
         &self,
         eval_point: u64,
         row_scalars: &'a [u64],
+        auxiliary_words: &'a [u64],
     ) -> SmallwoodNonlinearEvalView<'a>;
     fn compute_constraints_u64(
         &self,
@@ -285,7 +288,11 @@ pub trait SmallwoodConstraintAdapter: Sync {
 
 #[derive(Clone, Copy, Debug)]
 pub enum SmallwoodNonlinearEvalView<'a> {
-    RowScalars { eval_point: u64, rows: &'a [u64] },
+    RowScalars {
+        eval_point: u64,
+        rows: &'a [u64],
+        auxiliary_words: &'a [u64],
+    },
 }
 
 impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
@@ -329,14 +336,24 @@ impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
         self.linear_constraint_targets
     }
 
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &[]
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        None
+    }
+
     fn nonlinear_eval_view<'b>(
         &self,
         eval_point: u64,
         row_scalars: &'b [u64],
+        auxiliary_words: &'b [u64],
     ) -> SmallwoodNonlinearEvalView<'b> {
         SmallwoodNonlinearEvalView::RowScalars {
             eval_point,
             rows: row_scalars,
+            auxiliary_words,
         }
     }
 
@@ -561,6 +578,7 @@ pub(crate) fn compute_bridge_constraints_u64(
     let SmallwoodNonlinearEvalView::RowScalars {
         eval_point: _eval_point,
         rows,
+        auxiliary_words: _auxiliary_words,
     } = view;
     let felt_rows = rows.iter().copied().map(Felt::from_u64).collect::<Vec<_>>();
     let mut felt_out = vec![Felt::ZERO; expected];

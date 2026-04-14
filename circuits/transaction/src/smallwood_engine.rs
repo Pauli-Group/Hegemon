@@ -82,6 +82,8 @@ pub struct SmallwoodProofTraceV1 {
     pub piop: PiopProof,
     pub pcs: PcsProof,
     pub opened_witness_row_scalars: Vec<Vec<u64>>,
+    pub auxiliary_witness_words: Vec<u64>,
+    pub auxiliary_witness_limb_count: usize,
 }
 
 impl SmallwoodProofTraceV1 {
@@ -519,20 +521,51 @@ pub struct SmallwoodOpenedWitnessBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SmallwoodOpenedWitnessMode {
     None,
-    RowScalars { row_scalars: Vec<Vec<u64>> },
+    RowScalars {
+        row_scalars: Vec<Vec<u64>>,
+        auxiliary_words: Vec<u64>,
+        auxiliary_limb_count: usize,
+    },
 }
 
 impl SmallwoodOpenedWitnessBundle {
-    fn row_scalars(row_scalars: Vec<Vec<u64>>) -> Self {
+    fn row_scalars(
+        row_scalars: Vec<Vec<u64>>,
+        auxiliary_words: Vec<u64>,
+        auxiliary_limb_count: usize,
+    ) -> Self {
         Self {
-            mode: SmallwoodOpenedWitnessMode::RowScalars { row_scalars },
+            mode: SmallwoodOpenedWitnessMode::RowScalars {
+                row_scalars,
+                auxiliary_words,
+                auxiliary_limb_count,
+            },
         }
     }
 
     fn row_scalars_ref(&self) -> Option<&[Vec<u64>]> {
         match &self.mode {
-            SmallwoodOpenedWitnessMode::RowScalars { row_scalars } => Some(row_scalars),
+            SmallwoodOpenedWitnessMode::RowScalars { row_scalars, .. } => Some(row_scalars),
             _ => None,
+        }
+    }
+
+    fn auxiliary_words_ref(&self) -> Option<&[u64]> {
+        match &self.mode {
+            SmallwoodOpenedWitnessMode::RowScalars {
+                auxiliary_words, ..
+            } => Some(auxiliary_words),
+            _ => None,
+        }
+    }
+
+    fn auxiliary_limb_count(&self) -> usize {
+        match &self.mode {
+            SmallwoodOpenedWitnessMode::RowScalars {
+                auxiliary_limb_count,
+                ..
+            } => *auxiliary_limb_count,
+            SmallwoodOpenedWitnessMode::None => 0,
         }
     }
 }
@@ -733,7 +766,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
             cfg.nb_polys,
             cfg.nb_lvcs_rows,
             cfg.nb_lvcs_cols,
-            serialized_proof_size_hint(&cfg)
+            serialized_proof_size_hint(&cfg, statement.auxiliary_witness_words().len())
         );
     }
     log_stage("statement", &mut last_stage);
@@ -793,13 +826,26 @@ pub(crate) fn prove_statement_with_transcript_backend(
         transcript_backend,
     )?;
     log_stage("pcs_open", &mut last_stage);
+    let auxiliary_witness_words = statement.auxiliary_witness_words().to_vec();
+    let auxiliary_witness_limb_count = statement.auxiliary_witness_limb_count().unwrap_or(
+        auxiliary_witness_words.len(),
+    );
     let proof = SmallwoodProof {
         salt,
         nonce,
         h_piop,
         piop: piop.proof,
         pcs: pcs_proof,
-        opened_witness,
+        opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(
+            opened_witness
+                .row_scalars_ref()
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "smallwood prover missing row-scalar opened witness data",
+                ))?
+                .to_vec(),
+            auxiliary_witness_words,
+            auxiliary_witness_limb_count,
+        ),
     };
     let encoded = bincode::serialize(&proof).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -847,6 +893,10 @@ pub(crate) fn verify_statement_with_transcript_backend(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
+    let auxiliary_words = proof
+        .opened_witness
+        .auxiliary_words_ref()
+        .unwrap_or(&[]);
     if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
@@ -873,6 +923,7 @@ pub(crate) fn verify_statement_with_transcript_backend(
         &piop_input,
         &eval_points,
         row_scalars,
+        auxiliary_words,
         &proof.piop,
         transcript_backend,
     )?;
@@ -903,6 +954,10 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
+    let auxiliary_words = proof
+        .opened_witness
+        .auxiliary_words_ref()
+        .unwrap_or(&[]);
     if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
@@ -971,6 +1026,7 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
         &piop_input_words,
         &eval_points,
         row_scalars,
+        auxiliary_words,
         &proof.piop,
         transcript_backend,
     )?;
@@ -985,6 +1041,8 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
         piop: proof.piop,
         pcs: proof.pcs,
         opened_witness_row_scalars: row_scalars.to_vec(),
+        auxiliary_witness_words: auxiliary_words.to_vec(),
+        auxiliary_witness_limb_count: proof.opened_witness.auxiliary_limb_count(),
     };
     let pcs_trace = SmallwoodPcsVerifierTraceV1 {
         coeffs,
@@ -1032,6 +1090,8 @@ pub fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> Smallwood
         pcs: trace.pcs.clone(),
         opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(
             trace.opened_witness_row_scalars.clone(),
+            trace.auxiliary_witness_words.clone(),
+            trace.auxiliary_witness_limb_count,
         ),
     }
 }
@@ -1056,6 +1116,12 @@ pub fn decode_smallwood_proof_trace_v1(
         piop: proof.piop,
         pcs: proof.pcs,
         opened_witness_row_scalars: row_scalars.to_vec(),
+        auxiliary_witness_words: proof
+            .opened_witness
+            .auxiliary_words_ref()
+            .unwrap_or(&[])
+            .to_vec(),
+        auxiliary_witness_limb_count: proof.opened_witness.auxiliary_limb_count(),
     })
 }
 
@@ -1239,12 +1305,17 @@ pub fn smallwood_poseidon2_piop_transcript_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
+    let auxiliary_words = proof
+        .opened_witness
+        .auxiliary_words_ref()
+        .unwrap_or(&[]);
     piop_recompute_transcript(
         &cfg,
         statement,
         piop_input_words,
         eval_points,
         row_scalars,
+        auxiliary_words,
         &proof.piop,
         SmallwoodTranscriptBackend::Poseidon2,
     )
@@ -1364,6 +1435,10 @@ pub fn smallwood_poseidon2_piop_trace_v1(
             "smallwood proof missing row-scalar opened witness data",
         ),
     )?;
+    let auxiliary_words = proof
+        .opened_witness
+        .auxiliary_words_ref()
+        .unwrap_or(&[]);
     let pcs_transcript_words = pcs_trace.decs_commitment_transcript.clone();
     let mut piop_input_words = pcs_transcript_words.clone();
     piop_input_words.extend_from_slice(binded_words);
@@ -1373,6 +1448,7 @@ pub fn smallwood_poseidon2_piop_trace_v1(
         &piop_input_words,
         eval_points,
         row_scalars,
+        auxiliary_words,
         &proof.piop,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
@@ -1473,7 +1549,10 @@ pub(crate) fn projected_candidate_proof_bytes(
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new(statement)?;
     ensure_row_polynomial_arithmetization(statement)?;
-    Ok(serialized_proof_size_hint(&cfg))
+    Ok(serialized_proof_size_hint(
+        &cfg,
+        statement.auxiliary_witness_words().len(),
+    ))
 }
 
 pub(crate) fn ensure_canonical_smallwood_proof_bytes(
@@ -1665,6 +1744,7 @@ pub fn piop_recompute_transcript(
     in_transcript: &[u64],
     eval_points: &[u64],
     row_scalars: &[Vec<u64>],
+    auxiliary_words: &[u64],
     proof: &PiopProof,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
@@ -1682,10 +1762,16 @@ pub fn piop_recompute_transcript(
         .iter()
         .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
         .collect::<Vec<_>>();
-    let in_epol = get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals)?;
+    let in_epol = get_constraint_polynomial_evals(
+        cfg,
+        statement,
+        eval_points,
+        &wit_evals,
+        auxiliary_words,
+    )?;
     let in_elin =
         get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
-    let linear_targets = linear_targets_as_field(statement);
+    let linear_targets = effective_linear_targets(statement, auxiliary_words);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
     let vanishing = poly_set_vanishing(&cfg.packing_points);
@@ -2012,7 +2098,7 @@ fn pcs_build_opened_evaluations(
         }
     }
     Ok((
-        SmallwoodOpenedWitnessBundle::row_scalars(row_scalars),
+        SmallwoodOpenedWitnessBundle::row_scalars(row_scalars, Vec::new(), 0),
         partial_evals,
     ))
 }
@@ -2083,12 +2169,13 @@ fn get_constraint_polynomials(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    let auxiliary_words = statement.auxiliary_witness_words();
     let evaluated_constraints = wit_evals
         .par_iter()
         .zip(sample_points.par_iter().copied())
         .map(|(row, sample_point)| {
             let mut row_constraints = vec![0u64; cfg.constraint_count];
-            let view = statement.nonlinear_eval_view(sample_point, row);
+            let view = statement.nonlinear_eval_view(sample_point, row, auxiliary_words);
             statement.compute_constraints_u64(view, &mut row_constraints)?;
             Ok::<_, TransactionCircuitError>(row_constraints)
         })
@@ -2110,10 +2197,11 @@ fn get_constraint_polynomial_evals(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     eval_points: &[u64],
     witness_evals: &[Vec<u64>],
+    auxiliary_words: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut out = vec![vec![0u64; cfg.constraint_count]; eval_points.len()];
     for (row_idx, rows) in witness_evals.iter().enumerate() {
-        let view = statement.nonlinear_eval_view(eval_points[row_idx], rows);
+        let view = statement.nonlinear_eval_view(eval_points[row_idx], rows, auxiliary_words);
         statement.compute_constraints_u64(view, &mut out[row_idx])?;
     }
     Ok(out)
@@ -2228,6 +2316,17 @@ fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) 
         .copied()
         .map(canon)
         .collect()
+}
+
+fn effective_linear_targets(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    auxiliary_words: &[u64],
+) -> Vec<u64> {
+    if auxiliary_words.is_empty() {
+        linear_targets_as_field(statement)
+    } else {
+        auxiliary_words.iter().copied().map(canon).collect()
+    }
 }
 
 pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs: &mut [Vec<u64>]) {
@@ -2774,7 +2873,7 @@ fn choose_opening_nonce(
     }
 }
 
-fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
+fn serialized_proof_size_hint(cfg: &SmallwoodConfig, auxiliary_words_len: usize) -> usize {
     let proof = SmallwoodProof {
         salt: [0u8; SALT_BYTES],
         nonce: [0u8; NONCE_BYTES],
@@ -2814,7 +2913,7 @@ fn serialized_proof_size_hint(cfg: &SmallwoodConfig) -> usize {
         opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(vec![
             vec![0u64; cfg.nb_polys];
             SMALLWOOD_NB_OPENED_EVALS
-        ]),
+        ], vec![0u64; auxiliary_words_len], auxiliary_words_len),
     };
     bincode::serialize(&proof)
         .map(|bytes| bytes.len())
@@ -3175,9 +3274,15 @@ mod tests {
         let decoded: SmallwoodProof = bincode::deserialize(&proof).unwrap();
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         match decoded.opened_witness.mode {
-            SmallwoodOpenedWitnessMode::RowScalars { row_scalars } => {
+            SmallwoodOpenedWitnessMode::RowScalars {
+                row_scalars,
+                auxiliary_words,
+                auxiliary_limb_count,
+            } => {
                 assert_eq!(row_scalars.len(), SMALLWOOD_NB_OPENED_EVALS);
                 assert!(row_scalars.iter().all(|row| row.len() == cfg.nb_polys));
+                assert!(auxiliary_words.is_empty());
+                assert_eq!(auxiliary_limb_count, 0);
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }

@@ -1,5 +1,11 @@
 use std::sync::OnceLock;
 
+use crate::relation::{
+    debug_step_witness_validation_reason_from_words_with_limb_count_v1,
+    debug_step_witness_validation_from_words_with_limb_count_v1,
+    debug_step_witness_validation_v1,
+};
+
 use super::{
     deserialize_recursive_block_artifact_v1, hosted_base_binding_bytes_v1,
     hosted_recursive_descriptor_v1, hosted_recursive_proof_witness_layout_v1,
@@ -18,9 +24,10 @@ use super::{
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
+    decode_smallwood_proof_trace_v1,
     decode_smallwood_recursive_proof_envelope_v1, encode_smallwood_recursive_proof_envelope_v1,
     prove_recursive_statement_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    verify_recursive_statement_v1, SmallwoodRecursiveProfileTagV1,
+    verify_recursive_statement_v1, SmallwoodConstraintAdapter, SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
 };
 
@@ -497,8 +504,12 @@ fn step_witness_layout_matches_trace_len_for_base_context() {
         layout.previous_statement.limb_start + layout.previous_statement.limb_count
     );
     assert_eq!(
-        layout.descriptor.limb_start,
+        layout.layout_header.limb_start,
         layout.leaf_record.limb_start + layout.leaf_record.limb_count
+    );
+    assert_eq!(
+        layout.descriptor.limb_start,
+        layout.layout_header.limb_start + layout.layout_header.limb_count
     );
     assert_eq!(
         layout.envelope.limb_start,
@@ -867,7 +878,82 @@ fn step_b_relation_rejects_wrong_previous_proof_witness() {
 }
 
 #[test]
-fn step_b_relation_verification_depends_on_external_previous_context() {
+fn step_b_relation_constraints_vanish_on_canonical_step_witness() {
+    let base_context = base_a_context_v1();
+    let (previous, leaf, target) = step_statement_pair();
+    let relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let witness = step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
+    let layout = step_recursive_witness_layout_v1(&base_context).unwrap();
+    let (structural_mismatch, validation) =
+        debug_step_witness_validation_v1(layout, &target, &witness).unwrap();
+    assert_eq!(structural_mismatch, 0);
+    assert_eq!(validation, [true, true, true, true, true, true]);
+    let view = relation.nonlinear_eval_view(0, &[0u64], &witness);
+    let mut out = [1u64; 1];
+    relation.compute_constraints_u64(view, &mut out).unwrap();
+    assert_eq!(out, [0u64]);
+}
+
+#[test]
+fn step_b_relation_reconstructed_from_proof_witness_is_self_consistent() {
+    let base_context = base_a_context_v1();
+    let (previous, leaf, target) = step_statement_pair();
+    let relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    );
+    let descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let binding = hosted_step_binding_bytes_v1(&target);
+    let witness = step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
+    let proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &descriptor,
+        &relation,
+        &witness,
+        &binding,
+    )
+    .unwrap();
+    let proof_trace = decode_smallwood_proof_trace_v1(&proof).unwrap();
+    let (structural_mismatch, validation) =
+        debug_step_witness_validation_from_words_with_limb_count_v1(
+            &target,
+            &proof_trace.auxiliary_witness_words,
+            proof_trace.auxiliary_witness_limb_count,
+        )
+        .unwrap();
+    let reason = debug_step_witness_validation_reason_from_words_with_limb_count_v1(
+        &target,
+        &proof_trace.auxiliary_witness_words,
+        proof_trace.auxiliary_witness_limb_count,
+    )
+    .unwrap();
+    assert_eq!(structural_mismatch, 0);
+    assert_eq!(reason, "ok");
+    assert_eq!(validation, [true, true, true, true, true, true]);
+    let rebuilt = StepBRelationV1::from_witness_words_with_limb_count(
+        target.clone(),
+        &proof_trace.auxiliary_witness_words,
+        proof_trace.auxiliary_witness_limb_count,
+    )
+    .unwrap();
+    let view = rebuilt.nonlinear_eval_view(0, &[0u64], &proof_trace.auxiliary_witness_words);
+    let mut out = [1u64; 1];
+    rebuilt.compute_constraints_u64(view, &mut out).unwrap();
+    assert_eq!(out, [0u64]);
+}
+
+#[test]
+fn step_b_relation_verification_is_independent_of_external_previous_context() {
     let base_context = base_a_context_v1();
     let alternative_base_context = base_a_context_v1();
     assert_ne!(
@@ -905,20 +991,14 @@ fn step_b_relation_verification_depends_on_external_previous_context() {
         target.clone(),
     );
     let alternative_binding = hosted_step_binding_bytes_v1(&target);
-    let err = verify_recursive_statement_v1(
+    verify_recursive_statement_v1(
         &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         &descriptor,
         &alternative_relation,
         &alternative_binding,
         &proof,
     )
-    .unwrap_err();
-    assert!(
-        err.to_string().contains("transcript")
-            || err.to_string().contains("constraint")
-            || err.to_string().contains("mismatch"),
-        "unexpected external-context verification error: {err}"
-    );
+    .unwrap();
 }
 
 #[test]
