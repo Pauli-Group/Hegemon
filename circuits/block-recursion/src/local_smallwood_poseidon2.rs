@@ -143,6 +143,19 @@ pub fn validate_proof_shape(
             "smallwood proof opened evaluation shape mismatch",
         ));
     }
+    if proof_trace.auxiliary_witness_limb_count > proof_trace.auxiliary_witness_words.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness limb count exceeds proof-carried words",
+        ));
+    }
+    if proof_trace.auxiliary_witness_words[proof_trace.auxiliary_witness_limb_count..]
+        .iter()
+        .any(|&word| word != 0)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness padding must be zero",
+        ));
+    }
     if proof_trace.piop_ppol_highs_v1().len() != SMALLWOOD_RHO
         || proof_trace
             .piop_ppol_highs_v1()

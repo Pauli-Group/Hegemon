@@ -40,7 +40,6 @@ const RECURSIVE_BLOCK_RELATION_LABEL_V1: &str = "hegemon.superneo.block-recursiv
 const BLOCK_RECURSIVE_WITNESS_SLOTS: usize = 96;
 const SMALLWOOD_BASE_A_ROW_COUNT_V1: usize = 1;
 const SMALLWOOD_BASE_A_PACKING_FACTOR_V1: usize = 64;
-const SMALLWOOD_STEP_ROW_COUNT_V1: usize = 1;
 const SMALLWOOD_STEP_PACKING_FACTOR_V1: usize = 64;
 const STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1: usize = 6;
 
@@ -397,6 +396,12 @@ struct StepWitnessV1 {
     previous_proof_words: Vec<u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StepWitnessEvaluationV1 {
+    structural_mismatch: u64,
+    previous_proof_validation: PreviousProofWitnessValidationV1,
+}
+
 fn step_witness_layout_header_words_v1(
     previous_proof_layout: PreviousProofWitnessLayoutV1,
 ) -> [u64; STEP_WITNESS_LAYOUT_HEADER_LIMBS_V1] {
@@ -658,7 +663,7 @@ pub fn verify_hosted_recursive_proof_context_descriptor_shape_v1(
                 previous_statement.clone(),
                 leaf_record.clone(),
                 target_statement.clone(),
-            );
+            )?;
             let binding = hosted_step_binding_bytes_v1(target_statement);
             let _ = verify_recursive_proof_envelope_structure_v1(
                 &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::A),
@@ -686,7 +691,7 @@ pub fn verify_hosted_recursive_proof_context_descriptor_shape_v1(
                 previous_statement.clone(),
                 leaf_record.clone(),
                 target_statement.clone(),
-            );
+            )?;
             let binding = hosted_step_binding_bytes_v1(target_statement);
             let _ = verify_recursive_proof_envelope_structure_v1(
                 &hosted_recursive_profile_v1(SmallwoodRecursiveProfileTagV1::B),
@@ -743,13 +748,13 @@ struct RecomputedPreviousProofComponentsV1 {
     descriptor: SmallwoodRecursiveVerifierDescriptorV1,
     binded_data: Vec<u8>,
     proof_bytes: Vec<u8>,
+    descriptor_words: Vec<u64>,
+    proof_words: Vec<u64>,
     proof_trace: SmallwoodProofTraceV1,
     eval_points: Vec<u64>,
     coeffs: Vec<Vec<u64>>,
     combi_heads: Vec<Vec<u64>>,
-    decs_trans_hash: Digest32,
     decs_leaf_indexes: Vec<u32>,
-    decs_nonce: [u8; 4],
     decs_eval_points: Vec<u64>,
     rows: Vec<Vec<u64>>,
     root_digest: Digest32,
@@ -757,75 +762,36 @@ struct RecomputedPreviousProofComponentsV1 {
     piop_input_words: Vec<u64>,
     piop_gamma_prime: Vec<Vec<u64>>,
     piop_transcript_words: Vec<u64>,
+    transcript_words: Vec<u64>,
+    pcs_words: Vec<u64>,
+    decs_words: Vec<u64>,
+    merkle_words: Vec<u64>,
     accept: bool,
 }
 
 impl RecomputedPreviousProofComponentsV1 {
-    fn descriptor_words_v1(&self) -> Vec<u64> {
-        bytes_to_witness_limbs_v1(&self.descriptor.serialized_v1())
+    fn descriptor_words_v1(&self) -> &[u64] {
+        &self.descriptor_words
     }
 
-    fn proof_words_v1(&self) -> Vec<u64> {
-        bytes_to_witness_limbs_v1(&self.proof_bytes)
+    fn proof_words_v1(&self) -> &[u64] {
+        &self.proof_words
     }
 
-    fn transcript_words_v1(&self) -> Vec<u64> {
-        let mut out = Vec::new();
-        out.extend_from_slice(
-            &smallwood_binding_words_v1(
-                &recursive_binding_bytes_v1(&self.descriptor, &self.binded_data),
-            )
-            .unwrap_or_default(),
-        );
-        out.extend_from_slice(&self.eval_points);
-        out.extend_from_slice(&flatten_matrix_words_v1(&self.piop_gamma_prime));
-        out.extend_from_slice(&self.pcs_transcript_words);
-        out.extend_from_slice(&self.piop_input_words);
-        out.extend_from_slice(&self.piop_transcript_words);
-        out.extend_from_slice(&digest_words_v1(&self.proof_trace.h_piop));
-        out.push(self.accept as u64);
-        out
+    fn transcript_words_v1(&self) -> &[u64] {
+        &self.transcript_words
     }
 
-    fn pcs_words_v1(&self) -> Vec<u64> {
-        let mut out = Vec::new();
-        out.extend_from_slice(&flatten_matrix_words_v1(
-            &self.proof_trace.opened_witness_row_scalars,
-        ));
-        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_partial_evals_v1()));
-        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_rcombi_tails_v1()));
-        out.extend_from_slice(&flatten_matrix_words_v1(self.proof_trace.pcs_subset_evals_v1()));
-        out.extend_from_slice(&flatten_matrix_words_v1(&self.coeffs));
-        out.extend_from_slice(&flatten_matrix_words_v1(&self.combi_heads));
-        out.extend_from_slice(&digest_words_v1(&self.decs_trans_hash));
-        out.extend_from_slice(&self.pcs_transcript_words);
-        out
+    fn pcs_words_v1(&self) -> &[u64] {
+        &self.pcs_words
     }
 
-    fn decs_words_v1(&self) -> Vec<u64> {
-        let mut out = Vec::new();
-        out.extend_from_slice(&digest_words_v1(&self.decs_trans_hash));
-        out.extend_from_slice(&flatten_u32_words_v1(&self.decs_leaf_indexes));
-        out.extend_from_slice(&nonce_words_v1(&self.decs_nonce));
-        out.extend_from_slice(&self.decs_eval_points);
-        out.extend_from_slice(&flatten_matrix_words_v1(
-            self.proof_trace.decs_masking_evals_v1(),
-        ));
-        out.extend_from_slice(&flatten_matrix_words_v1(
-            self.proof_trace.decs_high_coeffs_v1(),
-        ));
-        out.extend_from_slice(&self.pcs_transcript_words);
-        out
+    fn decs_words_v1(&self) -> &[u64] {
+        &self.decs_words
     }
 
-    fn merkle_words_v1(&self) -> Vec<u64> {
-        let mut out = Vec::new();
-        out.extend_from_slice(&flatten_matrix_words_v1(&self.rows));
-        out.extend_from_slice(&flatten_auth_path_words_v1(
-            self.proof_trace.decs_auth_paths_v1(),
-        ));
-        out.extend_from_slice(&digest_words_v1(&self.root_digest));
-        out
+    fn merkle_words_v1(&self) -> &[u64] {
+        &self.merkle_words
     }
 
     fn validate_transcript_section_v1(&self) -> Result<(), TransactionCircuitError> {
@@ -1110,18 +1076,58 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         derive_gamma_prime(&cfg, &hash_fpp, SmallwoodTranscriptBackend::Poseidon2);
     let accept = hash_piop_transcript(&piop_transcript_words, SmallwoodTranscriptBackend::Poseidon2)
         == proof_trace.h_piop;
+    let descriptor_words = bytes_to_witness_limbs_v1(&descriptor.serialized_v1());
+    let proof_words = bytes_to_witness_limbs_v1(&proof_bytes);
+    let mut transcript_words = Vec::new();
+    transcript_words.extend_from_slice(&binding_words);
+    transcript_words.extend_from_slice(&eval_points);
+    transcript_words.extend_from_slice(&flatten_matrix_words_v1(&piop_gamma_prime));
+    transcript_words.extend_from_slice(&pcs_transcript_words);
+    transcript_words.extend_from_slice(&piop_input_words);
+    transcript_words.extend_from_slice(&piop_transcript_words);
+    transcript_words.extend_from_slice(&digest_words_v1(&proof_trace.h_piop));
+    transcript_words.push(accept as u64);
+    let mut pcs_words = Vec::new();
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(
+        &proof_trace.opened_witness_row_scalars,
+    ));
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_partial_evals_v1()));
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_rcombi_tails_v1()));
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_subset_evals_v1()));
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(&coeffs));
+    pcs_words.extend_from_slice(&flatten_matrix_words_v1(&combi_heads));
+    pcs_words.extend_from_slice(&digest_words_v1(&decs_trans_hash));
+    pcs_words.extend_from_slice(&pcs_transcript_words);
+    let mut decs_words = Vec::new();
+    decs_words.extend_from_slice(&digest_words_v1(&decs_trans_hash));
+    decs_words.extend_from_slice(&flatten_u32_words_v1(&decs_leaf_indexes));
+    decs_words.extend_from_slice(&nonce_words_v1(&decs_nonce));
+    decs_words.extend_from_slice(&decs_eval_points);
+    decs_words.extend_from_slice(&flatten_matrix_words_v1(
+        proof_trace.decs_masking_evals_v1(),
+    ));
+    decs_words.extend_from_slice(&flatten_matrix_words_v1(
+        proof_trace.decs_high_coeffs_v1(),
+    ));
+    decs_words.extend_from_slice(&pcs_transcript_words);
+    let mut merkle_words = Vec::new();
+    merkle_words.extend_from_slice(&flatten_matrix_words_v1(&rows));
+    merkle_words.extend_from_slice(&flatten_auth_path_words_v1(
+        proof_trace.decs_auth_paths_v1(),
+    ));
+    merkle_words.extend_from_slice(&digest_words_v1(&root_digest));
 
     let components = RecomputedPreviousProofComponentsV1 {
         descriptor,
         binded_data: binding,
         proof_bytes,
+        descriptor_words,
+        proof_words,
         proof_trace,
         eval_points,
         coeffs,
         combi_heads,
-        decs_trans_hash,
         decs_leaf_indexes,
-        decs_nonce,
         decs_eval_points,
         rows,
         root_digest,
@@ -1129,6 +1135,10 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         piop_input_words,
         piop_gamma_prime,
         piop_transcript_words,
+        transcript_words,
+        pcs_words,
+        decs_words,
+        merkle_words,
         accept,
     };
     components.validate_transcript_section_v1()?;
@@ -1204,49 +1214,48 @@ pub fn hosted_recursive_proof_witness_layout_v1(
     context: &HostedRecursiveProofContextV1,
 ) -> Result<PreviousProofWitnessLayoutV1, TransactionCircuitError> {
     let components = recompute_previous_proof_components_v1(context)?;
-    Ok(previous_proof_witness_layout_from_sections_v1(
+    Ok(previous_proof_witness_layout_from_components_v1(&components))
+}
+
+fn previous_proof_witness_layout_from_components_v1(
+    components: &RecomputedPreviousProofComponentsV1,
+) -> PreviousProofWitnessLayoutV1 {
+    previous_proof_witness_layout_from_sections_v1(
         components.descriptor.serialized_v1().len(),
         components.proof_bytes.len(),
         components.transcript_words_v1().len(),
         components.pcs_words_v1().len(),
         components.decs_words_v1().len(),
         components.merkle_words_v1().len(),
-    ))
+    )
 }
 
-pub fn hosted_recursive_proof_witness_words_v1(
-    context: &HostedRecursiveProofContextV1,
-) -> Result<Vec<u64>, TransactionCircuitError> {
-    let components = recompute_previous_proof_components_v1(context)?;
-    let layout = hosted_recursive_proof_witness_layout_v1(context)?;
-    let descriptor_words = components.descriptor_words_v1();
-    let proof_words = components.proof_words_v1();
-    let transcript_words = components.transcript_words_v1();
-    let pcs_words = components.pcs_words_v1();
-    let decs_words = components.decs_words_v1();
-    let merkle_words = components.merkle_words_v1();
+fn previous_proof_witness_words_from_components_v1(
+    components: &RecomputedPreviousProofComponentsV1,
+) -> Result<(PreviousProofWitnessLayoutV1, Vec<u64>), TransactionCircuitError> {
+    let layout = previous_proof_witness_layout_from_components_v1(components);
     let witness_sections = [
         (
             "descriptor",
             layout.descriptor.limb_count,
-            descriptor_words.as_slice(),
+            components.descriptor_words_v1(),
         ),
         (
             "envelope",
             layout.envelope.limb_count,
-            proof_words.as_slice(),
+            components.proof_words_v1(),
         ),
         (
             "transcript",
             layout.transcript.limb_count,
-            transcript_words.as_slice(),
+            components.transcript_words_v1(),
         ),
-        ("pcs", layout.pcs.limb_count, pcs_words.as_slice()),
-        ("decs", layout.decs.limb_count, decs_words.as_slice()),
+        ("pcs", layout.pcs.limb_count, components.pcs_words_v1()),
+        ("decs", layout.decs.limb_count, components.decs_words_v1()),
         (
             "merkle",
             layout.merkle.limb_count,
-            merkle_words.as_slice(),
+            components.merkle_words_v1(),
         ),
     ];
     let mut out = Vec::with_capacity(layout.total_rows() * layout.row_width);
@@ -1262,7 +1271,14 @@ pub fn hosted_recursive_proof_witness_words_v1(
         out.resize(out.len() + (limit - words.len()), 0);
     }
     out.resize(layout.total_rows() * layout.row_width, 0);
-    Ok(out)
+    Ok((layout, out))
+}
+
+pub fn hosted_recursive_proof_witness_words_v1(
+    context: &HostedRecursiveProofContextV1,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let components = recompute_previous_proof_components_v1(context)?;
+    previous_proof_witness_words_from_components_v1(&components).map(|(_, words)| words)
 }
 
 fn witness_section_words_v1<'a>(
@@ -1366,13 +1382,24 @@ pub fn step_recursive_witness_words_v1(
     previous_statement: &RecursivePrefixStatementV1,
     leaf_record: &BlockLeafRecordV1,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
-    let layout = step_recursive_witness_layout_v1(context)?;
-    let previous_proof_words = hosted_recursive_proof_witness_words_v1(context)?;
+    let (_, witness_words) =
+        step_recursive_witness_layout_and_words_v1(context, previous_statement, leaf_record)?;
+    Ok(witness_words)
+}
+
+fn step_recursive_witness_layout_and_words_v1(
+    context: &HostedRecursiveProofContextV1,
+    previous_statement: &RecursivePrefixStatementV1,
+    leaf_record: &BlockLeafRecordV1,
+) -> Result<(StepWitnessLayoutV1, Vec<u64>), TransactionCircuitError> {
+    let components = recompute_previous_proof_components_v1(context)?;
+    let (previous_proof_layout, previous_proof_words) =
+        previous_proof_witness_words_from_components_v1(&components)?;
+    let layout = step_witness_layout_from_previous_proof_v1(previous_proof_layout);
     let previous_statement_words =
         bytes_to_witness_limbs_v1(&recursive_prefix_statement_bytes_v1(previous_statement));
     let leaf_record_words =
         bytes_to_witness_limbs_v1(&canonical_verified_leaf_record_bytes_v1(leaf_record));
-    let previous_proof_layout = layout.previous_proof_layout_v1();
     let layout_header_words = step_witness_layout_header_words_v1(previous_proof_layout);
     let witness_sections = [
         (
@@ -1405,7 +1432,7 @@ pub fn step_recursive_witness_words_v1(
         out.resize(out.len() + (limit - words.len()), 0);
     }
     out.resize(layout.total_rows() * layout.row_width, 0);
-    Ok(out)
+    Ok((layout, out))
 }
 
 fn decode_step_witness_v1(
@@ -1426,18 +1453,16 @@ fn decode_step_witness_v1(
         VERIFIED_LEAF_RECORD_BYTES_LEN_V1,
     )?;
     let previous_proof_layout = layout.previous_proof_layout_v1();
-    let mut previous_proof_words =
-        Vec::with_capacity(previous_proof_layout.total_rows() * previous_proof_layout.row_width);
-    for section in [
-        layout.descriptor,
-        layout.envelope,
-        layout.transcript,
-        layout.pcs,
-        layout.decs,
-        layout.merkle,
-    ] {
-        previous_proof_words.extend_from_slice(witness_section_words_v1(witness_words, section)?);
-    }
+    let mut previous_proof_words = witness_words
+        .get(
+            layout.descriptor.limb_start
+                ..layout.descriptor.limb_start
+                    + previous_proof_layout.total_limbs(),
+        )
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "recursive step previous-proof witness section out of bounds",
+        ))?
+        .to_vec();
     previous_proof_words.resize(
         previous_proof_layout.total_rows() * previous_proof_layout.row_width,
         0,
@@ -1468,6 +1493,44 @@ fn fixed_witness_linear_constraints_v1(
         (0..count as u32).collect(),
         vec![1u64; count],
         witness_words.to_vec(),
+    )
+}
+
+fn invalid_step_witness_evaluation_v1() -> StepWitnessEvaluationV1 {
+    StepWitnessEvaluationV1 {
+        structural_mismatch: 1,
+        previous_proof_validation: PreviousProofWitnessValidationV1::default(),
+    }
+}
+
+fn compute_step_witness_evaluation_v1(
+    layout: StepWitnessLayoutV1,
+    target_statement: &RecursivePrefixStatementV1,
+    witness_words: &[u64],
+) -> Result<StepWitnessEvaluationV1, TransactionCircuitError> {
+    let witness = decode_step_witness_v1(layout, witness_words)?;
+    Ok(StepWitnessEvaluationV1 {
+        structural_mismatch: step_relation_mismatch(
+            &witness.previous_statement,
+            &witness.leaf_record,
+            target_statement,
+        ),
+        previous_proof_validation: validate_previous_proof_witness_v1(
+            &witness.previous_statement,
+            layout.previous_proof_layout_v1(),
+            &witness.previous_proof_words,
+        ),
+    })
+}
+
+fn previous_proof_trace_mismatch_v1(validation: PreviousProofWitnessValidationV1) -> u64 {
+    u64::from(
+        !validation.witness_ready
+            || !validation.descriptor_shape_valid
+            || !validation.binding_trace_valid
+            || !validation.transcript_valid
+            || !validation.pcs_valid
+            || !validation.decs_merkle_valid,
     )
 }
 
@@ -1717,7 +1780,7 @@ fn build_expected_recursive_inputs_v1(
                 previous_statement.clone(),
                 leaf_record.clone(),
                 target_statement.clone(),
-            )),
+            )?),
             hosted_step_binding_bytes_v1(target_statement),
             decode_smallwood_recursive_proof_envelope_v1(proof_envelope_bytes)?
                 .proof_bytes
@@ -1740,7 +1803,7 @@ fn build_expected_recursive_inputs_v1(
                 previous_statement.clone(),
                 leaf_record.clone(),
                 target_statement.clone(),
-            )),
+            )?),
             hosted_step_binding_bytes_v1(target_statement),
             decode_smallwood_recursive_proof_envelope_v1(proof_envelope_bytes)?
                 .proof_bytes
@@ -1821,21 +1884,21 @@ fn validate_previous_proof_witness_v1(
 
     validation.transcript_valid = components.validate_transcript_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.transcript)
-            .map(|words| words == transcript_words.as_slice())
+            .map(|words| words == transcript_words)
             .unwrap_or(false);
 
     validation.pcs_valid = components.validate_pcs_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.pcs)
-            .map(|words| words == pcs_words.as_slice())
+            .map(|words| words == pcs_words)
             .unwrap_or(false);
 
     validation.decs_merkle_valid = components.validate_decs_section_v1().is_ok()
         && components.validate_merkle_section_v1().is_ok()
         && witness_section_words_v1(witness_words, layout.decs)
-            .map(|words| words == decs_words.as_slice())
+            .map(|words| words == decs_words)
             .unwrap_or(false)
         && witness_section_words_v1(witness_words, layout.merkle)
-            .map(|words| words == merkle_words.as_slice())
+            .map(|words| words == merkle_words)
             .unwrap_or(false);
 
     validation
@@ -2251,6 +2314,7 @@ pub struct StepARelationV1 {
     pub previous_recursive_proof: Option<Box<HostedRecursiveProofContextV1>>,
     pub target_statement: RecursivePrefixStatementV1,
     step_witness_layout: Option<StepWitnessLayoutV1>,
+    cached_witness_evaluation: StepWitnessEvaluationV1,
     witness_row_count: usize,
     linear_offsets: Vec<u32>,
     linear_indices: Vec<u32>,
@@ -2264,26 +2328,27 @@ impl StepARelationV1 {
         target_statement: RecursivePrefixStatementV1,
         witness_words: Vec<u64>,
         auxiliary_limb_count: Option<usize>,
-    ) -> Self {
-        let step_witness_layout =
-            step_witness_layout_from_witness_words_with_limb_count_v1(
-                &witness_words,
-                auxiliary_limb_count,
-            )
-            .ok();
+    ) -> Result<Self, TransactionCircuitError> {
+        let step_witness_layout = step_witness_layout_from_witness_words_with_limb_count_v1(
+            &witness_words,
+            auxiliary_limb_count,
+        )?;
+        let cached_witness_evaluation =
+            compute_step_witness_evaluation_v1(step_witness_layout, &target_statement, &witness_words)?;
         let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
         let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
             fixed_witness_linear_constraints_v1(&witness_words);
-        Self {
+        Ok(Self {
             previous_recursive_proof: previous_recursive_proof.map(Box::new),
             target_statement,
-            step_witness_layout,
+            step_witness_layout: Some(step_witness_layout),
+            cached_witness_evaluation,
             witness_row_count: row_count,
             linear_offsets,
             linear_indices,
             linear_coefficients,
             linear_targets,
-        }
+        })
     }
 
     pub fn new(
@@ -2291,39 +2356,24 @@ impl StepARelationV1 {
         previous_statement: RecursivePrefixStatementV1,
         leaf_record: BlockLeafRecordV1,
         target_statement: RecursivePrefixStatementV1,
-    ) -> Self {
-        let step_witness_layout = step_recursive_witness_layout_v1(&previous_recursive_proof).ok();
-        let witness_words = step_recursive_witness_words_v1(
+    ) -> Result<Self, TransactionCircuitError> {
+        let (step_witness_layout, witness_words) = step_recursive_witness_layout_and_words_v1(
             &previous_recursive_proof,
             &previous_statement,
             &leaf_record,
-        )
-        .unwrap_or_default();
-        if witness_words.is_empty() {
-            return Self {
-                previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
-                target_statement,
-                step_witness_layout,
-                witness_row_count: SMALLWOOD_STEP_ROW_COUNT_V1,
-                linear_offsets: vec![0],
-                linear_indices: Vec::new(),
-                linear_coefficients: Vec::new(),
-                linear_targets: Vec::new(),
-            };
-        }
-        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
-        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
-            fixed_witness_linear_constraints_v1(&witness_words);
-        Self {
-            previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
+        )?;
+        let relation = Self::build_from_witness_words(
+            Some(previous_recursive_proof),
             target_statement,
-            step_witness_layout,
-            witness_row_count: row_count,
-            linear_offsets,
-            linear_indices,
-            linear_coefficients,
-            linear_targets,
+            witness_words,
+            Some(step_witness_layout.total_limbs()),
+        )?;
+        if relation.step_witness_layout != Some(step_witness_layout) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step witness layout mismatch during relation construction",
+            ));
         }
+        Ok(relation)
     }
 
     pub fn from_witness_words(
@@ -2335,12 +2385,12 @@ impl StepARelationV1 {
                 "recursive step verifier requires proof-carried witness words",
             ));
         }
-        Ok(Self::build_from_witness_words(
+        Self::build_from_witness_words(
             None,
             target_statement,
             witness_words.to_vec(),
             None,
-        ))
+        )
     }
 
     pub fn from_witness_words_with_limb_count(
@@ -2358,12 +2408,12 @@ impl StepARelationV1 {
                 "recursive step verifier requires nonzero proof-carried limb count",
             ));
         }
-        Ok(Self::build_from_witness_words(
+        Self::build_from_witness_words(
             None,
             target_statement,
             witness_words.to_vec(),
             Some(auxiliary_limb_count),
-        ))
+        )
     }
 }
 
@@ -2442,40 +2492,24 @@ impl SmallwoodConstraintAdapter for StepARelationV1 {
         } else {
             auxiliary_words
         };
-        let witness = self
-            .step_witness_layout
-            .and_then(|layout| decode_step_witness_v1(layout, witness_words).ok());
-        let structural_mismatch = witness
-            .as_ref()
-            .map(|witness| {
-                step_relation_mismatch(
-                    &witness.previous_statement,
-                    &witness.leaf_record,
-                    &self.target_statement,
-                )
-            })
-            .unwrap_or(1);
-        let validation = self
-            .step_witness_layout
-            .and_then(|layout| {
-                witness.as_ref().map(|witness| {
-                    validate_previous_proof_witness_v1(
-                        &witness.previous_statement,
-                        layout.previous_proof_layout_v1(),
-                        &witness.previous_proof_words,
-                    )
+        let cached_witness = self.linear_targets.as_slice();
+        let reuse_cached = auxiliary_words.is_empty()
+            || (witness_words.len() == cached_witness.len()
+                && std::ptr::eq(witness_words.as_ptr(), cached_witness.as_ptr()));
+        let evaluation = if reuse_cached {
+            self.cached_witness_evaluation
+        } else {
+            self.step_witness_layout
+                .and_then(|layout| {
+                    compute_step_witness_evaluation_v1(layout, &self.target_statement, witness_words).ok()
                 })
-            })
-            .unwrap_or_default();
-        let trace_mismatch = u64::from(
-            !validation.witness_ready
-                || !validation.descriptor_shape_valid
-                || !validation.binding_trace_valid
-                || !validation.transcript_valid
-                || !validation.pcs_valid
-                || !validation.decs_merkle_valid,
-        );
-        let mismatch = structural_mismatch.saturating_add(trace_mismatch);
+                .unwrap_or_else(invalid_step_witness_evaluation_v1)
+        };
+        let mismatch = evaluation
+            .structural_mismatch
+            .saturating_add(previous_proof_trace_mismatch_v1(
+                evaluation.previous_proof_validation,
+            ));
         out[0] = mismatch.saturating_mul(mismatch);
         Ok(())
     }
@@ -2486,6 +2520,7 @@ pub struct StepBRelationV1 {
     pub previous_recursive_proof: Option<Box<HostedRecursiveProofContextV1>>,
     pub target_statement: RecursivePrefixStatementV1,
     step_witness_layout: Option<StepWitnessLayoutV1>,
+    cached_witness_evaluation: StepWitnessEvaluationV1,
     witness_row_count: usize,
     linear_offsets: Vec<u32>,
     linear_indices: Vec<u32>,
@@ -2499,26 +2534,27 @@ impl StepBRelationV1 {
         target_statement: RecursivePrefixStatementV1,
         witness_words: Vec<u64>,
         auxiliary_limb_count: Option<usize>,
-    ) -> Self {
-        let step_witness_layout =
-            step_witness_layout_from_witness_words_with_limb_count_v1(
-                &witness_words,
-                auxiliary_limb_count,
-            )
-            .ok();
+    ) -> Result<Self, TransactionCircuitError> {
+        let step_witness_layout = step_witness_layout_from_witness_words_with_limb_count_v1(
+            &witness_words,
+            auxiliary_limb_count,
+        )?;
+        let cached_witness_evaluation =
+            compute_step_witness_evaluation_v1(step_witness_layout, &target_statement, &witness_words)?;
         let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
         let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
             fixed_witness_linear_constraints_v1(&witness_words);
-        Self {
+        Ok(Self {
             previous_recursive_proof: previous_recursive_proof.map(Box::new),
             target_statement,
-            step_witness_layout,
+            step_witness_layout: Some(step_witness_layout),
+            cached_witness_evaluation,
             witness_row_count: row_count,
             linear_offsets,
             linear_indices,
             linear_coefficients,
             linear_targets,
-        }
+        })
     }
 
     pub fn new(
@@ -2526,39 +2562,24 @@ impl StepBRelationV1 {
         previous_statement: RecursivePrefixStatementV1,
         leaf_record: BlockLeafRecordV1,
         target_statement: RecursivePrefixStatementV1,
-    ) -> Self {
-        let step_witness_layout = step_recursive_witness_layout_v1(&previous_recursive_proof).ok();
-        let witness_words = step_recursive_witness_words_v1(
+    ) -> Result<Self, TransactionCircuitError> {
+        let (step_witness_layout, witness_words) = step_recursive_witness_layout_and_words_v1(
             &previous_recursive_proof,
             &previous_statement,
             &leaf_record,
-        )
-        .unwrap_or_default();
-        if witness_words.is_empty() {
-            return Self {
-                previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
-                target_statement,
-                step_witness_layout,
-                witness_row_count: SMALLWOOD_STEP_ROW_COUNT_V1,
-                linear_offsets: vec![0],
-                linear_indices: Vec::new(),
-                linear_coefficients: Vec::new(),
-                linear_targets: Vec::new(),
-            };
-        }
-        let row_count = previous_proof_rows_for_limbs_v1(witness_words.len()).max(1);
-        let (linear_offsets, linear_indices, linear_coefficients, linear_targets) =
-            fixed_witness_linear_constraints_v1(&witness_words);
-        Self {
-            previous_recursive_proof: Some(Box::new(previous_recursive_proof)),
+        )?;
+        let relation = Self::build_from_witness_words(
+            Some(previous_recursive_proof),
             target_statement,
-            step_witness_layout,
-            witness_row_count: row_count,
-            linear_offsets,
-            linear_indices,
-            linear_coefficients,
-            linear_targets,
+            witness_words,
+            Some(step_witness_layout.total_limbs()),
+        )?;
+        if relation.step_witness_layout != Some(step_witness_layout) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "recursive step witness layout mismatch during relation construction",
+            ));
         }
+        Ok(relation)
     }
 
     pub fn from_witness_words(
@@ -2570,12 +2591,12 @@ impl StepBRelationV1 {
                 "recursive step verifier requires proof-carried witness words",
             ));
         }
-        Ok(Self::build_from_witness_words(
+        Self::build_from_witness_words(
             None,
             target_statement,
             witness_words.to_vec(),
             None,
-        ))
+        )
     }
 
     pub fn from_witness_words_with_limb_count(
@@ -2593,12 +2614,12 @@ impl StepBRelationV1 {
                 "recursive step verifier requires nonzero proof-carried limb count",
             ));
         }
-        Ok(Self::build_from_witness_words(
+        Self::build_from_witness_words(
             None,
             target_statement,
             witness_words.to_vec(),
             Some(auxiliary_limb_count),
-        ))
+        )
     }
 }
 
@@ -2677,40 +2698,24 @@ impl SmallwoodConstraintAdapter for StepBRelationV1 {
         } else {
             auxiliary_words
         };
-        let witness = self
-            .step_witness_layout
-            .and_then(|layout| decode_step_witness_v1(layout, witness_words).ok());
-        let structural_mismatch = witness
-            .as_ref()
-            .map(|witness| {
-                step_relation_mismatch(
-                    &witness.previous_statement,
-                    &witness.leaf_record,
-                    &self.target_statement,
-                )
-            })
-            .unwrap_or(1);
-        let validation = self
-            .step_witness_layout
-            .and_then(|layout| {
-                witness.as_ref().map(|witness| {
-                    validate_previous_proof_witness_v1(
-                        &witness.previous_statement,
-                        layout.previous_proof_layout_v1(),
-                        &witness.previous_proof_words,
-                    )
+        let cached_witness = self.linear_targets.as_slice();
+        let reuse_cached = auxiliary_words.is_empty()
+            || (witness_words.len() == cached_witness.len()
+                && std::ptr::eq(witness_words.as_ptr(), cached_witness.as_ptr()));
+        let evaluation = if reuse_cached {
+            self.cached_witness_evaluation
+        } else {
+            self.step_witness_layout
+                .and_then(|layout| {
+                    compute_step_witness_evaluation_v1(layout, &self.target_statement, witness_words).ok()
                 })
-            })
-            .unwrap_or_default();
-        let trace_mismatch = u64::from(
-            !validation.witness_ready
-                || !validation.descriptor_shape_valid
-                || !validation.binding_trace_valid
-                || !validation.transcript_valid
-                || !validation.pcs_valid
-                || !validation.decs_merkle_valid,
-        );
-        let mismatch = structural_mismatch.saturating_add(trace_mismatch);
+                .unwrap_or_else(invalid_step_witness_evaluation_v1)
+        };
+        let mismatch = evaluation
+            .structural_mismatch
+            .saturating_add(previous_proof_trace_mismatch_v1(
+                evaluation.previous_proof_validation,
+            ));
         out[0] = mismatch.saturating_mul(mismatch);
         Ok(())
     }

@@ -1480,6 +1480,21 @@ pub fn validate_proof_shape(
             "smallwood proof opened evaluation shape mismatch",
         ));
     }
+    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
+    let auxiliary_limb_count = proof.opened_witness.auxiliary_limb_count();
+    if auxiliary_limb_count > auxiliary_words.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness limb count exceeds opened witness words",
+        ));
+    }
+    if auxiliary_words[auxiliary_limb_count..]
+        .iter()
+        .any(|&word| word != 0)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness padding must be zero",
+        ));
+    }
     if proof.piop.ppol_highs.len() != SMALLWOOD_RHO
         || proof
             .piop
@@ -3358,6 +3373,94 @@ mod tests {
             err.to_string().contains("row-scalar"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn direct_packed_arithmetization_rejects_auxiliary_witness_limb_count_overflow() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let mut proof: SmallwoodProof = bincode::deserialize(
+            &prove_candidate(
+                &statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        match &mut proof.opened_witness.mode {
+            SmallwoodOpenedWitnessMode::RowScalars {
+                auxiliary_words,
+                auxiliary_limb_count,
+                ..
+            } => {
+                assert!(auxiliary_words.is_empty());
+                *auxiliary_limb_count = 1;
+            }
+            mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
+        }
+        let err = verify_candidate(
+            &statement,
+            &material.transcript_binding,
+            &bincode::serialize(&proof).unwrap(),
+        )
+        .expect_err("direct proof with overflowing auxiliary limb count unexpectedly verified");
+        assert!(err.to_string().contains("auxiliary"));
+    }
+
+    #[test]
+    fn direct_packed_arithmetization_rejects_nonzero_auxiliary_padding() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let mut proof: SmallwoodProof = bincode::deserialize(
+            &prove_candidate(
+                &statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        match &mut proof.opened_witness.mode {
+            SmallwoodOpenedWitnessMode::RowScalars {
+                auxiliary_words,
+                auxiliary_limb_count,
+                ..
+            } => {
+                *auxiliary_limb_count = 0;
+                auxiliary_words.push(1);
+            }
+            mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
+        }
+        let err = verify_candidate(
+            &statement,
+            &material.transcript_binding,
+            &bincode::serialize(&proof).unwrap(),
+        )
+        .expect_err("direct proof with nonzero auxiliary padding unexpectedly verified");
+        assert!(err.to_string().contains("padding"));
     }
 
     #[test]
