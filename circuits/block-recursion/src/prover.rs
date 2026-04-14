@@ -11,9 +11,8 @@ use crate::{
     },
     relation::{
         hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
-        hosted_step_binding_bytes_v1, step_recursive_witness_words_v1, BaseARelationV1,
-        HostedRecursiveProofContextV1, StepARelationV1, StepBRelationV1,
-        recursive_block_shape_digest_v1,
+        hosted_step_binding_bytes_v1, BaseARelationV1, HostedRecursiveProofContextV1,
+        StepARelationV1, StepBRelationV1, recursive_block_shape_digest_v1,
     },
     statement::{
         recursive_prefix_base_statement_v1, recursive_prefix_progress_tree_commitment_v1,
@@ -129,13 +128,6 @@ fn prove_step_context_v1(
             "recursive step index must be nonzero",
         ));
     }
-    let witness = step_recursive_witness_words_v1(
-        &previous_recursive_proof,
-        previous_statement,
-        leaf_record,
-    )
-    .map_err(|err| static_error("build recursive step witness failed", err))?;
-
     if step_index % 2 == 1 {
         let relation = StepBRelationV1::new(
             previous_recursive_proof.clone(),
@@ -153,7 +145,7 @@ fn prove_step_context_v1(
             &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
             &descriptor,
             &relation,
-            &witness,
+            relation.fixed_witness_words(),
             &binding,
         )
         .map_err(|err| static_error("prove StepB recursive statement failed", err))?;
@@ -191,7 +183,7 @@ fn prove_step_context_v1(
             &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
             &descriptor,
             &relation,
-            &witness,
+            relation.fixed_witness_words(),
             &binding,
         )
         .map_err(|err| static_error("prove StepA recursive statement failed", err))?;
