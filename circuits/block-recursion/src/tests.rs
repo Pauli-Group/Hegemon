@@ -28,7 +28,7 @@ use super::{
     BlockRecursiveProverInputV2, BlockSemanticInputsV1, HostedRecursiveProofContextV1,
     RecursiveBlockArtifactV1, RecursiveBlockArtifactV2, RecursiveBlockPublicV1,
     RecursiveBlockPublicV2, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
-    StepARelationV1, StepBRelationV1,
+    StepARelationV1, StepBRelationV1, TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
@@ -218,11 +218,21 @@ fn prove_artifact_v2_uncached(tx_count: u32) -> (RecursiveBlockArtifactV2, Recur
 fn prove_artifact_v2(tx_count: u32) -> (RecursiveBlockArtifactV2, RecursiveBlockPublicV2) {
     static ONE_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> = OnceLock::new();
     static FIVE_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> = OnceLock::new();
+    static THIRTY_TWO_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> =
+        OnceLock::new();
+    static THIRTY_THREE_TX: OnceLock<(RecursiveBlockArtifactV2, RecursiveBlockPublicV2)> =
+        OnceLock::new();
 
     match tx_count {
         1 => ONE_TX.get_or_init(|| prove_artifact_v2_uncached(1)).clone(),
         5 => FIVE_TX
             .get_or_init(|| prove_artifact_v2_uncached(5))
+            .clone(),
+        32 => THIRTY_TWO_TX
+            .get_or_init(|| prove_artifact_v2_uncached(32))
+            .clone(),
+        33 => THIRTY_THREE_TX
+            .get_or_init(|| prove_artifact_v2_uncached(33))
             .clone(),
         _ => prove_artifact_v2_uncached(tx_count),
     }
@@ -578,8 +588,18 @@ fn prove_and_verify_recursive_artifact_succeeds() {
 #[test]
 fn tree_v2_proof_cap_report_is_self_consistent() {
     let report = tree_proof_cap_report_v2();
+    let expected_max_chunk_count = report
+        .max_supported_txs
+        .div_ceil(TREE_RECURSIVE_CHUNK_SIZE_V2);
+    let mut expected_max_tree_level = 0usize;
+    let mut chunk_count = expected_max_chunk_count;
+    while chunk_count > 1 {
+        expected_max_tree_level += 1;
+        chunk_count = chunk_count.div_ceil(2);
+    }
     assert_eq!(report.max_supported_txs, 1000);
-    assert_eq!(report.max_chunk_count, 250);
+    assert_eq!(report.max_chunk_count, expected_max_chunk_count);
+    assert_eq!(report.max_tree_level, expected_max_tree_level);
     assert_eq!(report.max_tree_level + 1, report.level_caps.len());
     assert!(report.p_chunk_a <= report.root_proof_cap);
     assert!(report.p_merge_a <= report.root_proof_cap);
@@ -616,6 +636,34 @@ fn recursive_artifact_v2_constant_size_across_tx_counts() {
         .unwrap()
         .len();
     assert_eq!(short, long);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
+    for tx_count in [TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32]
+    {
+        let (artifact, public) = prove_artifact_v2(tx_count);
+        let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
+        assert_eq!(verified, public);
+    }
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
+    let chunk_aligned = serialize_recursive_block_artifact_v2(
+        &prove_artifact_v2(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32).0,
+    )
+    .unwrap()
+    .len();
+    let first_merged = serialize_recursive_block_artifact_v2(
+        &prove_artifact_v2((TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32).0,
+    )
+    .unwrap()
+    .len();
+    assert_eq!(chunk_aligned, first_merged);
+    assert_eq!(chunk_aligned, recursive_block_artifact_bytes_v2());
 }
 
 #[test]
