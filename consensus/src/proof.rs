@@ -6,12 +6,11 @@ use crate::types::{
     TxStatementBinding, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
     VersionCommitment, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root, kernel_root_from_shielded_root,
-    legacy_block_artifact_verifier_profile,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use block_recursion::{
     BlockLeafRecordV1, BlockSemanticInputsV1, deserialize_recursive_block_artifact_v1,
-    public_replay_v1, verify_block_recursive_v1,
+    public_replay_v1, recursive_block_artifact_verifier_profile_v1, verify_block_recursive_v1,
 };
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
@@ -727,8 +726,8 @@ impl ArtifactVerifier for ReceiptRootVerifier {
     }
 }
 
-fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
-    legacy_block_artifact_verifier_profile(ProofArtifactKind::RecursiveBlockV1)
+pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
+    recursive_block_artifact_verifier_profile_v1()
 }
 
 struct RecursiveBlockVerifier;
@@ -768,16 +767,12 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                     "recursive block artifact decode failed: {err}"
                 ))
             })?;
-        if parsed.artifact.header.version != 1 {
+        if parsed.artifact.header.artifact_version_rec
+            != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V1
+        {
             return Err(ProofError::AggregationProofInputsMismatch(format!(
                 "recursive block header version mismatch: {}",
-                parsed.artifact.header.version
-            )));
-        }
-        if parsed.artifact.header.proof_kind != 1 {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "recursive block proof kind mismatch: {}",
-                parsed.artifact.header.proof_kind
+                parsed.artifact.header.artifact_version_rec
             )));
         }
 

@@ -1,4 +1,7 @@
-use crate::{fold_digest48, BlockRecursionError, Digest32, Digest48};
+use crate::{
+    public_replay::{BlockSemanticInputsV1, RecursiveBlockPublicV1},
+    fold_digest32, fold_digest48, BlockRecursionError, Digest32, Digest48,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecursivePrefixStatementV1 {
@@ -10,6 +13,14 @@ pub struct RecursivePrefixStatementV1 {
     pub verified_receipt_commitment: Digest48,
     pub start_tree_commitment: Digest48,
     pub end_tree_commitment: Digest48,
+}
+
+pub fn recursive_prefix_statement_digest32_v1(statement: &RecursivePrefixStatementV1) -> Digest32 {
+    let encoded = recursive_prefix_statement_bytes_v1(statement);
+    fold_digest32(
+        b"hegemon.block-recursion.recursive-prefix-statement-d32.v1",
+        &[&encoded],
+    )
 }
 
 pub fn recursive_prefix_statement_digest_v1(statement: &RecursivePrefixStatementV1) -> Digest48 {
@@ -31,6 +42,121 @@ pub fn recursive_prefix_statement_bytes_v1(statement: &RecursivePrefixStatementV
     out.extend_from_slice(&statement.start_tree_commitment);
     out.extend_from_slice(&statement.end_tree_commitment);
     out
+}
+
+pub fn recursive_prefix_start_state_digest_v1(
+    tx_statements_commitment: Digest48,
+    start_tree_commitment: Digest48,
+) -> Digest48 {
+    fold_digest48(
+        b"hegemon.block-recursion.recursive-prefix-start-state.v1",
+        &[&tx_statements_commitment, &start_tree_commitment],
+    )
+}
+
+pub fn recursive_prefix_progress_tree_commitment_v1(
+    tx_count: u32,
+    start_tree_commitment: Digest48,
+    verified_leaf_commitment: Digest48,
+    verified_receipt_commitment: Digest48,
+) -> Digest48 {
+    fold_digest48(
+        b"hegemon.block-recursion.recursive-prefix-tree.v1",
+        &[
+            &tx_count.to_le_bytes(),
+            &start_tree_commitment,
+            &verified_leaf_commitment,
+            &verified_receipt_commitment,
+        ],
+    )
+}
+
+pub fn recursive_prefix_end_state_digest_v1(
+    tx_count: u32,
+    start_state_digest: Digest48,
+    verified_leaf_commitment: Digest48,
+    tx_statements_commitment: Digest48,
+    verified_receipt_commitment: Digest48,
+    start_tree_commitment: Digest48,
+    end_tree_commitment: Digest48,
+) -> Digest48 {
+    fold_digest48(
+        b"hegemon.block-recursion.recursive-prefix-end-state.v1",
+        &[
+            &tx_count.to_le_bytes(),
+            &start_state_digest,
+            &verified_leaf_commitment,
+            &tx_statements_commitment,
+            &verified_receipt_commitment,
+            &start_tree_commitment,
+            &end_tree_commitment,
+        ],
+    )
+}
+
+pub fn recursive_prefix_statement_from_parts_v1(
+    tx_count: u32,
+    tx_statements_commitment: Digest48,
+    verified_leaf_commitment: Digest48,
+    verified_receipt_commitment: Digest48,
+    start_tree_commitment: Digest48,
+    end_tree_commitment: Digest48,
+) -> RecursivePrefixStatementV1 {
+    let start_state_digest =
+        recursive_prefix_start_state_digest_v1(tx_statements_commitment, start_tree_commitment);
+    let end_state_digest = if tx_count == 0
+        && verified_leaf_commitment == [0u8; 48]
+        && verified_receipt_commitment == [0u8; 48]
+        && end_tree_commitment == start_tree_commitment
+    {
+        start_state_digest
+    } else {
+        recursive_prefix_end_state_digest_v1(
+            tx_count,
+            start_state_digest,
+            verified_leaf_commitment,
+            tx_statements_commitment,
+            verified_receipt_commitment,
+            start_tree_commitment,
+            end_tree_commitment,
+        )
+    };
+    RecursivePrefixStatementV1 {
+        tx_count,
+        start_state_digest,
+        end_state_digest,
+        verified_leaf_commitment,
+        tx_statements_commitment,
+        verified_receipt_commitment,
+        start_tree_commitment,
+        end_tree_commitment,
+    }
+}
+
+pub fn recursive_prefix_statement_from_public_v1(
+    public: &RecursiveBlockPublicV1,
+) -> RecursivePrefixStatementV1 {
+    recursive_prefix_statement_from_parts_v1(
+        public.tx_count,
+        public.tx_statements_commitment,
+        public.verified_leaf_commitment,
+        public.verified_receipt_commitment,
+        public.start_tree_commitment,
+        public.end_tree_commitment,
+    )
+}
+
+pub fn recursive_prefix_base_statement_v1(
+    semantic: &BlockSemanticInputsV1,
+) -> RecursivePrefixStatementV1 {
+    recursive_prefix_statement_from_parts_v1(
+        0,
+        semantic.tx_statements_commitment,
+        [0u8; 48],
+        [0u8; 48],
+        semantic.start_tree_commitment,
+        semantic.start_tree_commitment,
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,18 +238,4 @@ pub fn statement_digest_v1(statement: &BlockStepStatementV1) -> Digest48 {
         chunks.push(input);
     }
     fold_digest48(b"block_step_statement_v1", &chunks)
-}
-
-pub fn validate_compose_check_v1(
-    previous: &BlockPrefixStatementV1,
-    step: &BlockPrefixStatementV1,
-    target_tx_count: u32,
-) -> Result<ComposeCheckV1, BlockRecursionError> {
-    let compose = ComposeCheckV1::new(previous.tx_count, step.tx_count, target_tx_count)?;
-    if !compose.is_valid {
-        return Err(BlockRecursionError::ComposeCheckFailed(
-            "prefix counts do not compose",
-        ));
-    }
-    Ok(compose)
 }

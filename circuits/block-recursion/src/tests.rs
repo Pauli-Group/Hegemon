@@ -85,7 +85,7 @@ fn sample_input(tx_count: u32) -> BlockRecursiveProverInputV1 {
     }
 }
 
-fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
+fn prove_artifact_uncached(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
     let input = sample_input(tx_count);
     let public = public_replay_v1(&input.records, &input.semantic).unwrap();
     let artifact = prove_block_recursive_v1(&input).unwrap();
@@ -93,9 +93,22 @@ fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPub
     (artifact, public)
 }
 
+fn prove_artifact(tx_count: u32) -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
+    static ONE_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
+    static TWO_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
+    static FIVE_TX: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> =
+        OnceLock::new();
+
+    match tx_count {
+        1 => ONE_TX.get_or_init(|| prove_artifact_uncached(1)).clone(),
+        2 => TWO_TX.get_or_init(|| prove_artifact_uncached(2)).clone(),
+        5 => FIVE_TX.get_or_init(|| prove_artifact_uncached(5)).clone(),
+        _ => prove_artifact_uncached(tx_count),
+    }
+}
+
 fn cached_two_tx_artifact() -> (RecursiveBlockArtifactV1, RecursiveBlockPublicV1) {
-    static CACHE: OnceLock<(RecursiveBlockArtifactV1, RecursiveBlockPublicV1)> = OnceLock::new();
-    CACHE.get_or_init(|| prove_artifact(2)).clone()
+    prove_artifact(2)
 }
 
 fn base_prefix_statement() -> RecursivePrefixStatementV1 {
@@ -356,7 +369,7 @@ fn recursive_artifact_roundtrips_and_exact_consumes() {
     assert_eq!(parsed, artifact);
     let public_len = serialize_recursive_block_public_v1(&parsed.public).len();
     assert_eq!(
-        parsed.artifact.header.artifact_bytes as usize,
+        parsed.artifact.header.proof_bytes_rec as usize + 336,
         bytes.len() - public_len
     );
 }
@@ -373,21 +386,32 @@ fn recursive_artifact_rejects_trailing_bytes() {
 #[test]
 fn recursive_artifact_rejects_width_mismatch() {
     let (mut artifact, _) = cached_two_tx_artifact();
-    artifact.artifact.header.accumulator_bytes =
-        artifact.artifact.header.accumulator_bytes.saturating_add(1);
-    let bytes = serialize_recursive_block_artifact_v1(&artifact).unwrap();
-    let err = deserialize_recursive_block_artifact_v1(&bytes).unwrap_err();
+    artifact.artifact.header.proof_bytes_rec =
+        artifact.artifact.header.proof_bytes_rec.saturating_add(1);
+    let err = serialize_recursive_block_artifact_v1(&artifact).unwrap_err();
     assert!(matches!(err, BlockRecursionError::WidthMismatch { .. }));
 }
 
 #[test]
 fn recursive_artifact_rejects_tampered_statement_digest() {
     let (mut artifact, public) = cached_two_tx_artifact();
-    artifact.artifact.header.statement_digest[0] ^= 1;
+    artifact.artifact.header.statement_digest_rec[0] ^= 1;
     let err = verify_block_recursive_v1(&artifact, &public).unwrap_err();
     assert!(matches!(
         err,
-        BlockRecursionError::InvalidField("statement_digest")
+        BlockRecursionError::InvalidField("header_rec_step mismatch")
+    ));
+}
+
+#[test]
+fn recursive_artifact_rejects_nonzero_proof_padding() {
+    let (mut artifact, public) = prove_artifact(1);
+    let padding_index = artifact.artifact.header.proof_bytes_rec as usize - 1;
+    artifact.artifact.proof_bytes[padding_index] ^= 1;
+    let err = verify_block_recursive_v1(&artifact, &public).unwrap_err();
+    assert!(matches!(
+        err,
+        BlockRecursionError::InvalidField("proof_bytes_rec padding")
     ));
 }
 
@@ -405,7 +429,7 @@ fn recursive_artifact_rejects_wrong_expected_public() {
 #[test]
 fn recursive_artifact_rejects_alternate_serializer_under_same_profile() {
     let (mut artifact, public) = cached_two_tx_artifact();
-    artifact.artifact.decider_bytes[0] ^= 1;
+    artifact.artifact.proof_bytes[0] ^= 1;
     let err = verify_block_recursive_v1(&artifact, &public).unwrap_err();
     assert!(!matches!(err, BlockRecursionError::NotImplemented(_)));
 }
@@ -415,7 +439,7 @@ fn proof_bytes_constant_across_tx_counts() {
     let short = serialize_recursive_block_artifact_v1(&prove_artifact(1).0)
         .unwrap()
         .len();
-    let long = serialize_recursive_block_artifact_v1(&prove_artifact(5).0)
+    let long = serialize_recursive_block_artifact_v1(&prove_artifact(2).0)
         .unwrap()
         .len();
     assert_eq!(short, long);

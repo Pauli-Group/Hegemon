@@ -12423,9 +12423,7 @@ mod tests {
         let selector = PreparedArtifactSelector {
             legacy_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
             proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1,
-            verifier_profile: consensus::legacy_block_artifact_verifier_profile(
-                consensus::ProofArtifactKind::RecursiveBlockV1,
-            ),
+            verifier_profile: consensus::recursive_block_artifact_verifier_profile(),
         };
         let outcome = PreparedAggregationOutcome::native(
             PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
@@ -12552,9 +12550,7 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
-        payload.verifier_profile = consensus::legacy_block_artifact_verifier_profile(
-            consensus::ProofArtifactKind::RecursiveBlockV1,
-        );
+        payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
         ensure_native_only_receipt_root_payload(&payload)
@@ -12567,9 +12563,7 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
-        payload.verifier_profile = consensus::legacy_block_artifact_verifier_profile(
-            consensus::ProofArtifactKind::RecursiveBlockV1,
-        );
+        payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.recursive_block = Some(dummy_recursive_block_payload());
         let err = ensure_native_only_receipt_root_payload(&payload)
             .expect_err("recursive_block payload must reject commitment proof bytes");

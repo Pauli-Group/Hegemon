@@ -12,18 +12,18 @@ mod tests;
 mod verifier;
 
 pub use artifacts::{
-    block_accumulation_transcript_digest_v1, block_accumulation_transcript_serializer_digest_v1,
-    compress_transcript_digest_v1, decider_profile_digest_v1,
-    deserialize_block_accumulation_transcript_v1, deserialize_header_dec_step_v1,
+    deserialize_header_rec_step_v1, deserialize_recursive_block_artifact_rec_v1,
     deserialize_recursive_block_artifact_v1, deserialize_recursive_block_inner_artifact_v1,
-    header_dec_step_profile_digest_v1, recursive_block_public_statement_digest_v1,
-    recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
-    serialize_block_accumulation_transcript_v1, serialize_header_dec_step_v1,
-    serialize_recursive_block_artifact_v1, serialize_recursive_block_inner_artifact_v1,
-    serialize_recursive_block_public_v1, BlockAccumulationTranscriptV1, CanonicalDeciderTranscript,
-    HeaderDecStepV1, RecursiveBlockArtifactV1, RecursiveBlockInnerArtifactV1,
-    BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-    RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
+    header_rec_step_profile_digest_v1, recursive_block_artifact_verifier_profile_v1,
+    recursive_block_proof_encoding_digest_v1, recursive_block_public_statement_digest_v1,
+    recursive_block_tx_line_digest_v1, serialize_header_rec_step_v1,
+    serialize_recursive_block_artifact_rec_v1, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_inner_artifact_v1, serialize_recursive_block_public_v1,
+    HeaderRecStepV1, RecursiveBlockArtifactRecV1, RecursiveBlockArtifactV1,
+    RecursiveBlockInnerArtifactV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+    RECURSIVE_BLOCK_HEADER_BYTES_V1, RECURSIVE_BLOCK_PROOF_BYTES_V1,
+    RECURSIVE_BLOCK_PUBLIC_BYTES_V1, RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1,
+    RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1,
 };
 pub use prover::{prove_block_recursive_v1, BlockRecursiveProverInputV1};
 pub use public_replay::{
@@ -54,7 +54,11 @@ pub use relation::{
 };
 pub use state::{fold_digest32, fold_digest48, Digest32, Digest48};
 pub use statement::{
-    recursive_prefix_statement_bytes_v1, recursive_prefix_statement_digest_v1,
+    recursive_prefix_base_statement_v1, recursive_prefix_end_state_digest_v1,
+    recursive_prefix_progress_tree_commitment_v1, recursive_prefix_start_state_digest_v1,
+    recursive_prefix_statement_bytes_v1, recursive_prefix_statement_digest32_v1,
+    recursive_prefix_statement_digest_v1, recursive_prefix_statement_from_parts_v1,
+    recursive_prefix_statement_from_public_v1,
     statement_digest_v1, BlockPrefixStatementV1, BlockStepStatementV1, ComposeCheckV1,
     RecursivePrefixStatementV1,
 };

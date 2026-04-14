@@ -1,26 +1,143 @@
 use crate::{
     artifacts::{
-        compress_transcript_digest_v1, decider_profile_digest_v1,
-        recursive_decider_serializer_digest_v1, recursive_lcccs_serializer_digest_v1,
-        serialize_recursive_block_inner_artifact_v1, RecursiveBlockArtifactV1,
-        RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1,
+        recursive_block_proof_encoding_digest_v1, recursive_block_tx_line_digest_v1,
+        HeaderRecStepV1, RecursiveBlockArtifactV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+        RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1,
+        RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1,
     },
     public_replay::RecursiveBlockPublicV1,
     relation::{
-        ensure_expected_relation_v1, ensure_expected_shape_v1, prefix_statement_v1,
-        recursive_block_shape_v1,
+        hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
+        hosted_step_binding_bytes_v1, recursive_block_shape_digest_v1, BaseARelationV1,
+        StepARelationV1, StepBRelationV1,
     },
+    statement::{recursive_prefix_statement_digest32_v1, recursive_prefix_statement_from_public_v1},
     BlockRecursionError,
 };
-use superneo_backend_lattice::{recursive_backend_v2, RecursiveLatticeDeciderProof};
-use superneo_core::{
-    deserialize_lcccs_instance, serialize_decider_profile, serialize_lcccs_instance, LcccsInstance,
-    RecursiveBackend,
+use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+use transaction_circuit::{
+    decode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
+    recursive_profile_a_v1, recursive_profile_b_v1, verify_recursive_statement_v1,
+    SmallwoodConstraintAdapter, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveRelationKindV1,
 };
-use superneo_hegemon::native_backend_params;
 
 fn static_error(prefix: &'static str, err: impl core::fmt::Display) -> BlockRecursionError {
     BlockRecursionError::InvalidField(Box::leak(format!("{prefix}: {err}").into_boxed_str()))
+}
+
+fn expected_terminal_profile_tag_v1(tx_count: u32) -> SmallwoodRecursiveProfileTagV1 {
+    if tx_count % 2 == 0 {
+        SmallwoodRecursiveProfileTagV1::A
+    } else {
+        SmallwoodRecursiveProfileTagV1::B
+    }
+}
+
+fn expected_terminal_relation_kind_v1(tx_count: u32) -> SmallwoodRecursiveRelationKindV1 {
+    if tx_count % 2 == 0 {
+        SmallwoodRecursiveRelationKindV1::StepA
+    } else {
+        SmallwoodRecursiveRelationKindV1::StepB
+    }
+}
+
+fn expected_header_v1(
+    public: &RecursiveBlockPublicV1,
+) -> Result<HeaderRecStepV1, BlockRecursionError> {
+    let statement = recursive_prefix_statement_from_public_v1(public);
+    let base_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let step_a_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::StepA,
+    );
+    let step_b_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    Ok(HeaderRecStepV1 {
+        artifact_version_rec: RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+        tx_line_digest_v1: recursive_block_tx_line_digest_v1(),
+        rec_profile_tag_tau: expected_terminal_profile_tag_v1(public.tx_count).tag(),
+        terminal_relation_kind_k: expected_terminal_relation_kind_v1(public.tx_count).tag(),
+        relation_id_base_a: base_descriptor.relation_id,
+        relation_id_step_a: step_a_descriptor.relation_id,
+        relation_id_step_b: step_b_descriptor.relation_id,
+        shape_digest_rec: recursive_block_shape_digest_v1().0,
+        vk_digest_base_a: base_descriptor.vk_digest,
+        vk_digest_step_a: step_a_descriptor.vk_digest,
+        vk_digest_step_b: step_b_descriptor.vk_digest,
+        proof_encoding_digest_rec: recursive_block_proof_encoding_digest_v1(),
+        proof_bytes_rec: RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32,
+        statement_digest_rec: recursive_prefix_statement_digest32_v1(&statement),
+    })
+}
+
+fn expected_terminal_proof_bytes_v1(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+) -> Result<usize, BlockRecursionError> {
+    match relation_kind {
+        SmallwoodRecursiveRelationKindV1::StepA => Ok(RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1),
+        SmallwoodRecursiveRelationKindV1::StepB => Ok(RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1),
+        SmallwoodRecursiveRelationKindV1::BaseA => Err(BlockRecursionError::InvalidField(
+            "terminal_relation_kind_k",
+        )),
+    }
+}
+
+fn build_terminal_relation_v1(
+    relation_kind: SmallwoodRecursiveRelationKindV1,
+    profile_tag: SmallwoodRecursiveProfileTagV1,
+    public: &RecursiveBlockPublicV1,
+    proof_bytes: &[u8],
+) -> Result<
+    (
+        transaction_circuit::RecursiveSmallwoodProfileV1,
+        transaction_circuit::SmallwoodRecursiveVerifierDescriptorV1,
+        Box<dyn SmallwoodConstraintAdapter + Sync>,
+        Vec<u8>,
+    ),
+    BlockRecursionError,
+> {
+    let statement = recursive_prefix_statement_from_public_v1(public);
+    let proof_trace = decode_smallwood_proof_trace_v1(proof_bytes)
+        .map_err(|err| static_error("decode recursive proof trace failed", err))?;
+    let descriptor = hosted_recursive_descriptor_v1(profile_tag, relation_kind);
+    let profile = match profile_tag {
+        SmallwoodRecursiveProfileTagV1::A => recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        SmallwoodRecursiveProfileTagV1::B => recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+    };
+    let relation: Box<dyn SmallwoodConstraintAdapter + Sync> = match relation_kind {
+        SmallwoodRecursiveRelationKindV1::BaseA => {
+            Box::new(BaseARelationV1::new(statement.clone(), statement.clone()))
+        }
+        SmallwoodRecursiveRelationKindV1::StepA => Box::new(
+            StepARelationV1::from_witness_words_with_limb_count(
+                statement.clone(),
+                &proof_trace.auxiliary_witness_words,
+                proof_trace.auxiliary_witness_limb_count,
+            )
+            .map_err(|err| static_error("rebuild StepA relation from proof witness failed", err))?,
+        ),
+        SmallwoodRecursiveRelationKindV1::StepB => Box::new(
+            StepBRelationV1::from_witness_words_with_limb_count(
+                statement.clone(),
+                &proof_trace.auxiliary_witness_words,
+                proof_trace.auxiliary_witness_limb_count,
+            )
+            .map_err(|err| static_error("rebuild StepB relation from proof witness failed", err))?,
+        ),
+    };
+    let binding = match relation_kind {
+        SmallwoodRecursiveRelationKindV1::BaseA => hosted_base_binding_bytes_v1(&statement),
+        SmallwoodRecursiveRelationKindV1::StepA | SmallwoodRecursiveRelationKindV1::StepB => {
+            hosted_step_binding_bytes_v1(&statement)
+        }
+    };
+    Ok((profile, descriptor, relation, binding))
 }
 
 pub fn verify_block_recursive_v1(
@@ -33,116 +150,57 @@ pub fn verify_block_recursive_v1(
         ));
     }
     let inner = &artifact.artifact;
-    if inner.header.version != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 {
-        return Err(BlockRecursionError::InvalidVersion {
-            what: "recursive block artifact header",
-            version: inner.header.version,
-        });
+    let expected_header = expected_header_v1(expected_public)?;
+    if inner.header != expected_header {
+        return Err(BlockRecursionError::InvalidField(
+            "header_rec_step mismatch",
+        ));
     }
-    if inner.header.proof_kind != RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1 {
-        return Err(BlockRecursionError::InvalidField("proof_kind"));
-    }
-    if inner.header.accumulator_bytes as usize != inner.accumulator_bytes.len() {
+    if inner.proof_bytes.len() != RECURSIVE_BLOCK_PROOF_BYTES_V1 {
         return Err(BlockRecursionError::WidthMismatch {
-            what: "accumulator_bytes",
-            expected: inner.header.accumulator_bytes as usize,
-            actual: inner.accumulator_bytes.len(),
+            what: "proof_bytes_rec",
+            expected: RECURSIVE_BLOCK_PROOF_BYTES_V1,
+            actual: inner.proof_bytes.len(),
         });
     }
-    if inner.header.decider_bytes as usize != inner.decider_bytes.len() {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "decider_bytes",
-            expected: inner.header.decider_bytes as usize,
-            actual: inner.decider_bytes.len(),
-        });
-    }
-    let canonical_artifact_len = serialize_recursive_block_inner_artifact_v1(inner)?.len();
-    if inner.header.artifact_bytes as usize != canonical_artifact_len {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "artifact_bytes",
-            expected: inner.header.artifact_bytes as usize,
-            actual: canonical_artifact_len,
-        });
-    }
-    let header_bytes = crate::serialize_header_dec_step_v1(&inner.header)?;
-    if inner.header.header_bytes as usize != header_bytes.len() {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "header_bytes",
-            expected: inner.header.header_bytes as usize,
-            actual: header_bytes.len(),
-        });
-    }
-    if inner.header.statement_digest
-        != crate::recursive_block_public_statement_digest_v1(expected_public)
+
+    let relation_kind = expected_terminal_relation_kind_v1(expected_public.tx_count);
+    let profile_tag = expected_terminal_profile_tag_v1(expected_public.tx_count);
+    let actual_proof_bytes = expected_terminal_proof_bytes_v1(relation_kind)?;
+    if inner.proof_bytes[actual_proof_bytes..]
+        .iter()
+        .any(|byte| *byte != 0)
     {
-        return Err(BlockRecursionError::InvalidField("statement_digest"));
+        return Err(BlockRecursionError::InvalidField("proof_bytes_rec padding"));
     }
 
-    let params = native_backend_params();
-    let backend = recursive_backend_v2(params.clone());
-    let shape = recursive_block_shape_v1();
-    let security = params.security_params();
-    let (_pk, vk) = backend
-        .setup_recursive(&security, &shape)
-        .map_err(|err| static_error("recursive setup failed", err))?;
-    let decider_profile = backend
-        .recursive_decider_profile(&security, &shape)
-        .map_err(|err| static_error("recursive decider profile failed", err))?;
-    let decider_profile_bytes = serialize_decider_profile(&decider_profile)
-        .map_err(|err| static_error("serialize decider profile failed", err))?;
-    if inner.header.decider_profile_digest != decider_profile_digest_v1(&decider_profile_bytes) {
-        return Err(BlockRecursionError::InvalidField("decider_profile_digest"));
-    }
-    if inner.header.accumulator_serializer_digest != recursive_lcccs_serializer_digest_v1() {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator_serializer_digest",
-        ));
-    }
-    if inner.header.decider_serializer_digest != recursive_decider_serializer_digest_v1() {
-        return Err(BlockRecursionError::InvalidField(
-            "decider_serializer_digest",
-        ));
+    let (profile, descriptor, relation, binding) =
+        build_terminal_relation_v1(
+            relation_kind,
+            profile_tag,
+            expected_public,
+            &inner.proof_bytes[..actual_proof_bytes],
+        )?;
+    let projected_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
+        &profile,
+        relation.as_ref(),
+    )
+    .map_err(|err| static_error("project recursive proof bytes failed", err))?;
+    if actual_proof_bytes != projected_proof_bytes {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "proof_bytes_rec",
+            expected: projected_proof_bytes,
+            actual: actual_proof_bytes,
+        });
     }
 
-    let terminal: LcccsInstance<
-        superneo_backend_lattice::LatticeCommitment,
-        p3_goldilocks::Goldilocks,
-    > = deserialize_lcccs_instance(&inner.accumulator_bytes)
-        .map_err(|err| static_error("deserialize terminal accumulator failed", err))?;
-    let accumulator_roundtrip = serialize_lcccs_instance(&terminal)
-        .map_err(|err| static_error("serialize terminal accumulator failed", err))?;
-    if accumulator_roundtrip != inner.accumulator_bytes {
-        return Err(BlockRecursionError::InvalidField(
-            "accumulator_bytes must use canonical serializer",
-        ));
-    }
-    ensure_expected_relation_v1(terminal.relation_id)?;
-    ensure_expected_shape_v1(terminal.shape_digest)?;
-
-    let decider_proof = RecursiveLatticeDeciderProof::from_canonical_bytes(&inner.decider_bytes)
-        .map_err(|err| static_error("deserialize decider proof failed", err))?;
-    let decider_roundtrip = decider_proof
-        .to_canonical_bytes()
-        .map_err(|err| static_error("serialize decider proof failed", err))?;
-    if decider_roundtrip != inner.decider_bytes {
-        return Err(BlockRecursionError::InvalidField(
-            "decider_bytes must use canonical serializer",
-        ));
-    }
-    if inner.header.transcript_digest
-        != compress_transcript_digest_v1(&decider_proof.transcript_digest)
-    {
-        return Err(BlockRecursionError::InvalidField("transcript_digest"));
-    }
-
-    let statement = prefix_statement_v1(expected_public);
-    if terminal.statement != statement {
-        return Err(BlockRecursionError::InvalidField(
-            "terminal statement mismatch",
-        ));
-    }
-    backend
-        .verify_decider(&vk, &decider_profile, &statement, &terminal, &decider_proof)
-        .map_err(|err| static_error("verify recursive decider failed", err))?;
+    verify_recursive_statement_v1(
+        &profile,
+        &descriptor,
+        relation.as_ref(),
+        &binding,
+        &inner.proof_bytes[..actual_proof_bytes],
+    )
+    .map_err(|err| static_error("verify terminal recursive proof failed", err))?;
     Ok(expected_public.clone())
 }

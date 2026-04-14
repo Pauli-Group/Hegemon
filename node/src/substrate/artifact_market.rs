@@ -47,15 +47,18 @@ pub fn legacy_pallet_artifact_identity(
     pallet_shielded_pool::types::VerifierProfileDigest,
 ) {
     let kind = pallet_shielded_pool::types::proof_artifact_kind_from_mode(mode);
-    let verifier_profile = if matches!(
-        mode,
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
-    ) {
-        consensus::experimental_native_receipt_root_verifier_profile()
-    } else {
-        consensus::legacy_block_artifact_verifier_profile(
-            consensus_proof_artifact_kind_from_pallet(kind),
-        )
+    let verifier_profile = match mode {
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+            consensus::experimental_native_receipt_root_verifier_profile()
+        }
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            consensus::recursive_block_artifact_verifier_profile()
+        }
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => {
+            consensus::legacy_block_artifact_verifier_profile(
+                consensus_proof_artifact_kind_from_pallet(kind),
+            )
+        }
     };
     (kind, verifier_profile)
 }
@@ -166,9 +169,7 @@ mod tests {
         );
         assert_eq!(
             verifier_profile,
-            consensus::legacy_block_artifact_verifier_profile(
-                consensus::ProofArtifactKind::RecursiveBlockV1
-            )
+            consensus::recursive_block_artifact_verifier_profile()
         );
     }
 }

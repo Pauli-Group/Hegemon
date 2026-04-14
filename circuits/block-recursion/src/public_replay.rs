@@ -101,14 +101,8 @@ pub fn public_replay_v1(
     let leaf_refs = leaf_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let receipt_refs = receipt_chunks.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
-    let verified_leaf_commitment = fold_digest48(
-        b"hegemon.block-recursion.verified-leaf-commitment.v1",
-        &leaf_refs,
-    );
-    let verified_receipt_commitment = fold_digest48(
-        b"hegemon.block-recursion.verified-receipt-commitment.v1",
-        &receipt_refs,
-    );
+    let (verified_leaf_commitment, verified_receipt_commitment) =
+        fold_verified_record_commitments_v1(&leaf_refs, &receipt_refs);
 
     Ok(RecursiveBlockPublicV1 {
         tx_count: records.len() as u32,
@@ -124,4 +118,19 @@ pub fn public_replay_v1(
         start_tree_commitment: semantic.start_tree_commitment,
         end_tree_commitment: semantic.end_tree_commitment,
     })
+}
+
+pub fn fold_verified_record_commitments_v1(
+    leaf_refs: &[&[u8]],
+    receipt_refs: &[&[u8]],
+) -> (Digest48, Digest48) {
+    let verified_leaf_commitment = fold_digest48(
+        b"hegemon.block-recursion.verified-leaf-commitment.v1",
+        leaf_refs,
+    );
+    let verified_receipt_commitment = fold_digest48(
+        b"hegemon.block-recursion.verified-receipt-commitment.v1",
+        receipt_refs,
+    );
+    (verified_leaf_commitment, verified_receipt_commitment)
 }

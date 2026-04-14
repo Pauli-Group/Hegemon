@@ -2,57 +2,48 @@ use crate::{
     fold_digest32, fold_digest48, public_replay::RecursiveBlockPublicV1, BlockRecursionError,
     Digest32, Digest48,
 };
-use superneo_backend_lattice::RecursiveLatticeDeciderProof;
+use transaction_circuit::{
+    smallwood_recursive_proof_encoding_digest_v1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveRelationKindV1,
+};
 
-pub type CanonicalDeciderTranscript = Vec<u8>;
-
-pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V1: u16 = 1;
-pub const RECURSIVE_BLOCK_PROOF_KIND_STRUCTURAL_V1: u16 = 1;
-pub const BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1: u16 = 1;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeaderDecStepV1 {
-    pub version: u16,
-    pub proof_kind: u16,
-    pub header_bytes: u32,
-    pub artifact_bytes: u32,
-    pub relation_id: Digest32,
-    pub shape_digest: Digest32,
-    pub statement_digest: Digest48,
-    pub decider_profile_digest: Digest32,
-    pub accumulator_serializer_digest: Digest32,
-    pub decider_serializer_digest: Digest32,
-    pub transcript_digest: Digest32,
-    pub accumulator_bytes: u32,
-    pub decider_bytes: u32,
-}
+pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V1: u32 = 1;
+pub const RECURSIVE_BLOCK_HEADER_BYTES_V1: usize = 336;
+pub const RECURSIVE_BLOCK_PUBLIC_BYTES_V1: usize = 532;
+pub const RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1: usize = 698_536;
+pub const RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1: usize = 200_952;
+pub const RECURSIVE_BLOCK_PROOF_BYTES_V1: usize = RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlockAccumulationTranscriptV1 {
-    pub version: u16,
-    pub step_count: u32,
-    pub transcript_bytes: Vec<u8>,
+pub struct HeaderRecStepV1 {
+    pub artifact_version_rec: u32,
+    pub tx_line_digest_v1: Digest32,
+    pub rec_profile_tag_tau: u32,
+    pub terminal_relation_kind_k: u32,
+    pub relation_id_base_a: Digest32,
+    pub relation_id_step_a: Digest32,
+    pub relation_id_step_b: Digest32,
+    pub shape_digest_rec: Digest32,
+    pub vk_digest_base_a: Digest32,
+    pub vk_digest_step_a: Digest32,
+    pub vk_digest_step_b: Digest32,
+    pub proof_encoding_digest_rec: Digest32,
+    pub proof_bytes_rec: u32,
+    pub statement_digest_rec: Digest32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecursiveBlockInnerArtifactV1 {
-    pub header: HeaderDecStepV1,
-    pub accumulator_bytes: Vec<u8>,
-    pub decider_bytes: Vec<u8>,
+    pub header: HeaderRecStepV1,
+    pub proof_bytes: Vec<u8>,
 }
+
+pub type RecursiveBlockArtifactRecV1 = RecursiveBlockInnerArtifactV1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecursiveBlockArtifactV1 {
     pub artifact: RecursiveBlockInnerArtifactV1,
     pub public: RecursiveBlockPublicV1,
-}
-
-const HEADER_MAGIC: [u8; 8] = *b"HBRC0001";
-const ARTIFACT_MAGIC: [u8; 8] = *b"RBRC0001";
-const TRANSCRIPT_MAGIC: [u8; 8] = *b"TBR1T001";
-
-fn put_u16(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_le_bytes());
 }
 
 fn put_u32(out: &mut Vec<u8>, value: u32) {
@@ -61,21 +52,6 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
 
 fn put_fixed<const N: usize>(out: &mut Vec<u8>, value: &[u8; N]) {
     out.extend_from_slice(value);
-}
-
-fn read_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, BlockRecursionError> {
-    let end = cursor.saturating_add(2);
-    if end > bytes.len() {
-        return Err(BlockRecursionError::InvalidLength {
-            what: "u16",
-            expected: 2,
-            actual: bytes.len().saturating_sub(*cursor),
-        });
-    }
-    let mut buf = [0u8; 2];
-    buf.copy_from_slice(&bytes[*cursor..end]);
-    *cursor = end;
-    Ok(u16::from_le_bytes(buf))
 }
 
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, BlockRecursionError> {
@@ -111,181 +87,34 @@ fn read_fixed<const N: usize>(
     Ok(buf)
 }
 
-fn parse_header_dec_step_v1_prefix(
-    bytes: &[u8],
-) -> Result<(HeaderDecStepV1, usize), BlockRecursionError> {
-    let mut cursor = 0usize;
-    let magic = read_fixed::<8>(bytes, &mut cursor)?;
-    if magic != HEADER_MAGIC {
-        return Err(BlockRecursionError::InvalidField("header magic"));
-    }
-    let version = read_u16(bytes, &mut cursor)?;
-    let proof_kind = read_u16(bytes, &mut cursor)?;
-    let header_bytes = read_u32(bytes, &mut cursor)?;
-    let artifact_bytes = read_u32(bytes, &mut cursor)?;
-    let relation_id = read_fixed::<32>(bytes, &mut cursor)?;
-    let shape_digest = read_fixed::<32>(bytes, &mut cursor)?;
-    let statement_digest = read_fixed::<48>(bytes, &mut cursor)?;
-    let decider_profile_digest = read_fixed::<32>(bytes, &mut cursor)?;
-    let accumulator_serializer_digest = read_fixed::<32>(bytes, &mut cursor)?;
-    let decider_serializer_digest = read_fixed::<32>(bytes, &mut cursor)?;
-    let transcript_digest = read_fixed::<32>(bytes, &mut cursor)?;
-    let accumulator_bytes = read_u32(bytes, &mut cursor)?;
-    let decider_bytes = read_u32(bytes, &mut cursor)?;
-    Ok((
-        HeaderDecStepV1 {
-            version,
-            proof_kind,
-            header_bytes,
-            artifact_bytes,
-            relation_id,
-            shape_digest,
-            statement_digest,
-            decider_profile_digest,
-            accumulator_serializer_digest,
-            decider_serializer_digest,
-            transcript_digest,
-            accumulator_bytes,
-            decider_bytes,
-        },
-        cursor,
-    ))
-}
-
-pub fn serialize_header_dec_step_v1(
-    header: &HeaderDecStepV1,
-) -> Result<Vec<u8>, BlockRecursionError> {
-    let mut out = Vec::with_capacity(8 + 2 + 2 + 4 + 4 + 32 + 32 + 48 + 32 + 32 + 32 + 32 + 4 + 4);
-    out.extend_from_slice(&HEADER_MAGIC);
-    put_u16(&mut out, header.version);
-    put_u16(&mut out, header.proof_kind);
-    put_u32(&mut out, header.header_bytes);
-    put_u32(&mut out, header.artifact_bytes);
-    put_fixed(&mut out, &header.relation_id);
-    put_fixed(&mut out, &header.shape_digest);
-    put_fixed(&mut out, &header.statement_digest);
-    put_fixed(&mut out, &header.decider_profile_digest);
-    put_fixed(&mut out, &header.accumulator_serializer_digest);
-    put_fixed(&mut out, &header.decider_serializer_digest);
-    put_fixed(&mut out, &header.transcript_digest);
-    put_u32(&mut out, header.accumulator_bytes);
-    put_u32(&mut out, header.decider_bytes);
-    Ok(out)
-}
-
-pub fn deserialize_header_dec_step_v1(
-    bytes: &[u8],
-) -> Result<HeaderDecStepV1, BlockRecursionError> {
-    let (header, cursor) = parse_header_dec_step_v1_prefix(bytes)?;
-    if cursor != bytes.len() {
-        return Err(BlockRecursionError::TrailingBytes {
-            remaining: bytes.len() - cursor,
-        });
-    }
-    Ok(header)
-}
-
-pub fn serialize_block_accumulation_transcript_v1(
-    transcript: &BlockAccumulationTranscriptV1,
-) -> Result<CanonicalDeciderTranscript, BlockRecursionError> {
-    let mut out = Vec::with_capacity(8 + 2 + 4 + 4 + transcript.transcript_bytes.len());
-    out.extend_from_slice(&TRANSCRIPT_MAGIC);
-    put_u16(&mut out, transcript.version);
-    put_u32(&mut out, transcript.step_count);
-    put_u32(&mut out, transcript.transcript_bytes.len() as u32);
-    out.extend_from_slice(&transcript.transcript_bytes);
-    Ok(out)
-}
-
-pub fn deserialize_block_accumulation_transcript_v1(
-    bytes: &[u8],
-) -> Result<BlockAccumulationTranscriptV1, BlockRecursionError> {
-    let mut cursor = 0usize;
-    let magic = read_fixed::<8>(bytes, &mut cursor)?;
-    if magic != TRANSCRIPT_MAGIC {
-        return Err(BlockRecursionError::InvalidField("transcript magic"));
-    }
-    let version = read_u16(bytes, &mut cursor)?;
-    let step_count = read_u32(bytes, &mut cursor)?;
-    let transcript_len = read_u32(bytes, &mut cursor)? as usize;
-    let end = cursor.saturating_add(transcript_len);
-    if end > bytes.len() {
-        return Err(BlockRecursionError::InvalidLength {
-            what: "transcript_bytes",
-            expected: transcript_len,
-            actual: bytes.len().saturating_sub(cursor),
-        });
-    }
-    let transcript_bytes = bytes[cursor..end].to_vec();
-    cursor = end;
-    if cursor != bytes.len() {
-        return Err(BlockRecursionError::TrailingBytes {
-            remaining: bytes.len() - cursor,
-        });
-    }
-    Ok(BlockAccumulationTranscriptV1 {
-        version,
-        step_count,
-        transcript_bytes,
-    })
-}
-
-pub fn block_accumulation_transcript_serializer_digest_v1() -> Digest32 {
+pub fn recursive_block_tx_line_digest_v1() -> Digest32 {
     fold_digest32(
-        b"hegemon.block-recursion.accumulation-transcript-serializer.v1",
+        b"hegemon.block-recursion.tx-line-digest.v1",
+        &[b"smallwood_candidate", b"tx_leaf", b"recursive_block_v1"],
+    )
+}
+
+pub fn recursive_block_proof_encoding_digest_v1() -> Digest32 {
+    fold_digest32(
+        b"hegemon.block-recursion.proof-encoding-digest.v1",
+        &[&smallwood_recursive_proof_encoding_digest_v1()],
+    )
+}
+
+pub fn recursive_block_artifact_verifier_profile_v1() -> Digest48 {
+    fold_digest48(
+        b"hegemon.block-recursion.verifier-profile.v1",
         &[
-            &TRANSCRIPT_MAGIC,
-            &BLOCK_ACCUMULATION_TRANSCRIPT_VERSION_V1.to_le_bytes(),
-            b"step_count:u32",
-            b"transcript_bytes_len:u32",
-            b"transcript_bytes:opaque",
+            &RECURSIVE_BLOCK_ARTIFACT_VERSION_V1.to_le_bytes(),
+            &recursive_block_tx_line_digest_v1(),
+            &recursive_block_proof_encoding_digest_v1(),
+            b"recursive_block_v1",
         ],
-    )
-}
-
-pub fn block_accumulation_transcript_digest_v1(
-    transcript: &BlockAccumulationTranscriptV1,
-) -> Result<Digest32, BlockRecursionError> {
-    let bytes = serialize_block_accumulation_transcript_v1(transcript)?;
-    Ok(fold_digest32(
-        b"hegemon.block-recursion.accumulation-transcript-digest.v1",
-        &[&bytes],
-    ))
-}
-
-pub fn recursive_lcccs_serializer_digest_v1() -> Digest32 {
-    fold_digest32(
-        b"hegemon.block-recursion.lcccs-serializer.v1",
-        &[b"superneo_core::serialize_lcccs_instance"],
-    )
-}
-
-pub fn recursive_decider_serializer_digest_v1() -> Digest32 {
-    fold_digest32(
-        b"hegemon.block-recursion.decider-serializer.v1",
-        &[
-            b"superneo-backend-lattice::RecursiveLatticeDeciderProof",
-            &(RecursiveLatticeDeciderProof::CANONICAL_BYTE_SIZE as u32).to_le_bytes(),
-        ],
-    )
-}
-
-pub fn decider_profile_digest_v1(profile_bytes: &[u8]) -> Digest32 {
-    fold_digest32(
-        b"hegemon.block-recursion.decider-profile.v1",
-        &[profile_bytes],
-    )
-}
-
-pub fn compress_transcript_digest_v1(transcript_digest: &Digest48) -> Digest32 {
-    fold_digest32(
-        b"hegemon.block-recursion.transcript-digest.v1",
-        &[transcript_digest],
     )
 }
 
 pub fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + (48 * 11));
+    let mut out = Vec::with_capacity(RECURSIVE_BLOCK_PUBLIC_BYTES_V1);
     put_u32(&mut out, public.tx_count);
     put_fixed(&mut out, &public.tx_statements_commitment);
     put_fixed(&mut out, &public.verified_leaf_commitment);
@@ -306,24 +135,9 @@ pub fn recursive_block_public_statement_digest_v1(public: &RecursiveBlockPublicV
     fold_digest48(b"hegemon.block-recursion.public-statement.v1", &[&bytes])
 }
 
-pub fn header_dec_step_profile_digest_v1(header: &HeaderDecStepV1) -> Digest32 {
-    fold_digest32(
-        b"hegemon.block-recursion.header-profile.v1",
-        &[
-            &header.version.to_le_bytes(),
-            &header.proof_kind.to_le_bytes(),
-            &header.header_bytes.to_le_bytes(),
-            &header.artifact_bytes.to_le_bytes(),
-            &header.relation_id,
-            &header.shape_digest,
-            &header.statement_digest,
-            &header.accumulator_serializer_digest,
-            &header.decider_serializer_digest,
-            &header.transcript_digest,
-            &header.accumulator_bytes.to_le_bytes(),
-            &header.decider_bytes.to_le_bytes(),
-        ],
-    )
+pub fn header_rec_step_profile_digest_v1(header: &HeaderRecStepV1) -> Digest32 {
+    let bytes = serialize_header_rec_step_v1(header).expect("header serialization must succeed");
+    fold_digest32(b"hegemon.block-recursion.header-profile.v1", &[&bytes])
 }
 
 fn deserialize_recursive_block_public_v1(
@@ -358,130 +172,138 @@ fn deserialize_recursive_block_public_v1(
     })
 }
 
-pub fn serialize_recursive_block_inner_artifact_v1(
-    artifact: &RecursiveBlockInnerArtifactV1,
+pub fn serialize_header_rec_step_v1(
+    header: &HeaderRecStepV1,
 ) -> Result<Vec<u8>, BlockRecursionError> {
-    let header_bytes_preview = serialize_header_dec_step_v1(&HeaderDecStepV1 {
-        header_bytes: 0,
-        artifact_bytes: 0,
-        ..artifact.header.clone()
-    })?;
-    let header_len = header_bytes_preview.len() as u32;
-    let artifact_len = (ARTIFACT_MAGIC.len()
-        + header_bytes_preview.len()
-        + 4
-        + artifact.accumulator_bytes.len()
-        + 4
-        + artifact.decider_bytes.len()) as u32;
-    let header = HeaderDecStepV1 {
-        header_bytes: header_len,
-        artifact_bytes: artifact_len,
-        ..artifact.header.clone()
-    };
-    let header_bytes = serialize_header_dec_step_v1(&header)?;
-    let mut out = Vec::with_capacity(artifact_len as usize);
-    out.extend_from_slice(&ARTIFACT_MAGIC);
-    out.extend_from_slice(&header_bytes);
-    put_u32(&mut out, artifact.accumulator_bytes.len() as u32);
-    out.extend_from_slice(&artifact.accumulator_bytes);
-    put_u32(&mut out, artifact.decider_bytes.len() as u32);
-    out.extend_from_slice(&artifact.decider_bytes);
+    let mut out = Vec::with_capacity(RECURSIVE_BLOCK_HEADER_BYTES_V1);
+    put_u32(&mut out, header.artifact_version_rec);
+    put_fixed(&mut out, &header.tx_line_digest_v1);
+    put_u32(&mut out, header.rec_profile_tag_tau);
+    put_u32(&mut out, header.terminal_relation_kind_k);
+    put_fixed(&mut out, &header.relation_id_base_a);
+    put_fixed(&mut out, &header.relation_id_step_a);
+    put_fixed(&mut out, &header.relation_id_step_b);
+    put_fixed(&mut out, &header.shape_digest_rec);
+    put_fixed(&mut out, &header.vk_digest_base_a);
+    put_fixed(&mut out, &header.vk_digest_step_a);
+    put_fixed(&mut out, &header.vk_digest_step_b);
+    put_fixed(&mut out, &header.proof_encoding_digest_rec);
+    put_u32(&mut out, header.proof_bytes_rec);
+    put_fixed(&mut out, &header.statement_digest_rec);
+    if out.len() != RECURSIVE_BLOCK_HEADER_BYTES_V1 {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "header_rec_step_bytes",
+            expected: RECURSIVE_BLOCK_HEADER_BYTES_V1,
+            actual: out.len(),
+        });
+    }
     Ok(out)
 }
 
-fn parse_recursive_block_inner_artifact_v1_prefix(
+pub fn deserialize_header_rec_step_v1(
     bytes: &[u8],
-) -> Result<(RecursiveBlockInnerArtifactV1, usize), BlockRecursionError> {
+) -> Result<HeaderRecStepV1, BlockRecursionError> {
+    if bytes.len() != RECURSIVE_BLOCK_HEADER_BYTES_V1 {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "header_rec_step_bytes",
+            expected: RECURSIVE_BLOCK_HEADER_BYTES_V1,
+            actual: bytes.len(),
+        });
+    }
     let mut cursor = 0usize;
-    let magic = read_fixed::<8>(bytes, &mut cursor)?;
-    if magic != ARTIFACT_MAGIC {
-        return Err(BlockRecursionError::InvalidField("artifact magic"));
-    }
-    let header_start = cursor;
-    let (header, header_cursor) = parse_header_dec_step_v1_prefix(&bytes[cursor..])?;
-    let header_len = header.header_bytes as usize;
-    if header_len == 0 {
-        return Err(BlockRecursionError::InvalidField("header_bytes"));
-    }
-    let header_end = header_start.saturating_add(header_len);
-    if header_end > bytes.len() {
-        return Err(BlockRecursionError::InvalidLength {
-            what: "header bytes",
-            expected: header_len,
-            actual: bytes.len().saturating_sub(header_start),
-        });
-    }
-    if header_cursor != header_len {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "header_bytes",
-            expected: header_len,
-            actual: header_cursor,
-        });
-    }
-    cursor = header_end;
-    let accumulator_len = read_u32(bytes, &mut cursor)? as usize;
-    let acc_end = cursor.saturating_add(accumulator_len);
-    if acc_end > bytes.len() {
-        return Err(BlockRecursionError::InvalidLength {
-            what: "accumulator_bytes",
-            expected: accumulator_len,
-            actual: bytes.len().saturating_sub(cursor),
-        });
-    }
-    let accumulator_bytes = bytes[cursor..acc_end].to_vec();
-    cursor = acc_end;
-    let decider_len = read_u32(bytes, &mut cursor)? as usize;
-    let dec_end = cursor.saturating_add(decider_len);
-    if dec_end > bytes.len() {
-        return Err(BlockRecursionError::InvalidLength {
-            what: "decider_bytes",
-            expected: decider_len,
-            actual: bytes.len().saturating_sub(cursor),
-        });
-    }
-    let decider_bytes = bytes[cursor..dec_end].to_vec();
-    cursor = dec_end;
-    if header.accumulator_bytes as usize != accumulator_bytes.len() {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "accumulator_bytes",
-            expected: header.accumulator_bytes as usize,
-            actual: accumulator_bytes.len(),
-        });
-    }
-    if header.decider_bytes as usize != decider_bytes.len() {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "decider_bytes",
-            expected: header.decider_bytes as usize,
-            actual: decider_bytes.len(),
-        });
-    }
-    if header.artifact_bytes as usize != cursor {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "artifact_bytes",
-            expected: header.artifact_bytes as usize,
-            actual: cursor,
-        });
-    }
-    Ok((
-        RecursiveBlockInnerArtifactV1 {
-            header,
-            accumulator_bytes,
-            decider_bytes,
-        },
-        cursor,
-    ))
-}
-
-pub fn deserialize_recursive_block_inner_artifact_v1(
-    bytes: &[u8],
-) -> Result<RecursiveBlockInnerArtifactV1, BlockRecursionError> {
-    let (artifact, cursor) = parse_recursive_block_inner_artifact_v1_prefix(bytes)?;
+    let header = HeaderRecStepV1 {
+        artifact_version_rec: read_u32(bytes, &mut cursor)?,
+        tx_line_digest_v1: read_fixed::<32>(bytes, &mut cursor)?,
+        rec_profile_tag_tau: read_u32(bytes, &mut cursor)?,
+        terminal_relation_kind_k: read_u32(bytes, &mut cursor)?,
+        relation_id_base_a: read_fixed::<32>(bytes, &mut cursor)?,
+        relation_id_step_a: read_fixed::<32>(bytes, &mut cursor)?,
+        relation_id_step_b: read_fixed::<32>(bytes, &mut cursor)?,
+        shape_digest_rec: read_fixed::<32>(bytes, &mut cursor)?,
+        vk_digest_base_a: read_fixed::<32>(bytes, &mut cursor)?,
+        vk_digest_step_a: read_fixed::<32>(bytes, &mut cursor)?,
+        vk_digest_step_b: read_fixed::<32>(bytes, &mut cursor)?,
+        proof_encoding_digest_rec: read_fixed::<32>(bytes, &mut cursor)?,
+        proof_bytes_rec: read_u32(bytes, &mut cursor)?,
+        statement_digest_rec: read_fixed::<32>(bytes, &mut cursor)?,
+    };
     if cursor != bytes.len() {
         return Err(BlockRecursionError::TrailingBytes {
             remaining: bytes.len() - cursor,
         });
     }
-    Ok(artifact)
+    if header.rec_profile_tag_tau != SmallwoodRecursiveProfileTagV1::A.tag()
+        && header.rec_profile_tag_tau != SmallwoodRecursiveProfileTagV1::B.tag()
+    {
+        return Err(BlockRecursionError::InvalidField("rec_profile_tag_tau"));
+    }
+    match header.terminal_relation_kind_k {
+        value if value == SmallwoodRecursiveRelationKindV1::BaseA.tag() => {}
+        value if value == SmallwoodRecursiveRelationKindV1::StepA.tag() => {}
+        value if value == SmallwoodRecursiveRelationKindV1::StepB.tag() => {}
+        _ => return Err(BlockRecursionError::InvalidField("terminal_relation_kind_k")),
+    }
+    if header.proof_bytes_rec != RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32 {
+        return Err(BlockRecursionError::InvalidField("proof_bytes_rec"));
+    }
+    Ok(header)
+}
+
+pub fn serialize_recursive_block_inner_artifact_v1(
+    artifact: &RecursiveBlockInnerArtifactV1,
+) -> Result<Vec<u8>, BlockRecursionError> {
+    if artifact.header.proof_bytes_rec as usize != artifact.proof_bytes.len() {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "proof_bytes_rec",
+            expected: artifact.header.proof_bytes_rec as usize,
+            actual: artifact.proof_bytes.len(),
+        });
+    }
+    let mut out = serialize_header_rec_step_v1(&artifact.header)?;
+    out.extend_from_slice(&artifact.proof_bytes);
+    Ok(out)
+}
+
+pub fn serialize_recursive_block_artifact_rec_v1(
+    artifact: &RecursiveBlockArtifactRecV1,
+) -> Result<Vec<u8>, BlockRecursionError> {
+    serialize_recursive_block_inner_artifact_v1(artifact)
+}
+
+pub fn deserialize_recursive_block_inner_artifact_v1(
+    bytes: &[u8],
+) -> Result<RecursiveBlockInnerArtifactV1, BlockRecursionError> {
+    if bytes.len() < RECURSIVE_BLOCK_HEADER_BYTES_V1 {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "recursive_block_inner_artifact_bytes",
+            expected: RECURSIVE_BLOCK_HEADER_BYTES_V1,
+            actual: bytes.len(),
+        });
+    }
+    let header = deserialize_header_rec_step_v1(&bytes[..RECURSIVE_BLOCK_HEADER_BYTES_V1])?;
+    let proof_end = RECURSIVE_BLOCK_HEADER_BYTES_V1
+        .checked_add(header.proof_bytes_rec as usize)
+        .ok_or(BlockRecursionError::InvalidField("proof_bytes_rec overflow"))?;
+    if proof_end > bytes.len() {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "recursive_block_inner_proof_bytes",
+            expected: header.proof_bytes_rec as usize,
+            actual: bytes.len().saturating_sub(RECURSIVE_BLOCK_HEADER_BYTES_V1),
+        });
+    }
+    let proof_bytes = bytes[RECURSIVE_BLOCK_HEADER_BYTES_V1..proof_end].to_vec();
+    if proof_end != bytes.len() {
+        return Err(BlockRecursionError::TrailingBytes {
+            remaining: bytes.len() - proof_end,
+        });
+    }
+    Ok(RecursiveBlockInnerArtifactV1 { header, proof_bytes })
+}
+
+pub fn deserialize_recursive_block_artifact_rec_v1(
+    bytes: &[u8],
+) -> Result<RecursiveBlockArtifactRecV1, BlockRecursionError> {
+    deserialize_recursive_block_inner_artifact_v1(bytes)
 }
 
 pub fn serialize_recursive_block_artifact_v1(
@@ -495,7 +317,30 @@ pub fn serialize_recursive_block_artifact_v1(
 pub fn deserialize_recursive_block_artifact_v1(
     bytes: &[u8],
 ) -> Result<RecursiveBlockArtifactV1, BlockRecursionError> {
-    let (inner, mut cursor) = parse_recursive_block_inner_artifact_v1_prefix(bytes)?;
+    let minimum_len = RECURSIVE_BLOCK_HEADER_BYTES_V1 + RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
+    if bytes.len() < minimum_len {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "recursive_block_artifact_bytes",
+            expected: minimum_len,
+            actual: bytes.len(),
+        });
+    }
+    let header = deserialize_header_rec_step_v1(&bytes[..RECURSIVE_BLOCK_HEADER_BYTES_V1])?;
+    let proof_end = RECURSIVE_BLOCK_HEADER_BYTES_V1
+        .checked_add(header.proof_bytes_rec as usize)
+        .ok_or(BlockRecursionError::InvalidField("proof_bytes_rec overflow"))?;
+    let public_end = proof_end
+        .checked_add(RECURSIVE_BLOCK_PUBLIC_BYTES_V1)
+        .ok_or(BlockRecursionError::InvalidField("recursive artifact length overflow"))?;
+    if public_end > bytes.len() {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "recursive_block_artifact_bytes",
+            expected: public_end,
+            actual: bytes.len(),
+        });
+    }
+    let proof_bytes = bytes[RECURSIVE_BLOCK_HEADER_BYTES_V1..proof_end].to_vec();
+    let mut cursor = proof_end;
     let public = deserialize_recursive_block_public_v1(bytes, &mut cursor)?;
     if cursor != bytes.len() {
         return Err(BlockRecursionError::TrailingBytes {
@@ -503,7 +348,7 @@ pub fn deserialize_recursive_block_artifact_v1(
         });
     }
     Ok(RecursiveBlockArtifactV1 {
-        artifact: inner,
+        artifact: RecursiveBlockInnerArtifactV1 { header, proof_bytes },
         public,
     })
 }

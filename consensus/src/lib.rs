@@ -48,6 +48,7 @@ pub use proof::{
     experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_receipt_root_verifier_profile,
     experimental_tx_leaf_verifier_profile, native_receipt_root_verify_mode_label,
+    recursive_block_artifact_verifier_profile,
     prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
     tx_statement_bindings_from_tx_artifacts, tx_validity_artifact_from_native_tx_leaf_bytes,
     tx_validity_artifact_from_proof, tx_validity_artifact_from_receipt,
