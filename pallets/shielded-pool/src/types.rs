@@ -30,6 +30,16 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// currently `512KiB` on the shipped `v8` product lane.
 pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 
+/// Maximum size of the shipped `recursive_block_v1` artifact payload.
+///
+/// This is the full serialized `Pi_block(B)` object carried on the recursive lane:
+/// `Header_rec_step || pi_n || Y_rec(B)`.
+/// It must stay aligned with:
+/// `block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1 +
+///  block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1 +
+///  block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1`.
+pub const RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE: usize = 699_404;
+
 /// Maximum size of a native `tx_leaf` artifact payload submitted on the unsigned
 /// shielded transfer path.
 ///

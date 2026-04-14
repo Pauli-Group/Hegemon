@@ -2747,7 +2747,8 @@ pub mod pallet {
                         .as_ref()
                         .ok_or(Error::<T>::InvalidProofFormat)?;
                     if recursive_block.proof.data.is_empty()
-                        || recursive_block.proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE
+                        || recursive_block.proof.data.len()
+                            > crate::types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE
                     {
                         return Err(Error::<T>::ProofTooLarge);
                     }
@@ -3658,6 +3659,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_submit_recursive_candidate_artifact_accepts_product_lane_size_cap() {
+        mock::new_test_ext().execute_with(|| {
+            let mut payload = dummy_recursive_candidate_artifact();
+            payload
+                .recursive_block
+                .as_mut()
+                .expect("recursive payload")
+                .proof
+                .data = vec![0u8; types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE];
+
+            let meta = pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(
+                &payload,
+            )
+            .expect("recursive product lane size cap should be accepted");
+
+            assert!(!meta.propagate);
+            assert!(matches!(meta.source_class, ActionSourceClass::InBlockOnly));
+        });
+    }
+
+    #[test]
     fn total_block_proof_bytes_counts_recursive_payload_and_ignores_receipt_root() {
         mock::new_test_ext().execute_with(|| {
             let mut recursive = dummy_recursive_candidate_artifact();
@@ -3719,7 +3741,7 @@ mod tests {
                 .as_mut()
                 .expect("recursive payload")
                 .proof
-                .data = vec![0u8; types::STARK_PROOF_MAX_SIZE + 1];
+                .data = vec![0u8; types::RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE + 1];
 
             let err =
                 pallet::Pallet::<mock::Test>::validate_submit_candidate_artifact_action(&payload)
