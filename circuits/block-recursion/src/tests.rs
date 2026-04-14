@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use crate::local_smallwood_poseidon2::SmallwoodConfig as LocalSmallwoodConfig;
 use crate::relation::{
     debug_step_witness_validation_reason_from_words_with_limb_count_v1,
     debug_step_witness_validation_from_words_with_limb_count_v1,
@@ -27,7 +28,8 @@ use transaction_circuit::{
     decode_smallwood_proof_trace_v1,
     decode_smallwood_recursive_proof_envelope_v1, encode_smallwood_recursive_proof_envelope_v1,
     prove_recursive_statement_v1, recursive_profile_a_v1, recursive_profile_b_v1,
-    verify_recursive_statement_v1, SmallwoodConstraintAdapter,
+    verify_recursive_statement_v1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
+    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
     SmallwoodRecursiveProfileTagV1,
     SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
 };
@@ -50,6 +52,91 @@ fn digest48(tag: u8, idx: u32) -> [u8; 48] {
             .wrapping_add((offset as u8).wrapping_mul(5));
     }
     out
+}
+
+struct FakeIdentityWitnessStatement {
+    row_count: usize,
+    packing_factor: usize,
+    linear_offsets: Vec<u32>,
+    linear_indices: Vec<u32>,
+    linear_coefficients: Vec<u64>,
+    linear_targets: Vec<u64>,
+}
+
+impl SmallwoodConstraintAdapter for FakeIdentityWitnessStatement {
+    fn arithmetization(&self) -> SmallwoodArithmetization {
+        SmallwoodArithmetization::Bridge64V1
+    }
+
+    fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    fn packing_factor(&self) -> usize {
+        self.packing_factor
+    }
+
+    fn constraint_degree(&self) -> usize {
+        2
+    }
+
+    fn linear_constraint_count(&self) -> usize {
+        self.linear_targets.len()
+    }
+
+    fn constraint_count(&self) -> usize {
+        1
+    }
+
+    fn linear_constraint_offsets(&self) -> &[u32] {
+        &self.linear_offsets
+    }
+
+    fn linear_constraint_indices(&self) -> &[u32] {
+        &self.linear_indices
+    }
+
+    fn linear_constraint_coefficients(&self) -> &[u64] {
+        &self.linear_coefficients
+    }
+
+    fn linear_targets(&self) -> &[u64] {
+        &self.linear_targets
+    }
+
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &[]
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        None
+    }
+
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::IdentityWitness
+    }
+
+    fn nonlinear_eval_view<'a>(
+        &self,
+        eval_point: u64,
+        rows: &'a [u64],
+        auxiliary_words: &'a [u64],
+    ) -> SmallwoodNonlinearEvalView<'a> {
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point,
+            rows,
+            auxiliary_words,
+        }
+    }
+
+    fn compute_constraints_u64(
+        &self,
+        _view: SmallwoodNonlinearEvalView<'_>,
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError> {
+        out[0] = 0;
+        Ok(())
+    }
 }
 
 fn sample_input(tx_count: u32) -> BlockRecursiveProverInputV1 {
@@ -443,6 +530,21 @@ fn proof_bytes_constant_across_tx_counts() {
         .unwrap()
         .len();
     assert_eq!(short, long);
+}
+
+#[test]
+fn local_smallwood_config_rejects_malformed_identity_witness_metadata() {
+    let statement = FakeIdentityWitnessStatement {
+        row_count: 1,
+        packing_factor: 4,
+        linear_offsets: vec![0, 1, 2, 3, 4],
+        linear_indices: vec![0, 1, 2, 3],
+        linear_coefficients: vec![1, 9, 1, 1],
+        linear_targets: vec![10, 11, 12, 13],
+    };
+    let err = LocalSmallwoodConfig::new(&statement)
+        .expect_err("malformed identity-witness metadata unexpectedly accepted");
+    assert!(err.to_string().contains("identity witness"));
 }
 
 #[test]

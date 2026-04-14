@@ -39,6 +39,51 @@ pub struct SmallwoodConfig {
     packing_points: Vec<u64>,
 }
 
+fn validate_identity_witness_form(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_size: usize,
+    linear_constraint_count: usize,
+) -> Result<(), TransactionCircuitError> {
+    if statement.linear_constraint_form() != SmallwoodLinearConstraintForm::IdentityWitness {
+        return Ok(());
+    }
+    if linear_constraint_count != witness_size {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "identity witness linear constraints must cover the full witness: constraints={} witness_size={witness_size}",
+            linear_constraint_count
+        )));
+    }
+    if statement.linear_targets().len() != linear_constraint_count {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "identity witness linear target count mismatch: targets={} constraints={linear_constraint_count}",
+            statement.linear_targets().len()
+        )));
+    }
+    let offsets = statement.linear_constraint_offsets();
+    let indices = statement.linear_constraint_indices();
+    let coefficients = statement.linear_constraint_coefficients();
+    if offsets.len() != linear_constraint_count + 1
+        || indices.len() != linear_constraint_count
+        || coefficients.len() != linear_constraint_count
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "identity witness linear metadata length mismatch",
+        ));
+    }
+    for check in 0..linear_constraint_count {
+        if offsets[check] as usize != check
+            || offsets[check + 1] as usize != check + 1
+            || indices[check] as usize != check
+            || coefficients[check] != 1
+        {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "identity witness linear metadata mismatch at constraint {check}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl SmallwoodConfig {
     pub fn new(
         statement: &(dyn SmallwoodConstraintAdapter + Sync),
@@ -53,6 +98,8 @@ impl SmallwoodConfig {
                 "smallwood row_count and packing_factor must be non-zero",
             ));
         }
+        let witness_size = row_count * packing_factor;
+        validate_identity_witness_form(statement, witness_size, linear_constraint_count)?;
         let wit_poly_degree = packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1;
         let mpol_poly_degree =
             constraint_degree * (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) - packing_factor;
@@ -92,7 +139,7 @@ impl SmallwoodConfig {
             row_count,
             packing_factor,
             linear_constraint_count,
-            witness_size: row_count * packing_factor,
+            witness_size,
             constraint_count,
             mpol_poly_degree,
             mlin_poly_degree,

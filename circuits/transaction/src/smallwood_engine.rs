@@ -1599,6 +1599,51 @@ struct PiopRunOutput {
     proof: PiopProof,
 }
 
+fn validate_identity_witness_form(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_size: usize,
+    linear_constraint_count: usize,
+) -> Result<(), TransactionCircuitError> {
+    if statement.linear_constraint_form() != SmallwoodLinearConstraintForm::IdentityWitness {
+        return Ok(());
+    }
+    if linear_constraint_count != witness_size {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "identity witness linear constraints must cover the full witness: constraints={} witness_size={witness_size}",
+            linear_constraint_count
+        )));
+    }
+    if statement.linear_targets().len() != linear_constraint_count {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "identity witness linear target count mismatch: targets={} constraints={linear_constraint_count}",
+            statement.linear_targets().len()
+        )));
+    }
+    let offsets = statement.linear_constraint_offsets();
+    let indices = statement.linear_constraint_indices();
+    let coefficients = statement.linear_constraint_coefficients();
+    if offsets.len() != linear_constraint_count + 1
+        || indices.len() != linear_constraint_count
+        || coefficients.len() != linear_constraint_count
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "identity witness linear metadata length mismatch",
+        ));
+    }
+    for check in 0..linear_constraint_count {
+        if offsets[check] as usize != check
+            || offsets[check + 1] as usize != check + 1
+            || indices[check] as usize != check
+            || coefficients[check] != 1
+        {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "identity witness linear metadata mismatch at constraint {check}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl SmallwoodConfig {
     pub fn new(
         statement: &(dyn SmallwoodConstraintAdapter + Sync),
@@ -1613,6 +1658,8 @@ impl SmallwoodConfig {
                 "smallwood row_count and packing_factor must be non-zero",
             ));
         }
+        let witness_size = row_count * packing_factor;
+        validate_identity_witness_form(statement, witness_size, linear_constraint_count)?;
         let wit_poly_degree = packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1;
         let mpol_poly_degree =
             constraint_degree * (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) - packing_factor;
@@ -1653,7 +1700,7 @@ impl SmallwoodConfig {
             packing_factor,
             constraint_degree,
             linear_constraint_count,
-            witness_size: row_count * packing_factor,
+            witness_size,
             constraint_count,
             wit_poly_degree,
             mpol_poly_degree,
@@ -3221,7 +3268,9 @@ mod tests {
         verify_smallwood_candidate_transaction_proof, SmallwoodCandidateProof,
         SMALLWOOD_BRIDGE_PACKING_FACTOR, SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
-    use crate::smallwood_semantics::PackedStatement;
+    use crate::smallwood_semantics::{
+        PackedStatement, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
+    };
     use crate::witness::TransactionWitness;
     use p3_field::PrimeCharacteristicRing;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -3307,6 +3356,91 @@ mod tests {
         }
     }
 
+    struct FakeIdentityWitnessStatement {
+        row_count: usize,
+        packing_factor: usize,
+        linear_offsets: Vec<u32>,
+        linear_indices: Vec<u32>,
+        linear_coefficients: Vec<u64>,
+        linear_targets: Vec<u64>,
+    }
+
+    impl SmallwoodConstraintAdapter for FakeIdentityWitnessStatement {
+        fn arithmetization(&self) -> SmallwoodArithmetization {
+            SmallwoodArithmetization::Bridge64V1
+        }
+
+        fn row_count(&self) -> usize {
+            self.row_count
+        }
+
+        fn packing_factor(&self) -> usize {
+            self.packing_factor
+        }
+
+        fn constraint_degree(&self) -> usize {
+            2
+        }
+
+        fn linear_constraint_count(&self) -> usize {
+            self.linear_targets.len()
+        }
+
+        fn constraint_count(&self) -> usize {
+            1
+        }
+
+        fn linear_constraint_offsets(&self) -> &[u32] {
+            &self.linear_offsets
+        }
+
+        fn linear_constraint_indices(&self) -> &[u32] {
+            &self.linear_indices
+        }
+
+        fn linear_constraint_coefficients(&self) -> &[u64] {
+            &self.linear_coefficients
+        }
+
+        fn linear_targets(&self) -> &[u64] {
+            &self.linear_targets
+        }
+
+        fn auxiliary_witness_words(&self) -> &[u64] {
+            &[]
+        }
+
+        fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+            None
+        }
+
+        fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+            SmallwoodLinearConstraintForm::IdentityWitness
+        }
+
+        fn nonlinear_eval_view<'a>(
+            &self,
+            eval_point: u64,
+            rows: &'a [u64],
+            auxiliary_words: &'a [u64],
+        ) -> SmallwoodNonlinearEvalView<'a> {
+            SmallwoodNonlinearEvalView::RowScalars {
+                eval_point,
+                rows,
+                auxiliary_words,
+            }
+        }
+
+        fn compute_constraints_u64(
+            &self,
+            _view: SmallwoodNonlinearEvalView<'_>,
+            out: &mut [u64],
+        ) -> Result<(), TransactionCircuitError> {
+            out[0] = 0;
+            Ok(())
+        }
+    }
+
     #[test]
     fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
         let witness = sample_witness();
@@ -3349,6 +3483,21 @@ mod tests {
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
         verify_candidate(&statement, &material.transcript_binding, &proof).unwrap();
+    }
+
+    #[test]
+    fn identity_witness_fast_path_rejects_malformed_linear_metadata() {
+        let statement = FakeIdentityWitnessStatement {
+            row_count: 1,
+            packing_factor: 4,
+            linear_offsets: vec![0, 1, 2, 3, 4],
+            linear_indices: vec![0, 1, 2, 3],
+            linear_coefficients: vec![1, 1, 7, 1],
+            linear_targets: vec![10, 11, 12, 13],
+        };
+        let err = SmallwoodConfig::new(&statement)
+            .expect_err("malformed identity-witness metadata unexpectedly accepted");
+        assert!(err.to_string().contains("identity witness"));
     }
 
     #[test]
