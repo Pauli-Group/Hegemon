@@ -20,7 +20,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 32;
+pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 64;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
 const TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2: usize = 64;
@@ -166,13 +166,14 @@ impl TreeWitnessKindV2 {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct TreeRelationV2 {
     tree_level: usize,
     relation_kind: SmallwoodRecursiveRelationKindV1,
     target_statement: RecursiveSegmentStatementV2,
     auxiliary_witness_words: Vec<u64>,
     auxiliary_witness_limb_count: usize,
+    cached_mismatch: OnceLock<Result<u64, BlockRecursionError>>,
 }
 
 impl TreeRelationV2 {
@@ -210,6 +211,7 @@ impl TreeRelationV2 {
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
             auxiliary_witness_words,
+            cached_mismatch: OnceLock::new(),
         })
     }
 
@@ -225,14 +227,51 @@ impl TreeRelationV2 {
             ));
         }
         let tree_level = left.level.saturating_add(1);
-        Self::new_merge_with_child_cap(
-            relation_kind,
+        let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
+        if left.proof_bytes.len() > child_proof_cap {
+            return Err(BlockRecursionError::WidthMismatch {
+                what: "tree_v2 live merge left child proof len",
+                expected: child_proof_cap,
+                actual: left.proof_bytes.len(),
+            });
+        }
+        if right.proof_bytes.len() > child_proof_cap {
+            return Err(BlockRecursionError::WidthMismatch {
+                what: "tree_v2 live merge right child proof len",
+                expected: child_proof_cap,
+                actual: right.proof_bytes.len(),
+            });
+        }
+        let left_kind = TreeWitnessKindV2::from_relation_kind(left.relation_kind)?;
+        let right_kind = TreeWitnessKindV2::from_relation_kind(right.relation_kind)?;
+        let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
+        let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
+        let mut bytes = Vec::with_capacity(
+            (MERGE_WITNESS_HEADER_WORDS_V2 * 8)
+                + left_statement_bytes.len()
+                + right_statement_bytes.len()
+                + left.proof_bytes.len()
+                + right.proof_bytes.len(),
+        );
+        bytes.extend_from_slice(&(left.profile.tag() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(left_kind as u64).to_le_bytes());
+        bytes.extend_from_slice(&(left.proof_bytes.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&left_statement_bytes);
+        bytes.extend_from_slice(&left.proof_bytes);
+        bytes.extend_from_slice(&(right.profile.tag() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(right_kind as u64).to_le_bytes());
+        bytes.extend_from_slice(&(right.proof_bytes.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&right_statement_bytes);
+        bytes.extend_from_slice(&right.proof_bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        Ok(Self {
             tree_level,
+            relation_kind,
             target_statement,
-            left,
-            right,
-            tree_recursive_child_proof_bytes_v2(tree_level),
-        )
+            auxiliary_witness_limb_count: auxiliary_witness_words.len(),
+            auxiliary_witness_words,
+            cached_mismatch: OnceLock::new(),
+        })
     }
 
     fn new_merge_with_child_cap(
@@ -272,6 +311,7 @@ impl TreeRelationV2 {
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
             auxiliary_witness_words,
+            cached_mismatch: OnceLock::new(),
         })
     }
 
@@ -281,13 +321,35 @@ impl TreeRelationV2 {
         child: &TreeProofNodeV2,
     ) -> Result<Self, BlockRecursionError> {
         let tree_level = child.level.saturating_add(1);
-        Self::new_carry_with_child_cap(
-            relation_kind,
+        let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
+        if child.proof_bytes.len() > child_proof_cap {
+            return Err(BlockRecursionError::WidthMismatch {
+                what: "tree_v2 live carry child proof len",
+                expected: child_proof_cap,
+                actual: child.proof_bytes.len(),
+            });
+        }
+        let child_kind = TreeWitnessKindV2::from_relation_kind(child.relation_kind)?;
+        let child_statement_bytes = recursive_segment_statement_bytes_v2(&child.statement);
+        let mut bytes = Vec::with_capacity(
+            (MERGE_WITNESS_HEADER_WORDS_V2 / 2 * 8)
+                + child_statement_bytes.len()
+                + child.proof_bytes.len(),
+        );
+        bytes.extend_from_slice(&(child.profile.tag() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(child_kind as u64).to_le_bytes());
+        bytes.extend_from_slice(&(child.proof_bytes.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&child_statement_bytes);
+        bytes.extend_from_slice(&child.proof_bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        Ok(Self {
             tree_level,
+            relation_kind,
             target_statement,
-            child,
-            tree_recursive_child_proof_bytes_v2(tree_level),
-        )
+            auxiliary_witness_limb_count: auxiliary_witness_words.len(),
+            auxiliary_witness_words,
+            cached_mismatch: OnceLock::new(),
+        })
     }
 
     fn new_carry_with_child_cap(
@@ -315,6 +377,7 @@ impl TreeRelationV2 {
             target_statement,
             auxiliary_witness_limb_count: auxiliary_witness_words.len(),
             auxiliary_witness_words,
+            cached_mismatch: OnceLock::new(),
         })
     }
 
@@ -338,7 +401,41 @@ impl TreeRelationV2 {
             target_statement,
             auxiliary_witness_words: words[..limb_count].to_vec(),
             auxiliary_witness_limb_count: limb_count,
+            cached_mismatch: OnceLock::new(),
         })
+    }
+
+    fn compute_mismatch_uncached(&self) -> Result<u64, BlockRecursionError> {
+        match self.relation_kind {
+            SmallwoodRecursiveRelationKindV1::ChunkA => {
+                chunk_relation_mismatch_v2(&self.target_statement, &self.auxiliary_witness_words)
+            }
+            SmallwoodRecursiveRelationKindV1::MergeA | SmallwoodRecursiveRelationKindV1::MergeB => {
+                merge_relation_mismatch_v2(
+                    self.relation_kind,
+                    self.tree_level,
+                    &self.target_statement,
+                    &self.auxiliary_witness_words,
+                )
+            }
+            SmallwoodRecursiveRelationKindV1::CarryA | SmallwoodRecursiveRelationKindV1::CarryB => {
+                carry_relation_mismatch_v2(
+                    self.relation_kind,
+                    self.tree_level,
+                    &self.target_statement,
+                    &self.auxiliary_witness_words,
+                )
+            }
+            _ => Err(BlockRecursionError::InvalidField(
+                "tree_v2 compute relation_kind",
+            )),
+        }
+    }
+
+    fn cached_mismatch(&self) -> Result<u64, BlockRecursionError> {
+        self.cached_mismatch
+            .get_or_init(|| self.compute_mismatch_uncached())
+            .clone()
     }
 
     fn witness_values(&self) -> [u64; TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2] {
@@ -417,32 +514,9 @@ impl SmallwoodConstraintAdapter for TreeRelationV2 {
         view: SmallwoodNonlinearEvalView<'_>,
         out: &mut [u64],
     ) -> Result<(), TransactionCircuitError> {
-        let SmallwoodNonlinearEvalView::RowScalars {
-            auxiliary_words, ..
-        } = view;
-        let mismatch =
-            match self.relation_kind {
-                SmallwoodRecursiveRelationKindV1::ChunkA => {
-                    chunk_relation_mismatch_v2(&self.target_statement, auxiliary_words)
-                }
-                SmallwoodRecursiveRelationKindV1::MergeA
-                | SmallwoodRecursiveRelationKindV1::MergeB => merge_relation_mismatch_v2(
-                    self.relation_kind,
-                    self.tree_level,
-                    &self.target_statement,
-                    auxiliary_words,
-                ),
-                SmallwoodRecursiveRelationKindV1::CarryA
-                | SmallwoodRecursiveRelationKindV1::CarryB => carry_relation_mismatch_v2(
-                    self.relation_kind,
-                    self.tree_level,
-                    &self.target_statement,
-                    auxiliary_words,
-                ),
-                _ => Err(BlockRecursionError::InvalidField(
-                    "tree_v2 compute relation_kind",
-                )),
-            }
+        let SmallwoodNonlinearEvalView::RowScalars { .. } = view;
+        let mismatch = self
+            .cached_mismatch()
             .map_err(block_recursion_to_tx_error_v2)?;
         out[0] = mismatch.saturating_mul(mismatch);
         Ok(())
@@ -1034,20 +1108,16 @@ fn decode_merge_child_v2(
             })?,
     )?;
     *cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
-    let proof_slice = bytes.get(*cursor..*cursor + child_proof_cap).ok_or(
-        BlockRecursionError::InvalidLength {
-            what: "tree_v2 child proof bytes",
-            expected: child_proof_cap,
-            actual: bytes.len().saturating_sub(*cursor),
-        },
-    )?;
-    *cursor += child_proof_cap;
-    if proof_slice[proof_len..].iter().any(|byte| *byte != 0) {
-        return Err(BlockRecursionError::InvalidField(
-            "tree_v2 child proof padding must be zero",
-        ));
-    }
-    Ok((profile, kind, statement, proof_slice[..proof_len].to_vec()))
+    let proof_slice =
+        bytes
+            .get(*cursor..*cursor + proof_len)
+            .ok_or(BlockRecursionError::InvalidLength {
+                what: "tree_v2 child proof bytes",
+                expected: proof_len,
+                actual: bytes.len().saturating_sub(*cursor),
+            })?;
+    *cursor += proof_len;
+    Ok((profile, kind, statement, proof_slice.to_vec()))
 }
 
 fn chunk_relation_mismatch_v2(
@@ -1237,6 +1307,12 @@ fn merge_relation_mismatch_v2(
     }
     let mut mismatch = 0u64;
     let expected_child_profile = expected_child_profile_for_parent_kind_v2(relation_kind)?;
+    if profile_for_relation_kind_v2(left_kind)? != left_profile {
+        mismatch += 1;
+    }
+    if profile_for_relation_kind_v2(right_kind)? != right_profile {
+        mismatch += 1;
+    }
     if left_profile != expected_child_profile {
         mismatch += 1;
     }
@@ -1303,10 +1379,10 @@ fn carry_relation_mismatch_v2(
     cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
     let proof_slice =
         bytes
-            .get(cursor..cursor + child_proof_cap)
+            .get(cursor..cursor + proof_len)
             .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 carry child proof bytes",
-                expected: child_proof_cap,
+                expected: proof_len,
                 actual: bytes.len().saturating_sub(cursor),
             })?;
     if proof_len > child_proof_cap {
@@ -1316,13 +1392,12 @@ fn carry_relation_mismatch_v2(
             actual: proof_len,
         });
     }
-    if proof_slice[proof_len..].iter().any(|byte| *byte != 0) {
-        return Err(BlockRecursionError::InvalidField(
-            "tree_v2 carry child proof padding must be zero",
-        ));
-    }
+    cursor += proof_len;
     let mut mismatch = 0u64;
     let expected_child_profile = expected_child_profile_for_parent_kind_v2(relation_kind)?;
+    if profile_for_relation_kind_v2(child_kind)? != profile {
+        mismatch += 1;
+    }
     if expected_child_profile != profile {
         mismatch += 1;
     }
@@ -1334,11 +1409,16 @@ fn carry_relation_mismatch_v2(
         child_kind,
         child_level,
         &child_statement,
-        &proof_slice[..proof_len],
+        proof_slice,
     )
     .is_err()
     {
         mismatch += 1;
+    }
+    if cursor != bytes.len() && bytes[cursor..].iter().any(|byte| *byte != 0) {
+        return Err(BlockRecursionError::TrailingBytes {
+            remaining: bytes.len() - cursor,
+        });
     }
     Ok(mismatch)
 }

@@ -670,6 +670,36 @@ fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
 
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn prove_and_verify_recursive_artifact_v2_across_first_carry_boundary_succeeds() {
+    for tx_count in [
+        (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32,
+        ((TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1) as u32,
+    ] {
+        let (artifact, public) = prove_artifact_v2(tx_count);
+        let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
+        assert_eq!(verified, public);
+    }
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v2_constant_size_across_first_carry_boundary() {
+    let merge_aligned = serialize_recursive_block_artifact_v2(
+        &prove_artifact_v2((TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32).0,
+    )
+    .unwrap()
+    .len();
+    let first_carried = serialize_recursive_block_artifact_v2(
+        &prove_artifact_v2(((TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1) as u32).0,
+    )
+    .unwrap()
+    .len();
+    assert_eq!(merge_aligned, first_carried);
+    assert_eq!(merge_aligned, recursive_block_artifact_bytes_v2());
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_matches_derived_constant_width() {
     let width = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
         .unwrap()
