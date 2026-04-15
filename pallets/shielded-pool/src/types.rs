@@ -228,11 +228,11 @@ pub const BLOCK_PROOF_BUNDLE_MAX_TOTAL_PROOF_BYTES: usize = 64 * 1024 * 1024;
     MaxEncodedLen,
 )]
 pub enum BlockProofMode {
-    /// Verify ordered inline tx proofs directly plus the commitment proof.
+    /// Historical inline lane retained only for compatibility/error handling.
     InlineTx,
-    /// Verify an experimental receipt root over canonical tx-validity receipts.
+    /// Explicit experimental native comparison lane.
     ReceiptRoot,
-    /// Verify a recursive block-proof artifact over the canonical verified leaf stream.
+    /// Shipped 0.10.0 product lane over the canonical verified leaf stream.
     RecursiveBlock,
 }
 
@@ -280,6 +280,25 @@ pub const fn is_recursive_block_artifact_kind(kind: ProofArtifactKind) -> bool {
     )
 }
 
+pub const fn canonical_recursive_block_artifact_kind() -> ProofArtifactKind {
+    ProofArtifactKind::RecursiveBlockV1
+}
+
+pub const fn is_shipped_block_proof_mode(mode: BlockProofMode) -> bool {
+    matches!(mode, BlockProofMode::RecursiveBlock)
+}
+
+pub const fn is_experimental_block_proof_mode(mode: BlockProofMode) -> bool {
+    matches!(mode, BlockProofMode::ReceiptRoot)
+}
+
+pub const fn is_experimental_block_artifact_kind(kind: ProofArtifactKind) -> bool {
+    matches!(
+        kind,
+        ProofArtifactKind::ReceiptRoot | ProofArtifactKind::RecursiveBlockV2
+    )
+}
+
 pub const fn recursive_block_artifact_max_size(kind: ProofArtifactKind) -> Option<usize> {
     match kind {
         ProofArtifactKind::RecursiveBlockV1 => Some(RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE),
@@ -292,7 +311,7 @@ pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind 
     match mode {
         BlockProofMode::InlineTx => ProofArtifactKind::InlineTx,
         BlockProofMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
-        BlockProofMode::RecursiveBlock => ProofArtifactKind::RecursiveBlockV1,
+        BlockProofMode::RecursiveBlock => canonical_recursive_block_artifact_kind(),
     }
 }
 

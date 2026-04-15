@@ -55,6 +55,10 @@ pub fn legacy_pallet_artifact_identity(
             consensus::experimental_native_receipt_root_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+            debug_assert_eq!(
+                kind,
+                pallet_shielded_pool::types::canonical_recursive_block_artifact_kind()
+            );
             consensus::recursive_block_artifact_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => {

@@ -1,119 +1,106 @@
 # Scalability Path
 
-This document records the current honest deployment path for Hegemon’s shipped shielded block lane. It is a topology and operations reference, not a consensus spec.
+This document records the current honest deployment path for Hegemon `0.10.0`. It is an operator and topology reference, not a consensus specification.
 
 ## Current shipping architecture
 
-Hegemon now runs the shielded path on three layers:
+The shipped shielded block path now has one canonical block-artifact lane:
 
-- **Private or wallet-side proving edge**: wallets or trusted private services produce canonical native `tx_leaf` artifacts for shielded transfers.
-- **Public authoring layer**: the authoring node selects verified native `tx_leaf` artifacts, builds one same-block native `receipt_root`, and seals only when that bundle is ready.
-- **Public verification layer**: import verifies the commitment proof plus the same-block native `receipt_root`. The receipt-root verifier now defaults to the `verified_records` path, meaning it consumes the already-verified native leaf records instead of replaying every leaf verifier a second time.
+- **Private or wallet-side proving edge**: wallets or private prover infrastructure produce canonical native `tx_leaf` artifacts for shielded transfers.
+- **Public authoring layer**: the authoring node verifies and selects those native `tx_leaf` artifacts, derives the canonical semantic tuple from parent state plus tx order, builds one same-block `recursive_block_v1` artifact, and seals only when that recursive bundle is ready.
+- **Public verification layer**: block import verifies the ordered native `tx_leaf` artifact stream plus the same-block `recursive_block_v1` artifact.
 
-The live low-TPS path is no longer `InlineTx`. The shipped path is:
+The shipped `0.10.0` path is therefore:
 
 - wallets submit native `tx_leaf` artifacts,
 - the authoring node verifies and selects those native artifacts,
-- the authoring node builds the commitment proof and native `receipt_root`,
-- consensus verifies the commitment proof plus the native `receipt_root`.
+- the authoring node builds one same-block `recursive_block_v1`,
+- consensus verifies that recursive artifact against the canonical ordered verified-leaf stream.
 
-There is no external public prover host in the normal shipping topology for this version.
+There is no external public prover host in the normal shipping topology for this release.
+
+## What is explicit experimental surface
+
+Two block-proof lanes remain in-tree, but they are not the shipped product surface:
+
+- **`ReceiptRoot`** is the explicit native comparison lane. It still carries a parent-bound commitment proof plus a native receipt-root artifact. It is useful for comparison, diagnostics, and research, but it is not the default shipped path.
+- **`RecursiveBlockV2`** is the explicit experimental tree lane. It currently has a real bounded-domain invariant and explicit verification plumbing, but it is not the shipped default lane.
+
+The old `InlineTx` label remains only as historical compatibility vocabulary and fail-closed handling. It is not a shipped non-empty shielded block mode.
 
 ## Immediate topology
 
-The current deployment target is still simple:
+The current deployment target stays simple:
 
-- one public **authoring node** that accepts proof-ready shielded transactions, builds the commitment proof, builds the same-block native `receipt_root`, mines, and broadcasts blocks;
+- one public **authoring node** that accepts proof-ready shielded transactions, builds the same-block `recursive_block_v1`, mines, and broadcasts blocks;
 - any number of **full nodes** that sync, verify, relay, and optionally run wallets;
 - users proving transactions locally or through private infrastructure they trust.
 
 Current approved public join seed list for miners and full nodes:
 
-```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333"
-```
+    HEGEMON_SEEDS="hegemon.pauli.group:30333"
 
 All miners and verifiers in the same testnet must use the same approved `HEGEMON_SEEDS` value to avoid peer partitions and forks. The first public authoring node after a full reset should not seed itself; bring it up first, then use the join seed list on every other node. All mining hosts must keep NTP/chrony time sync enabled because PoW headers beyond the future-skew bound are rejected.
 
 ## What scales now
 
-The current scaling levers are no longer only “make more tx proofs.” They are:
+The main scaling levers on the shipped path are:
 
-- more user-side / private prover capacity, so more native `tx_leaf` artifacts are ready at block assembly time;
-- faster authoring-time aggregation of those verified leaves into one `receipt_root`;
-- cheaper import-time verification of that `receipt_root`.
+- more wallet-side or private-prover capacity, so more native `tx_leaf` artifacts are ready before block assembly;
+- faster authoring-time compression of the ordered verified leaf stream into one `recursive_block_v1`;
+- cheaper import-time verification of the ordered `tx_leaf` stream plus the recursive block artifact;
+- lower ciphertext transport pressure through DA sidecars rather than inline payload growth.
 
-The current product implementation already uses three practical levers on the block-artifact side:
+This is the important architectural point: the fixed block artifact is not the only growth driver. Chain growth still scales with the ordered transaction set and ciphertext availability bytes. The recursive block artifact only keeps the block-validity proof component constant-width.
 
-- **Verified-record import**: the shipped receipt-root verifier consumes verified native leaf records by default. On the local `8`-leaf sample, the root step measured about `0.695s` on replay-heavy verification versus about `0.027s` on the records-only path, which is about a `26x` reduction for that step.
-- **Mini-root hierarchy**: authoring now treats the native receipt-root build as deterministic `8`-leaf mini-roots plus an upper tree. This does not reduce fresh-build fold count by itself, but it sharply reduces recomputation after small changes.
-- **Leaf and chunk caches**: repeated or near-repeated candidate sets can reuse verified leaves and cached chunk folds keyed by native artifact identity.
+## What the current split buys
 
-## What the current hierarchy buys
+The current split is:
 
-For a fresh full build, total fold count is still about `N - 1`. The hierarchy matters because it reduces recomputation and enables parallel work.
+- `transaction -> tx_leaf`
+- `ordered verified tx_leaf stream -> recursive_block_v1`
 
-With `128` leaves and `8`-leaf mini-roots:
+That keeps the system operationally sane:
 
-- one changed leaf touches at most `11` internal fold nodes instead of `127`, which is about `11.5x` less recomputation inside the block tree;
-- exact-repeat candidates can skip the whole receipt-root build through the existing prepared-bundle cache;
-- near-repeat candidates can reuse most lower-tree work through the native leaf/chunk caches.
-
-At larger summary levels the savings get bigger. If an epoch root summarizes `1024` block roots, one changed block touches only the `10` parent nodes on its path to the epoch root instead of rebuilding the full `1023` internal-node tree.
-
-## What parallelism buys
-
-The native receipt-root builder now has a clear unit of work: deterministic mini-roots. That means the node can spread aggregation work across a dedicated local Rayon pool, controlled by `HEGEMON_RECEIPT_ROOT_WORKERS`.
-
-The expected gain is wall-clock time, not fold-count reduction:
-
-- on the fold stage of a `128`-leaf build, `16` workers should be materially faster than `1`;
-- the realistic target remains roughly `11x` to `16x` fold-stage wall-clock improvement at `16` to `32` workers, depending on machine and cache warmth;
-- the lower-tree caches are what turn that one-shot speedup into a practical repeated-authoring win.
-
-The important honest caveat is that full cold-path timings are still dominated by native `tx_leaf` generation unless the benchmark uses a frozen leaf corpus. The clean product import question is therefore “how expensive is verifying and aggregating already-built native artifacts?”, not “how long does it take to generate all transaction proofs from scratch?”
-
-`superneo-bench` now exposes that measurement path directly: `--emit-native-leaf-record-corpus <path>` writes a reusable native leaf-record corpus, and `--native-leaf-record-corpus <path>` reuses that corpus for `--measure-native-receipt-root-hierarchy`, `--measure-native-epoch-root-hierarchy`, and `--measure-native-receipt-root-build` so larger aggregation benchmarks do not accidentally charge fresh tx-proof generation. The repo-level regression entry point for that path is `./scripts/verify_native_receipt_root_scalability.sh`, and the native-backend-security CI job runs it on every change.
+- transaction proving stays parallelizable at the edge;
+- the chain sees one canonical block-validity object per non-empty shielded block;
+- consensus and runtime do not need to switch between multiple live-looking block-proof contracts during normal operation;
+- experimental lanes can stay in-tree without confusing the default release story.
 
 ## Near-term roadmap
 
-### Phase 0: ship native same-block aggregation
+### Phase 0: ship the canonical recursive block lane
 
-- one public authoring node;
 - wallets and private provers produce proof-ready native `tx_leaf` artifacts;
-- block authors attach a same-block native `receipt_root`;
-- full nodes verify the commitment proof plus the native `receipt_root`;
+- block authors attach a same-block `recursive_block_v1`;
+- full nodes verify the ordered native `tx_leaf` artifacts plus the recursive block artifact;
 - no external prover-worker market, no public recursive work queue, no pooled/private-prover desktop roles.
 
-### Phase 1: make authoring cheaper operationally
+### Phase 1: improve authoring throughput without changing the on-chain contract
 
-Scale the part that now matters on the block-artifact side:
+Scale the parts that matter on the shipped lane:
 
 - keep the prepared-bundle cache hot for exact repeats;
-- keep the native leaf and chunk caches hot for near repeats;
-- schedule receipt-root work on a bounded local worker pool;
-- keep proof-ready tx throughput high enough that authoring waits on aggregation rarely.
+- keep the tx-leaf verification cache hot for near repeats;
+- reduce recursive block proving latency on the authoring node;
+- keep proof-ready tx throughput high enough that authoring rarely waits on aggregation.
 
-### Phase 2: extend the hierarchy
+### Phase 2: keep comparison lanes explicit
 
-Once the block-level lane is stable:
+If operators or researchers want to run `ReceiptRoot` or `RecursiveBlockV2`, they should do so explicitly and measure them explicitly. Those lanes should not blur back into the shipped `0.10.0` release story.
 
-- keep `transaction -> tx_leaf`,
-- use deterministic `mini-root -> block root`,
-- add `many block roots -> epoch root` off the hot path for archival, sync, or later compression work.
+### Phase 3: future compression work
 
-This remains an authoring and data-structure win even before any new succinct proof object exists.
-
-### Phase 3: optional post-proof compression
-
-If Hegemon later needs a compact block proof, it should sit on top of the current native `tx_leaf -> receipt_root` lane. That is a new cryptographic object, not an operational cleanup. It only becomes product-relevant if it beats the existing `verified_records` import path on bytes or verification time.
+If Hegemon later wants a different block proof, it must beat the current shipped lane on bytes, verifier cost, or authoring latency without weakening the release surface. That is a future cryptographic change, not an operational prerequisite for `0.10.0`.
 
 ## What is explicitly not current product surface
 
-The following are not part of the current shipping topology:
+The following are not part of the current shipped `0.10.0` topology:
 
-- `hegemon-prover` as a required deployment host,
-- any external prover-worker market as part of the normal authoring path,
-- pooled hash-worker participation in the desktop app,
-- private-prover participation in the desktop app,
-- recursive hot-path block proving as the default low-TPS lane.
+- `ReceiptRoot` as the default low-TPS block lane;
+- `RecursiveBlockV2` as the default block lane;
+- `InlineTx` as a valid non-empty shielded block lane;
+- `hegemon-prover` as a required deployment host;
+- any external prover-worker market as part of the normal authoring path;
+- pooled hash-worker participation in the desktop app;
+- private-prover participation in the desktop app.

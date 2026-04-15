@@ -1188,7 +1188,7 @@ impl ProverCoordinator {
         }
         tracing::warn!(
             mode = raw,
-            "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing recursive_block on the product path"
+            "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing the shipped recursive_block lane"
         );
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
     }
@@ -1222,9 +1222,9 @@ impl ProverCoordinator {
 
 fn proof_mode_rank(mode: pallet_shielded_pool::types::BlockProofMode) -> u8 {
     match mode {
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => 0,
-        pallet_shielded_pool::types::BlockProofMode::InlineTx => 1,
-        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => 2,
+        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => 0,
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => 1,
+        pallet_shielded_pool::types::BlockProofMode::InlineTx => 2,
     }
 }
 
@@ -1393,7 +1393,19 @@ mod tests {
         ));
         assert_eq!(
             proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::RecursiveBlock),
-            2
+            0
+        );
+    }
+
+    #[test]
+    fn prepared_bundle_rank_prefers_shipped_recursive_block_over_receipt_root() {
+        assert!(
+            proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::RecursiveBlock)
+                < proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
+        );
+        assert!(
+            proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
+                < proof_mode_rank(pallet_shielded_pool::types::BlockProofMode::InlineTx)
         );
     }
 

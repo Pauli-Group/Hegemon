@@ -2579,11 +2579,11 @@ impl PreparedArtifactSelector {
         }
     }
 
-    fn receipt_root() -> Self {
+    fn explicit_receipt_root() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::ReceiptRoot)
     }
 
-    fn recursive_block() -> Self {
+    fn shipped_recursive_block() -> Self {
         Self::from_mode(pallet_shielded_pool::types::BlockProofMode::RecursiveBlock)
     }
 }
@@ -2594,16 +2594,16 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
         || raw.eq_ignore_ascii_case("recursive_block")
         || raw.eq_ignore_ascii_case("recursive-block")
     {
-        return PreparedArtifactSelector::recursive_block();
+        return PreparedArtifactSelector::shipped_recursive_block();
     }
     if raw.eq_ignore_ascii_case("receipt_root") || raw.eq_ignore_ascii_case("receipt-root") {
-        return PreparedArtifactSelector::receipt_root();
+        return PreparedArtifactSelector::explicit_receipt_root();
     }
     tracing::warn!(
         mode = raw,
-        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing recursive_block on the product path"
+        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing the shipped recursive_block lane"
     );
-    PreparedArtifactSelector::recursive_block()
+    PreparedArtifactSelector::shipped_recursive_block()
 }
 
 fn truthy_env_var(name: &str) -> bool {
@@ -2634,23 +2634,21 @@ fn truthy_env_var(name: &str) -> bool {
     false
 }
 
-fn native_only_receipt_root_required_from_env() -> bool {
+fn native_block_proof_required_from_env() -> bool {
     truthy_env_var("HEGEMON_REQUIRE_NATIVE")
 }
 
-fn ensure_native_only_receipt_root_selector(
-    selector: PreparedArtifactSelector,
-) -> Result<(), String> {
-    if !native_only_receipt_root_required_from_env() {
+fn ensure_native_block_proof_selector(selector: PreparedArtifactSelector) -> Result<(), String> {
+    if !native_block_proof_required_from_env() {
         return Ok(());
     }
     match selector.legacy_mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-            tracing::info!("native-only receipt_root lane selected");
+            tracing::info!("native-only explicit experimental receipt_root lane selected");
             Ok(())
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-            tracing::info!("native-only recursive_block lane selected");
+            tracing::info!("native-only shipped recursive_block lane selected");
             Ok(())
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
@@ -2662,10 +2660,8 @@ fn ensure_native_only_receipt_root_selector(
     }
 }
 
-fn ensure_native_only_receipt_root_outcome(
-    outcome: &PreparedAggregationOutcome,
-) -> Result<(), String> {
-    if !native_only_receipt_root_required_from_env() {
+fn ensure_native_block_proof_outcome(outcome: &PreparedAggregationOutcome) -> Result<(), String> {
+    if !native_block_proof_required_from_env() {
         return Ok(());
     }
     let report = outcome.native_selection_report.as_ref().ok_or_else(|| {
@@ -2682,22 +2678,22 @@ fn ensure_native_only_receipt_root_outcome(
     Ok(())
 }
 
-fn is_canonical_native_receipt_root_payload(
+fn is_canonical_experimental_receipt_root_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> bool {
-    payload.proof_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    pallet_shielded_pool::types::is_experimental_block_proof_mode(payload.proof_mode)
         && payload.proof_kind == pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
         && payload.verifier_profile
             == consensus::experimental_native_receipt_root_verifier_profile()
         && payload.receipt_root.is_some()
 }
 
-fn ensure_product_receipt_root_payload(
+fn ensure_experimental_receipt_root_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> Result<(), String> {
-    if !is_canonical_native_receipt_root_payload(payload) {
+    if !is_canonical_experimental_receipt_root_payload(payload) {
         return Err(format!(
-            "non-empty shielded blocks require canonical native receipt_root artifacts; got proof_mode {:?}, proof_kind {:?}, verifier_profile {}",
+            "explicit experimental receipt_root lane requires canonical native receipt_root artifacts; got proof_mode {:?}, proof_kind {:?}, verifier_profile {}",
             payload.proof_mode,
             payload.proof_kind,
             hex::encode(payload.verifier_profile),
@@ -2706,13 +2702,16 @@ fn ensure_product_receipt_root_payload(
     Ok(())
 }
 
-fn ensure_product_receipt_root_outcome(outcome: &PreparedAggregationOutcome) -> Result<(), String> {
+fn ensure_experimental_receipt_root_outcome(
+    outcome: &PreparedAggregationOutcome,
+) -> Result<(), String> {
     let report = outcome.native_selection_report.as_ref().ok_or_else(|| {
-        "product receipt_root authoring requires a native selection report".to_string()
+        "explicit experimental receipt_root authoring requires a native selection report"
+            .to_string()
     })?;
     if !report.used_native_lane {
         return Err(format!(
-            "product receipt_root authoring forbids InlineTx fallback: {} ({})",
+            "explicit experimental receipt_root authoring forbids InlineTx fallback: {} ({})",
             report.fallback_reason_label(),
             report.fallback_detail(),
         ));
@@ -2722,24 +2721,24 @@ fn ensure_product_receipt_root_outcome(outcome: &PreparedAggregationOutcome) -> 
         PreparedAggregationArtifacts::ReceiptRoot(_)
     ) {
         return Err(
-            "product receipt_root authoring expected a receipt_root aggregation artifact"
+            "explicit experimental receipt_root authoring expected a receipt_root aggregation artifact"
                 .to_string(),
         );
     }
     Ok(())
 }
 
-fn ensure_native_only_receipt_root_payload(
+fn ensure_native_block_proof_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> Result<(), String> {
-    if !native_only_receipt_root_required_from_env() {
+    if !native_block_proof_required_from_env() {
         return Ok(());
     }
     match payload.proof_mode {
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => ensure_product_receipt_root_payload(payload)
+        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => ensure_experimental_receipt_root_payload(payload)
             .map_err(|_| {
                 format!(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical native receipt_root is required",
+                    "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical explicit receipt_root or recursive_block is required",
                     payload.proof_mode,
                     payload.proof_kind,
                     hex::encode(payload.verifier_profile),
@@ -2795,7 +2794,7 @@ fn receipt_root_lane_requires_embedded_proof_bytes(
 }
 
 fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> bool {
-    selector.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+    pallet_shielded_pool::types::is_experimental_block_proof_mode(selector.legacy_mode)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3604,8 +3603,9 @@ fn prepare_block_proof_bundle(
 
     let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
     let selected_artifact = prepared_artifact_selector_from_env();
-    ensure_native_only_receipt_root_selector(selected_artifact)?;
-    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+    ensure_native_block_proof_selector(selected_artifact)?;
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    {
         receipt_root_lane_requires_embedded_proof_bytes(
             selected_artifact.proof_kind,
             context.missing_proof_bindings,
@@ -3884,10 +3884,11 @@ fn prepare_block_proof_bundle(
     }
     let commitment_proof = commitment_result?;
     let aggregation_outcome = aggregation_result?;
-    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
-        ensure_product_receipt_root_outcome(&aggregation_outcome)?;
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    {
+        ensure_experimental_receipt_root_outcome(&aggregation_outcome)?;
     }
-    ensure_native_only_receipt_root_outcome(&aggregation_outcome)?;
+    ensure_native_block_proof_outcome(&aggregation_outcome)?;
     let native_selection_report = aggregation_outcome.native_selection_report.clone();
 
     let mut payload = pallet_shielded_pool::types::BlockProofBundle {
@@ -3911,7 +3912,7 @@ fn prepare_block_proof_bundle(
     match aggregation_outcome.artifacts {
         PreparedAggregationArtifacts::InlineTx => {
             return Err(
-                "product authoring requires receipt_root aggregation artifacts; received InlineTx"
+                "explicit experimental receipt_root authoring requires receipt_root aggregation artifacts; received InlineTx"
                     .to_string(),
             );
         }
@@ -3927,10 +3928,11 @@ fn prepare_block_proof_bundle(
         }
     }
     sync_payload_artifact_identity(&mut payload);
-    if selected_artifact.legacy_mode == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
-        ensure_product_receipt_root_payload(&payload)?;
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    {
+        ensure_experimental_receipt_root_payload(&payload)?;
     }
-    ensure_native_only_receipt_root_payload(&payload)?;
+    ensure_native_block_proof_payload(&payload)?;
 
     tracing::info!(
         block_number,
@@ -3942,8 +3944,9 @@ fn prepare_block_proof_bundle(
         da_chunk_count = payload.da_chunk_count,
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
-        requested_native_lane = selected_artifact.legacy_mode
-            == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        requested_native_lane = pallet_shielded_pool::types::is_experimental_block_proof_mode(
+            selected_artifact.legacy_mode,
+        )
             && selector_requests_native_receipt_lane(selected_artifact),
         used_native_lane = native_selection_report
             .as_ref()
@@ -4621,15 +4624,15 @@ fn verify_proof_carrying_block(
     }
     match payload.proof_mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-            ensure_product_receipt_root_payload(&payload)?;
-            ensure_native_only_receipt_root_payload(&payload)?;
+            ensure_experimental_receipt_root_payload(&payload)?;
+            ensure_native_block_proof_payload(&payload)?;
             receipt_root_lane_requires_embedded_proof_bytes(
                 payload.proof_kind,
                 missing_proof_bindings.len(),
             )?;
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-            ensure_native_only_receipt_root_payload(&payload)?;
+            ensure_native_block_proof_payload(&payload)?;
             if !matches!(
                 payload.proof_kind,
                 pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
@@ -12285,7 +12288,7 @@ mod tests {
     }
 
     #[test]
-    fn receipt_root_mode_is_selected_from_env() {
+    fn explicit_receipt_root_mode_is_selected_from_env() {
         let _guard = set_block_proof_mode("receipt_root");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
@@ -12316,7 +12319,7 @@ mod tests {
     fn legacy_block_proof_mode_is_forced_to_recursive_block() {
         let _guard = set_block_proof_mode_with_require_native("inline_tx", "1");
         let selector = prepared_artifact_selector_from_env();
-        ensure_native_only_receipt_root_selector(selector)
+        ensure_native_block_proof_selector(selector)
             .expect("legacy env modes should be forced onto canonical recursive_block");
         assert_eq!(
             selector.proof_kind,
@@ -12325,16 +12328,16 @@ mod tests {
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_canonical_mode() {
+    fn require_native_block_proof_accepts_explicit_receipt_root_mode() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
-        ensure_native_only_receipt_root_selector(prepared_artifact_selector_from_env())
-            .expect("canonical native receipt_root mode must be accepted");
+        ensure_native_block_proof_selector(prepared_artifact_selector_from_env())
+            .expect("explicit receipt_root mode must be accepted");
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_recursive_block_mode() {
+    fn require_native_block_proof_accepts_recursive_block_mode() {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
-        ensure_native_only_receipt_root_selector(prepared_artifact_selector_from_env())
+        ensure_native_block_proof_selector(prepared_artifact_selector_from_env())
             .expect("native-only mode must accept recursive_block");
     }
 
@@ -12378,9 +12381,9 @@ mod tests {
     }
 
     #[test]
-    fn require_native_receipt_root_rejects_inline_fallback_outcome() {
+    fn require_native_block_proof_rejects_inline_fallback_outcome() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
-        let err = ensure_native_only_receipt_root_outcome(&PreparedAggregationOutcome::native(
+        let err = ensure_native_block_proof_outcome(&PreparedAggregationOutcome::native(
             PreparedAggregationArtifacts::InlineTx,
             NativeArtifactSelectionReport::fallback(
                 NativeArtifactFallbackReason::ArtifactsUnavailable,
@@ -12393,13 +12396,13 @@ mod tests {
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_native_receipt_root_outcome() {
+    fn require_native_block_proof_accepts_explicit_receipt_root_outcome() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
-        ensure_native_only_receipt_root_outcome(&PreparedAggregationOutcome::native(
+        ensure_native_block_proof_outcome(&PreparedAggregationOutcome::native(
             PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
             NativeArtifactSelectionReport::native_lane_selected(),
         ))
-        .expect("native-only mode must accept canonical native receipt_root outcomes");
+        .expect("native-only mode must accept explicit receipt_root outcomes");
     }
 
     #[test]
@@ -12412,7 +12415,7 @@ mod tests {
             ),
         );
         assert!(!should_store_prove_ahead_aggregation_outcome(
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
             &outcome,
         ));
     }
@@ -12424,7 +12427,7 @@ mod tests {
             NativeArtifactSelectionReport::native_lane_selected(),
         );
         assert!(should_store_prove_ahead_aggregation_outcome(
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
             &outcome,
         ));
     }
@@ -12447,7 +12450,7 @@ mod tests {
 
     #[test]
     fn receipt_root_cache_key_binds_tx_artifact_identity() {
-        let selector = PreparedArtifactSelector::receipt_root();
+        let selector = PreparedArtifactSelector::explicit_receipt_root();
         let first_artifacts = vec![dummy_native_tx_validity_artifact_variant(10)];
         let second_artifacts = vec![dummy_native_tx_validity_artifact_variant(11)];
         let first_key = make_prove_ahead_aggregation_cache_key(
@@ -12547,16 +12550,16 @@ mod tests {
     }
 
     #[test]
-    fn require_native_receipt_root_rejects_inline_payload() {
+    fn require_native_block_proof_rejects_inline_payload() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
         let payload = dummy_block_proof_bundle();
-        let err = ensure_native_only_receipt_root_payload(&payload)
+        let err = ensure_native_block_proof_payload(&payload)
             .expect_err("native-only mode must reject inline payloads on import");
         assert!(err.contains("native block-proof lane is required"));
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_recursive_block_payload() {
+    fn require_native_block_proof_accepts_recursive_block_payload() {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
@@ -12564,12 +12567,12 @@ mod tests {
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        ensure_native_only_receipt_root_payload(&payload)
+        ensure_native_block_proof_payload(&payload)
             .expect("native-only mode must accept recursive_block payloads");
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_recursive_block_v2_payload() {
+    fn require_native_block_proof_accepts_recursive_block_v2_payload() {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
@@ -12577,33 +12580,33 @@ mod tests {
         payload.verifier_profile = block_recursion::recursive_block_artifact_verifier_profile_v2();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        ensure_native_only_receipt_root_payload(&payload)
+        ensure_native_block_proof_payload(&payload)
             .expect("native-only mode must accept recursive_block_v2 payloads");
     }
 
     #[test]
-    fn require_native_receipt_root_rejects_recursive_block_commitment_bytes() {
+    fn require_native_block_proof_rejects_recursive_block_commitment_bytes() {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        let err = ensure_native_only_receipt_root_payload(&payload)
+        let err = ensure_native_block_proof_payload(&payload)
             .expect_err("recursive_block payload must reject commitment proof bytes");
         assert!(err.contains("commitment proof bytes"));
     }
 
     #[test]
-    fn require_native_receipt_root_accepts_canonical_payload() {
+    fn require_native_block_proof_accepts_explicit_receipt_root_payload() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
         payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
         payload.receipt_root = Some(dummy_receipt_root_payload());
-        ensure_native_only_receipt_root_payload(&payload)
-            .expect("native-only mode must accept canonical native receipt_root payloads");
+        ensure_native_block_proof_payload(&payload)
+            .expect("native-only mode must accept explicit receipt_root payloads");
     }
 
     fn test_sidecar_transfer_extrinsic(binding_byte: u8, nullifier: [u8; 48]) -> Vec<u8> {
@@ -13145,7 +13148,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -13191,7 +13194,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -13246,7 +13249,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(
@@ -13293,7 +13296,7 @@ mod tests {
             parent_hash,
             &candidate_txs,
             1,
-            PreparedArtifactSelector::receipt_root(),
+            PreparedArtifactSelector::explicit_receipt_root(),
         )
         .expect("pause reason evaluation succeeds");
         assert!(

@@ -340,8 +340,7 @@ impl TreeRelationV2 {
     ) -> Result<Self, BlockRecursionError> {
         let child_kind = TreeWitnessKindV2::from_relation_kind(child.relation_kind)?;
         let child_padded = pad_child_proof_bytes_with_cap_v2(&child.proof_bytes, child_proof_cap)?;
-        let mut bytes =
-            Vec::with_capacity(TREE_CHILD_WITNESS_HEADER_BYTES_V2 + child_proof_cap);
+        let mut bytes = Vec::with_capacity(TREE_CHILD_WITNESS_HEADER_BYTES_V2 + child_proof_cap);
         put_u32_v2(&mut bytes, child_kind as u32);
         put_u32_v2(&mut bytes, child.proof_bytes.len() as u32);
         bytes.extend_from_slice(&child_padded);
@@ -1244,8 +1243,8 @@ fn carry_relation_mismatch_v2(
     let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
     let child_level = tree_level - 1;
     let mut cursor = 0usize;
-    let child_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?
-        .relation_kind();
+    let child_kind =
+        TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
     let proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
     let proof_slice =
         bytes
