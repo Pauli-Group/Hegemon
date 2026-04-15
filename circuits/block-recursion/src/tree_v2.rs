@@ -1344,7 +1344,7 @@ fn carry_relation_mismatch_v2(
 }
 
 fn tree_profile_for_level_v2(level: usize) -> SmallwoodRecursiveProfileTagV1 {
-    if level % 2 == 0 {
+    if level.is_multiple_of(2) {
         SmallwoodRecursiveProfileTagV1::A
     } else {
         SmallwoodRecursiveProfileTagV1::B
@@ -1352,7 +1352,7 @@ fn tree_profile_for_level_v2(level: usize) -> SmallwoodRecursiveProfileTagV1 {
 }
 
 fn tree_carry_kind_for_level_v2(level: usize) -> SmallwoodRecursiveRelationKindV1 {
-    if level % 2 == 0 {
+    if level.is_multiple_of(2) {
         SmallwoodRecursiveRelationKindV1::CarryA
     } else {
         SmallwoodRecursiveRelationKindV1::CarryB
@@ -1360,7 +1360,7 @@ fn tree_carry_kind_for_level_v2(level: usize) -> SmallwoodRecursiveRelationKindV
 }
 
 fn tree_merge_kind_for_level_v2(level: usize) -> SmallwoodRecursiveRelationKindV1 {
-    if level % 2 == 0 {
+    if level.is_multiple_of(2) {
         SmallwoodRecursiveRelationKindV1::MergeA
     } else {
         SmallwoodRecursiveRelationKindV1::MergeB

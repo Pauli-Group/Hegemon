@@ -96,7 +96,7 @@ pub fn public_replay_v1(
     let mut leaf_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
     let mut receipt_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
     for record in records {
-        if previous_index.map_or(false, |prev| record.tx_index != prev + 1) {
+        if previous_index.is_some_and(|prev| record.tx_index != prev + 1) {
             return Err(BlockRecursionError::InvalidField(
                 "verified leaf records must be ordered by tx_index",
             ));
@@ -137,7 +137,7 @@ pub fn prefix_public_v1(
     let mut leaf_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
     let mut receipt_chunks: Vec<Vec<u8>> = Vec::with_capacity(records.len());
     for record in records {
-        if previous_index.map_or(false, |prev| record.tx_index != prev + 1) {
+        if previous_index.is_some_and(|prev| record.tx_index != prev + 1) {
             return Err(BlockRecursionError::InvalidField(
                 "verified leaf records must be ordered by tx_index",
             ));

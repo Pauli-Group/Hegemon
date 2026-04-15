@@ -641,8 +641,10 @@ fn recursive_artifact_v2_constant_size_across_tx_counts() {
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
-    for tx_count in [TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32]
-    {
+    for tx_count in [
+        TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+        (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32,
+    ] {
         let (artifact, public) = prove_artifact_v2(tx_count);
         let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
         assert_eq!(verified, public);

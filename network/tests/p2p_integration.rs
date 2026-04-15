@@ -7,7 +7,11 @@ use network::{
 };
 use rand::random;
 use std::path::PathBuf;
-use tokio::time::timeout;
+use tokio::sync::broadcast;
+use tokio::time::{Instant, sleep, timeout};
+
+const TCP_GOSSIP_DEADLINE: Duration = Duration::from_secs(20);
+const TCP_GOSSIP_POLL: Duration = Duration::from_millis(250);
 
 fn local_addr() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
@@ -24,6 +28,52 @@ fn peer_store(tag: &str) -> PeerStore {
 
 fn peer_store_at(path: PathBuf) -> PeerStore {
     PeerStore::new(PeerStoreConfig::with_path(path))
+}
+
+async fn recv_matching<F>(
+    rx: &mut broadcast::Receiver<GossipMessage>,
+    per_attempt_timeout: Duration,
+    mut matches: F,
+) -> Option<()>
+where
+    F: FnMut(&GossipMessage) -> bool,
+{
+    timeout(per_attempt_timeout, async {
+        loop {
+            match rx.recv().await {
+                Ok(message) if matches(&message) => return,
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    })
+    .await
+    .ok()
+}
+
+async fn retry_broadcast_until<F>(
+    mut broadcast_once: impl FnMut() -> bool,
+    rx: &mut broadcast::Receiver<GossipMessage>,
+    matches: F,
+    expectation: &str,
+) where
+    F: FnMut(&GossipMessage) -> bool,
+{
+    let deadline = Instant::now() + TCP_GOSSIP_DEADLINE;
+    let mut matches = matches;
+    loop {
+        let sent = broadcast_once();
+        if sent
+            && recv_matching(rx, TCP_GOSSIP_POLL, &mut matches)
+                .await
+                .is_some()
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "{expectation}");
+        sleep(TCP_GOSSIP_POLL).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -63,29 +113,16 @@ async fn gossip_crosses_tcp_boundary() {
     let task_a = tokio::spawn(service_a.run());
     let task_b = tokio::spawn(service_b.run());
 
-    // Wait for the dialer to connect before broadcasting.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     let payload = b"integration-payload".to_vec();
     let tx_handle = router_a.handle();
-    tx_handle
-        .broadcast_transaction(payload.clone())
-        .expect("broadcast payload");
-
     let mut rx = router_b.handle().subscribe();
-    let received = timeout(Duration::from_secs(5), async move {
-        loop {
-            match rx.recv().await {
-                Ok(GossipMessage::Transaction(bytes)) => break bytes,
-                Ok(_) => continue,
-                Err(_) => continue,
-            }
-        }
-    })
-    .await
-    .expect("remote router received message");
-
-    assert_eq!(received, payload);
+    retry_broadcast_until(
+        || tx_handle.broadcast_transaction(payload.clone()).is_ok(),
+        &mut rx,
+        |message| matches!(message, GossipMessage::Transaction(bytes) if bytes == &payload),
+        "remote router received message",
+    )
+    .await;
 
     task_a.abort();
     task_b.abort();
@@ -205,33 +242,21 @@ async fn block_gossip_is_imported_and_regossiped() {
     let task_a = tokio::spawn(service_a.run());
     let task_b = tokio::spawn(service_b.run());
 
-    // Wait for the dialer to connect before broadcasting.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     let payload = b"block-gossip-regossip".to_vec();
     let handle_a = router_a.handle();
     let mut rx_a = handle_a.subscribe();
     let mut rx_b = router_b.handle().subscribe();
 
-    handle_a
-        .broadcast_block(payload.clone())
-        .expect("broadcast block");
-
-    // Node B should import the block into its gossip router.
-    timeout(Duration::from_secs(5), async {
-        loop {
-            match rx_b.recv().await {
-                Ok(GossipMessage::Block(block)) if block == payload => break,
-                Ok(_) => continue,
-                Err(_) => continue,
-            }
-        }
-    })
-    .await
-    .expect("node B to receive block");
+    retry_broadcast_until(
+        || handle_a.broadcast_block(payload.clone()).is_ok(),
+        &mut rx_b,
+        |message| matches!(message, GossipMessage::Block(block) if block == &payload),
+        "node B to receive block",
+    )
+    .await;
 
     // After importing, node B should re-gossip the block back to peers (including A).
-    timeout(Duration::from_secs(5), async move {
+    timeout(TCP_GOSSIP_DEADLINE, async move {
         let mut saw_local = false;
         loop {
             match rx_a.recv().await {

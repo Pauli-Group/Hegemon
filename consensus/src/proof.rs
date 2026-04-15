@@ -1914,7 +1914,7 @@ impl ProofVerifier for ParallelProofVerifier {
                     .as_slice();
                 let recursive_artifact = block_artifact
                     .as_ref()
-                    .ok_or_else(|| ProofError::MissingAggregationProofForSelfContainedMode)?;
+                    .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
                 let verify_report = verify_recursive_block_artifact_against_verified_records(
                     &block.transactions,
                     artifacts,

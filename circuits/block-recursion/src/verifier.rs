@@ -27,7 +27,7 @@ fn static_error(prefix: &'static str, err: impl core::fmt::Display) -> BlockRecu
 }
 
 fn expected_terminal_profile_tag_v1(tx_count: u32) -> SmallwoodRecursiveProfileTagV1 {
-    if tx_count % 2 == 0 {
+    if tx_count.is_multiple_of(2) {
         SmallwoodRecursiveProfileTagV1::A
     } else {
         SmallwoodRecursiveProfileTagV1::B
@@ -35,7 +35,7 @@ fn expected_terminal_profile_tag_v1(tx_count: u32) -> SmallwoodRecursiveProfileT
 }
 
 fn expected_terminal_relation_kind_v1(tx_count: u32) -> SmallwoodRecursiveRelationKindV1 {
-    if tx_count % 2 == 0 {
+    if tx_count.is_multiple_of(2) {
         SmallwoodRecursiveRelationKindV1::StepA
     } else {
         SmallwoodRecursiveRelationKindV1::StepB

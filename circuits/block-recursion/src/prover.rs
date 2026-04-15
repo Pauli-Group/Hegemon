@@ -205,7 +205,7 @@ fn prove_step_context_v1(
 }
 
 fn terminal_profile_tag_v1(tx_count: u32) -> SmallwoodRecursiveProfileTagV1 {
-    if tx_count % 2 == 0 {
+    if tx_count.is_multiple_of(2) {
         SmallwoodRecursiveProfileTagV1::A
     } else {
         SmallwoodRecursiveProfileTagV1::B
@@ -213,7 +213,7 @@ fn terminal_profile_tag_v1(tx_count: u32) -> SmallwoodRecursiveProfileTagV1 {
 }
 
 fn terminal_relation_kind_v1(tx_count: u32) -> SmallwoodRecursiveRelationKindV1 {
-    if tx_count % 2 == 0 {
+    if tx_count.is_multiple_of(2) {
         SmallwoodRecursiveRelationKindV1::StepA
     } else {
         SmallwoodRecursiveRelationKindV1::StepB

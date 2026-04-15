@@ -1296,10 +1296,10 @@ pub fn hosted_recursive_proof_witness_words_v1(
     previous_proof_witness_words_from_components_v1(&components).map(|(_, words)| words)
 }
 
-fn witness_section_words_v1<'a>(
-    witness_words: &'a [u64],
+fn witness_section_words_v1(
+    witness_words: &[u64],
     section: PreviousProofWitnessSectionV1,
-) -> Result<&'a [u64], TransactionCircuitError> {
+) -> Result<&[u64], TransactionCircuitError> {
     witness_words
         .get(section.limb_start..section.limb_start + section.limb_count)
         .ok_or(TransactionCircuitError::ConstraintViolation(
