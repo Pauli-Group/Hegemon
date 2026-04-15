@@ -27,11 +27,9 @@ const TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2: usize = 64;
 const RECURSIVE_BLOCK_HEADER_BYTES_V2: usize = 112;
 const RECURSIVE_BLOCK_PUBLIC_BYTES_V2: usize = 4 + (48 * 14);
 const TREE_SEGMENT_STATEMENT_BYTES_V2: usize = (4 * 3) + (48 * 8);
-const TREE_PREFIX_STATEMENT_BYTES_V2: usize = 4 + (48 * 7);
 const CHUNK_RECORD_BYTES_V2: usize = 4 + (48 * 8) + (32 * 3);
 const CHUNK_SLOT_BYTES_V2: usize = CHUNK_RECORD_BYTES_V2;
-const CHUNK_WITNESS_HEADER_WORDS_V2: usize = 1;
-const MERGE_WITNESS_HEADER_WORDS_V2: usize = 6;
+const TREE_CHILD_WITNESS_HEADER_BYTES_V2: usize = 8;
 const EMPTY_LINEAR_OFFSETS_V2: [u32; 1] = [0];
 static TREE_PROOF_CAP_REPORT_V2: OnceLock<TreeProofCapReportV2> = OnceLock::new();
 
@@ -179,8 +177,6 @@ struct TreeRelationV2 {
 impl TreeRelationV2 {
     fn new_chunk(
         target_statement: RecursiveSegmentStatementV2,
-        start_prefix: &RecursivePrefixStatementV1,
-        end_prefix: &RecursivePrefixStatementV1,
         records: &[BlockLeafRecordV1],
     ) -> Result<Self, BlockRecursionError> {
         if records.is_empty() || records.len() > TREE_RECURSIVE_CHUNK_SIZE_V2 {
@@ -190,14 +186,7 @@ impl TreeRelationV2 {
                 actual: records.len(),
             });
         }
-        let mut bytes = Vec::with_capacity(
-            CHUNK_WITNESS_HEADER_WORDS_V2 * 8
-                + (TREE_PREFIX_STATEMENT_BYTES_V2 * 2)
-                + (TREE_RECURSIVE_CHUNK_SIZE_V2 * CHUNK_SLOT_BYTES_V2),
-        );
-        bytes.extend_from_slice(&(records.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&crate::recursive_prefix_statement_bytes_v1(start_prefix));
-        bytes.extend_from_slice(&crate::recursive_prefix_statement_bytes_v1(end_prefix));
+        let mut bytes = Vec::with_capacity(TREE_RECURSIVE_CHUNK_SIZE_V2 * CHUNK_SLOT_BYTES_V2);
         for record in records {
             bytes.extend_from_slice(&canonical_verified_leaf_record_bytes_v1(record));
         }
@@ -247,20 +236,18 @@ impl TreeRelationV2 {
         let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
         let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
         let mut bytes = Vec::with_capacity(
-            (MERGE_WITNESS_HEADER_WORDS_V2 * 8)
+            (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2)
                 + left_statement_bytes.len()
                 + right_statement_bytes.len()
                 + left.proof_bytes.len()
                 + right.proof_bytes.len(),
         );
-        bytes.extend_from_slice(&(left.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(left_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(left.proof_bytes.len() as u64).to_le_bytes());
+        put_u32_v2(&mut bytes, left_kind as u32);
+        put_u32_v2(&mut bytes, left.proof_bytes.len() as u32);
         bytes.extend_from_slice(&left_statement_bytes);
         bytes.extend_from_slice(&left.proof_bytes);
-        bytes.extend_from_slice(&(right.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(right_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(right.proof_bytes.len() as u64).to_le_bytes());
+        put_u32_v2(&mut bytes, right_kind as u32);
+        put_u32_v2(&mut bytes, right.proof_bytes.len() as u32);
         bytes.extend_from_slice(&right_statement_bytes);
         bytes.extend_from_slice(&right.proof_bytes);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
@@ -289,19 +276,17 @@ impl TreeRelationV2 {
         let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
         let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
         let mut bytes = Vec::with_capacity(
-            (MERGE_WITNESS_HEADER_WORDS_V2 * 8)
+            (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2)
                 + left_statement_bytes.len()
                 + right_statement_bytes.len()
                 + (child_proof_cap * 2),
         );
-        bytes.extend_from_slice(&(left.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(left_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(left.proof_bytes.len() as u64).to_le_bytes());
+        put_u32_v2(&mut bytes, left_kind as u32);
+        put_u32_v2(&mut bytes, left.proof_bytes.len() as u32);
         bytes.extend_from_slice(&left_statement_bytes);
         bytes.extend_from_slice(&left_padded);
-        bytes.extend_from_slice(&(right.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(right_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(right.proof_bytes.len() as u64).to_le_bytes());
+        put_u32_v2(&mut bytes, right_kind as u32);
+        put_u32_v2(&mut bytes, right.proof_bytes.len() as u32);
         bytes.extend_from_slice(&right_statement_bytes);
         bytes.extend_from_slice(&right_padded);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
@@ -330,16 +315,10 @@ impl TreeRelationV2 {
             });
         }
         let child_kind = TreeWitnessKindV2::from_relation_kind(child.relation_kind)?;
-        let child_statement_bytes = recursive_segment_statement_bytes_v2(&child.statement);
-        let mut bytes = Vec::with_capacity(
-            (MERGE_WITNESS_HEADER_WORDS_V2 / 2 * 8)
-                + child_statement_bytes.len()
-                + child.proof_bytes.len(),
-        );
-        bytes.extend_from_slice(&(child.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(child_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(child.proof_bytes.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&child_statement_bytes);
+        let mut bytes =
+            Vec::with_capacity(TREE_CHILD_WITNESS_HEADER_BYTES_V2 + child.proof_bytes.len());
+        put_u32_v2(&mut bytes, child_kind as u32);
+        put_u32_v2(&mut bytes, child.proof_bytes.len() as u32);
         bytes.extend_from_slice(&child.proof_bytes);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
@@ -361,14 +340,10 @@ impl TreeRelationV2 {
     ) -> Result<Self, BlockRecursionError> {
         let child_kind = TreeWitnessKindV2::from_relation_kind(child.relation_kind)?;
         let child_padded = pad_child_proof_bytes_with_cap_v2(&child.proof_bytes, child_proof_cap)?;
-        let child_statement_bytes = recursive_segment_statement_bytes_v2(&child.statement);
-        let mut bytes = Vec::with_capacity(
-            (MERGE_WITNESS_HEADER_WORDS_V2 / 2 * 8) + child_statement_bytes.len() + child_proof_cap,
-        );
-        bytes.extend_from_slice(&(child.profile.tag() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(child_kind as u64).to_le_bytes());
-        bytes.extend_from_slice(&(child.proof_bytes.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&child_statement_bytes);
+        let mut bytes =
+            Vec::with_capacity(TREE_CHILD_WITNESS_HEADER_BYTES_V2 + child_proof_cap);
+        put_u32_v2(&mut bytes, child_kind as u32);
+        put_u32_v2(&mut bytes, child.proof_bytes.len() as u32);
         bytes.extend_from_slice(&child_padded);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
@@ -586,10 +561,6 @@ fn read_exact_u32_v2(bytes: &[u8], cursor: &mut usize) -> Result<u32, BlockRecur
     Ok(u32::from_le_bytes(read_exact_fixed_v2::<4>(bytes, cursor)?))
 }
 
-fn read_exact_u64_v2(bytes: &[u8], cursor: &mut usize) -> Result<u64, BlockRecursionError> {
-    Ok(u64::from_le_bytes(read_exact_fixed_v2::<8>(bytes, cursor)?))
-}
-
 pub fn recursive_segment_statement_bytes_v2(statement: &RecursiveSegmentStatementV2) -> Vec<u8> {
     let mut out = Vec::with_capacity(TREE_SEGMENT_STATEMENT_BYTES_V2);
     put_u32_v2(&mut out, statement.start_index);
@@ -631,28 +602,6 @@ fn decode_recursive_segment_statement_from_bytes_v2(
         statement_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
         verified_leaf_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
         verified_receipt_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-    };
-    if cursor != bytes.len() {
-        return Err(BlockRecursionError::TrailingBytes {
-            remaining: bytes.len() - cursor,
-        });
-    }
-    Ok(statement)
-}
-
-fn decode_recursive_prefix_statement_from_bytes_v2(
-    bytes: &[u8],
-) -> Result<RecursivePrefixStatementV1, BlockRecursionError> {
-    let mut cursor = 0usize;
-    let statement = RecursivePrefixStatementV1 {
-        tx_count: read_exact_u32_v2(bytes, &mut cursor)?,
-        start_state_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        end_state_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        verified_leaf_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        tx_statements_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        verified_receipt_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        start_tree_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        end_tree_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
     };
     if cursor != bytes.len() {
         return Err(BlockRecursionError::TrailingBytes {
@@ -979,42 +928,15 @@ fn decode_leaf_record_from_bytes_v2(
 
 fn decode_chunk_witness_v2(
     auxiliary_words: &[u64],
-) -> Result<
-    (
-        RecursivePrefixStatementV1,
-        RecursivePrefixStatementV1,
-        Vec<BlockLeafRecordV1>,
-    ),
-    BlockRecursionError,
-> {
+    active_len: usize,
+) -> Result<Vec<BlockLeafRecordV1>, BlockRecursionError> {
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
-    let mut cursor = 0usize;
-    let active_len = read_exact_u64_v2(&bytes, &mut cursor)? as usize;
     if active_len == 0 || active_len > TREE_RECURSIVE_CHUNK_SIZE_V2 {
         return Err(BlockRecursionError::InvalidField(
             "tree_v2 chunk active_len",
         ));
     }
-    let start_prefix = decode_recursive_prefix_statement_from_bytes_v2(
-        bytes
-            .get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2)
-            .ok_or(BlockRecursionError::InvalidLength {
-                what: "tree_v2 chunk start prefix",
-                expected: TREE_PREFIX_STATEMENT_BYTES_V2,
-                actual: bytes.len().saturating_sub(cursor),
-            })?,
-    )?;
-    cursor += TREE_PREFIX_STATEMENT_BYTES_V2;
-    let end_prefix = decode_recursive_prefix_statement_from_bytes_v2(
-        bytes
-            .get(cursor..cursor + TREE_PREFIX_STATEMENT_BYTES_V2)
-            .ok_or(BlockRecursionError::InvalidLength {
-                what: "tree_v2 chunk end prefix",
-                expected: TREE_PREFIX_STATEMENT_BYTES_V2,
-                actual: bytes.len().saturating_sub(cursor),
-            })?,
-    )?;
-    cursor += TREE_PREFIX_STATEMENT_BYTES_V2;
+    let mut cursor = 0usize;
     let mut records = Vec::with_capacity(active_len);
     for idx in 0..TREE_RECURSIVE_CHUNK_SIZE_V2 {
         let slot = bytes.get(cursor..cursor + CHUNK_SLOT_BYTES_V2).ok_or(
@@ -1041,19 +963,7 @@ fn decode_chunk_witness_v2(
             });
         }
     }
-    Ok((start_prefix, end_prefix, records))
-}
-
-fn profile_tag_from_u32_v2(
-    value: u32,
-) -> Result<SmallwoodRecursiveProfileTagV1, BlockRecursionError> {
-    match value {
-        1 => Ok(SmallwoodRecursiveProfileTagV1::A),
-        2 => Ok(SmallwoodRecursiveProfileTagV1::B),
-        _ => Err(BlockRecursionError::InvalidField(
-            "tree_v2 child profile tag",
-        )),
-    }
+    Ok(records)
 }
 
 fn pad_child_proof_bytes_with_cap_v2(
@@ -1079,7 +989,6 @@ fn decode_merge_child_v2(
     tree_level: usize,
 ) -> Result<
     (
-        SmallwoodRecursiveProfileTagV1,
         SmallwoodRecursiveRelationKindV1,
         RecursiveSegmentStatementV2,
         Vec<u8>,
@@ -1087,10 +996,8 @@ fn decode_merge_child_v2(
     BlockRecursionError,
 > {
     let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
-    let profile = profile_tag_from_u32_v2(read_exact_u64_v2(bytes, cursor)? as u32)?;
-    let kind =
-        TreeWitnessKindV2::from_u32(read_exact_u64_v2(bytes, cursor)? as u32)?.relation_kind();
-    let proof_len = read_exact_u64_v2(bytes, cursor)? as usize;
+    let kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(bytes, cursor)?)?.relation_kind();
+    let proof_len = read_exact_u32_v2(bytes, cursor)? as usize;
     if proof_len > child_proof_cap {
         return Err(BlockRecursionError::WidthMismatch {
             what: "tree_v2 child proof len",
@@ -1117,43 +1024,21 @@ fn decode_merge_child_v2(
                 actual: bytes.len().saturating_sub(*cursor),
             })?;
     *cursor += proof_len;
-    Ok((profile, kind, statement, proof_slice.to_vec()))
+    Ok((kind, statement, proof_slice.to_vec()))
 }
 
 fn chunk_relation_mismatch_v2(
     target_statement: &RecursiveSegmentStatementV2,
     auxiliary_words: &[u64],
 ) -> Result<u64, BlockRecursionError> {
-    let (start_prefix, end_prefix, records) = decode_chunk_witness_v2(auxiliary_words)?;
-    let active_len = records.len() as u32;
+    let active_len = target_statement.segment_len as usize;
+    let records = decode_chunk_witness_v2(auxiliary_words, active_len)?;
+    let active_len = active_len as u32;
     let mut mismatch = 0u64;
     if active_len != target_statement.segment_len {
         mismatch += 1;
     }
     if target_statement.start_index.saturating_add(active_len) != target_statement.end_index {
-        mismatch += 1;
-    }
-    if start_prefix.tx_count != target_statement.start_index {
-        mismatch += 1;
-    }
-    if end_prefix.tx_count != target_statement.end_index {
-        mismatch += 1;
-    }
-    if start_prefix.end_state_digest != target_statement.start_state_digest {
-        mismatch += 1;
-    }
-    if end_prefix.end_state_digest != target_statement.end_state_digest {
-        mismatch += 1;
-    }
-    if start_prefix.end_tree_commitment != target_statement.start_tree_commitment {
-        mismatch += 1;
-    }
-    if end_prefix.end_tree_commitment != target_statement.end_tree_commitment {
-        mismatch += 1;
-    }
-    if start_prefix.tx_statements_commitment != target_statement.tx_statements_commitment
-        || end_prefix.tx_statements_commitment != target_statement.tx_statements_commitment
-    {
         mismatch += 1;
     }
     if statement_digest_from_records_v2(&records) != target_statement.statement_tree_digest_v2 {
@@ -1296,9 +1181,9 @@ fn merge_relation_mismatch_v2(
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
     let mut cursor = 0usize;
     let child_level = tree_level - 1;
-    let (left_profile, left_kind, left_statement, left_proof) =
+    let (left_kind, left_statement, left_proof) =
         decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
-    let (right_profile, right_kind, right_statement, right_proof) =
+    let (right_kind, right_statement, right_proof) =
         decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
     if cursor != bytes.len() && bytes[cursor..].iter().any(|byte| *byte != 0) {
         return Err(BlockRecursionError::TrailingBytes {
@@ -1307,12 +1192,8 @@ fn merge_relation_mismatch_v2(
     }
     let mut mismatch = 0u64;
     let expected_child_profile = expected_child_profile_for_parent_kind_v2(relation_kind)?;
-    if profile_for_relation_kind_v2(left_kind)? != left_profile {
-        mismatch += 1;
-    }
-    if profile_for_relation_kind_v2(right_kind)? != right_profile {
-        mismatch += 1;
-    }
+    let left_profile = profile_for_relation_kind_v2(left_kind)?;
+    let right_profile = profile_for_relation_kind_v2(right_kind)?;
     if left_profile != expected_child_profile {
         mismatch += 1;
     }
@@ -1363,20 +1244,9 @@ fn carry_relation_mismatch_v2(
     let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
     let child_level = tree_level - 1;
     let mut cursor = 0usize;
-    let profile = profile_tag_from_u32_v2(read_exact_u64_v2(&bytes, &mut cursor)? as u32)?;
-    let child_kind = TreeWitnessKindV2::from_u32(read_exact_u64_v2(&bytes, &mut cursor)? as u32)?
+    let child_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?
         .relation_kind();
-    let proof_len = read_exact_u64_v2(&bytes, &mut cursor)? as usize;
-    let child_statement = decode_recursive_segment_statement_from_bytes_v2(
-        bytes
-            .get(cursor..cursor + TREE_SEGMENT_STATEMENT_BYTES_V2)
-            .ok_or(BlockRecursionError::InvalidLength {
-                what: "tree_v2 carry child statement bytes",
-                expected: TREE_SEGMENT_STATEMENT_BYTES_V2,
-                actual: bytes.len().saturating_sub(cursor),
-            })?,
-    )?;
-    cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
+    let proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
     let proof_slice =
         bytes
             .get(cursor..cursor + proof_len)
@@ -1395,20 +1265,15 @@ fn carry_relation_mismatch_v2(
     cursor += proof_len;
     let mut mismatch = 0u64;
     let expected_child_profile = expected_child_profile_for_parent_kind_v2(relation_kind)?;
-    if profile_for_relation_kind_v2(child_kind)? != profile {
-        mismatch += 1;
-    }
+    let profile = profile_for_relation_kind_v2(child_kind)?;
     if expected_child_profile != profile {
-        mismatch += 1;
-    }
-    if &child_statement != target_statement {
         mismatch += 1;
     }
     if verify_tree_child_v2(
         profile,
         child_kind,
         child_level,
-        &child_statement,
+        target_statement,
         proof_slice,
     )
     .is_err()
@@ -1540,19 +1405,6 @@ fn dummy_digest48_v2(seed: u8) -> Digest48 {
     [seed; 48]
 }
 
-fn dummy_prefix_statement_v2(tx_count: u32, seed: u8) -> RecursivePrefixStatementV1 {
-    RecursivePrefixStatementV1 {
-        tx_count,
-        start_state_digest: dummy_digest48_v2(seed),
-        end_state_digest: dummy_digest48_v2(seed.wrapping_add(1)),
-        verified_leaf_commitment: dummy_digest48_v2(seed.wrapping_add(2)),
-        tx_statements_commitment: dummy_digest48_v2(seed.wrapping_add(3)),
-        verified_receipt_commitment: dummy_digest48_v2(seed.wrapping_add(4)),
-        start_tree_commitment: dummy_digest48_v2(seed.wrapping_add(5)),
-        end_tree_commitment: dummy_digest48_v2(seed.wrapping_add(6)),
-    }
-}
-
 fn dummy_segment_statement_v2(
     start_index: u32,
     end_index: u32,
@@ -1618,15 +1470,11 @@ fn projected_tree_relation_proof_bytes_v2(
 }
 
 fn projected_chunk_proof_bytes_v2() -> Result<usize, BlockRecursionError> {
-    let start_prefix = dummy_prefix_statement_v2(0, 0x10);
-    let end_prefix = dummy_prefix_statement_v2(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x20);
     let records = (0..TREE_RECURSIVE_CHUNK_SIZE_V2)
         .map(|idx| dummy_leaf_record_v2(idx as u32, 0x30u8.wrapping_add(idx as u8)))
         .collect::<Vec<_>>();
     let relation = TreeRelationV2::new_chunk(
         dummy_segment_statement_v2(0, TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x40),
-        &start_prefix,
-        &end_prefix,
         &records,
     )?;
     projected_tree_relation_proof_bytes_v2(SmallwoodRecursiveRelationKindV1::ChunkA, &relation)
@@ -1944,15 +1792,7 @@ pub fn prove_block_recursive_v2(
                 start,
                 end,
             )?;
-            let start_prefix =
-                prefix_statement_for_records_v1(&input.records[..start], &input.semantic, false)?;
-            let end_prefix = prefix_statement_for_records_v1(
-                &input.records[..end],
-                &input.semantic,
-                end == input.records.len(),
-            )?;
-            let relation =
-                TreeRelationV2::new_chunk(statement.clone(), &start_prefix, &end_prefix, chunk)?;
+            let relation = TreeRelationV2::new_chunk(statement.clone(), chunk)?;
             let proof_bytes = prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &relation)?;
             Ok(TreeProofNodeV2 {
                 level,
