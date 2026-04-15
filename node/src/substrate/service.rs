@@ -3526,6 +3526,17 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
     payload.verifier_profile = verifier_profile;
 }
 
+fn proof_kind_requires_prepared_bundle(
+    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+) -> bool {
+    matches!(
+        proof_kind,
+        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+    )
+}
+
 const MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION: u32 = 4;
 const MIN_BLOCK_PROOF_BUNDLE_V2_TRANSACTION_VERSION: u32 = 2;
 
@@ -5126,12 +5137,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
         return Ok(None);
     }
 
-    let require_ready_bundle = matches!(
-        selector.proof_kind,
-        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
-    );
+    let require_ready_bundle = proof_kind_requires_prepared_bundle(selector.proof_kind);
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
@@ -5210,11 +5216,7 @@ fn ready_bundle_trace_for_candidate(
         return Ok(None);
     }
 
-    let require_ready_bundle = matches!(
-        selector.proof_kind,
-        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-    );
+    let require_ready_bundle = proof_kind_requires_prepared_bundle(selector.proof_kind);
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
@@ -5803,10 +5805,8 @@ pub fn wire_block_builder_api(
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let selected_artifact = prepared_artifact_selector_from_env();
-        let prepared_bundle_mode_enabled = matches!(
-            selected_artifact.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-        );
+        let prepared_bundle_mode_enabled =
+            proof_kind_requires_prepared_bundle(selected_artifact.proof_kind);
         let mut defer_proofless_until_ready_batch = false;
         let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
@@ -11116,12 +11116,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         let hold_mining_while_proving = load_hold_mining_while_proving();
         let selected_artifact = prepared_artifact_selector_from_env();
-        let prepared_bundle_required_while_proving = matches!(
-            selected_artifact.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-                | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-                | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
-        );
+        let prepared_bundle_required_while_proving =
+            proof_kind_requires_prepared_bundle(selected_artifact.proof_kind);
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
@@ -12313,6 +12309,28 @@ mod tests {
             selector.proof_kind,
             pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
         );
+    }
+
+    #[test]
+    fn prepared_bundle_requirement_matches_shipped_and_experimental_lanes() {
+        assert!(proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        ));
+        assert!(proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        ));
+        assert!(proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+        ));
+        assert!(!proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+        ));
+        assert!(!proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
+        ));
+        assert!(!proof_kind_requires_prepared_bundle(
+            pallet_shielded_pool::types::ProofArtifactKind::Custom([7u8; 16])
+        ));
     }
 
     #[test]

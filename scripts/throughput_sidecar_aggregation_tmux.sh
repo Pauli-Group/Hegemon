@@ -15,6 +15,7 @@ VALUE="${HEGEMON_TP_VALUE:-100000000}" # 1.0 HGM (8 decimals)
 FEE="${HEGEMON_TP_FEE:-0}"
 COINBASE_BLOCKS="${HEGEMON_TP_COINBASE_BLOCKS:-$((TX_COUNT + 3))}"
 MAX_BLOCK_WAIT_SECS="${HEGEMON_TP_MAX_BLOCK_WAIT_SECS:-600}"
+BLOCK_SHIELDED_TRANSFER_LIMIT="${HEGEMON_TP_BLOCK_SHIELDED_LIMIT:-$((TX_COUNT + 1))}"
 
 FAST="${HEGEMON_TP_FAST:-0}" # 1 = fast proofs (dev only)
 SKIP_BUILD="${HEGEMON_TP_SKIP_BUILD:-0}" # 1 = reuse existing release binaries
@@ -24,7 +25,7 @@ STRICT_AGGREGATION="${HEGEMON_TP_STRICT_AGGREGATION:-1}" # 1 = fail if proven ba
 STRICT_PREPARE_TIMEOUT_SECS="${HEGEMON_TP_STRICT_PREPARE_TIMEOUT_SECS:-}"
 MIN_PREPARED_TXS="${HEGEMON_TP_MIN_PREPARED_TXS:-$TX_COUNT}"
 TPS_EFFECTIVE_MODE="${HEGEMON_TP_EFFECTIVE_MODE:-inclusion}" # inclusion|end_to_end|submission
-PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation=current receipt_root lane, single=historical inline comparison
+PROOF_MODE="${HEGEMON_TP_PROOF_MODE:-aggregation}" # aggregation=shipped recursive_block lane, single=historical inline comparison
 
 case "$PROOF_MODE" in
   aggregation|single)
@@ -40,7 +41,7 @@ if [ -n "${HEGEMON_TP_SEND_PROOF_SIDECAR:-}" ]; then
 elif [ "$PROOF_MODE" = "single" ]; then
   SEND_PROOF_SIDECAR=0
 else
-  # The shipped receipt_root lane requires embedded proof bytes in every
+  # The shipped recursive_block lane requires embedded proof bytes in every
   # shielded transfer. DA sidecars remain fine, proof sidecars do not.
   SEND_PROOF_SIDECAR=0
 fi
@@ -53,7 +54,7 @@ if [ "$PROOF_MODE" = "single" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
   exit 1
 fi
 if [ "$PROOF_MODE" = "aggregation" ] && [ "$SEND_PROOF_SIDECAR" != "0" ]; then
-  echo "HEGEMON_TP_PROOF_MODE=aggregation measures the shipped receipt_root lane and requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
+  echo "HEGEMON_TP_PROOF_MODE=aggregation measures the shipped recursive_block lane and requires HEGEMON_TP_SEND_PROOF_SIDECAR=0." >&2
   exit 1
 fi
 
@@ -302,6 +303,10 @@ if ! [[ "$MIN_READY_BATCH_TXS" =~ ^[0-9]+$ ]] || [ "$MIN_READY_BATCH_TXS" -lt 1 
 fi
 if [ "$MIN_READY_BATCH_TXS" -gt "$TX_COUNT" ]; then
   echo "HEGEMON_TP_MIN_READY_BATCH_TXS (${MIN_READY_BATCH_TXS}) cannot exceed HEGEMON_TP_TX_COUNT (${TX_COUNT})." >&2
+  exit 1
+fi
+if ! [[ "$BLOCK_SHIELDED_TRANSFER_LIMIT" =~ ^[0-9]+$ ]] || [ "$BLOCK_SHIELDED_TRANSFER_LIMIT" -lt 1 ]; then
+  echo "HEGEMON_TP_BLOCK_SHIELDED_LIMIT must be a positive integer (got '$BLOCK_SHIELDED_TRANSFER_LIMIT')." >&2
   exit 1
 fi
 
@@ -1153,6 +1158,7 @@ echo "Throughput profile: $TP_PROFILE (host_threads=$HOST_THREADS host_mem_gib=$
 echo "Thread config: node_rayon=$NODE_RAYON_THREADS cargo_jobs=$CARGO_JOBS mine_threads=$MINE_THREADS agg_prepare_threads=$AGG_PREPARE_THREADS agg_prover_threads=$AGG_PROVER_THREADS" >&2
 echo "Batch config: target_txs=$TX_COUNT min_prepared_txs=$MIN_PREPARED_TXS min_ready_batch_txs=$MIN_READY_BATCH_TXS liveness_lane=$PROVER_LIVENESS_LANE queue_capacity=$BATCH_QUEUE_CAPACITY adaptive_liveness_ms=${ADAPTIVE_LIVENESS_MS:-default}" >&2
 echo "Aggregation recursion config: leaf_fanin=$AGG_LEAF_FANIN merge_fanin=$AGG_MERGE_FANIN tx_recursion_queries=$TX_RECURSION_NUM_QUERIES tx_recursion_log_blowup=$TX_RECURSION_LOG_BLOWUP outer_queries=$AGG_OUTER_NUM_QUERIES outer_log_blowup=$AGG_OUTER_LOG_BLOWUP prover_workers=$PROVER_WORKERS" >&2
+echo "Shielded block limit: block_shielded_transfer_limit=$BLOCK_SHIELDED_TRANSFER_LIMIT (includes coinbase when shielded mining is enabled)" >&2
 echo "Aggregation packing config: witness_lanes=${AGG_WITNESS_LANES:-default} add_lanes=${AGG_ADD_LANES:-default} mul_lanes=${AGG_MUL_LANES:-default}" >&2
 echo "Aggregation prewarm config: include_merge=${AGG_PREWARM_INCLUDE_MERGE:-default} max_txs=${AGG_PREWARM_MAX_TXS:-default(target_txs)}" >&2
 echo "Aggregation timeout budget: strict_prepare_timeout_secs=$STRICT_PREPARE_TIMEOUT_SECS batch_job_timeout_ms=$PROVER_BATCH_JOB_TIMEOUT_MS work_package_ttl_ms=$PROVER_WORK_PACKAGE_TTL_MS leaf_jobs=${AGG_LEAF_JOBS:-0}" >&2
@@ -1283,7 +1289,7 @@ tmux new-session -d -s "$SESSION" -n node \
      HEGEMON_AGGREGATION_PROOFS='${AGGREGATION_PROOFS_ENABLED}' \
      HEGEMON_PARALLEL_PROOF_VERIFICATION=1 \
      HEGEMON_FULL_IMPORT=1 \
-     HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${TX_COUNT}' \
+     HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK='${BLOCK_SHIELDED_TRANSFER_LIMIT}' \
      HEGEMON_AGG_PROFILE='${AGG_PROFILE}' \
      HEGEMON_AGG_LEAF_FANIN='${AGG_LEAF_FANIN}' \
      HEGEMON_AGG_MERGE_FANIN='${AGG_MERGE_FANIN}' \

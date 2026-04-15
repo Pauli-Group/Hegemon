@@ -280,6 +280,33 @@ where
         (ready, future)
     }
 
+    fn recover_idempotent_local_submission(
+        &self,
+        extrinsic_bytes: &[u8],
+        rejection: &str,
+        submission_kind: &str,
+    ) -> Option<(sp_core::H256, bool, bool)> {
+        if !is_idempotent_local_submission_error(rejection) {
+            return None;
+        }
+
+        let tx_hash = local_extrinsic_hash(extrinsic_bytes);
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return None;
+        }
+
+        tracing::warn!(
+            tx_hash = %hex::encode(tx_hash.as_ref()),
+            tracked_ready,
+            tracked_future,
+            rejection,
+            submission_kind,
+            "Recovered duplicate local submission as idempotent success"
+        );
+        Some((tx_hash, tracked_ready, tracked_future))
+    }
+
     async fn submit_kernel_action_inner(&self, envelope: ActionEnvelope) -> Result<[u8; 32], String>
     where
         Block::Hash: Into<sp_core::H256>,
@@ -291,12 +318,32 @@ where
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
         let at: sp_core::H256 = self.best_hash().into();
-        let tx_hash = self
+        let (tx_hash, tracked_ready, tracked_future) = match self
             .transaction_pool
             .submit_one(at, TransactionSource::Local, extrinsic)
             .await
-            .map_err(|e| format!("transaction pool rejected kernel action: {e:?}"))?;
-        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        {
+            Ok(tx_hash) => {
+                let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+                (tx_hash, tracked_ready, tracked_future)
+            }
+            Err(err) => {
+                let rejection = format!("{err:?}");
+                if let Some((tx_hash, tracked_ready, tracked_future)) = self
+                    .recover_idempotent_local_submission(
+                        &extrinsic_bytes,
+                        &rejection,
+                        "kernel action",
+                    )
+                {
+                    (tx_hash, tracked_ready, tracked_future)
+                } else {
+                    return Err(format!(
+                        "transaction pool rejected kernel action: {rejection}"
+                    ));
+                }
+            }
+        };
         if !tracked_ready && !tracked_future {
             return Err(format!(
                 "kernel action disappeared after local submission (tx_hash=0x{})",
@@ -331,6 +378,15 @@ fn canonicalize_native_balance_slot_asset_id_host(asset_id: u64) -> u64 {
     } else {
         asset_id
     }
+}
+
+fn is_idempotent_local_submission_error(rejection: &str) -> bool {
+    let lower = rejection.to_ascii_lowercase();
+    lower.contains("toolowpriority") || lower.contains("alreadyimported")
+}
+
+fn local_extrinsic_hash(extrinsic_bytes: &[u8]) -> sp_core::H256 {
+    sp_core::H256(sp_core::hashing::blake2_256(extrinsic_bytes))
 }
 
 fn canonical_balance_slots_from_public_args_host(
@@ -1329,12 +1385,32 @@ where
         let extrinsic_bytes = extrinsic.encode();
         let at: sp_core::H256 = self.best_hash().into();
 
-        let tx_hash = self
+        let (tx_hash, tracked_ready, tracked_future) = match self
             .transaction_pool
             .submit_one(at, TransactionSource::Local, extrinsic)
             .await
-            .map_err(|e| format!("transaction pool rejected unsigned shielded transfer: {e:?}"))?;
-        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        {
+            Ok(tx_hash) => {
+                let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+                (tx_hash, tracked_ready, tracked_future)
+            }
+            Err(err) => {
+                let rejection = format!("{err:?}");
+                if let Some((tx_hash, tracked_ready, tracked_future)) = self
+                    .recover_idempotent_local_submission(
+                        &extrinsic_bytes,
+                        &rejection,
+                        "unsigned shielded transfer",
+                    )
+                {
+                    (tx_hash, tracked_ready, tracked_future)
+                } else {
+                    return Err(format!(
+                        "transaction pool rejected unsigned shielded transfer: {rejection}"
+                    ));
+                }
+            }
+        };
         if !tracked_ready && !tracked_future {
             return Err(format!(
                 "unsigned shielded transfer disappeared after local submission (tx_hash=0x{})",
@@ -1466,6 +1542,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sp_core::hashing::blake2_256;
 
     fn test_reward_bundle(seed: u8) -> pallet_shielded_pool::types::BlockRewardBundle {
         pallet_shielded_pool::types::BlockRewardBundle {
@@ -1496,6 +1573,28 @@ mod tests {
         assert_eq!(
             try_decode_coinbase_recipient::<runtime::Block>(&extrinsic),
             Some(recipient)
+        );
+    }
+
+    #[test]
+    fn duplicate_submission_error_classifier_matches_pool_rejections() {
+        assert!(is_idempotent_local_submission_error(
+            "Pool(TooLowPriority { old: 100, new: 100 })"
+        ));
+        assert!(is_idempotent_local_submission_error(
+            "AlreadyImported(0x1234)"
+        ));
+        assert!(!is_idempotent_local_submission_error(
+            "InvalidTransaction::Custom(3)"
+        ));
+    }
+
+    #[test]
+    fn local_extrinsic_hash_uses_blake2_256() {
+        let bytes = b"hegemon-extrinsic";
+        assert_eq!(
+            local_extrinsic_hash(bytes),
+            sp_core::H256(blake2_256(bytes))
         );
     }
 }
