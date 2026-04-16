@@ -700,6 +700,44 @@ fn recursive_artifact_v2_constant_size_across_first_carry_boundary() {
 
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn prove_and_verify_recursive_artifact_v2_at_deepest_supported_level_succeeds() {
+    let report = tree_proof_cap_report_v2();
+    let deepest_level_boundary = if report.max_tree_level == 0 {
+        1u32
+    } else {
+        (((1usize << (report.max_tree_level - 1)) * TREE_RECURSIVE_CHUNK_SIZE_V2) + 1) as u32
+    };
+    assert!(deepest_level_boundary as usize <= report.max_supported_txs);
+    let (artifact, public) = prove_artifact_v2(deepest_level_boundary);
+    let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
+    assert_eq!(verified, public);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn recursive_artifact_v2_constant_size_at_deepest_supported_level() {
+    let report = tree_proof_cap_report_v2();
+    let deepest_level_boundary = if report.max_tree_level == 0 {
+        1u32
+    } else {
+        (((1usize << (report.max_tree_level - 1)) * TREE_RECURSIVE_CHUNK_SIZE_V2) + 1) as u32
+    };
+    assert!(deepest_level_boundary as usize <= report.max_supported_txs);
+    let deep_width =
+        serialize_recursive_block_artifact_v2(&prove_artifact_v2(deepest_level_boundary).0)
+            .unwrap()
+            .len();
+    let max_width = serialize_recursive_block_artifact_v2(
+        &prove_artifact_v2(report.max_supported_txs as u32).0,
+    )
+    .unwrap()
+    .len();
+    assert_eq!(deep_width, max_width);
+    assert_eq!(deep_width, recursive_block_artifact_bytes_v2());
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_matches_derived_constant_width() {
     let width = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
         .unwrap()

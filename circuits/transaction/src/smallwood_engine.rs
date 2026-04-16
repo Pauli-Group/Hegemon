@@ -2366,14 +2366,13 @@ fn get_constraint_linear_evals(
     if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
         let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
         for num in 0..eval_points.len() {
-            for (check, out_eval) in out[num]
-                .iter_mut()
-                .enumerate()
-                .take(cfg.linear_constraint_count)
-            {
-                let row = check / cfg.packing_factor;
-                let col = check % cfg.packing_factor;
-                *out_eval = mul_mod(witness_evals[num][row], lag_evals[num][col]);
+            let mut out_idx = 0usize;
+            for row in 0..cfg.row_count {
+                let witness = witness_evals[num][row];
+                for col in 0..cfg.packing_factor {
+                    out[num][out_idx] = mul_mod(witness, lag_evals[num][col]);
+                    out_idx += 1;
+                }
             }
         }
         return Ok(out);
