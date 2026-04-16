@@ -1,4 +1,6 @@
 use std::cmp::min;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use blake3::Hasher;
@@ -34,6 +36,8 @@ pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
 const SMALLWOOD_DECS_ETA: usize = 3;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
+static CONSECUTIVE_LAGRANGE_BASIS_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<u64>>>>>> =
+    OnceLock::new();
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SmallwoodArithmetization {
     Bridge64V1,
@@ -1748,15 +1752,15 @@ fn piop_run(
     log_stage("derive_gamma_prime", &mut last);
     let in_ppol = get_constraint_polynomials(cfg, statement, witness_polys)?;
     log_stage("constraint_polynomials", &mut last);
+    let lagrange_basis = cached_lagrange_basis(cfg.packing_factor, &cfg.packing_points)?;
     let in_plin = get_constraint_linear_polynomials_batched(
         cfg,
         statement,
         witness_polys,
-        &cfg.packing_points,
+        lagrange_basis.as_ref(),
         &gammas,
     )?;
     log_stage("constraint_linear_polynomials", &mut last);
-    let vanishing = poly_set_vanishing(&cfg.packing_points);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
     let mut ppol_highs = Vec::with_capacity(SMALLWOOD_RHO);
@@ -1778,8 +1782,6 @@ fn piop_run(
         transcript_words.extend_from_slice(&out_plin[1..]);
         ppol_highs.push(out_ppol[SMALLWOOD_NB_OPENED_EVALS..].to_vec());
         plin_highs.push(out_plin[(SMALLWOOD_NB_OPENED_EVALS + 1)..].to_vec());
-
-        let _ = &vanishing;
     }
     log_stage("transcript_assembly", &mut last);
     Ok(PiopRunOutput {
@@ -1817,12 +1819,12 @@ pub fn piop_recompute_transcript(
         .collect::<Vec<_>>();
     let in_epol =
         get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
+    let lagrange_basis = cached_lagrange_basis(cfg.packing_factor, &cfg.packing_points)?;
     let in_elin =
-        get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, &cfg.packing_points)?;
+        get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, lagrange_basis.as_ref())?;
     let linear_targets = effective_linear_targets(statement, auxiliary_words);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
-    let vanishing = poly_set_vanishing(&cfg.packing_points);
     let eval_points_with_zero = {
         let mut v = eval_points.to_vec();
         v.push(0);
@@ -1882,8 +1884,6 @@ pub fn piop_recompute_transcript(
         res = div_mod(res, correction_factor);
         let scaled_lag = poly_mul_scalar(&lag, res);
         poly_add_assign(&mut out_plin, &scaled_lag);
-
-        let _ = &vanishing;
         transcript_words.extend_from_slice(&out_ppol);
         transcript_words.extend_from_slice(&out_plin[1..]);
     }
@@ -2259,10 +2259,9 @@ fn get_constraint_linear_polynomials_batched(
     cfg: &SmallwoodConfig,
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_polys: &[Vec<u64>],
-    packing_points: &[u64],
+    lag: &[Vec<u64>],
     gammas: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
-    let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let out_degree = cfg.wit_poly_degree + (cfg.packing_factor - 1);
     if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
         return (0..SMALLWOOD_RHO)
@@ -2354,9 +2353,8 @@ fn get_constraint_linear_evals(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     eval_points: &[u64],
     witness_evals: &[Vec<u64>],
-    packing_points: &[u64],
+    lag: &[Vec<u64>],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
-    let lag = build_lagrange_basis(cfg.packing_factor, packing_points)?;
     let mut lag_evals = vec![vec![0u64; cfg.packing_factor]; eval_points.len()];
     for (num, &eval_point) in eval_points.iter().enumerate() {
         for col in 0..cfg.packing_factor {
@@ -4106,14 +4104,6 @@ pub fn interpolate_smallwood_consecutive_row_v1(
     interpolate_consecutive(evals)
 }
 
-fn poly_set_vanishing(roots: &[u64]) -> Vec<u64> {
-    let mut vanishing = vec![1u64];
-    for root in roots {
-        vanishing = poly_mul_linear_normalized(&vanishing, *root);
-    }
-    vanishing
-}
-
 fn poly_set_lagrange(points: &[u64], ind: usize) -> Vec<u64> {
     let degree = points.len() - 1;
     let mut lag = vec![0u64; degree + 1];
@@ -4147,6 +4137,26 @@ fn build_lagrange_basis(
         });
     }
     Ok(out)
+}
+
+fn cached_lagrange_basis(
+    packing_factor: usize,
+    packing_points: &[u64],
+) -> Result<Arc<Vec<Vec<u64>>>, TransactionCircuitError> {
+    if !points_are_consecutive(packing_points) {
+        return Ok(Arc::new(build_lagrange_basis(
+            packing_factor,
+            packing_points,
+        )?));
+    }
+    let cache = CONSECUTIVE_LAGRANGE_BASIS_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(cached) = cache.lock().expect("lagrange cache mutex").get(&packing_factor) {
+        return Ok(cached.clone());
+    }
+    let built = Arc::new(build_lagrange_basis(packing_factor, packing_points)?);
+    let mut guard = cache.lock().expect("lagrange cache mutex");
+    let cached = guard.entry(packing_factor).or_insert_with(|| built.clone());
+    Ok(cached.clone())
 }
 
 fn poly_remove_one_degree_factor(poly: &[u64], root: u64) -> Vec<u64> {
