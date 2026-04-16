@@ -17,6 +17,7 @@ The key idea is to stop putting full child proof bytes into the parent recursive
 - [x] (2026-04-14 20:53Z) Audit the current `tree_v2` geometry and confirm the exact blow-up source.
 - [x] (2026-04-14 20:53Z) Confirm the current `tree_v2` bounded-domain cap and artifact size: root proof cap `26,023,056`, outer artifact `26,023,844`, with `TREE_RECURSIVE_CHUNK_SIZE_V2 = 4` and `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`.
 - [x] (2026-04-14 20:53Z) Draft the `tree_v3` optimization plan centered on a compact recursive child object instead of raw child proof bytes.
+- [x] (2026-04-16 19:34Z) Run the first backend spike against a real `tree_v2` recursive proof and compare existing backend-native child-object candidates.
 - [ ] Prototype the backend compact-child-object surface in `transaction-circuit`.
 - [ ] Measure the derived proof-cap geometry for the compact-child-object design and compare it to `v1` and `v2`.
 - [ ] Implement a `recursive_block_v3` spike in `circuits/block-recursion` using the compact child object.
@@ -40,6 +41,9 @@ The key idea is to stop putting full child proof bytes into the parent recursive
 - Observation: a bounded-domain proof cap can make the current tree lane valid, but it cannot make it competitive.
   Evidence: the current `v2` bounded-domain cap now passes `prove_and_verify_recursive_artifact_v2_succeeds`, `recursive_artifact_v2_constant_size_across_tx_counts`, and the explicit `RecursiveBlockV2` consensus/runtime admission tests, but the derived cap is still two orders of magnitude worse than the shipped lane.
 
+- Observation: existing backend-native proof surfaces do not provide a meaningful compact child object for `v3`.
+  Evidence: on a real merge-boundary `tree_v2` root proof (`tx_count = 129`), the raw proof bytes were `272,288`, the serialized decoded `SmallwoodProofTraceV1` was `272,284`, the serialized `SmallwoodRecursiveVerifierTraceV1` was `318,401`, and the projected recursive envelope was `272,408`. That means the obvious “reuse what the backend already exposes” candidates are either effectively the same size as the raw proof or larger.
+
 ## Decision Log
 
 - Decision: do not try to “optimize `v2`” with small local edits.
@@ -54,6 +58,10 @@ The key idea is to stop putting full child proof bytes into the parent recursive
   Rationale: if `transaction-circuit` cannot expose a compact recursive child object, then no amount of work in `circuits/block-recursion` will make the tree lane small.
   Date/Author: 2026-04-14 / Codex
 
+- Decision: treat the existing decoded proof trace and full verifier trace as ruled-out child-object candidates.
+  Rationale: the real-size comparison on a merge-boundary `tree_v2` proof showed that `SmallwoodProofTraceV1` is only `4` bytes smaller than the raw proof and `SmallwoodRecursiveVerifierTraceV1` is materially larger, so simply swapping the child payload to an already-existing backend object does not change the bad recurrence.
+  Date/Author: 2026-04-16 / Codex
+
 - Decision: define success against two bars, not one.
   Rationale: `v3` must be both correct and worth keeping. The hard correctness bar is fixed-width and fail-closed verification. The utility bar is size competitiveness: if `v3` stays in multi-megabyte territory, it is not a product improvement.
   Date/Author: 2026-04-14 / Codex
@@ -67,6 +75,10 @@ The key idea is to stop putting full child proof bytes into the parent recursive
 - Outcome: this document captures the first implementation-grade optimization attempt for the tree lane.
   Gap: no code has been written yet.
   Lesson: the right question is not “can the tree lane be bounded?” It is “can the backend verify children from a compact object instead of full proof bytes?” That is the only redesign that changes the bad recurrence.
+
+- Outcome: the first backend spike is now partially complete.
+  Gap: there is still no new compact child object implementation in `transaction-circuit`.
+  Lesson: the existing backend-native decoded proof objects are not enough. A real `v3` requires a new verifier-facing object with less payload than the current proof serialization, not just repackaging `SmallwoodProofTraceV1` or `SmallwoodRecursiveVerifierTraceV1`.
 
 ## Context and Orientation
 
@@ -308,4 +320,6 @@ In [circuits/block-recursion/src/tree_v3.rs](/Users/pldd/Projects/Reflexivity/He
 
 Do not export `v3` into consensus/runtime until the comparison gate says it is worth keeping.
 
-Revision note: this file was created on 2026-04-14 because the newly corrected `tree_v2` lane proved that bounded-domain constant size is achievable on the current backend, but only at an unacceptable artifact size. The plan therefore shifts from “make the tree lane sound” to “make the tree lane compact enough to matter.” 
+Revision note: this file was created on 2026-04-14 because the newly corrected `tree_v2` lane proved that bounded-domain constant size is achievable on the current backend, but only at an unacceptable artifact size. The plan therefore shifts from “make the tree lane sound” to “make the tree lane compact enough to matter.”
+
+Revision note: updated on 2026-04-16 after the first backend spike measured the obvious backend-native child-object candidates on a real `tree_v2` proof. That spike ruled out `SmallwoodProofTraceV1` and `SmallwoodRecursiveVerifierTraceV1` as meaningful compact-child-object replacements because they are effectively the same size as the raw proof or larger.

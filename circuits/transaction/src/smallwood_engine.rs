@@ -620,6 +620,35 @@ fn poseidon2_domain_words(domain: &[u8]) -> Vec<u64> {
     words
 }
 
+#[inline]
+fn update_hasher_with_word_slice(hasher: &mut Hasher, words: &[u64]) {
+    #[cfg(target_endian = "little")]
+    unsafe {
+        let bytes = std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), std::mem::size_of_val(words));
+        hasher.update(bytes);
+    }
+    #[cfg(not(target_endian = "little"))]
+    for word in words {
+        hasher.update(&word.to_le_bytes());
+    }
+}
+
+#[inline]
+fn read_blake3_xof_words(mut reader: blake3::OutputReader, out_words: usize) -> Vec<u64> {
+    let mut out = vec![0u64; out_words];
+    for slot in &mut out {
+        let mut buf = [0u8; 16];
+        reader.fill(&mut buf);
+        *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
+    }
+    out
+}
+
+#[inline]
+fn read_blake3_xof_digest(reader: blake3::OutputReader) -> [u8; DIGEST_BYTES] {
+    words_to_digest(&read_blake3_xof_words(reader, DIGEST_WORDS))
+}
+
 fn transcript_xof_words(
     backend: SmallwoodTranscriptBackend,
     domain: &[u8],
@@ -638,17 +667,8 @@ fn transcript_xof_words(
             let mut hasher = Hasher::new();
             hasher.update(domain);
             hasher.update(&(words.len() as u64).to_le_bytes());
-            for word in words {
-                hasher.update(&word.to_le_bytes());
-            }
-            let mut reader = hasher.finalize_xof();
-            let mut out = vec![0u64; out_words];
-            for slot in &mut out {
-                let mut buf = [0u8; 16];
-                reader.fill(&mut buf);
-                *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
-            }
-            out
+            update_hasher_with_word_slice(&mut hasher, words);
+            read_blake3_xof_words(hasher.finalize_xof(), out_words)
         }
         SmallwoodTranscriptBackend::Poseidon2 => {
             let mut state = [Felt::ZERO; transaction_core::constants::POSEIDON2_WIDTH];
@@ -696,16 +716,9 @@ fn blake3_compress2_words(words: &[u64; 8]) -> [u64; 4] {
     let mut hasher = Hasher::new();
     hasher.update(SMALLWOOD_COMPRESS2_DOMAIN);
     hasher.update(&(words.len() as u64).to_le_bytes());
-    for word in words {
-        hasher.update(&word.to_le_bytes());
-    }
-    let mut reader = hasher.finalize_xof();
+    update_hasher_with_word_slice(&mut hasher, words);
     let mut out = [0u64; 4];
-    for slot in &mut out {
-        let mut buf = [0u8; 16];
-        reader.fill(&mut buf);
-        *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
-    }
+    out.copy_from_slice(&read_blake3_xof_words(hasher.finalize_xof(), 4));
     out
 }
 
@@ -2863,6 +2876,22 @@ fn hash_merkle_leave_from_tables(
     leaf_idx: usize,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
+        let mut hasher = Hasher::new();
+        hasher.update(SMALLWOOD_XOF_DOMAIN);
+        hasher.update(
+            &((salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len()) as u64)
+                .to_le_bytes(),
+        );
+        update_hasher_with_word_slice(&mut hasher, salt_words);
+        for poly in committed_domain_evals {
+            hasher.update(&poly[leaf_idx].to_le_bytes());
+        }
+        for poly in masking_domain_evals {
+            hasher.update(&poly[leaf_idx].to_le_bytes());
+        }
+        return read_blake3_xof_digest(hasher.finalize_xof());
+    }
     let mut input = Vec::with_capacity(
         salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len(),
     );
@@ -2881,6 +2910,14 @@ fn hash_merkle_root(
     root: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
+        let mut hasher = Hasher::new();
+        hasher.update(SMALLWOOD_XOF_DOMAIN);
+        hasher.update(&((SALT_WORDS + DIGEST_WORDS) as u64).to_le_bytes());
+        hasher.update(salt);
+        hasher.update(root);
+        return read_blake3_xof_digest(hasher.finalize_xof());
+    }
     let mut input = Vec::with_capacity(SALT_WORDS + DIGEST_WORDS);
     input.extend(bytes_to_words_unchecked(salt));
     input.extend(digest_to_words(root));
@@ -3203,24 +3240,38 @@ fn merkle_build_levels(
     levels: &mut Vec<Vec<[u8; DIGEST_BYTES]>>,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
-    let mut current = levels[0].clone();
-    while current.len() > 1 {
-        let mut parents = Vec::with_capacity(current.len().div_ceil(2));
-        for pair in current.chunks(2) {
-            let mut input = Vec::with_capacity(pair.len() * DIGEST_WORDS);
-            for child in pair {
-                input.extend(digest_to_words(child));
-            }
-            parents.push(transcript_xof_digest(
-                transcript_backend,
-                SMALLWOOD_XOF_DOMAIN,
-                &input,
-            ));
-        }
-        levels.push(parents.clone());
-        current = parents;
+    let mut level_idx = 0usize;
+    while levels[level_idx].len() > 1 {
+        let current = &levels[level_idx];
+        let parents = if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
+            current
+                .par_chunks(2)
+                .map(|pair| {
+                    let mut hasher = Hasher::new();
+                    hasher.update(SMALLWOOD_XOF_DOMAIN);
+                    hasher.update(&((pair.len() * DIGEST_WORDS) as u64).to_le_bytes());
+                    for child in pair {
+                        hasher.update(child);
+                    }
+                    read_blake3_xof_digest(hasher.finalize_xof())
+                })
+                .collect()
+        } else {
+            current
+                .par_chunks(2)
+                .map(|pair| {
+                    let mut input = Vec::with_capacity(pair.len() * DIGEST_WORDS);
+                    for child in pair {
+                        input.extend(digest_to_words(child));
+                    }
+                    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+                })
+                .collect()
+        };
+        levels.push(parents);
+        level_idx += 1;
     }
-    current[0]
+    levels[level_idx][0]
 }
 
 fn merkle_auth_path(

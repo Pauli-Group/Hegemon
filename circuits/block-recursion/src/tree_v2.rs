@@ -1976,3 +1976,117 @@ pub fn verify_block_recursive_v2(
     )?;
     Ok(expected_public.clone())
 }
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    use transaction_circuit::{
+        build_recursive_verifier_trace_v1, decode_smallwood_proof_trace_v1,
+        projected_smallwood_recursive_envelope_bytes_v1,
+    };
+
+    fn digest32(tag: u8, idx: u32) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (offset, byte) in out.iter_mut().enumerate() {
+            *byte = tag
+                .wrapping_add(idx as u8)
+                .wrapping_add((offset as u8).wrapping_mul(3));
+        }
+        out
+    }
+
+    fn digest48(tag: u8, idx: u32) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        for (offset, byte) in out.iter_mut().enumerate() {
+            *byte = tag
+                .wrapping_add(idx as u8)
+                .wrapping_add((offset as u8).wrapping_mul(5));
+        }
+        out
+    }
+
+    fn sample_input_v2(tx_count: u32) -> BlockRecursiveProverInputV2 {
+        let records = (0..tx_count)
+            .map(|tx_index| BlockLeafRecordV1 {
+                tx_index,
+                receipt_statement_hash: digest48(0x10, tx_index),
+                receipt_proof_digest: digest48(0x20, tx_index),
+                receipt_public_inputs_digest: digest48(0x30, tx_index),
+                receipt_verifier_profile: digest48(0x40, tx_index),
+                leaf_params_fingerprint: digest48(0x50, tx_index),
+                leaf_spec_digest: digest32(0x60, tx_index),
+                leaf_relation_id: digest32(0x70, tx_index),
+                leaf_shape_digest: digest32(0x80, tx_index),
+                leaf_statement_digest: digest48(0x90, tx_index),
+                leaf_commitment_digest: digest48(0xa0, tx_index),
+                leaf_proof_digest: digest48(0xb0, tx_index),
+            })
+            .collect();
+        BlockRecursiveProverInputV2 {
+            records,
+            semantic: BlockSemanticInputsV1 {
+                tx_statements_commitment: digest48(0xc0, tx_count),
+                start_shielded_root: digest48(0xd0, 0),
+                end_shielded_root: digest48(0xd1, tx_count),
+                start_kernel_root: digest48(0xe0, 0),
+                end_kernel_root: digest48(0xe1, tx_count),
+                nullifier_root: digest48(0xf0, tx_count),
+                da_root: digest48(0xf8, tx_count),
+                start_tree_commitment: digest48(0xa8, 0),
+                end_tree_commitment: digest48(0xa9, tx_count),
+            },
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic size-report for compact child object experiments"]
+    fn tree_v2_child_object_candidate_size_report() {
+        let tx_count = TREE_RECURSIVE_CHUNK_SIZE_V2 as u32 + 1;
+        let input = sample_input_v2(tx_count);
+        let artifact = prove_block_recursive_v2(&input).unwrap();
+        let expected_public = public_replay_v2(&input.records, &input.semantic).unwrap();
+        let expected_kind = expected_root_terminal_kind_v2(expected_public.tx_count).unwrap();
+        let expected_profile = expected_root_terminal_profile_v2(expected_public.tx_count).unwrap();
+        let expected_level = tree_root_level_for_tx_count_v2(expected_public.tx_count).unwrap();
+        let expected_statement = recursive_segment_statement_from_public_v2(&expected_public);
+        let relation = rebuild_tree_relation_from_proof_v2(
+            expected_profile,
+            expected_kind,
+            expected_level,
+            expected_statement.clone(),
+            &artifact.artifact.proof_bytes,
+        )
+        .unwrap();
+        let actual_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
+            &tree_recursive_profile_v2(expected_profile),
+            &relation,
+        )
+        .unwrap();
+        let proof_slice = &artifact.artifact.proof_bytes[..actual_proof_bytes];
+        let proof_trace = decode_smallwood_proof_trace_v1(proof_slice).unwrap();
+        let descriptor =
+            tree_recursive_descriptor_v2(expected_profile, expected_kind, expected_level);
+        let binding = tree_binding_bytes_v2(&expected_statement);
+        let verifier_trace = build_recursive_verifier_trace_v1(
+            &tree_recursive_profile_v2(expected_profile),
+            &descriptor,
+            &relation,
+            &binding,
+            proof_slice,
+        )
+        .unwrap();
+        let proof_trace_bytes = bincode::serialize(&proof_trace).unwrap();
+        let verifier_trace_bytes = bincode::serialize(&verifier_trace).unwrap();
+        let envelope_bytes =
+            projected_smallwood_recursive_envelope_bytes_v1(&descriptor, actual_proof_bytes)
+                .unwrap();
+        eprintln!(
+            "tree_v2 child object candidates: proof={} proof_trace={} verifier_trace={} envelope={} aux_words={}",
+            actual_proof_bytes,
+            proof_trace_bytes.len(),
+            verifier_trace_bytes.len(),
+            envelope_bytes,
+            relation.auxiliary_witness_words.len()
+        );
+    }
+}
