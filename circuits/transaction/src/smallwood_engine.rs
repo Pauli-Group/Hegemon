@@ -624,7 +624,8 @@ fn poseidon2_domain_words(domain: &[u8]) -> Vec<u64> {
 fn update_hasher_with_word_slice(hasher: &mut Hasher, words: &[u64]) {
     #[cfg(target_endian = "little")]
     unsafe {
-        let bytes = std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), std::mem::size_of_val(words));
+        let bytes =
+            std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), std::mem::size_of_val(words));
         hasher.update(bytes);
     }
     #[cfg(not(target_endian = "little"))]
@@ -1833,8 +1834,13 @@ pub fn piop_recompute_transcript(
     let in_epol =
         get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
     let lagrange_basis = cached_lagrange_basis(cfg.packing_factor, &cfg.packing_points)?;
-    let in_elin =
-        get_constraint_linear_evals(cfg, statement, eval_points, &wit_evals, lagrange_basis.as_ref())?;
+    let in_elin = get_constraint_linear_evals(
+        cfg,
+        statement,
+        eval_points,
+        &wit_evals,
+        lagrange_basis.as_ref(),
+    )?;
     let linear_targets = effective_linear_targets(statement, auxiliary_words);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
@@ -2378,10 +2384,9 @@ fn get_constraint_linear_evals(
         let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
         for num in 0..eval_points.len() {
             let mut out_idx = 0usize;
-            for row in 0..cfg.row_count {
-                let witness = witness_evals[num][row];
-                for col in 0..cfg.packing_factor {
-                    out[num][out_idx] = mul_mod(witness, lag_evals[num][col]);
+            for &witness in witness_evals[num].iter().take(cfg.row_count) {
+                for &lag_eval in lag_evals[num].iter().take(cfg.packing_factor) {
+                    out[num][out_idx] = mul_mod(witness, lag_eval);
                     out_idx += 1;
                 }
             }
@@ -2880,7 +2885,8 @@ fn hash_merkle_leave_from_tables(
         let mut hasher = Hasher::new();
         hasher.update(SMALLWOOD_XOF_DOMAIN);
         hasher.update(
-            &((salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len()) as u64)
+            &((salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len())
+                as u64)
                 .to_le_bytes(),
         );
         update_hasher_with_word_slice(&mut hasher, salt_words);
@@ -4053,10 +4059,19 @@ mod tests {
         for domain in domains {
             for words in &samples {
                 for &out_words in &[1usize, 3, 4, 7] {
-                    let actual =
-                        transcript_xof_words(SmallwoodTranscriptBackend::Blake3, domain, words, out_words);
+                    let actual = transcript_xof_words(
+                        SmallwoodTranscriptBackend::Blake3,
+                        domain,
+                        words,
+                        out_words,
+                    );
                     let expected = transcript_xof_words_blake3_reference(domain, words, out_words);
-                    assert_eq!(actual, expected, "domain={domain:?} len={} out={out_words}", words.len());
+                    assert_eq!(
+                        actual,
+                        expected,
+                        "domain={domain:?} len={} out={out_words}",
+                        words.len()
+                    );
                 }
             }
         }
@@ -4345,7 +4360,11 @@ fn cached_lagrange_basis(
         )?));
     }
     let cache = CONSECUTIVE_LAGRANGE_BASIS_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
-    if let Some(cached) = cache.lock().expect("lagrange cache mutex").get(&packing_factor) {
+    if let Some(cached) = cache
+        .lock()
+        .expect("lagrange cache mutex")
+        .get(&packing_factor)
+    {
         return Ok(cached.clone());
     }
     let built = Arc::new(build_lagrange_basis(packing_factor, packing_points)?);

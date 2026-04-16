@@ -851,10 +851,9 @@ fn get_constraint_linear_evals(
         let mut out = vec![vec![0u64; cfg.linear_constraint_count]; eval_points.len()];
         for num in 0..eval_points.len() {
             let mut out_idx = 0usize;
-            for row in 0..cfg.row_count {
-                let witness = witness_evals[num][row];
-                for col in 0..cfg.packing_factor {
-                    out[num][out_idx] = mul_mod(witness, lag_evals[num][col]);
+            for &witness in witness_evals[num].iter().take(cfg.row_count) {
+                for &lag_eval in lag_evals[num].iter().take(cfg.packing_factor) {
+                    out[num][out_idx] = mul_mod(witness, lag_eval);
                     out_idx += 1;
                 }
             }
