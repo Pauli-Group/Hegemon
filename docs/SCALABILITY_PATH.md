@@ -53,6 +53,101 @@ The main scaling levers on the shipped path are:
 
 This is the important architectural point: the fixed block artifact is not the only growth driver. Chain growth still scales with the ordered transaction set and ciphertext availability bytes. The recursive block artifact only keeps the block-validity proof component constant-width.
 
+## Capacity planning and chain-growth model
+
+This section is a deployment-planning model for the shipped `RecursiveBlockV1` lane. It is deliberately simple and uses current code constants rather than optimistic future compression claims.
+
+### Assumptions
+
+- shipped on-chain block artifact: `recursive_block_v1 = 699,404 B`
+- experimental `RecursiveBlockV2 = 1,239,940 B` is not used for the shipped planning model
+- proofless sidecar transfer public on-chain body: about `468 B/tx`
+- raw DA ciphertext ingress: about `4,294 B/tx`
+- values below are protocol payload only; they do not include RocksDB amplification, erasure-coding overhead, replication, or generic block/header/network framing
+
+The current constants behind those assumptions are:
+
+- `RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE = 699_404`
+- `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 1_239_940`
+- `ENCRYPTED_NOTE_SIZE = 579`
+- `MAX_KEM_CIPHERTEXT_LEN = 1568`
+- `MAX_OUTPUTS = 2`
+
+### Core formulas
+
+Let:
+
+- `T` = shielded TPS
+- `k` = average shielded tx per non-empty shielded block
+
+Then the shipped lane projects to:
+
+```text
+G_on(T, k) ~= 86400 * T * (468 + 699404 / k) bytes/day
+           ~= T * (0.0377 + 56.28 / k) GiB/day
+
+G_da(T)    ~= 86400 * T * 4294 bytes/day
+           ~= 0.3455 * T GiB/day
+```
+
+Interpretation:
+
+- `56.28 / k` GiB/day is the recursive-block proof cost amortized over `k` tx per non-empty shielded block
+- `0.0377 * T` GiB/day is the public on-chain tx body growth
+- `0.3455 * T` GiB/day is raw DA ciphertext ingress before erasure/sampling/replication overhead
+
+### Block-packing study
+
+Generated chart source: `scripts/render_scalability_plots.py`
+
+All values below are projected `GiB/day` on the shipped `RecursiveBlockV1` lane.
+
+![Shipped lane on-chain growth vs. block packing](assets/scalability-block-packing-onchain.svg)
+
+| tx/block | on-chain @1 TPS | on-chain @10 TPS | on-chain @100 TPS | raw DA @1 TPS | raw DA @10 TPS | raw DA @100 TPS | total @1 TPS | total @10 TPS | total @100 TPS |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 56.32 | 563.16 | 5631.61 | 0.35 | 3.46 | 34.55 | 56.66 | 566.62 | 5666.16 |
+| 2 | 28.18 | 281.77 | 2817.69 | 0.35 | 3.46 | 34.55 | 28.52 | 285.22 | 2852.24 |
+| 4 | 14.11 | 141.07 | 1410.73 | 0.35 | 3.46 | 34.55 | 14.45 | 144.53 | 1445.28 |
+| 8 | 7.07 | 70.72 | 707.25 | 0.35 | 3.46 | 34.55 | 7.42 | 74.18 | 741.80 |
+| 16 | 3.56 | 35.55 | 355.51 | 0.35 | 3.46 | 34.55 | 3.90 | 39.01 | 390.06 |
+| 32 | 1.80 | 17.96 | 179.64 | 0.35 | 3.46 | 34.55 | 2.14 | 21.42 | 214.19 |
+| 64 | 0.92 | 9.17 | 91.70 | 0.35 | 3.46 | 34.55 | 1.26 | 12.63 | 126.25 |
+
+This is the main operator conclusion: chain growth is dominated by the fixed `recursive_block_v1` artifact until blocks are packed hard. Running at one shielded tx per non-empty block is storage-hostile. Packing `32-64` shielded tx per non-empty block makes the shipped lane materially more reasonable.
+
+### Block-interval model
+
+The table below converts the same sizing model into daily growth for a few practical target block intervals under one explicit packing assumption per interval. These are planning points, not measured authoring guarantees:
+
+- `1s` block time: `2` shielded tx per non-empty block
+- `5s` block time: `8` shielded tx per non-empty block
+- `10s` block time: `16` shielded tx per non-empty block
+- `30s` block time: `64` shielded tx per non-empty block
+
+Those assumptions reflect the intended operational direction of the shipped lane: longer block intervals should be used to amortize the fixed recursive proof cost over more shielded transfers, not to produce the same tiny blocks more slowly.
+
+![Block-interval planning model](assets/scalability-block-interval-model.svg)
+
+| target block time | assumed tx/block | implied TPS | proof GiB/day | public tx body GiB/day | on-chain GiB/day | raw DA GiB/day | total GiB/day |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1s | 2 | 2.00 | 56.28 | 0.08 | 56.35 | 0.69 | 57.04 |
+| 5s | 8 | 1.60 | 11.26 | 0.06 | 11.32 | 0.55 | 11.87 |
+| 10s | 16 | 1.60 | 5.63 | 0.06 | 5.69 | 0.55 | 6.24 |
+| 30s | 64 | 2.13 | 1.88 | 0.08 | 1.96 | 0.74 | 2.69 |
+
+This interval view is useful for operators because it separates the two levers:
+
+- shorter blocks reduce latency but multiply the fixed proof object frequency
+- higher packing reduces the recursive proof amplification term directly
+
+If compact chain growth is the priority, the shipped lane wants:
+
+- `RecursiveBlockV1`, not `RecursiveBlockV2`
+- proofless sidecar transfers, not inline per-tx proof transport
+- aggressive packing of shielded tx into non-empty shielded blocks
+- DA sidecars for ciphertext transport rather than inline ciphertext growth
+
 ## What the current split buys
 
 The current split is:
