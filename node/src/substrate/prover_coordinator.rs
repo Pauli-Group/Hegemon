@@ -1322,7 +1322,7 @@ mod tests {
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
             proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
-            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+            verifier_profile: crate::substrate::artifact_market::compat_pallet_artifact_identity(
                 pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
             )
             .1,

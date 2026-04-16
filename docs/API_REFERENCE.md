@@ -197,6 +197,14 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
   - `DaChunkResult`: `{ chunk: Bytes, merkle_proof: Vec<H256> }`
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
+- `da_submitCiphertexts(request: { ciphertexts: Vec<String> }) -> Vec<SubmitCiphertextsEntry>`
+  - Unsafe-only proposer/local staging RPC. Stages ciphertext sidecars for `*_sidecar` shielded submission paths and requires `--rpc-methods=unsafe`.
+  - Staged ciphertext bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
+- `da_submitProofs(request: { proofs: Vec<{ binding_hash: String, proof: String }> }) -> Vec<SubmitProofsEntry>`
+  - Unsafe-only proposer/local staging RPC. Accepts only canonical self-verifying native `tx_leaf` artifact bytes whose derived binding hash matches the requested `binding_hash`. Not part of consensus validity.
+  - Staged proof bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
+- `da_submitWitnesses(...)`
+  - Deliberately disabled. Witness sidecars are rejected because they may contain secret material and must not be uploaded over RPC.
 
 Prepared-artifact discovery RPC methods exposed on the Substrate node:
 

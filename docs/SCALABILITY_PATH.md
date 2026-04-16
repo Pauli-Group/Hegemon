@@ -67,6 +67,16 @@ That keeps the system operationally sane:
 - consensus and runtime do not need to switch between multiple live-looking block-proof contracts during normal operation;
 - experimental lanes can stay in-tree without confusing the default release story.
 
+## Sidecar staging contract
+
+DA sidecar staging is intentionally local and ephemeral:
+
+- `da_submitCiphertexts` and `da_submitProofs` are unsafe-only proposer/local RPCs, not public consensus APIs;
+- staged ciphertexts and staged proof bytes live in proposer-local RAM only;
+- a node restart drops those staged sidecars, so wallets/provers must restage before proofless `*_sidecar` transfers can be authored again.
+
+That is the current recovery contract. Restart recovery is deterministic because the authoring node fail-closes or defers when local sidecar bytes are missing; it does not pretend those sidecars are durable chain state.
+
 ## Near-term roadmap
 
 ### Phase 0: ship the canonical recursive block lane

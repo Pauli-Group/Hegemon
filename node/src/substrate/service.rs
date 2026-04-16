@@ -2563,7 +2563,7 @@ fn build_recursive_block_semantic_inputs_from_materials(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct PreparedArtifactSelector {
-    legacy_mode: pallet_shielded_pool::types::BlockProofMode,
+    compat_mode: pallet_shielded_pool::types::BlockProofMode,
     proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
     verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
 }
@@ -2571,9 +2571,9 @@ struct PreparedArtifactSelector {
 impl PreparedArtifactSelector {
     fn from_mode(mode: pallet_shielded_pool::types::BlockProofMode) -> Self {
         let (proof_kind, verifier_profile) =
-            crate::substrate::artifact_market::legacy_pallet_artifact_identity(mode);
+            crate::substrate::artifact_market::compat_pallet_artifact_identity(mode);
         Self {
-            legacy_mode: mode,
+            compat_mode: mode,
             proof_kind,
             verifier_profile,
         }
@@ -2601,7 +2601,7 @@ fn prepared_artifact_selector_from_env() -> PreparedArtifactSelector {
     }
     tracing::warn!(
         mode = raw,
-        "legacy or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing the shipped recursive_block lane"
+        "compatibility or unknown HEGEMON_BLOCK_PROOF_MODE requested; forcing the shipped recursive_block lane"
     );
     PreparedArtifactSelector::shipped_recursive_block()
 }
@@ -2642,7 +2642,7 @@ fn ensure_native_block_proof_selector(selector: PreparedArtifactSelector) -> Res
     if !native_block_proof_required_from_env() {
         return Ok(());
     }
-    match selector.legacy_mode {
+    match selector.compat_mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             tracing::info!("native-only explicit experimental receipt_root lane selected");
             Ok(())
@@ -2652,8 +2652,8 @@ fn ensure_native_block_proof_selector(selector: PreparedArtifactSelector) -> Res
             Ok(())
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
-            "HEGEMON_REQUIRE_NATIVE=1 requires a native block-proof lane; got legacy_mode {:?}, proof_kind {:?}, verifier_profile {}",
-            selector.legacy_mode,
+            "HEGEMON_REQUIRE_NATIVE=1 requires a native block-proof lane; got compat_mode {:?}, proof_kind {:?}, verifier_profile {}",
+            selector.compat_mode,
             selector.proof_kind,
             hex::encode(selector.verifier_profile),
         )),
@@ -2794,7 +2794,7 @@ fn receipt_root_lane_requires_embedded_proof_bytes(
 }
 
 fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> bool {
-    pallet_shielded_pool::types::is_experimental_block_proof_mode(selector.legacy_mode)
+    pallet_shielded_pool::types::is_experimental_block_proof_mode(selector.compat_mode)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3317,7 +3317,7 @@ fn should_store_prove_ahead_aggregation_outcome(
     selector: PreparedArtifactSelector,
     outcome: &PreparedAggregationOutcome,
 ) -> bool {
-    match selector.legacy_mode {
+    match selector.compat_mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             matches!(
                 outcome.artifacts,
@@ -3430,7 +3430,7 @@ fn prove_ahead_tx_artifact_set_digest(
     selector: PreparedArtifactSelector,
     tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
 ) -> Option<[u8; 48]> {
-    if selector.legacy_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+    if selector.compat_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
         return None;
     }
 
@@ -3521,7 +3521,7 @@ fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::Can
         return;
     }
     let (proof_kind, verifier_profile) =
-        crate::substrate::artifact_market::legacy_pallet_artifact_identity(payload.proof_mode);
+        crate::substrate::artifact_market::compat_pallet_artifact_identity(payload.proof_mode);
     payload.proof_kind = proof_kind;
     payload.verifier_profile = verifier_profile;
 }
@@ -3615,7 +3615,7 @@ fn prepare_block_proof_bundle(
     let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
     let selected_artifact = prepared_artifact_selector_from_env();
     ensure_native_block_proof_selector(selected_artifact)?;
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
     {
         receipt_root_lane_requires_embedded_proof_bytes(
             selected_artifact.proof_kind,
@@ -3638,7 +3638,7 @@ fn prepare_block_proof_bundle(
         let commitment_bindings = context.statement_bindings.clone();
         let aggregation_transactions = context.extracted_transactions.clone();
         let aggregation_bindings = context.statement_bindings.clone();
-        let commitment_handle = if selected_artifact.legacy_mode
+        let commitment_handle = if selected_artifact.compat_mode
             == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
         {
             Some(scope.spawn(move || {
@@ -3669,14 +3669,14 @@ fn prepare_block_proof_bundle(
             tracing::info!(
                 block_number,
                 tx_count,
-                legacy_mode = ?selected_artifact.legacy_mode,
+                compat_mode = ?selected_artifact.compat_mode,
                 proof_kind = ?selected_artifact.proof_kind,
                 verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "prepare_block_proof_bundle: starting aggregation stage"
             );
             let stage_started = Instant::now();
             let mut cache_hit = false;
-            let mut receipt_root_work_plan = if selected_artifact.legacy_mode
+            let mut receipt_root_work_plan = if selected_artifact.compat_mode
                 == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
             {
                 require_native_tx_leaf_artifacts(aggregation_tx_artifacts.as_deref())
@@ -3692,7 +3692,7 @@ fn prepare_block_proof_bundle(
                 cache_hit = true;
                 Ok(cached)
             } else {
-                let built = match selected_artifact.legacy_mode {
+                let built = match selected_artifact.compat_mode {
                     pallet_shielded_pool::types::BlockProofMode::InlineTx => Ok(
                         PreparedAggregationOutcome::new(PreparedAggregationArtifacts::InlineTx),
                     ),
@@ -3787,7 +3787,7 @@ fn prepare_block_proof_bundle(
             "prepare_block_proof_bundle: commitment stage complete"
         ),
         Ok(None)
-            if selected_artifact.legacy_mode
+            if selected_artifact.compat_mode
                 == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot =>
         {
             tracing::warn!(
@@ -3895,7 +3895,7 @@ fn prepare_block_proof_bundle(
     }
     let commitment_proof = commitment_result?;
     let aggregation_outcome = aggregation_result?;
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
     {
         ensure_experimental_receipt_root_outcome(&aggregation_outcome)?;
     }
@@ -3939,7 +3939,7 @@ fn prepare_block_proof_bundle(
         }
     }
     sync_payload_artifact_identity(&mut payload);
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.legacy_mode)
+    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
     {
         ensure_experimental_receipt_root_payload(&payload)?;
     }
@@ -3956,7 +3956,7 @@ fn prepare_block_proof_bundle(
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
         requested_native_lane = pallet_shielded_pool::types::is_experimental_block_proof_mode(
-            selected_artifact.legacy_mode,
+            selected_artifact.compat_mode,
         )
             && selector_requests_native_receipt_lane(selected_artifact),
         used_native_lane = native_selection_report
@@ -12062,6 +12062,40 @@ mod tests {
         )
     }
 
+    fn test_sidecar_transfer_extrinsic_with_staged_material(
+        proof_bytes: Vec<u8>,
+        binding_hash: [u8; 64],
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
+        ciphertext_bytes: Vec<Vec<u8>>,
+        balance_slot_asset_ids: [u64; 4],
+    ) -> runtime::UncheckedExtrinsic {
+        let ciphertext_hashes = ciphertext_bytes
+            .iter()
+            .map(|ciphertext| ciphertext_hash_bytes(ciphertext))
+            .collect::<Vec<_>>();
+        let ciphertext_sizes = ciphertext_bytes
+            .iter()
+            .map(|ciphertext| ciphertext.len() as u32)
+            .collect::<Vec<_>>();
+        kernel_shielded_extrinsic(
+            ACTION_SHIELDED_TRANSFER_SIDECAR,
+            nullifiers,
+            ShieldedTransferSidecarArgs {
+                proof: proof_bytes,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor: [7u8; 48],
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 5,
+            }
+            .encode(),
+        )
+    }
+
     fn test_reward_bundle(seed: u8) -> pallet_shielded_pool::types::BlockRewardBundle {
         let mut encrypted_note = pallet_shielded_pool::types::EncryptedNote::default();
         if let Some(byte) = encrypted_note.ciphertext.first_mut() {
@@ -12198,7 +12232,7 @@ mod tests {
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![5u8; 8]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::InlineTx,
             proof_kind: pallet_shielded_pool::types::ProofArtifactKind::InlineTx,
-            verifier_profile: crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+            verifier_profile: crate::substrate::artifact_market::compat_pallet_artifact_identity(
                 pallet_shielded_pool::types::BlockProofMode::InlineTx,
             )
             .1,
@@ -12275,7 +12309,7 @@ mod tests {
         let _guard = set_block_proof_mode("");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
-            selector.legacy_mode,
+            selector.compat_mode,
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert_eq!(
@@ -12303,7 +12337,7 @@ mod tests {
         let _guard = set_block_proof_mode("recursive_block");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
-            selector.legacy_mode,
+            selector.compat_mode,
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert_eq!(
@@ -12454,7 +12488,7 @@ mod tests {
     #[test]
     fn recursive_block_outcomes_are_not_cacheable() {
         let selector = PreparedArtifactSelector {
-            legacy_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
+            compat_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
             proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1,
             verifier_profile: consensus::recursive_block_artifact_verifier_profile(),
         };
@@ -12736,6 +12770,88 @@ mod tests {
             legacy[0].statement_hash,
             "native tx artifacts must override legacy materialized statement hashing on the product path"
         );
+    }
+
+    #[test]
+    fn proofless_sidecar_full_extraction_requires_local_proof_restage_after_restart() {
+        let witness = test_native_sample_witness(91);
+        let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
+        let public_inputs = witness.public_inputs().expect("public inputs");
+        let balance_slot_asset_ids: [u64; 4] = witness
+            .balance_slots()
+            .expect("balance slots")
+            .iter()
+            .map(|slot| slot.asset_id)
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("four balance slots");
+        let binding_hash = [0x5Au8; 64];
+        let ciphertext_bytes = vec![vec![0x91u8; 32], vec![0x92u8; 32]];
+        let extrinsic = test_sidecar_transfer_extrinsic_with_staged_material(
+            Vec::new(),
+            binding_hash,
+            public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
+            public_inputs.commitments[..witness.outputs.len()].to_vec(),
+            ciphertext_bytes.clone(),
+            balance_slot_asset_ids,
+        );
+
+        let mut pending_proofs = PendingProofStore::new(4);
+        pending_proofs.insert(binding_hash, built.artifact_bytes.clone());
+        let extracted = extract_shielded_transfers_for_parallel_verification(
+            std::slice::from_ref(&extrinsic),
+            Some(std::slice::from_ref(&ciphertext_bytes)),
+            Some(&pending_proofs),
+            false,
+        )
+        .expect("full extraction with staged proof bytes");
+        assert_eq!(extracted.2.len(), 1);
+        assert!(
+            extracted.2[0].is_some(),
+            "staged native proof bytes should materialize a tx artifact"
+        );
+
+        let restarted_pending_proofs = PendingProofStore::new(4);
+        let err = extract_shielded_transfers_for_parallel_verification(
+            &[extrinsic],
+            Some(std::slice::from_ref(&ciphertext_bytes)),
+            Some(&restarted_pending_proofs),
+            false,
+        )
+        .expect_err(
+            "proofless sidecar extraction must fail closed after restart without restaging",
+        );
+        assert!(err.contains("missing pending proof bytes"));
+    }
+
+    #[test]
+    fn sidecar_ciphertexts_require_local_restage_after_restart() {
+        let ciphertext = vec![0x37u8; 48];
+        let hash = ciphertext_hash_bytes(&ciphertext);
+        let extrinsic = test_sidecar_transfer_extrinsic_with_staged_material(
+            vec![1u8; 8],
+            [0x7Bu8; 64],
+            vec![[0x11u8; 48]],
+            vec![[0x22u8; 48]],
+            vec![ciphertext.clone()],
+            [0, u64::MAX, u64::MAX, u64::MAX],
+        );
+
+        let mut pending_ciphertexts = PendingCiphertextStore::new(4);
+        pending_ciphertexts.insert(hash, ciphertext.clone());
+        let build = build_da_blob_from_extrinsics(
+            std::slice::from_ref(&extrinsic),
+            Some(&pending_ciphertexts),
+        )
+        .expect("DA build with locally staged ciphertext bytes");
+        assert_eq!(build.transactions, vec![vec![ciphertext.clone()]]);
+        assert_eq!(build.used_ciphertext_hashes, vec![hash]);
+
+        let restarted_pending_ciphertexts = PendingCiphertextStore::new(4);
+        let err = build_da_blob_from_extrinsics(&[extrinsic], Some(&restarted_pending_ciphertexts))
+            .err()
+            .expect("sidecar ciphertexts must be restaged after restart");
+        assert!(err.contains("missing ciphertext bytes"));
     }
 
     #[test]
@@ -13198,7 +13314,7 @@ mod tests {
                 proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
                 proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
                 verifier_profile:
-                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                    crate::substrate::artifact_market::compat_pallet_artifact_identity(
                         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
                     )
                     .1,
@@ -13300,7 +13416,7 @@ mod tests {
                 proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
                 proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
                 verifier_profile:
-                    crate::substrate::artifact_market::legacy_pallet_artifact_identity(
+                    crate::substrate::artifact_market::compat_pallet_artifact_identity(
                         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
                     )
                     .1,

@@ -43,7 +43,7 @@ pub fn consensus_proof_artifact_kind_from_pallet(
     }
 }
 
-pub fn legacy_pallet_artifact_identity(
+pub fn compat_pallet_artifact_identity(
     mode: pallet_shielded_pool::types::BlockProofMode,
 ) -> (
     pallet_shielded_pool::types::ProofArtifactKind,
@@ -95,7 +95,7 @@ mod tests {
     use super::*;
 
     fn artifact() -> pallet_shielded_pool::types::CandidateArtifact {
-        let (proof_kind, verifier_profile) = legacy_pallet_artifact_identity(
+        let (proof_kind, verifier_profile) = compat_pallet_artifact_identity(
             pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
         );
         pallet_shielded_pool::types::CandidateArtifact {
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn receipt_root_uses_experimental_verifier_profile() {
-        let (kind, verifier_profile) = legacy_pallet_artifact_identity(
+        let (kind, verifier_profile) = compat_pallet_artifact_identity(
             pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
         );
         assert_eq!(
@@ -167,7 +167,7 @@ mod tests {
             ),
             consensus::ProofArtifactKind::RecursiveBlockV1
         );
-        let (kind, verifier_profile) = legacy_pallet_artifact_identity(
+        let (kind, verifier_profile) = compat_pallet_artifact_identity(
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
         );
         assert_eq!(

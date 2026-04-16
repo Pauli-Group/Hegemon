@@ -695,6 +695,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_ciphertexts_rejects_safe_rpc_mode() {
+        let (rpc, _tmpdir) = test_rpc(sc_rpc::DenyUnsafe::Yes);
+        let err = rpc
+            .submit_ciphertexts(SubmitCiphertextsRequest {
+                ciphertexts: vec![format!("0x{}", hex::encode([7u8; 32]))],
+            })
+            .await
+            .expect_err("safe rpc mode must reject DA ciphertext staging");
+        assert!(
+            err.message().contains("unsafe"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_proofs_rejects_non_native_tx_leaf_artifact() {
+        let (rpc, _tmpdir) = test_rpc(sc_rpc::DenyUnsafe::No);
+        let err = rpc
+            .submit_proofs(SubmitProofsRequest {
+                proofs: vec![SubmitProofsItem {
+                    binding_hash: format!("0x{}", hex::encode([3u8; 64])),
+                    proof: format!("0x{}", hex::encode([9u8; 48])),
+                }],
+            })
+            .await
+            .expect_err("non-native tx-leaf bytes must be rejected");
+        assert!(
+            err.message().contains("canonical native tx-leaf artifact"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn submit_proofs_rejects_binding_hash_mismatch_for_native_tx_leaf() {
         let (rpc, _tmpdir) = test_rpc(sc_rpc::DenyUnsafe::No);
         let (proof_bytes, _binding_hash) = valid_native_tx_leaf_proof_and_binding(41);

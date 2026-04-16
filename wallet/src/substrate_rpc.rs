@@ -1243,7 +1243,8 @@ impl SubstrateRpcClient {
     /// `da_submitCiphertexts`, then submits the corresponding sidecar-flavored
     /// kernel action through `hegemon_submitAction`. The shipped proof bytes
     /// remain native tx-leaf artifact bytes even when ciphertext transport moves
-    /// to the sidecar path.
+    /// to the sidecar path. The DA staging RPC is unsafe-only; this flow is for
+    /// a trusted local or proposer node running with `--rpc-methods=unsafe`.
     pub async fn submit_shielded_transfer_unsigned_sidecar(
         &self,
         bundle: &TransactionBundle,
@@ -1278,7 +1279,11 @@ impl SubstrateRpcClient {
                 }],
             )
             .await
-            .map_err(|e| WalletError::Rpc(format!("da_submitCiphertexts failed: {}", e)))?;
+            .map_err(|e| {
+                WalletError::Rpc(format!(
+                    "da_submitCiphertexts failed: {e} (requires trusted node with --rpc-methods=unsafe)"
+                ))
+            })?;
 
         if da_response.len() != bundle.commitments.len() {
             return Err(WalletError::Rpc(
@@ -1307,7 +1312,11 @@ impl SubstrateRpcClient {
                     }],
                 )
                 .await
-                .map_err(|e| WalletError::Rpc(format!("da_submitProofs failed: {}", e)))?;
+                .map_err(|e| {
+                    WalletError::Rpc(format!(
+                        "da_submitProofs failed: {e} (requires trusted node with --rpc-methods=unsafe)"
+                    ))
+                })?;
 
             let staged = proof_response
                 .as_array()

@@ -12,7 +12,7 @@
 #   pq          - Run PQ network tests (19 tests)
 #   security    - Run security pipeline tests
 #   single-node - Run single node mining test (semi-automated)
-#   restart-recovery - Run OVH/prover restart-recovery harness (automated)
+#   restart-recovery - Run authoring/follower restart-recovery harness (automated)
 #   two-node    - Start two-node test environment (manual)
 #   three-node  - Start three-node test environment (manual)
 #   partition   - Guide for partition recovery test (manual)
@@ -303,6 +303,57 @@ wait_for_equal_tip() {
     return 1
 }
 
+# Helper: Wait for a node to reach at least the requested height
+wait_for_min_height() {
+    local port=$1
+    local target=$2
+    local timeout=$3
+    local label=$4
+    local elapsed=0
+
+    while [ $elapsed -lt $timeout ]; do
+        local current
+        current=$(get_block_number "$port")
+        if [ "$current" != "null" ] && [ "$current" -ge "$target" ]; then
+            log_success "$label reached height $current (target: $target)"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    log_error "$label did not reach height $target within ${timeout}s"
+    return 1
+}
+
+# Helper: Control mining through the unsafe RPC surface
+set_mining_state() {
+    local port=$1
+    local action=$2
+    local threads=${3:-1}
+
+    local payload
+    if [ "$action" = "start" ]; then
+        payload=$(jq -n --argjson threads "$threads" \
+            '{jsonrpc:"2.0", method:"hegemon_startMining", params:[{threads:$threads}], id:1}')
+    else
+        payload='{"jsonrpc":"2.0","method":"hegemon_stopMining","params":[{}],"id":1}'
+    fi
+
+    local response
+    response=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d "$payload" \
+        "http://127.0.0.1:$port")
+
+    if [ "$(echo "$response" | jq -r '.result.success // false')" != "true" ]; then
+        log_error "Failed to ${action} mining on port $port"
+        echo "$response"
+        return 1
+    fi
+
+    return 0
+}
+
 # Helper: deterministically solve the current compact job and submit a full-target block
 mine_compact_block() {
     local port=$1
@@ -480,45 +531,42 @@ cmd_single_node() {
     fi
 }
 
-# Automated OVH/prover restart-recovery harness
+# Automated authoring/follower restart-recovery harness
 cmd_restart_recovery() {
-    log_section "OVH/Prover Restart-Recovery Harness"
+    log_section "Authoring/Follower Restart-Recovery Harness"
 
     check_prerequisites
 
     local node_bin="target/release/hegemon-node"
-    local worker_bin="target/release/hegemon-prover-worker"
-    if [ ! -x "$node_bin" ] || [ ! -x "$worker_bin" ]; then
+    if [ ! -x "$node_bin" ]; then
         log_info "Release binaries missing; building hegemon-node package..."
         cargo build --release -p hegemon-node --features substrate
     fi
 
-    if [ ! -x "$node_bin" ] || [ ! -x "$worker_bin" ]; then
+    if [ ! -x "$node_bin" ]; then
         log_error "Required binaries not found after build"
         exit 1
     fi
 
-    local ovh_rpc_port=19944
-    local prover_rpc_port=19945
-    local ovh_p2p_port=39333
-    local prover_p2p_port=39334
+    local author_rpc_port=19944
+    local follower_rpc_port=19945
+    local author_p2p_port=39333
+    local follower_p2p_port=39334
     local tmp_root
     tmp_root=$(mktemp -d /tmp/hegemon-restart-harness.XXXXXX)
-    local ovh_log="$tmp_root/ovh.log"
-    local prover_log="$tmp_root/prover.log"
-    local worker_log="$tmp_root/worker.log"
+    local author_log="$tmp_root/author.log"
+    local follower_log="$tmp_root/follower.log"
     local harness_spec="$tmp_root/restart-harness-chainspec.json"
-    local ovh_base="$tmp_root/ovh-base"
-    local prover_base="$tmp_root/prover-base"
-    local ovh_pid=""
-    local prover_pid=""
-    local worker_pid=""
+    local author_base="$tmp_root/author-base"
+    local follower_base="$tmp_root/follower-base"
+    local author_pid=""
+    local follower_pid=""
     local difficulty_bits_key="0x7d15dd66fbf0cbda1d3a651b5e606df2fbc97b050ba98067c6d1bdd855ff03b8"
     local difficulty_value_key="0x7d15dd66fbf0cbda1d3a651b5e606df27d15dd66fbf0cbda1d3a651b5e606df2"
     local payout_address=""
 
     cleanup_restart_recovery() {
-        for pid in "$worker_pid" "$prover_pid" "$ovh_pid"; do
+        for pid in "$follower_pid" "$author_pid"; do
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
                 kill "$pid" 2>/dev/null || true
                 wait "$pid" 2>/dev/null || true
@@ -545,14 +593,14 @@ cmd_restart_recovery() {
         | .genesis.raw.top[$value_key] = "0x0100000000000000000000000000000000000000000000000000000000000000"' \
         config/dev-chainspec.json > "$harness_spec"
 
-    for port in "$ovh_rpc_port" "$prover_rpc_port" "$ovh_p2p_port" "$prover_p2p_port"; do
+    for port in "$author_rpc_port" "$follower_rpc_port" "$author_p2p_port" "$follower_p2p_port"; do
         if port_in_use "$port"; then
             log_error "Harness port $port is already in use"
             exit 1
         fi
     done
 
-    log_info "Starting OVH-like public node on 127.0.0.1:$ovh_rpc_port / $ovh_p2p_port"
+    log_info "Starting authoring node on 127.0.0.1:$author_rpc_port / $author_p2p_port"
     HEGEMON_MINE=1 \
     HEGEMON_MINE_THREADS=1 \
     HEGEMON_MINER_ADDRESS="$payout_address" \
@@ -563,122 +611,116 @@ cmd_restart_recovery() {
     "$node_bin" \
         --dev \
         --chain "$harness_spec" \
-        --base-path "$ovh_base" \
-        --rpc-port "$ovh_rpc_port" \
-        --port "$ovh_p2p_port" \
-        --rpc-methods safe \
-        --name "RestartHarnessOVH" \
-        >"$ovh_log" 2>&1 &
-    ovh_pid=$!
+        --base-path "$author_base" \
+        --rpc-port "$author_rpc_port" \
+        --port "$author_p2p_port" \
+        --rpc-methods unsafe \
+        --name "RestartHarnessAuthor" \
+        >"$author_log" 2>&1 &
+    author_pid=$!
 
-    if ! wait_for_rpc "$ovh_rpc_port" 60; then
-        log_error "OVH-like node RPC failed to start"
+    if ! wait_for_rpc "$author_rpc_port" 60; then
+        log_error "Authoring node RPC failed to start"
         exit 1
     fi
-    if ! mine_compact_block "$ovh_rpc_port" "restart-harness-ovh" "OVH-like node"; then
+    if ! set_mining_state "$author_rpc_port" start 1; then
+        exit 1
+    fi
+    if ! wait_for_block_advance "$author_rpc_port" 0 60 "Authoring node"; then
+        exit 1
+    fi
+    if ! set_mining_state "$author_rpc_port" stop; then
         exit 1
     fi
 
-    log_info "Starting prover-like private node on 127.0.0.1:$prover_rpc_port / $prover_p2p_port"
+    log_info "Starting follower node on 127.0.0.1:$follower_rpc_port / $follower_p2p_port"
     HEGEMON_MINE=0 \
     HEGEMON_MINER_ADDRESS="$payout_address" \
     HEGEMON_PROVER_REWARD_ADDRESS="$payout_address" \
     HEGEMON_PROVER_WORKERS=0 \
     HEGEMON_BATCH_VERIFY_PREWARM_TXS=0 \
-    HEGEMON_SEEDS="127.0.0.1:$ovh_p2p_port" \
+    HEGEMON_SEEDS="127.0.0.1:$author_p2p_port" \
     HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
     "$node_bin" \
         --dev \
         --chain "$harness_spec" \
-        --base-path "$prover_base" \
-        --rpc-port "$prover_rpc_port" \
-        --port "$prover_p2p_port" \
+        --base-path "$follower_base" \
+        --rpc-port "$follower_rpc_port" \
+        --port "$follower_p2p_port" \
         --rpc-methods safe \
-        --name "RestartHarnessProver" \
-        >"$prover_log" 2>&1 &
-    prover_pid=$!
+        --name "RestartHarnessFollower" \
+        >"$follower_log" 2>&1 &
+    follower_pid=$!
 
-    if ! wait_for_rpc "$prover_rpc_port" 60; then
-        log_error "Prover-like node RPC failed to start"
+    if ! wait_for_rpc "$follower_rpc_port" 60; then
+        log_error "Follower node RPC failed to start"
         exit 1
     fi
-    if ! wait_for_equal_tip "$ovh_rpc_port" "$prover_rpc_port" 90 "OVH-like node" "Prover-like node"; then
-        exit 1
-    fi
-
-    log_info "Starting external prover worker against OVH-like RPC"
-    HEGEMON_PROVER_RPC_URL="http://127.0.0.1:$ovh_rpc_port" \
-    HEGEMON_PROVER_SOURCE="restart-recovery-harness" \
-    "$worker_bin" \
-        --poll-ms 250 \
-        >"$worker_log" 2>&1 &
-    worker_pid=$!
-    sleep 2
-    if ! kill -0 "$worker_pid" 2>/dev/null; then
-        log_error "Prover worker exited immediately"
+    if ! wait_for_equal_tip "$author_rpc_port" "$follower_rpc_port" 120 "Authoring node" "Follower node"; then
         exit 1
     fi
 
     local before_shutdown_block
-    before_shutdown_block=$(get_block_number "$ovh_rpc_port")
-    log_info "Stopping prover stack at OVH height $before_shutdown_block"
-    kill "$worker_pid" 2>/dev/null || true
-    wait "$worker_pid" 2>/dev/null || true
-    worker_pid=""
-    kill "$prover_pid" 2>/dev/null || true
-    wait "$prover_pid" 2>/dev/null || true
-    prover_pid=""
+    before_shutdown_block=$(get_block_number "$author_rpc_port")
+    log_info "Stopping follower node at authoring height $before_shutdown_block"
+    kill "$follower_pid" 2>/dev/null || true
+    wait "$follower_pid" 2>/dev/null || true
+    follower_pid=""
 
-    if ! mine_compact_block "$ovh_rpc_port" "restart-harness-ovh" "OVH-like node while prover stack is down"; then
+    if ! set_mining_state "$author_rpc_port" start 1; then
+        exit 1
+    fi
+    if ! wait_for_block_advance "$author_rpc_port" "$before_shutdown_block" 60 "Authoring node while follower is down"; then
+        exit 1
+    fi
+    if ! set_mining_state "$author_rpc_port" stop; then
         exit 1
     fi
 
-    log_info "Restarting prover stack"
+    log_info "Restarting follower node"
     HEGEMON_MINE=0 \
     HEGEMON_MINER_ADDRESS="$payout_address" \
     HEGEMON_PROVER_REWARD_ADDRESS="$payout_address" \
     HEGEMON_PROVER_WORKERS=0 \
     HEGEMON_BATCH_VERIFY_PREWARM_TXS=0 \
-    HEGEMON_SEEDS="127.0.0.1:$ovh_p2p_port" \
+    HEGEMON_SEEDS="127.0.0.1:$author_p2p_port" \
     HEGEMON_PQ_STRICT_COMPATIBILITY=1 \
     "$node_bin" \
         --dev \
         --chain "$harness_spec" \
-        --base-path "$prover_base" \
-        --rpc-port "$prover_rpc_port" \
-        --port "$prover_p2p_port" \
+        --base-path "$follower_base" \
+        --rpc-port "$follower_rpc_port" \
+        --port "$follower_p2p_port" \
         --rpc-methods safe \
-        --name "RestartHarnessProver" \
-        >>"$prover_log" 2>&1 &
-    prover_pid=$!
+        --name "RestartHarnessFollower" \
+        >>"$follower_log" 2>&1 &
+    follower_pid=$!
 
-    if ! wait_for_rpc "$prover_rpc_port" 60; then
-        log_error "Restarted prover-like node RPC failed to start"
+    if ! wait_for_rpc "$follower_rpc_port" 60; then
+        log_error "Restarted follower node RPC failed to start"
         exit 1
     fi
 
-    HEGEMON_PROVER_RPC_URL="http://127.0.0.1:$ovh_rpc_port" \
-    HEGEMON_PROVER_SOURCE="restart-recovery-harness" \
-    "$worker_bin" \
-        --poll-ms 250 \
-        >>"$worker_log" 2>&1 &
-    worker_pid=$!
-    sleep 2
-    if ! kill -0 "$worker_pid" 2>/dev/null; then
-        log_error "Restarted prover worker exited immediately"
+    if ! wait_for_equal_tip "$author_rpc_port" "$follower_rpc_port" 120 "Authoring node" "Restarted follower node"; then
         exit 1
     fi
 
-    if ! wait_for_equal_tip "$ovh_rpc_port" "$prover_rpc_port" 90 "OVH-like node" "Restarted prover-like node"; then
+    local resumed_author_block
+    resumed_author_block=$(get_block_number "$author_rpc_port")
+    if [ "$resumed_author_block" = "null" ]; then
+        log_error "Authoring node did not report a height before resumed mining check"
         exit 1
     fi
-
-    local market_params
-    market_params=$(curl -s -X POST -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"prover_getMarketParams","params":[],"id":1}' \
-        "http://127.0.0.1:$ovh_rpc_port" 2>/dev/null | jq -r '.result.package_ttl_ms // "null"')
-    if [ "$market_params" = "null" ]; then
-        log_error "OVH-like node did not answer prover_getMarketParams"
+    if ! set_mining_state "$author_rpc_port" start 1; then
+        exit 1
+    fi
+    if ! wait_for_block_advance "$author_rpc_port" "$resumed_author_block" 60 "Authoring node after follower restart"; then
+        exit 1
+    fi
+    if ! set_mining_state "$author_rpc_port" stop; then
+        exit 1
+    fi
+    if ! wait_for_equal_tip "$author_rpc_port" "$follower_rpc_port" 120 "Authoring node" "Follower node after resumed mining"; then
         exit 1
     fi
 
@@ -1100,7 +1142,7 @@ cmd_help() {
     echo "  pq                 Run PQ network tests (19 tests)"
     echo "  security           Run security pipeline tests"
     echo "  single-node        Run single node mining test (semi-automated)"
-    echo "  restart-recovery   Run OVH/prover restart-recovery harness"
+    echo "  restart-recovery   Run authoring/follower restart-recovery harness"
     echo "  two-node           Setup instructions for two-node test (manual)"
     echo "  three-node         Setup instructions for three-node test (manual)"
     echo "  partition          Guide for partition recovery test (manual)"
