@@ -789,15 +789,12 @@ fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) ->
 
 /// Print just the hex account ID (for use in shell command substitution)
 fn cmd_account_id(args: StoreArgs) -> Result<()> {
-    use wallet::extrinsic::ExtrinsicBuilder;
-
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
 
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
-        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
-        let account_id = builder.account_id();
+        let account_id = wallet::ml_dsa_account_id_from_seed(&signing_seed);
         // Print ONLY the hex, no label, no newline decorations - for shell substitution
         println!("{}", hex::encode(account_id));
         Ok(())

@@ -13,9 +13,7 @@
 use crate::error::WalletError;
 use crate::metadata::RuntimeCallIndex;
 use crate::rpc::TransactionBundle;
-use synthetic_crypto::ml_dsa::{
-    MlDsaPublicKey, MlDsaSecretKey, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN,
-};
+use synthetic_crypto::ml_dsa::MlDsaSecretKey;
 use synthetic_crypto::slh_dsa::{
     SlhDsaPublicKey, SlhDsaSecretKey, SLH_DSA_PUBLIC_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
 };
@@ -39,6 +37,13 @@ pub struct ChainMetadata {
 
 /// Account nonce for replay protection
 pub type Nonce = u32;
+
+/// Derive the canonical runtime account id from a deterministic ML-DSA seed.
+pub fn ml_dsa_account_id_from_seed(seed: &[u8; 32]) -> [u8; 32] {
+    let signing_key = MlDsaSecretKey::generate_deterministic(seed);
+    let public_key = signing_key.verify_key();
+    blake2_256_hash(&public_key.to_bytes())
+}
 
 /// Era for transaction mortality
 #[derive(Clone, Debug)]
@@ -145,256 +150,6 @@ pub struct ShieldedTransferSidecarCall {
     pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Optional miner tip encoded in the proof.
     pub fee: u64,
-}
-
-/// Legacy signed extrinsic builder retained for archival/test scenarios.
-#[allow(dead_code)]
-pub struct ExtrinsicBuilder {
-    /// ML-DSA signing key
-    signing_key: MlDsaSecretKey,
-    /// ML-DSA public key (cached)
-    public_key: MlDsaPublicKey,
-    /// Account ID (blake2_256 hash of raw public key bytes)
-    account_id: [u8; 32],
-}
-
-#[allow(dead_code)]
-impl ExtrinsicBuilder {
-    /// Create a new extrinsic builder from a seed
-    pub fn from_seed(seed: &[u8; 32]) -> Self {
-        let signing_key = MlDsaSecretKey::generate_deterministic(seed);
-        let public_key = signing_key.verify_key();
-
-        // Account ID is blake2_256 hash of the raw public key bytes
-        // This matches the runtime's IdentifyAccount implementation
-        let pk_bytes = public_key.to_bytes();
-        let account_id = blake2_256_hash(&pk_bytes);
-
-        Self {
-            signing_key,
-            public_key,
-            account_id,
-        }
-    }
-
-    /// Get the account ID
-    pub fn account_id(&self) -> [u8; 32] {
-        self.account_id
-    }
-
-    /// Get the public key bytes
-    pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key.to_bytes()
-    }
-
-    /// Build a signed extrinsic for a shielded transfer
-    pub fn build_shielded_transfer(
-        &self,
-        call: &ShieldedTransferCall,
-        call_index: RuntimeCallIndex,
-        nonce: Nonce,
-        era: Era,
-        tip: u128,
-        metadata: &ChainMetadata,
-    ) -> Result<Vec<u8>, WalletError> {
-        let _ = (call, call_index, nonce, era, tip, metadata);
-        Err(WalletError::InvalidState(
-            "direct shielded extrinsic construction is removed; use Hegemon kernel RPC".into(),
-        ))
-    }
-
-    /// Encode the shielded_transfer call
-    ///
-    /// Call format:
-    /// - pallet_index (1 byte) = ShieldedPool index from runtime metadata
-    /// - call_index (1 byte) = shielded_transfer call index from metadata
-    /// - proof: StarkProof (Vec<u8> prefixed with compact length)
-    /// - nullifiers: BoundedVec<[u8;48], MaxNullifiersPerTx>
-    /// - commitments: BoundedVec<[u8;48], MaxCommitmentsPerTx>
-    /// - ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx>
-    /// - anchor: [u8; 48]
-    /// - binding_hash: BindingHash
-    /// - stablecoin: Option<StablecoinPolicyBinding>
-    /// - fee: u64
-    /// - value_balance: i128
-    fn encode_shielded_transfer_call(
-        &self,
-        call: &ShieldedTransferCall,
-        call_index: RuntimeCallIndex,
-    ) -> Result<Vec<u8>, WalletError> {
-        let _ = (call, call_index);
-        Err(WalletError::InvalidState(
-            "direct shielded call encoding is removed; use Hegemon kernel RPC".into(),
-        ))
-    }
-
-    /// Encode SignedExtra tuple
-    ///
-    /// SignedExtra = (
-    ///     CheckNonZeroSender,      // empty
-    ///     CheckSpecVersion,        // empty (implicit)
-    ///     CheckTxVersion,          // empty (implicit)
-    ///     CheckGenesis,            // empty (implicit)
-    ///     CheckEra,                // Era
-    ///     CheckNonce,              // Compact<Nonce>
-    ///     CheckWeight,             // empty
-    ///     ChargeTransactionPayment // Compact<Balance> (tip)
-    /// )
-    fn encode_signed_extra(
-        &self,
-        nonce: Nonce,
-        era: &Era,
-        tip: u128,
-        _metadata: &ChainMetadata,
-    ) -> Vec<u8> {
-        let mut encoded = Vec::new();
-
-        // CheckNonZeroSender: empty
-        // CheckSpecVersion: empty (validated against implicit spec_version)
-        // CheckTxVersion: empty (validated against implicit tx_version)
-        // CheckGenesis: empty (validated against implicit genesis_hash)
-
-        // CheckEra: Era encoding
-        encoded.extend_from_slice(&era.encode());
-
-        // CheckNonce: Compact<Nonce>
-        encode_compact_u32(nonce, &mut encoded);
-
-        // CheckWeight: empty
-
-        // ChargeTransactionPayment: Compact<Balance> (tip)
-        encode_compact_u128(tip, &mut encoded);
-
-        encoded
-    }
-
-    /// Build the payload to sign
-    ///
-    /// SignedPayload = (Call, Extra, Additional)
-    /// where Additional = (spec_version, tx_version, genesis_hash, block_hash)
-    fn build_sign_payload(
-        &self,
-        encoded_call: &[u8],
-        encoded_extra: &[u8],
-        metadata: &ChainMetadata,
-    ) -> Vec<u8> {
-        let mut payload = Vec::new();
-
-        // Call
-        payload.extend_from_slice(encoded_call);
-
-        // Extra
-        payload.extend_from_slice(encoded_extra);
-
-        // Additional signed data (not included in extrinsic, only for signing)
-        // spec_version: u32
-        payload.extend_from_slice(&metadata.spec_version.to_le_bytes());
-        // tx_version: u32
-        payload.extend_from_slice(&metadata.tx_version.to_le_bytes());
-        // genesis_hash: [u8; 32]
-        payload.extend_from_slice(&metadata.genesis_hash);
-        // block_hash: [u8; 32] (mortality checkpoint)
-        payload.extend_from_slice(&metadata.block_hash);
-
-        // eprintln!("DEBUG: Sign payload before hash: {} bytes", payload.len());
-        // eprintln!("DEBUG: Sign payload first 50: {}", hex::encode(&payload[..50.min(payload.len())]));
-
-        // If payload > 256 bytes, hash it first (Substrate convention)
-        if payload.len() > 256 {
-            let hashed = blake2_256_hash(&payload);
-            // eprintln!("DEBUG: Sign payload hashed to: {}", hex::encode(&hashed));
-            hashed.to_vec()
-        } else {
-            payload
-        }
-    }
-
-    /// Sign payload with ML-DSA
-    fn sign_payload(&self, payload: &[u8]) -> Vec<u8> {
-        let signature = self.signing_key.sign(payload);
-
-        // Encode as Signature::MlDsa variant
-        // Format: variant_byte(0) + signature[3309] + Public::MlDsa(variant_byte(0) + pk[1952])
-        //
-        // The runtime's Signature enum is:
-        //   enum Signature { MlDsa { signature: [u8; 3309], public: Public }, ... }
-        // And Public enum is:
-        //   enum Public { MlDsa([u8; 1952]), SlhDsa([u8; 64]) }
-        //
-        // So we need: Signature variant + signature bytes + Public variant + public key bytes
-        let mut encoded = Vec::with_capacity(1 + ML_DSA_SIGNATURE_LEN + 1 + ML_DSA_PUBLIC_KEY_LEN);
-        encoded.push(0u8); // Signature::MlDsa variant
-        encoded.extend_from_slice(signature.as_bytes());
-        encoded.push(0u8); // Public::MlDsa variant
-        encoded.extend_from_slice(&self.public_key.to_bytes());
-
-        encoded
-    }
-
-    /// Build the final signed extrinsic
-    ///
-    /// UncheckedExtrinsic = (
-    ///     version: u8 (0x84 for signed, or 0x04 for unsigned),
-    ///     address: MultiAddress<AccountId32, ()>,
-    ///     signature: Signature,
-    ///     extra: SignedExtra,
-    ///     call: Call
-    /// )
-    fn build_extrinsic(
-        &self,
-        encoded_call: &[u8],
-        signature: &[u8],
-        encoded_extra: &[u8],
-    ) -> Vec<u8> {
-        // eprintln!("DEBUG EXTRINSIC BUILD:");
-        eprintln!("  call len = {} bytes", encoded_call.len());
-        eprintln!("  signature len = {} bytes", signature.len());
-        eprintln!("  extra len = {} bytes", encoded_extra.len());
-        eprintln!("  extra hex = {}", hex::encode(encoded_extra));
-
-        let mut extrinsic = Vec::new();
-
-        // Version byte: 0x84 = signed extrinsic (0b10000100)
-        // Bit 7 = 1 (signed), bits 0-6 = 4 (extrinsic format version)
-        extrinsic.push(0x84);
-
-        // Address: MultiAddress::Id(AccountId32)
-        // Variant 0 = Id
-        extrinsic.push(0x00);
-        extrinsic.extend_from_slice(&self.account_id);
-
-        // Signature (already encoded with variant byte)
-        extrinsic.extend_from_slice(signature);
-
-        // Extra
-        extrinsic.extend_from_slice(encoded_extra);
-
-        // Call
-        extrinsic.extend_from_slice(encoded_call);
-
-        eprintln!("  extrinsic body = {} bytes", extrinsic.len());
-        eprintln!("  breakdown: 1(version) + 1(addr variant) + 32(account) + {}(sig) + {}(extra) + {}(call) = {}",
-                  signature.len(), encoded_extra.len(), encoded_call.len(),
-                  1 + 1 + 32 + signature.len() + encoded_extra.len() + encoded_call.len());
-
-        // Wrap with compact length prefix (standard extrinsic encoding)
-        let mut result = Vec::new();
-        encode_compact_len(extrinsic.len(), &mut result);
-        eprintln!(
-            "  compact prefix = {} bytes for value {}",
-            result.len(),
-            extrinsic.len()
-        );
-        result.extend_from_slice(&extrinsic);
-
-        eprintln!("  final extrinsic = {} bytes", result.len());
-        eprintln!(
-            "  first 20 bytes: {}",
-            hex::encode(&result[..20.min(result.len())])
-        );
-
-        result
-    }
 }
 
 // ============================================================================
@@ -839,15 +594,10 @@ mod tests {
     }
 
     #[test]
-    fn test_extrinsic_builder_creation() {
+    fn test_ml_dsa_account_id_derivation() {
         let seed = [0u8; 32];
-        let builder = ExtrinsicBuilder::from_seed(&seed);
-
-        // Account ID should be 32 bytes
-        assert_eq!(builder.account_id().len(), 32);
-
-        // Public key should be ML_DSA_PUBLIC_KEY_LEN bytes
-        assert_eq!(builder.public_key_bytes().len(), ML_DSA_PUBLIC_KEY_LEN);
+        let account_id = ml_dsa_account_id_from_seed(&seed);
+        assert_eq!(account_id.len(), 32);
     }
 
     #[test]

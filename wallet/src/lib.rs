@@ -24,7 +24,7 @@ pub use address::ShieldedAddress;
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
 pub use consolidate::{execute_consolidation, ConsolidationPlan, MAX_INPUTS};
 pub use error::WalletError;
-pub use extrinsic::{ChainMetadata, Era, ExtrinsicBuilder, SlhDsaExtrinsicBuilder};
+pub use extrinsic::{ml_dsa_account_id_from_seed, ChainMetadata, Era, SlhDsaExtrinsicBuilder};
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{ProofResult, ProverStats, StarkProver, StarkProverConfig};

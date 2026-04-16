@@ -35,7 +35,7 @@ hen assembling payloads.
   - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
   - `TxValidityArtifact { receipt, proof }`
   - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
-- Import routes proof checks through `VerifierRegistry`, which currently has adapters for the shipped `InlineTx` compatibility lane and the experimental native `ReceiptRoot` artifact family.
+- Import routes proof checks through `VerifierRegistry`, which currently has adapters for the shipped `RecursiveBlockV1` lane, the explicit native `ReceiptRoot` compatibility lane, and the experimental `RecursiveBlockV2` lane.
 - The consensus crate also exposes the temporary receipt-root backend façade:
   - `experimental_receipt_root_verifier_profile()`
   - `build_experimental_receipt_root_artifact(receipts)`
@@ -108,7 +108,7 @@ Legacy / experimental pool-worker RPC notes:
 - `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
 - `hegemon_submitPoolShare` remains as a compatibility path and now also accepts a 32-byte nonce (`0x`-prefixed hex); full-target solutions are forwarded into the mining coordinator.
 - `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
-- These pool-worker RPCs are not part of the current default desktop or `InlineTx` operator flow. They remain in-tree for compatibility and experiments.
+- These pool-worker RPCs are not part of the current default desktop or shipped `RecursiveBlock` operator flow. They remain in-tree for compatibility and experiments.
 
 `CompactJobResponse` fields:
 - `available: bool`
@@ -216,7 +216,7 @@ Artifact market RPC notes:
 - `artifact_hash: String` (`0x`-prefixed hex)
 - `tx_statements_commitment: String` (`0x`-prefixed hex)
 - `tx_count: u32`
-- `proof_mode: String` (legacy compatibility label: `inline_tx` | `receipt_root`)
+- `proof_mode: String` (compatibility label: `inline_tx` | `receipt_root` | `recursive_block`)
 - `proof_kind: String` (backend-neutral artifact family label)
 - `verifier_profile: String` (`0x`-prefixed 48-byte digest)
 
