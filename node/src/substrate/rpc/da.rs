@@ -6,13 +6,14 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
 use jsonrpsee::types::ErrorObjectOwned;
-use parking_lot::Mutex;
 use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use state_da::{DaChunkProof, DaParams, DaRoot};
 use std::sync::Arc;
 use superneo_hegemon::{
-    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes, NativeTxLeafArtifact,
+    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+    NativeTxLeafArtifact,
 };
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
@@ -201,7 +202,9 @@ fn signed_magnitude_to_i128(sign: u8, magnitude: u64) -> Result<i128, ErrorObjec
     match sign {
         0 => Ok(i128::from(magnitude)),
         1 => Ok(-i128::from(magnitude)),
-        _ => Err(invalid_params("native tx-leaf staged proof has invalid signed-magnitude flag")),
+        _ => Err(invalid_params(
+            "native tx-leaf staged proof has invalid signed-magnitude flag",
+        )),
     }
 }
 
@@ -224,7 +227,9 @@ fn stablecoin_binding_from_artifact(
         asset_id: artifact.stark_public_inputs.stablecoin_asset_id,
         policy_hash: artifact.stark_public_inputs.stablecoin_policy_hash,
         oracle_commitment: artifact.stark_public_inputs.stablecoin_oracle_commitment,
-        attestation_commitment: artifact.stark_public_inputs.stablecoin_attestation_commitment,
+        attestation_commitment: artifact
+            .stark_public_inputs
+            .stablecoin_attestation_commitment,
         issuance_delta: signed_magnitude_to_i128(
             artifact.stark_public_inputs.stablecoin_issuance_sign,
             artifact.stark_public_inputs.stablecoin_issuance_magnitude,
@@ -237,20 +242,22 @@ fn try_binding_hash_from_native_tx_leaf_artifact(
     artifact: &NativeTxLeafArtifact,
     balance_slot_asset_ids: [u64; transaction_circuit::constants::BALANCE_SLOTS],
 ) -> Result<[u8; 64], ErrorObjectOwned> {
-    Ok(StarkVerifier::compute_binding_hash(&ShieldedTransferInputs {
-        anchor: artifact.stark_public_inputs.merkle_root,
-        nullifiers: artifact.tx.nullifiers.clone(),
-        commitments: artifact.tx.commitments.clone(),
-        ciphertext_hashes: artifact.tx.ciphertext_hashes.clone(),
-        balance_slot_asset_ids,
-        fee: artifact.stark_public_inputs.fee,
-        value_balance: signed_magnitude_to_i128(
-            artifact.stark_public_inputs.value_balance_sign,
-            artifact.stark_public_inputs.value_balance_magnitude,
-        )?,
-        stablecoin: stablecoin_binding_from_artifact(artifact)?,
-    })
-    .data)
+    Ok(
+        StarkVerifier::compute_binding_hash(&ShieldedTransferInputs {
+            anchor: artifact.stark_public_inputs.merkle_root,
+            nullifiers: artifact.tx.nullifiers.clone(),
+            commitments: artifact.tx.commitments.clone(),
+            ciphertext_hashes: artifact.tx.ciphertext_hashes.clone(),
+            balance_slot_asset_ids,
+            fee: artifact.stark_public_inputs.fee,
+            value_balance: signed_magnitude_to_i128(
+                artifact.stark_public_inputs.value_balance_sign,
+                artifact.stark_public_inputs.value_balance_magnitude,
+            )?,
+            stablecoin: stablecoin_binding_from_artifact(artifact)?,
+        })
+        .data,
+    )
 }
 
 fn binding_hash_candidates_from_native_tx_leaf_artifact(
@@ -261,7 +268,9 @@ fn binding_hash_candidates_from_native_tx_leaf_artifact(
         .balance_slot_asset_ids
         .clone()
         .try_into()
-        .map_err(|_| invalid_params("native tx-leaf staged proof has invalid balance-slot shape"))?;
+        .map_err(|_| {
+            invalid_params("native tx-leaf staged proof has invalid balance-slot shape")
+        })?;
     let legacy_asset_ids = direct_asset_ids.map(decanonicalize_balance_slot_asset_id);
 
     Ok([
@@ -275,7 +284,9 @@ fn prevalidate_staged_native_tx_leaf_artifact(
     bytes: &[u8],
 ) -> Result<(), ErrorObjectOwned> {
     if bytes.len() > pallet_shielded_pool::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
-        return Err(invalid_params("proof exceeds NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE"));
+        return Err(invalid_params(
+            "proof exceeds NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE",
+        ));
     }
 
     let artifact = decode_native_tx_leaf_artifact_bytes(bytes).map_err(|err| {
@@ -283,14 +294,19 @@ fn prevalidate_staged_native_tx_leaf_artifact(
             "staged proof must be a canonical native tx-leaf artifact: {err}"
         ))
     })?;
-    verify_native_tx_leaf_artifact_bytes(&artifact.tx, &artifact.receipt, bytes).map_err(|err| {
-        invalid_params(format!(
-            "staged native tx-leaf artifact failed self-verification: {err}"
-        ))
-    })?;
+    verify_native_tx_leaf_artifact_bytes(&artifact.tx, &artifact.receipt, bytes).map_err(
+        |err| {
+            invalid_params(format!(
+                "staged native tx-leaf artifact failed self-verification: {err}"
+            ))
+        },
+    )?;
 
     let derived_binding_hashes = binding_hash_candidates_from_native_tx_leaf_artifact(&artifact)?;
-    if !derived_binding_hashes.iter().any(|candidate| candidate == binding_hash) {
+    if !derived_binding_hashes
+        .iter()
+        .any(|candidate| candidate == binding_hash)
+    {
         return Err(invalid_params(
             "staged native tx-leaf artifact binding hash does not match request binding hash",
         ));
@@ -545,10 +561,14 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use superneo_hegemon::{build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes};
+    use superneo_hegemon::{
+        build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
+    };
     use tempfile::TempDir;
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
-    use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes, Felt, HashFelt};
+    use transaction_circuit::hashing_pq::{
+        felts_to_bytes48, merkle_node, spend_auth_key_bytes, Felt, HashFelt,
+    };
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use transaction_circuit::witness::TransactionWitness;
 
@@ -636,8 +656,12 @@ mod tests {
             current = merkle_node(current, zero);
         }
         (
-            MerklePath { siblings: siblings0 },
-            MerklePath { siblings: siblings1 },
+            MerklePath {
+                siblings: siblings0,
+            },
+            MerklePath {
+                siblings: siblings1,
+            },
             current,
         )
     }
@@ -706,9 +730,7 @@ mod tests {
             sc_rpc::DenyUnsafe::No,
         );
         let (proof_bytes, binding_hash) = valid_native_tx_leaf_proof_and_binding(42);
-        pending_proofs
-            .lock()
-            .insert(binding_hash, vec![7u8; 32]);
+        pending_proofs.lock().insert(binding_hash, vec![7u8; 32]);
 
         let err = rpc
             .submit_proofs(SubmitProofsRequest {
