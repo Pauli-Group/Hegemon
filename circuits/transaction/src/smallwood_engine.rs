@@ -3311,6 +3311,70 @@ mod tests {
     use p3_field::PrimeCharacteristicRing;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
+    fn transcript_xof_words_blake3_reference(
+        domain: &[u8],
+        words: &[u64],
+        out_words: usize,
+    ) -> Vec<u64> {
+        if out_words == 4 && words.len() <= 8 && domain == SMALLWOOD_COMPRESS2_DOMAIN {
+            let mut padded = [0u64; 8];
+            for (idx, word) in words.iter().enumerate() {
+                padded[idx] = *word;
+            }
+            let mut hasher = Hasher::new();
+            hasher.update(SMALLWOOD_COMPRESS2_DOMAIN);
+            hasher.update(&(padded.len() as u64).to_le_bytes());
+            for word in &padded {
+                hasher.update(&word.to_le_bytes());
+            }
+            let mut reader = hasher.finalize_xof();
+            let mut out = vec![0u64; 4];
+            for slot in &mut out {
+                let mut buf = [0u8; 16];
+                reader.fill(&mut buf);
+                *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
+            }
+            return out;
+        }
+        let mut hasher = Hasher::new();
+        hasher.update(domain);
+        hasher.update(&(words.len() as u64).to_le_bytes());
+        for word in words {
+            hasher.update(&word.to_le_bytes());
+        }
+        let mut reader = hasher.finalize_xof();
+        let mut out = vec![0u64; out_words];
+        for slot in &mut out {
+            let mut buf = [0u8; 16];
+            reader.fill(&mut buf);
+            *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
+        }
+        out
+    }
+
+    fn merkle_build_levels_blake3_reference(
+        levels: &mut Vec<Vec<[u8; DIGEST_BYTES]>>,
+    ) -> [u8; DIGEST_BYTES] {
+        let mut current = levels[0].clone();
+        while current.len() > 1 {
+            let mut parents = Vec::with_capacity(current.len().div_ceil(2));
+            for pair in current.chunks(2) {
+                let mut input = Vec::with_capacity(pair.len() * DIGEST_WORDS);
+                for child in pair {
+                    input.extend(digest_to_words(child));
+                }
+                parents.push(words_to_digest(&transcript_xof_words_blake3_reference(
+                    SMALLWOOD_XOF_DOMAIN,
+                    &input,
+                    DIGEST_WORDS,
+                )));
+            }
+            levels.push(parents.clone());
+            current = parents;
+        }
+        current[0]
+    }
+
     fn sample_witness() -> TransactionWitness {
         let sk_spend = [42u8; 32];
         let pk_auth = spend_auth_key_bytes(&sk_spend);
@@ -3974,6 +4038,86 @@ mod tests {
             .map(|point| poly_eval(&poly, point as u64))
             .collect::<Vec<_>>();
         assert_eq!(extended, expected);
+    }
+
+    #[test]
+    fn blake3_bulk_word_hashing_matches_reference() {
+        let domains = [SMALLWOOD_XOF_DOMAIN, SMALLWOOD_COMPRESS2_DOMAIN];
+        let samples = [
+            Vec::new(),
+            vec![7u64],
+            vec![1u64, 2, 3, 4],
+            (0..8u64).collect::<Vec<_>>(),
+            (0..11u64).collect::<Vec<_>>(),
+        ];
+        for domain in domains {
+            for words in &samples {
+                for &out_words in &[1usize, 3, 4, 7] {
+                    let actual =
+                        transcript_xof_words(SmallwoodTranscriptBackend::Blake3, domain, words, out_words);
+                    let expected = transcript_xof_words_blake3_reference(domain, words, out_words);
+                    assert_eq!(actual, expected, "domain={domain:?} len={} out={out_words}", words.len());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blake3_merkle_fast_paths_match_reference() {
+        let salt = [9u8; SALT_BYTES];
+        let salt_words = bytes_to_words_unchecked(&salt);
+        let committed = vec![
+            vec![11u64, 12, 13, 14, 15],
+            vec![21u64, 22, 23, 24, 25],
+            vec![31u64, 32, 33, 34, 35],
+        ];
+        let masking = vec![vec![41u64, 42, 43, 44, 45], vec![51u64, 52, 53, 54, 55]];
+        for leaf_idx in 0..5 {
+            let actual = hash_merkle_leave_from_tables(
+                &salt_words,
+                &committed,
+                &masking,
+                leaf_idx,
+                SmallwoodTranscriptBackend::Blake3,
+            );
+            let mut input = salt_words.to_vec();
+            for poly in &committed {
+                input.push(poly[leaf_idx]);
+            }
+            for poly in &masking {
+                input.push(poly[leaf_idx]);
+            }
+            let expected = words_to_digest(&transcript_xof_words_blake3_reference(
+                SMALLWOOD_XOF_DOMAIN,
+                &input,
+                DIGEST_WORDS,
+            ));
+            assert_eq!(actual, expected, "leaf_idx={leaf_idx}");
+        }
+
+        let mut levels = vec![vec![
+            [1u8; DIGEST_BYTES],
+            [2u8; DIGEST_BYTES],
+            [3u8; DIGEST_BYTES],
+            [4u8; DIGEST_BYTES],
+            [5u8; DIGEST_BYTES],
+        ]];
+        let mut expected_levels = levels.clone();
+        let actual_root = merkle_build_levels(&mut levels, SmallwoodTranscriptBackend::Blake3);
+        let expected_root = merkle_build_levels_blake3_reference(&mut expected_levels);
+        assert_eq!(actual_root, expected_root);
+        assert_eq!(levels, expected_levels);
+
+        let actual_root_hash =
+            hash_merkle_root(&salt, &actual_root, SmallwoodTranscriptBackend::Blake3);
+        let mut root_words = bytes_to_words_unchecked(&salt);
+        root_words.extend(digest_to_words(&actual_root));
+        let expected_root_hash = words_to_digest(&transcript_xof_words_blake3_reference(
+            SMALLWOOD_XOF_DOMAIN,
+            &root_words,
+            DIGEST_WORDS,
+        ));
+        assert_eq!(actual_root_hash, expected_root_hash);
     }
 }
 
