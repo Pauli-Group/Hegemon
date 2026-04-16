@@ -11661,6 +11661,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             Arc::clone(&pending_ciphertext_store),
             Arc::clone(&pending_proof_store),
             da_params,
+            rpc_deny_unsafe,
         );
         if let Err(e) = module.merge(da_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge DA RPC");

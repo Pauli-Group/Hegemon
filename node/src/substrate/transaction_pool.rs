@@ -465,7 +465,7 @@ impl SubstrateTransactionPoolWrapper {
     }
 }
 
-fn prevalidate_external_gossip_extrinsic(
+pub(crate) fn prevalidate_native_shielded_extrinsic(
     extrinsic: &runtime::UncheckedExtrinsic,
 ) -> Result<(), PoolError> {
     let runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope }) =
@@ -499,13 +499,13 @@ fn prevalidate_external_gossip_extrinsic(
 fn prevalidate_native_tx_leaf_artifact(proof_bytes: &[u8]) -> Result<(), PoolError> {
     let artifact = decode_native_tx_leaf_artifact_bytes(proof_bytes).map_err(|err| {
         PoolError::InvalidTransaction(format!(
-            "external native tx-leaf decode failed before pool admission: {err}"
+            "native tx-leaf decode failed before pool admission: {err}"
         ))
     })?;
     verify_native_tx_leaf_artifact_bytes(&artifact.tx, &artifact.receipt, proof_bytes).map_err(
         |err| {
             PoolError::InvalidTransaction(format!(
-                "external native tx-leaf verification failed before pool admission: {err}"
+                "native tx-leaf verification failed before pool admission: {err}"
             ))
         },
     )?;
@@ -556,17 +556,21 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
             ));
         }
 
-        if matches!(source, TransactionSource::External) {
-            match prevalidate_external_gossip_extrinsic(&extrinsic) {
+        if !matches!(source, TransactionSource::InBlock) {
+            match prevalidate_native_shielded_extrinsic(&extrinsic) {
                 Ok(()) => {
-                    self.record_external_verification(hash, ExternalVerificationVerdict::Valid);
+                    if matches!(source, TransactionSource::External) {
+                        self.record_external_verification(hash, ExternalVerificationVerdict::Valid);
+                    }
                 }
                 Err(err) => {
                     let error = err.to_string();
-                    self.record_external_verification(
-                        hash,
-                        ExternalVerificationVerdict::Invalid(error.clone()),
-                    );
+                    if matches!(source, TransactionSource::External) {
+                        self.record_external_verification(
+                            hash,
+                            ExternalVerificationVerdict::Invalid(error.clone()),
+                        );
+                    }
                     return Err(PoolError::InvalidTransaction(error));
                 }
             }
@@ -1260,15 +1264,15 @@ mod tests {
     }
 
     #[test]
-    fn external_kernel_transfer_requires_valid_native_tx_leaf_artifact() {
+    fn native_shielded_pool_submission_requires_valid_native_tx_leaf_artifact() {
         let witness = sample_witness(31);
         let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
         let extrinsic = kernel_transfer_extrinsic_with_proof(built.artifact_bytes);
-        assert!(prevalidate_external_gossip_extrinsic(&extrinsic).is_ok());
+        assert!(prevalidate_native_shielded_extrinsic(&extrinsic).is_ok());
     }
 
     #[test]
-    fn external_kernel_transfer_rejects_invalid_native_tx_leaf_artifact() {
+    fn native_shielded_pool_submission_rejects_invalid_native_tx_leaf_artifact() {
         let witness = sample_witness(32);
         let built = build_native_tx_leaf_artifact_bytes(&witness).expect("native tx leaf bytes");
         let mut artifact =
@@ -1278,7 +1282,7 @@ mod tests {
             encode_native_tx_leaf_artifact_bytes(&artifact).expect("encode tampered artifact");
         let extrinsic = kernel_transfer_extrinsic_with_proof(tampered);
         assert!(matches!(
-            prevalidate_external_gossip_extrinsic(&extrinsic),
+            prevalidate_native_shielded_extrinsic(&extrinsic),
             Err(PoolError::InvalidTransaction(_))
         ));
     }

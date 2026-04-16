@@ -100,6 +100,7 @@ use crate::substrate::mining_worker::MinedBlockRecord;
 use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL};
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
+use crate::substrate::transaction_pool::prevalidate_native_shielded_extrinsic;
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
 use superneo_hegemon::{
     decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
@@ -317,6 +318,8 @@ where
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
+        prevalidate_native_shielded_extrinsic(&extrinsic)
+            .map_err(|err| format!("kernel action prevalidation failed: {err}"))?;
         let at: sp_core::H256 = self.best_hash().into();
         let (tx_hash, tracked_ready, tracked_future) = match self
             .transaction_pool
@@ -1383,6 +1386,8 @@ where
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
+        prevalidate_native_shielded_extrinsic(&extrinsic)
+            .map_err(|err| format!("unsigned shielded transfer prevalidation failed: {err}"))?;
         let at: sp_core::H256 = self.best_hash().into();
 
         let (tx_hash, tracked_ready, tracked_future) = match self

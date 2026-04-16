@@ -1777,7 +1777,6 @@ pub mod pallet {
                     NATIVE_TX_INLINE_ZERO_RECEIPT_FIELDS_CODE,
                 ));
             }
-
             Ok(Some(ValidActionMeta {
                 priority: 100,
                 longevity: 64,
@@ -1990,7 +1989,6 @@ pub mod pallet {
             {
                 return Err(InvalidTransaction::BadProof);
             }
-
             Ok(Some(ValidActionMeta {
                 priority: 100,
                 longevity: 64,

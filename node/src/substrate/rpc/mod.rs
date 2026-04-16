@@ -159,6 +159,7 @@ where
         Arc::clone(&deps.pending_ciphertext_store),
         Arc::clone(&deps.pending_proof_store),
         deps.da_params,
+        deps.deny_unsafe,
     );
     module.merge(da_rpc.into_rpc())?;
 
