@@ -21,7 +21,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 128;
+pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 256;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
 const TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2: usize = 64;

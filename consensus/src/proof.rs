@@ -776,7 +776,7 @@ impl ArtifactVerifier for ReceiptRootVerifier {
 }
 
 pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
-    recursive_block_artifact_verifier_profile_v1()
+    recursive_block_artifact_verifier_profile_v2()
 }
 
 struct RecursiveBlockVerifier {

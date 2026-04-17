@@ -249,7 +249,7 @@ pub fn proof_artifact_kind_from_mode(mode: ProvenBatchMode) -> ProofArtifactKind
     match mode {
         ProvenBatchMode::InlineTx => ProofArtifactKind::InlineTx,
         ProvenBatchMode::ReceiptRoot => ProofArtifactKind::ReceiptRoot,
-        ProvenBatchMode::RecursiveBlock => ProofArtifactKind::RecursiveBlockV1,
+        ProvenBatchMode::RecursiveBlock => ProofArtifactKind::RecursiveBlockV2,
     }
 }
 

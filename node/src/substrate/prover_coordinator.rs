@@ -1440,7 +1440,7 @@ mod tests {
             da_chunk_count: 1,
             commitment_proof: pallet_shielded_pool::types::StarkProof::from_bytes(vec![1, 2, 3]),
             proof_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
-            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1,
+            proof_kind: pallet_shielded_pool::types::canonical_recursive_block_artifact_kind(),
             verifier_profile: crate::substrate::artifact_market::compat_pallet_artifact_identity(
                 pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
             )
@@ -1557,7 +1557,7 @@ mod tests {
             .expect("recursive bundle should be found");
         assert_eq!(
             recursive_bundle.payload.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
 

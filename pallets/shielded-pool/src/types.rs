@@ -40,12 +40,12 @@ pub const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE: usize = 699_404;
 /// Maximum size of a `recursive_block_v2` artifact payload.
 ///
 /// `v2` is the bounded-domain tree lane. The current cap is derived from:
-/// - `TREE_RECURSIVE_CHUNK_SIZE_V2 = 128`
+/// - `TREE_RECURSIVE_CHUNK_SIZE_V2 = 256`
 /// - `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`
 /// - the level-capped recursive proof report in `block_recursion`
 ///
-/// The current full serialized `Pi_block_v2(B)` size is `1_239_940`.
-pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 1_239_940;
+/// The current full serialized `Pi_block_v2(B)` size is `788_431`.
+pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 788_431;
 
 /// Maximum size of any accepted recursive block artifact payload.
 ///
@@ -281,7 +281,7 @@ pub const fn is_recursive_block_artifact_kind(kind: ProofArtifactKind) -> bool {
 }
 
 pub const fn canonical_recursive_block_artifact_kind() -> ProofArtifactKind {
-    ProofArtifactKind::RecursiveBlockV1
+    ProofArtifactKind::RecursiveBlockV2
 }
 
 pub const fn is_shipped_block_proof_mode(mode: BlockProofMode) -> bool {
@@ -293,10 +293,7 @@ pub const fn is_experimental_block_proof_mode(mode: BlockProofMode) -> bool {
 }
 
 pub const fn is_experimental_block_artifact_kind(kind: ProofArtifactKind) -> bool {
-    matches!(
-        kind,
-        ProofArtifactKind::ReceiptRoot | ProofArtifactKind::RecursiveBlockV2
-    )
+    matches!(kind, ProofArtifactKind::ReceiptRoot)
 }
 
 pub const fn recursive_block_artifact_max_size(kind: ProofArtifactKind) -> Option<usize> {

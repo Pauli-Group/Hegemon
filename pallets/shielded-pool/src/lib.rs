@@ -3278,7 +3278,9 @@ mod tests {
     }
 
     fn dummy_recursive_candidate_artifact() -> types::CandidateArtifact {
-        dummy_recursive_candidate_artifact_with_kind(types::ProofArtifactKind::RecursiveBlockV1)
+        dummy_recursive_candidate_artifact_with_kind(
+            types::canonical_recursive_block_artifact_kind(),
+        )
     }
 
     fn dummy_recursive_candidate_artifact_with_kind(
@@ -3672,6 +3674,7 @@ mod tests {
     fn validate_submit_recursive_candidate_artifact_accepts_product_lane_size_cap() {
         mock::new_test_ext().execute_with(|| {
             let mut payload = dummy_recursive_candidate_artifact();
+            let proof_kind = payload.proof_kind;
             payload
                 .recursive_block
                 .as_mut()
@@ -3679,10 +3682,8 @@ mod tests {
                 .proof
                 .data = vec![
                 0u8;
-                types::recursive_block_artifact_max_size(
-                    types::ProofArtifactKind::RecursiveBlockV1
-                )
-                .expect("v1 recursive size cap")
+                types::recursive_block_artifact_max_size(proof_kind)
+                    .expect("canonical recursive size cap")
             ];
 
             let meta =
@@ -3779,6 +3780,7 @@ mod tests {
     fn validate_submit_recursive_candidate_artifact_rejects_oversized_recursive_payload() {
         mock::new_test_ext().execute_with(|| {
             let mut payload = dummy_recursive_candidate_artifact();
+            let proof_kind = payload.proof_kind;
             payload
                 .recursive_block
                 .as_mut()
@@ -3786,10 +3788,8 @@ mod tests {
                 .proof
                 .data = vec![
                 0u8;
-                types::recursive_block_artifact_max_size(
-                    types::ProofArtifactKind::RecursiveBlockV1
-                )
-                .expect("v1 recursive size cap")
+                types::recursive_block_artifact_max_size(proof_kind)
+                .expect("canonical recursive size cap")
                     + 1
             ];
 

@@ -136,8 +136,9 @@ use crate::substrate::transaction_pool::{
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use block_recursion::{
-    prove_block_recursive_v1, BlockLeafRecordV1, BlockRecursiveProverInputV1,
-    BlockSemanticInputsV1, RecursiveBlockArtifactV1,
+    prove_block_recursive_v1, prove_block_recursive_v2, BlockLeafRecordV1,
+    BlockRecursiveProverInputV1, BlockRecursiveProverInputV2, BlockSemanticInputsV1,
+    RecursiveBlockArtifactV1, RecursiveBlockArtifactV2,
 };
 use codec::Decode;
 use codec::Encode;
@@ -3069,7 +3070,7 @@ fn build_receipt_root_proof_from_materials_with_plan(
     ))
 }
 
-fn recursive_block_payload_from_artifact(
+fn recursive_block_payload_from_artifact_v1(
     artifact: RecursiveBlockArtifactV1,
 ) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
     let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
@@ -3079,7 +3080,18 @@ fn recursive_block_payload_from_artifact(
     })
 }
 
+fn recursive_block_payload_from_artifact_v2(
+    artifact: RecursiveBlockArtifactV2,
+) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
+    let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+        .map_err(|err| format!("serialize recursive_block_v2 artifact failed: {err}"))?;
+    Ok(pallet_shielded_pool::types::RecursiveBlockProofPayload {
+        proof: pallet_shielded_pool::types::StarkProof::from_bytes(bytes),
+    })
+}
+
 fn build_recursive_block_proof_from_materials(
+    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
     tx_artifacts: &[consensus::TxValidityArtifact],
     semantic: &BlockSemanticInputsV1,
 ) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
@@ -3115,12 +3127,28 @@ fn build_recursive_block_proof_from_materials(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let artifact = prove_block_recursive_v1(&BlockRecursiveProverInputV1 {
-        records,
-        semantic: semantic.clone(),
-    })
-    .map_err(|err| format!("recursive_block_v1 artifact generation failed: {err}"))?;
-    recursive_block_payload_from_artifact(artifact)
+    match proof_kind {
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1 => {
+            let artifact = prove_block_recursive_v1(&BlockRecursiveProverInputV1 {
+                records,
+                semantic: semantic.clone(),
+            })
+            .map_err(|err| format!("recursive_block_v1 artifact generation failed: {err}"))?;
+            recursive_block_payload_from_artifact_v1(artifact)
+        }
+        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2 => {
+            let artifact = prove_block_recursive_v2(&BlockRecursiveProverInputV2 {
+                records,
+                semantic: semantic.clone(),
+            })
+            .map_err(|err| format!("recursive_block_v2 artifact generation failed: {err}"))?;
+            recursive_block_payload_from_artifact_v2(artifact)
+        }
+        other => Err(format!(
+            "recursive_block requires recursive_block_v1 or recursive_block_v2 proof kind, got {:?}",
+            other
+        )),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3725,7 +3753,11 @@ fn prepare_block_proof_bundle(
                                     aggregation_statement_commitment,
                                     aggregation_da_root,
                                 )?;
-                                build_recursive_block_proof_from_materials(tx_artifacts, &semantic)
+                                build_recursive_block_proof_from_materials(
+                                    selected_artifact.proof_kind,
+                                    tx_artifacts,
+                                    &semantic,
+                                )
                             })
                             .map(|payload| {
                                 PreparedAggregationOutcome::native(
@@ -12320,7 +12352,7 @@ mod tests {
         );
         assert_eq!(
             selector.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
 
@@ -12348,7 +12380,7 @@ mod tests {
         );
         assert_eq!(
             selector.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
 
@@ -12382,7 +12414,7 @@ mod tests {
             .expect("legacy env modes should be forced onto canonical recursive_block");
         assert_eq!(
             selector.proof_kind,
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
 
@@ -12495,7 +12527,7 @@ mod tests {
     fn recursive_block_outcomes_are_not_cacheable() {
         let selector = PreparedArtifactSelector {
             compat_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
-            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1,
+            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2,
             verifier_profile: consensus::recursive_block_artifact_verifier_profile(),
         };
         let outcome = PreparedAggregationOutcome::native(
@@ -12622,7 +12654,7 @@ mod tests {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
-        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
@@ -12648,7 +12680,7 @@ mod tests {
         let _guard = set_block_proof_mode_with_require_native("recursive_block", "1");
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
-        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1;
+        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.recursive_block = Some(dummy_recursive_block_payload());
         let err = ensure_native_block_proof_payload(&payload)

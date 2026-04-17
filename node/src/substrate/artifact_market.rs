@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_mode_maps_to_recursive_block_v1() {
+    fn recursive_block_mode_maps_to_canonical_recursive_block() {
         assert_eq!(
             consensus_proven_batch_mode_from_pallet(
                 pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
@@ -163,16 +163,16 @@ mod tests {
         );
         assert_eq!(
             consensus_proof_artifact_kind_from_pallet(
-                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
             ),
-            consensus::ProofArtifactKind::RecursiveBlockV1
+            consensus::ProofArtifactKind::RecursiveBlockV2
         );
         let (kind, verifier_profile) = compat_pallet_artifact_identity(
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
         );
         assert_eq!(
             kind,
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
         assert_eq!(
             verifier_profile,

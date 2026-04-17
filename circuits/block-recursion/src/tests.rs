@@ -30,7 +30,6 @@ use super::{
     RecursiveBlockPublicV2, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
     StepARelationV1, StepBRelationV1, RECURSIVE_BLOCK_HEADER_BYTES_V1,
     RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_PUBLIC_BYTES_V1,
-    RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1, RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1,
     TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -855,6 +854,21 @@ fn recursive_block_v1_proof_cap_report_reveals_steady_state_growth() {
 #[test]
 fn tree_v2_proof_cap_report_is_self_consistent() {
     let report = tree_proof_cap_report_v2();
+    println!(
+        "tree_v2 chunk_size={} max_supported_txs={} max_chunk_count={} max_tree_level={} \
+         p_chunk_a={} p_merge_a={} p_merge_b={} p_carry_a={} p_carry_b={} root_proof_cap={} artifact_bytes={}",
+        TREE_RECURSIVE_CHUNK_SIZE_V2,
+        report.max_supported_txs,
+        report.max_chunk_count,
+        report.max_tree_level,
+        report.p_chunk_a,
+        report.p_merge_a,
+        report.p_merge_b,
+        report.p_carry_a,
+        report.p_carry_b,
+        report.root_proof_cap,
+        recursive_block_artifact_bytes_v2(),
+    );
     let expected_max_chunk_count = report
         .max_supported_txs
         .div_ceil(TREE_RECURSIVE_CHUNK_SIZE_V2);
