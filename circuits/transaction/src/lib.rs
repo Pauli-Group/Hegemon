@@ -31,6 +31,7 @@ pub mod proof;
 pub mod public_inputs;
 mod smallwood_engine;
 pub mod smallwood_frontend;
+pub mod smallwood_lppc_frontend;
 pub mod smallwood_native;
 pub mod smallwood_recursive;
 mod smallwood_semantics;
@@ -55,7 +56,9 @@ pub use smallwood_engine::{
     ensure_no_packing_collisions, ensure_row_polynomial_arithmetization,
     hash_challenge_opening_decs, hash_piop_transcript, interpolate_smallwood_consecutive_row_v1,
     lvcs_recompute_rows, pcs_build_coefficients, pcs_reconstruct_combi_heads,
-    piop_recompute_transcript, report_smallwood_proof_size_v1, smallwood_binding_words_v1,
+    piop_recompute_transcript, prove_smallwood_structural_identity_witness_v1,
+    report_smallwood_proof_size_v1, report_smallwood_structural_no_grinding_soundness_v1,
+    projected_smallwood_structural_proof_bytes_v1, smallwood_binding_words_v1,
     smallwood_poseidon2_coeffs_v1, smallwood_poseidon2_combi_heads_v1,
     smallwood_poseidon2_decs_commitment_transcript_v1, smallwood_poseidon2_decs_query_v1,
     smallwood_poseidon2_decs_trans_hash_v1, smallwood_poseidon2_eval_points_v1,
@@ -64,8 +67,9 @@ pub use smallwood_engine::{
     smallwood_poseidon2_piop_input_words_v1, smallwood_poseidon2_piop_trace_v1,
     smallwood_poseidon2_piop_transcript_v1, smallwood_poseidon2_recompute_root_v1,
     smallwood_poseidon2_recompute_rows_v1, smallwood_proof_from_trace_v1, validate_proof_shape,
-    xof_decs_opening, xof_piop_opening_points, SmallwoodArithmetization, SmallwoodConfig,
-    SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
+    verify_smallwood_structural_identity_witness_v1, xof_decs_opening, xof_piop_opening_points,
+    SmallwoodArithmetization, SmallwoodConfig, SmallwoodNoGrindingProfileV1,
+    SmallwoodNoGrindingSoundnessReportV1,
     SmallwoodPcsVerifierTraceV1, SmallwoodPiopVerifierTraceV1, SmallwoodProof,
     SmallwoodProofSizeReportV1, SmallwoodProofTraceV1, SmallwoodTranscriptBackend,
     SmallwoodVerifierTraceV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1, DIGEST_BYTES, NONCE_BYTES,
@@ -85,6 +89,33 @@ pub use smallwood_frontend::{
     SmallwoodCandidateProfileAnalysisReport, SmallwoodCandidateProfileSurface,
     SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport, SmallwoodFrontendShape,
     SmallwoodPoseidonLayout, SmallwoodPublicBindingMode,
+};
+pub use smallwood_lppc_frontend::{
+    analyze_smallwood_semantic_bridge_lower_bound_from_witness,
+    analyze_smallwood_semantic_bridge_lower_bound_frontier_from_witness,
+    analyze_smallwood_semantic_helper_floor_from_witness,
+    analyze_smallwood_semantic_helper_floor_frontier_from_witness,
+    analyze_smallwood_semantic_lppc_frontier_from_witness,
+    analyze_smallwood_semantic_lppc_auxiliary_poseidon_spike_from_witness,
+    analyze_smallwood_semantic_lppc_shape_from_witness,
+    build_smallwood_semantic_helper_floor_material_from_witness,
+    build_smallwood_semantic_lppc_material_from_witness,
+    build_smallwood_semantic_bridge_lower_bound_material_from_witness,
+    exact_smallwood_semantic_bridge_lower_bound_report_from_witness,
+    exact_smallwood_semantic_helper_floor_report_from_witness,
+    exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness,
+    exact_smallwood_semantic_lppc_identity_spike_report_from_witness,
+    prove_smallwood_semantic_lppc_identity_spike_from_witness,
+    verify_smallwood_semantic_lppc_identity_spike_from_witness,
+    SmallwoodSemanticBridgeLowerBoundAnalysisReport,
+    SmallwoodSemanticBridgeLowerBoundMaterial,
+    SmallwoodSemanticBridgeLowerBoundReport, SmallwoodSemanticBridgeLowerBoundShape,
+    SmallwoodSemanticHelperFloorAnalysisReport, SmallwoodSemanticHelperFloorMaterial,
+    SmallwoodSemanticHelperFloorReport, SmallwoodSemanticHelperFloorShape,
+    SmallwoodSemanticLppcAuxiliaryPoseidonSpikeReport, SmallwoodSemanticLppcFrontendMaterial,
+    SmallwoodSemanticLppcIdentitySpikeReport,
+    SmallwoodSemanticLppcProfileAnalysisReport, SmallwoodSemanticLppcShape,
+    SmallwoodSemanticLppcStatement,
 };
 pub use smallwood_recursive::{
     build_recursive_verifier_trace_v1, decode_smallwood_recursive_proof_envelope_v1,

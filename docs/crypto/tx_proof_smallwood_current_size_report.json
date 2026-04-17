@@ -1,26 +1,26 @@
 {
   "generator": {
     "command": "cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture",
-    "date_utc": "2026-04-17T03:20:00Z",
-    "note": "Generated from the live SmallWoodCandidate release proof on the current tree after promoting the 32768/24/3 no-grinding DECS point."
+    "date_utc": "2026-04-17T06:49:00Z",
+    "note": "Generated from the live SmallWoodCandidate release proof on the current tree after promoting DirectPacked64CompactBindingsSkipInitialMdsV1 as the default SmallWood arithmetization."
   },
   "report": {
-    "total_bytes": 100956,
+    "total_bytes": 98532,
     "wrapper_bytes": 12,
-    "ark_proof_bytes": 100944,
+    "ark_proof_bytes": 98520,
     "transcript_bytes": 9524,
     "commitment_bytes": 11720,
     "opened_values_bytes": 25192,
-    "opening_payload_bytes": 54508,
+    "opening_payload_bytes": 52084,
     "other_bytes": 0,
-    "arithmetization": "Bridge64V1",
+    "arithmetization": "DirectPacked64CompactBindingsSkipInitialMdsV1",
     "inner": {
-      "total_bytes": 100944,
+      "total_bytes": 98520,
       "transcript_bytes": 9524,
       "commitment_bytes": 11720,
       "opened_values_bytes": 25192,
-      "opening_payload_bytes": 54508,
-      "opened_witness_bytes": 34876,
+      "opening_payload_bytes": 52084,
+      "opened_witness_bytes": 33268,
       "other_bytes": 0,
       "salt_bytes": 32,
       "nonce_bytes": 4,
@@ -31,7 +31,7 @@
       "pcs_partial_evals_bytes": 416,
       "decs_auth_paths_bytes": 11720,
       "decs_masking_evals_bytes": 776,
-      "decs_high_coeffs_bytes": 17648
+      "decs_high_coeffs_bytes": 16832
     }
   }
 }

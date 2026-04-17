@@ -13,7 +13,9 @@ use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 
 use crate::{
     error::TransactionCircuitError,
-    smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm},
+    smallwood_semantics::{
+        SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
+    },
 };
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
@@ -1341,6 +1343,297 @@ pub fn report_smallwood_no_grinding_soundness_v1(
         security_floor_bits,
         meets_128_bit_floor: security_floor_bits + 1e-6 >= 128.0,
     })
+}
+
+#[derive(Clone, Debug)]
+struct StructuralIdentityWitnessStatement {
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    linear_offsets: Vec<u32>,
+    linear_indices: Vec<u32>,
+    linear_coefficients: Vec<u64>,
+    linear_targets: Vec<u64>,
+    auxiliary_words: Vec<u64>,
+}
+
+impl StructuralIdentityWitnessStatement {
+    fn new(
+        row_count: usize,
+        packing_factor: usize,
+        constraint_degree: usize,
+        constraint_count: usize,
+        auxiliary_words_len: usize,
+    ) -> Result<Self, TransactionCircuitError> {
+        if row_count == 0 || packing_factor == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood structural shape requires non-zero row_count and packing_factor",
+            ));
+        }
+        let witness_size = row_count
+            .checked_mul(packing_factor)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood structural witness size overflow",
+            ))?;
+        let mut linear_offsets = Vec::with_capacity(witness_size + 1);
+        let mut linear_indices = Vec::with_capacity(witness_size);
+        let mut linear_coefficients = Vec::with_capacity(witness_size);
+        let mut linear_targets = Vec::with_capacity(witness_size);
+        linear_offsets.push(0);
+        for idx in 0..witness_size {
+            linear_indices.push(idx as u32);
+            linear_coefficients.push(1);
+            linear_targets.push(0);
+            linear_offsets.push((idx + 1) as u32);
+        }
+        Ok(Self {
+            row_count,
+            packing_factor,
+            constraint_degree,
+            constraint_count,
+            linear_offsets,
+            linear_indices,
+            linear_coefficients,
+            linear_targets,
+            auxiliary_words: vec![0u64; auxiliary_words_len],
+        })
+    }
+
+    fn with_linear_targets(
+        row_count: usize,
+        packing_factor: usize,
+        constraint_degree: usize,
+        constraint_count: usize,
+        linear_targets: &[u64],
+        auxiliary_words: &[u64],
+    ) -> Result<Self, TransactionCircuitError> {
+        let mut statement = Self::new(
+            row_count,
+            packing_factor,
+            constraint_degree,
+            constraint_count,
+            auxiliary_words.len(),
+        )?;
+        let witness_size = row_count
+            .checked_mul(packing_factor)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood structural witness size overflow",
+            ))?;
+        if linear_targets.len() != witness_size {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood structural identity target length {} does not match witness size {witness_size}",
+                linear_targets.len()
+            )));
+        }
+        statement.linear_targets.copy_from_slice(linear_targets);
+        statement.auxiliary_words.copy_from_slice(auxiliary_words);
+        Ok(statement)
+    }
+}
+
+impl SmallwoodConstraintAdapter for StructuralIdentityWitnessStatement {
+    fn arithmetization(&self) -> SmallwoodArithmetization {
+        SmallwoodArithmetization::Bridge64V1
+    }
+
+    fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    fn packing_factor(&self) -> usize {
+        self.packing_factor
+    }
+
+    fn constraint_degree(&self) -> usize {
+        self.constraint_degree
+    }
+
+    fn linear_constraint_count(&self) -> usize {
+        self.linear_targets.len()
+    }
+
+    fn constraint_count(&self) -> usize {
+        self.constraint_count
+    }
+
+    fn linear_constraint_offsets(&self) -> &[u32] {
+        &self.linear_offsets
+    }
+
+    fn linear_constraint_indices(&self) -> &[u32] {
+        &self.linear_indices
+    }
+
+    fn linear_constraint_coefficients(&self) -> &[u64] {
+        &self.linear_coefficients
+    }
+
+    fn linear_targets(&self) -> &[u64] {
+        &self.linear_targets
+    }
+
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &self.auxiliary_words
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        Some(self.auxiliary_words.len())
+    }
+
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::IdentityWitness
+    }
+
+    fn nonlinear_eval_view<'a>(
+        &self,
+        eval_point: u64,
+        rows: &'a [u64],
+        auxiliary_words: &'a [u64],
+    ) -> SmallwoodNonlinearEvalView<'a> {
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point,
+            rows,
+            auxiliary_words,
+        }
+    }
+
+    fn compute_constraints_u64(
+        &self,
+        _view: SmallwoodNonlinearEvalView<'_>,
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError> {
+        out.fill(0);
+        Ok(())
+    }
+}
+
+pub fn projected_smallwood_structural_proof_bytes_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    auxiliary_words_len: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<usize, TransactionCircuitError> {
+    let statement = StructuralIdentityWitnessStatement::new(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        auxiliary_words_len,
+    )?;
+    projected_candidate_proof_bytes_with_profile(&statement, profile)
+}
+
+pub fn report_smallwood_structural_no_grinding_soundness_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    public_value_count: usize,
+    auxiliary_words_len: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodNoGrindingSoundnessReportV1, TransactionCircuitError> {
+    let statement = StructuralIdentityWitnessStatement::new(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        auxiliary_words_len,
+    )?;
+    report_smallwood_no_grinding_soundness_v1(&statement, public_value_count, profile)
+}
+
+pub fn prove_smallwood_structural_identity_witness_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    witness_values: &[u64],
+    binded_data: &[u8],
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    prove_smallwood_structural_identity_witness_with_auxiliary_v1(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        witness_values,
+        &[],
+        binded_data,
+    )
+}
+
+pub fn prove_smallwood_structural_identity_witness_with_auxiliary_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    witness_values: &[u64],
+    auxiliary_words: &[u64],
+    binded_data: &[u8],
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let statement = StructuralIdentityWitnessStatement::with_linear_targets(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        witness_values,
+        auxiliary_words,
+    )?;
+    prove_statement_with_transcript_backend(
+        &statement,
+        witness_values,
+        binded_data,
+        SmallwoodTranscriptBackend::Blake3,
+    )
+}
+
+pub fn verify_smallwood_structural_identity_witness_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    witness_values: &[u64],
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    verify_smallwood_structural_identity_witness_with_auxiliary_v1(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        witness_values,
+        &[],
+        binded_data,
+        proof_bytes,
+    )
+}
+
+pub fn verify_smallwood_structural_identity_witness_with_auxiliary_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    witness_values: &[u64],
+    auxiliary_words: &[u64],
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    let statement = StructuralIdentityWitnessStatement::with_linear_targets(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        witness_values,
+        auxiliary_words,
+    )?;
+    verify_statement_with_transcript_backend(
+        &statement,
+        binded_data,
+        proof_bytes,
+        SmallwoodTranscriptBackend::Blake3,
+    )
 }
 
 pub fn smallwood_binding_words_v1(binded_data: &[u8]) -> Result<Vec<u64>, TransactionCircuitError> {

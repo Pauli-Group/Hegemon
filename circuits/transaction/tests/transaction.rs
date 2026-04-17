@@ -1,4 +1,4 @@
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::{
     LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
 };
@@ -11,14 +11,30 @@ use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::p3_verifier::{
     verify_transaction_proof_bytes_p3, verify_transaction_proof_bytes_p3_for_version,
 };
-use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
+use transaction_circuit::proof::{
+    prove, prove_with_params, stark_public_inputs_p3,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash_from_public_inputs,
+    verify,
+};
 use transaction_circuit::{
+    analyze_smallwood_semantic_bridge_lower_bound_frontier_from_witness,
+    analyze_smallwood_semantic_helper_floor_frontier_from_witness,
+    analyze_smallwood_semantic_lppc_auxiliary_poseidon_spike_from_witness,
+    analyze_smallwood_semantic_lppc_frontier_from_witness,
     analyze_smallwood_candidate_profile_for_arithmetization,
+    build_smallwood_semantic_lppc_material_from_witness,
+    exact_smallwood_semantic_bridge_lower_bound_report_from_witness,
+    exact_smallwood_semantic_helper_floor_report_from_witness,
+    exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness,
+    exact_smallwood_semantic_lppc_identity_spike_report_from_witness,
     projected_smallwood_candidate_proof_bytes,
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
     report_smallwood_candidate_proof_size, InputNoteWitness, OutputNoteWitness,
-    SmallwoodArithmetization, SmallwoodNoGrindingProfileV1, StablecoinPolicyBinding,
-    TransactionCircuitError, TransactionWitness,
+    SmallwoodArithmetization, SmallwoodNoGrindingProfileV1, SmallwoodSemanticBridgeLowerBoundShape,
+    SmallwoodSemanticHelperFloorShape,
+    SmallwoodSemanticLppcShape,
+    StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,7 +45,7 @@ struct MirrorSmallwoodCandidateProof {
 }
 
 fn default_mirror_smallwood_arithmetization() -> SmallwoodArithmetization {
-    SmallwoodArithmetization::Bridge64V1
+    SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -397,19 +413,19 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
 }
 
 #[test]
-fn smallwood_candidate_default_projection_tracks_bridge_arithmetization() {
+fn smallwood_candidate_default_projection_tracks_skip_initial_mds_arithmetization() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let default_bytes = projected_smallwood_candidate_proof_bytes(&witness)
         .expect("projected smallwood candidate proof bytes");
-    let bridge_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+    let skip_initial_mds_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
         &witness,
-        SmallwoodArithmetization::Bridge64V1,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
     )
-    .expect("projected bridge smallwood candidate proof bytes");
+    .expect("projected skip-initial-mds smallwood candidate proof bytes");
     assert_eq!(
-        default_bytes, bridge_bytes,
-        "default SmallWood candidate projection should stay pinned to the bridge arithmetization"
+        default_bytes, skip_initial_mds_bytes,
+        "default SmallWood candidate projection should stay pinned to the skip-initial-mds arithmetization"
     );
 }
 
@@ -560,6 +576,277 @@ fn smallwood_candidate_active_no_grinding_profile_clears_128_bits() {
         analysis.soundness.meets_128_bit_floor,
         "active profile must clear the 128-bit no-grinding floor: {:?}",
         analysis.soundness
+    );
+}
+
+#[test]
+fn smallwood_semantic_lppc_recommended_material_matches_expected_shape() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let material = build_smallwood_semantic_lppc_material_from_witness(
+        &witness,
+        SmallwoodSemanticLppcShape::recommended_v1(),
+    )
+    .expect("build semantic LPPC material");
+    assert_eq!(material.statement.public_value_count, 18);
+    assert_eq!(material.statement.raw_witness_elements, 3_991);
+    assert_eq!(material.statement.padded_witness_elements, 4_096);
+    assert_eq!(material.statement.witness_rows, 512);
+    assert_eq!(material.statement.packing_factor, 8);
+    assert_eq!(material.packed_witness_matrix.len(), 4_096);
+    assert_eq!(material.transcript_binding.len() % 8, 0);
+}
+
+#[test]
+fn smallwood_semantic_lppc_statement_binds_expected_native_digests() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let material = build_smallwood_semantic_lppc_material_from_witness(
+        &witness,
+        SmallwoodSemanticLppcShape::recommended_v1(),
+    )
+    .expect("build semantic LPPC material");
+    let public_inputs = witness.public_inputs().expect("derive public inputs");
+    let serialized = transaction_circuit::proof::SerializedStarkInputs {
+        input_flags: vec![1, 1],
+        output_flags: vec![1, 1],
+        fee: witness.fee,
+        value_balance_sign: 0,
+        value_balance_magnitude: 0,
+        merkle_root: witness.merkle_root,
+        balance_slot_asset_ids: public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| Felt::from_u64(slot.asset_id).as_canonical_u64())
+            .collect(),
+        stablecoin_enabled: 0,
+        stablecoin_asset_id: 0,
+        stablecoin_policy_version: 0,
+        stablecoin_issuance_sign: 0,
+        stablecoin_issuance_magnitude: 0,
+        stablecoin_policy_hash: [0u8; 48],
+        stablecoin_oracle_commitment: [0u8; 48],
+        stablecoin_attestation_commitment: [0u8; 48],
+    };
+    assert_eq!(
+        material.statement.statement_hash,
+        transaction_statement_hash_from_public_inputs(&public_inputs)
+    );
+    assert_eq!(
+        material.statement.public_inputs_digest,
+        transaction_public_inputs_digest_from_serialized(&serialized)
+            .expect("hash serialized public inputs")
+    );
+}
+
+#[test]
+fn smallwood_semantic_lppc_frontier_reports_current_engine_projections() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = analyze_smallwood_semantic_lppc_frontier_from_witness(
+        &witness,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("analyze semantic LPPC frontier");
+    eprintln!("smallwood semantic LPPC frontier: {:?}", reports);
+    assert_eq!(reports.len(), 3);
+    assert!(reports.iter().all(|report| report.soundness.meets_128_bit_floor));
+    assert_eq!(reports[0].shape, SmallwoodSemanticLppcShape::packed_1024x4_v1());
+    assert_eq!(reports[0].projected_total_bytes, 54_240);
+    assert_eq!(reports[1].shape, SmallwoodSemanticLppcShape::packed_512x8_v1());
+    assert_eq!(reports[1].projected_total_bytes, 37_776);
+    assert_eq!(reports[2].shape, SmallwoodSemanticLppcShape::packed_256x16_v1());
+    assert_eq!(reports[2].projected_total_bytes, 32_712);
+}
+
+#[test]
+#[ignore = "experimental semantic LPPC identity spike proving is still too slow for the default test profile"]
+fn smallwood_semantic_lppc_identity_spike_frontier_matches_projection() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = [
+        SmallwoodSemanticLppcShape::packed_1024x4_v1(),
+        SmallwoodSemanticLppcShape::packed_512x8_v1(),
+        SmallwoodSemanticLppcShape::packed_256x16_v1(),
+    ]
+    .into_iter()
+    .map(|shape| exact_smallwood_semantic_lppc_identity_spike_report_from_witness(&witness, shape))
+    .collect::<Result<Vec<_>, _>>()
+    .expect("build exact semantic LPPC identity frontier");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&reports).expect("serialize semantic LPPC identity frontier")
+    );
+    assert_eq!(reports.len(), 3);
+    assert_eq!(reports[0].shape, SmallwoodSemanticLppcShape::packed_1024x4_v1());
+    assert_eq!(reports[0].exact_total_bytes, reports[0].projected_total_bytes);
+    assert_eq!(reports[0].exact_total_bytes, 54_240);
+    assert_eq!(reports[1].shape, SmallwoodSemanticLppcShape::packed_512x8_v1());
+    assert_eq!(reports[1].exact_total_bytes, reports[1].projected_total_bytes);
+    assert_eq!(reports[1].exact_total_bytes, 37_776);
+    assert_eq!(reports[2].shape, SmallwoodSemanticLppcShape::packed_256x16_v1());
+    assert_eq!(reports[2].exact_total_bytes, reports[2].projected_total_bytes);
+    assert_eq!(reports[2].exact_total_bytes, 32_712);
+}
+
+#[test]
+fn smallwood_semantic_lppc_auxiliary_poseidon_spike_projection_shows_aux_path_loses() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = [
+        SmallwoodSemanticLppcShape::packed_1024x4_v1(),
+        SmallwoodSemanticLppcShape::packed_512x8_v1(),
+        SmallwoodSemanticLppcShape::packed_256x16_v1(),
+    ]
+    .into_iter()
+    .map(|shape| {
+        analyze_smallwood_semantic_lppc_auxiliary_poseidon_spike_from_witness(
+            &witness,
+            shape,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        )
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .expect("analyze semantic LPPC auxiliary poseidon spike");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&reports)
+            .expect("serialize semantic LPPC auxiliary poseidon spike report")
+    );
+    assert_eq!(reports.len(), 3);
+    assert!(reports.iter().all(|report| report.auxiliary_poseidon_words == 54_912));
+    assert!(reports.iter().all(|report| {
+        report.projected_total_bytes > report.shipped_smallwood_candidate_bytes
+    }));
+}
+
+#[test]
+fn smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_fail_closes_on_current_engine() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let err = exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness(
+        &witness,
+        SmallwoodSemanticLppcShape::recommended_v1(),
+    )
+    .expect_err("current engine should fail-close on the auxiliary poseidon spike");
+    eprintln!("semantic LPPC auxiliary poseidon exact spike error: {err}");
+    assert!(
+        matches!(
+            err,
+            TransactionCircuitError::ConstraintViolation("smallwood piop transcript hash mismatch")
+        ),
+        "expected the current engine to fail closed on the auxiliary poseidon spike replay path, got {err:?}",
+    );
+}
+
+#[test]
+fn smallwood_semantic_bridge_lower_bound_frontier_quantifies_current_backend_floor() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = analyze_smallwood_semantic_bridge_lower_bound_frontier_from_witness(
+        &witness,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("analyze semantic bridge lower-bound frontier");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&reports)
+            .expect("serialize semantic bridge lower-bound frontier")
+    );
+    assert_eq!(reports.len(), 3);
+    assert_eq!(
+        reports[0].shape,
+        SmallwoodSemanticBridgeLowerBoundShape::packed_32x_v1()
+    );
+    assert_eq!(
+        reports[1].shape,
+        SmallwoodSemanticBridgeLowerBoundShape::packed_64x_v1()
+    );
+    assert_eq!(
+        reports[2].shape,
+        SmallwoodSemanticBridgeLowerBoundShape::packed_128x_v1()
+    );
+    assert!(reports[0].projected_total_bytes > reports[1].projected_total_bytes);
+    assert!(reports[2].projected_total_bytes > reports[1].projected_total_bytes);
+    assert_eq!(reports[1].projected_total_bytes, 99_456);
+    assert!(
+        reports[1].projected_total_bytes < reports[1].shipped_smallwood_candidate_bytes,
+        "the semantic lower bound should show the remaining headroom on the current backend"
+    );
+}
+
+#[test]
+#[ignore = "experimental semantic lower-bound identity proving is still too slow for the default test profile"]
+fn smallwood_semantic_bridge_lower_bound_exact_report_matches_projection() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let report = exact_smallwood_semantic_bridge_lower_bound_report_from_witness(
+        &witness,
+        SmallwoodSemanticBridgeLowerBoundShape::recommended_v1(),
+    )
+    .expect("build exact semantic bridge lower-bound report");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report)
+            .expect("serialize semantic bridge lower-bound report")
+    );
+    assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
+    assert!(
+        report.exact_total_bytes < report.shipped_smallwood_candidate_bytes,
+        "the exact lower-bound identity spike should preserve the measured headroom on the current backend"
+    );
+}
+
+#[test]
+fn smallwood_semantic_helper_floor_frontier_exposes_lane_visible_semantic_tax() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = analyze_smallwood_semantic_helper_floor_frontier_from_witness(
+        &witness,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("analyze semantic helper floor frontier");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&reports)
+            .expect("serialize semantic helper floor frontier")
+    );
+    assert_eq!(reports.len(), 3);
+    assert_eq!(reports[0].shape, SmallwoodSemanticHelperFloorShape::packed_32x_v1());
+    assert_eq!(reports[1].shape, SmallwoodSemanticHelperFloorShape::packed_64x_v1());
+    assert_eq!(
+        reports[2].shape,
+        SmallwoodSemanticHelperFloorShape::packed_128x_v1()
+    );
+    assert!(
+        reports[1].projected_total_bytes > 99_456,
+        "once lane-visible nonlinear helper rows return, the current-backend floor should sit above the pure semantic lower bound"
+    );
+    assert!(
+        reports[1].projected_total_bytes >= reports[1].shipped_smallwood_candidate_bytes,
+        "if the helper floor is still below the shipped bridge there is still a live current-backend semantic-adapter path to pursue"
+    );
+}
+
+#[test]
+#[ignore = "experimental semantic helper-floor identity proving is still too slow for the default test profile"]
+fn smallwood_semantic_helper_floor_exact_report_matches_projection() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let report = exact_smallwood_semantic_helper_floor_report_from_witness(
+        &witness,
+        SmallwoodSemanticHelperFloorShape::recommended_v1(),
+    )
+    .expect("build exact semantic helper floor report");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report)
+            .expect("serialize semantic helper floor report")
+    );
+    assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
+    assert!(
+        report.exact_total_bytes >= report.shipped_smallwood_candidate_bytes,
+        "if the exact helper floor stays below the shipped bridge then the current backend still has a semantic-adapter path left"
     );
 }
 

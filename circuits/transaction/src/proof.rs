@@ -241,7 +241,9 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
         message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
     } else if matches!(backend, TxProofBackend::SmallwoodCandidate) {
         let arithmetization =
-            smallwood_arithmetization.unwrap_or(SmallwoodArithmetization::Bridge64V1);
+            smallwood_arithmetization.unwrap_or(
+                SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+            );
         message.extend_from_slice(&smallwood_candidate_verifier_profile_material(
             version,
             arithmetization,
@@ -254,7 +256,7 @@ pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) 
     transaction_verifier_profile_digest_for_version_and_backend(
         version,
         tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
-        Some(SmallwoodArithmetization::Bridge64V1),
+        Some(SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1),
     )
 }
 

@@ -6,8 +6,8 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `100956` bytes, the passing release roundtrip emits `100956` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
-- and the latest focused local release roundtrip on the current host is about `6.1s` directly on the bridge statement and about `5.4s` on the compact-binding branch after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
+- the exact serialized proof envelope for the shipped default now projects to `98532` bytes, the passing release roundtrip emits `98532` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- and the latest focused local release roundtrips on the current host measured about `6.1s` directly on the old bridge statement and about `5.4s` on the older compact-binding branch before the final `skip-initial-mds` promotion, after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
@@ -64,7 +64,7 @@ The current no-grinding claim also assumes the hardened PCS/evaluation binding n
 
 The redteam regressions covering those seams now live in [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs) and [transaction.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/tests/transaction.rs).
 
-Proof-specific verifier-profile digests now also bind the actual SmallWood arithmetization tag extracted from the proof wrapper instead of assuming bridge mode. The version-only helper remains pinned to canonical `Bridge64V1`, because that path has no proof bytes to inspect.
+Proof-specific verifier-profile digests now also bind the actual SmallWood arithmetization tag extracted from the proof wrapper instead of assuming bridge mode. The version-only helper is now pinned to canonical `DirectPacked64CompactBindingsSkipInitialMdsV1`, because that path has no proof bytes to inspect and the shipped default must still remain version-owned.
 
 ## Exact no-grinding profile
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `100956`-byte release proof, about `3.51x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsSkipInitialMdsV1` path now emits an actual `98532`-byte release proof, about `3.59x` smaller than the shipped Plonky3 proof and about `2.4%` smaller than the old `100956`-byte bridge baseline. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
 
 ## Product conclusion
 

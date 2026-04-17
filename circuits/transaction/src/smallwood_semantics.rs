@@ -699,6 +699,10 @@ pub(crate) fn packed_constraint_count() -> usize {
     constraint_count(SmallwoodArithmetization::Bridge64V1, 64)
 }
 
+pub(crate) fn packed_constraint_count_for_packing_factor(packing_factor: usize) -> usize {
+    constraint_count(SmallwoodArithmetization::Bridge64V1, packing_factor)
+}
+
 pub(crate) fn compute_bridge_constraints_u64(
     statement: &PackedStatement<'_>,
     view: SmallwoodNonlinearEvalView<'_>,

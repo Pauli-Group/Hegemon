@@ -172,7 +172,13 @@ pub fn ensure_row_polynomial_arithmetization(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<(), TransactionCircuitError> {
     match statement.arithmetization() {
-        SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => Ok(()),
+        SmallwoodArithmetization::Bridge64V1
+        | SmallwoodArithmetization::DirectPacked64V1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Ok(()),
     }
 }
 

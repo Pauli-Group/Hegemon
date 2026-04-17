@@ -1,0 +1,49 @@
+{
+  "generator": {
+    "command": "cargo test -p transaction-circuit smallwood_semantic_lppc_identity_spike_frontier_matches_projection -- --ignored --nocapture",
+    "date_utc": "2026-04-17T05:13:00Z",
+    "note": "Generated from the exact current SmallWood opening layer on the semantic LPPC witness window using identity constraints over the full packed witness matrix. This is an opening-layer/backend spike, not a full semantic tx-validity proof."
+  },
+  "baseline": {
+    "current_smallwood_candidate_bytes": 100956,
+    "profile": {
+      "rho": 2,
+      "nb_opened_evals": 3,
+      "beta": 2,
+      "opening_pow_bits": 0,
+      "decs_nb_evals": 32768,
+      "decs_nb_opened_evals": 24,
+      "decs_eta": 3,
+      "decs_pow_bits": 0
+    }
+  },
+  "semantic_lppc_identity_spike_frontier": [
+    {
+      "label": "native_tx_validity_1024x4_v1",
+      "witness_rows": 1024,
+      "packing_factor": 4,
+      "padded_witness_elements": 4096,
+      "constraint_count_estimate": 1270,
+      "exact_total_bytes": 54240,
+      "projected_total_bytes": 54240
+    },
+    {
+      "label": "native_tx_validity_512x8_v1",
+      "witness_rows": 512,
+      "packing_factor": 8,
+      "padded_witness_elements": 4096,
+      "constraint_count_estimate": 712,
+      "exact_total_bytes": 37776,
+      "projected_total_bytes": 37776
+    },
+    {
+      "label": "native_tx_validity_256x16_v1",
+      "witness_rows": 256,
+      "packing_factor": 16,
+      "padded_witness_elements": 4096,
+      "constraint_count_estimate": 433,
+      "exact_total_bytes": 32712,
+      "projected_total_bytes": 32712
+    }
+  ]
+}

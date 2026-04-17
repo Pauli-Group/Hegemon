@@ -1,0 +1,30 @@
+[
+  {
+    "packing_factor": 32,
+    "nonlinear_helper_rows": 264,
+    "semantic_witness_rows": 128,
+    "total_secret_rows": 392,
+    "witness_rows": 2312,
+    "projected_total_bytes": 115176,
+    "shipped_smallwood_candidate_bytes": 100956
+  },
+  {
+    "packing_factor": 64,
+    "nonlinear_helper_rows": 264,
+    "semantic_witness_rows": 64,
+    "total_secret_rows": 328,
+    "witness_rows": 1480,
+    "projected_total_bytes": 102120,
+    "exact_total_bytes": 102120,
+    "shipped_smallwood_candidate_bytes": 100956
+  },
+  {
+    "packing_factor": 128,
+    "nonlinear_helper_rows": 264,
+    "semantic_witness_rows": 32,
+    "total_secret_rows": 296,
+    "witness_rows": 1064,
+    "projected_total_bytes": 120936,
+    "shipped_smallwood_candidate_bytes": 100956
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "generated_by": "cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_ -- --nocapture",
+  "current_shipped_smallwood_candidate_bytes": 100956,
+  "auxiliary_poseidon_words": 54912,
+  "projected_frontier": [
+    {
+      "shape": "1024x4",
+      "projected_total_bytes": 493536
+    },
+    {
+      "shape": "512x8",
+      "projected_total_bytes": 477072
+    },
+    {
+      "shape": "256x16",
+      "projected_total_bytes": 472008
+    }
+  ],
+  "exact_current_engine_negative_result": {
+    "shape": "512x8",
+    "result": "fail_closed",
+    "error": "constraint system violated: smallwood piop transcript hash mismatch"
+  },
+  "conclusion": "Carrying the current Poseidon2 subtrace as auxiliary witness is not viable on the current Smallwood engine. It projects to 4.7x-4.9x the shipped proof size and the exact 512x8 attempt fail-closes on transcript replay."
+}

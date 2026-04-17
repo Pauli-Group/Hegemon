@@ -427,7 +427,7 @@ pub struct SmallwoodCandidateProfileSurface {
 }
 
 fn default_smallwood_candidate_arithmetization() -> SmallwoodArithmetization {
-    SmallwoodArithmetization::Bridge64V1
+    SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
 }
 
 #[allow(dead_code)]
@@ -471,7 +471,10 @@ struct SmallwoodWitnessContext {
 pub fn prove_smallwood_candidate(
     witness: &TransactionWitness,
 ) -> Result<TransactionProof, TransactionCircuitError> {
-    prove_smallwood_candidate_with_arithmetization(witness, SmallwoodArithmetization::Bridge64V1)
+    prove_smallwood_candidate_with_arithmetization(
+        witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+    )
 }
 
 pub fn prove_smallwood_candidate_with_arithmetization(
@@ -620,7 +623,7 @@ pub fn projected_smallwood_candidate_proof_bytes(
 ) -> Result<usize, TransactionCircuitError> {
     projected_smallwood_candidate_proof_bytes_for_arithmetization(
         witness,
-        SmallwoodArithmetization::Bridge64V1,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
     )
 }
 
@@ -1641,45 +1644,47 @@ fn build_packed_bridge_linear_constraints(
         push_poseidon_continuation(&mut constraints, commitment1, commitment2);
 
         for level in 0..MERKLE_TREE_DEPTH {
-            let challenge =
-                smallwood_bridge_merkle_challenge(&statement.public_values, input, level);
             let merkle0 = bridge_input_merkle_permutation(input, level, 0);
             let merkle1 = bridge_input_merkle_permutation(input, level, 1);
-            let lane = permutation_lane(merkle0);
-            let current_row = bridge_row_input_current_agg(layout, input, level);
-            let left_row = bridge_row_input_left_agg(layout, input, level);
-            let right_row = bridge_row_input_right_agg(layout, input, level);
+            if layout.has_merkle_aggregate_rows() {
+                let challenge =
+                    smallwood_bridge_merkle_challenge(&statement.public_values, input, level);
+                let lane = permutation_lane(merkle0);
+                let current_row = bridge_row_input_current_agg(layout, input, level);
+                let left_row = bridge_row_input_left_agg(layout, input, level);
+                let right_row = bridge_row_input_right_agg(layout, input, level);
 
-            let current_source = if level == 0 {
-                commitment2
-            } else {
-                bridge_input_merkle_permutation(input, level - 1, 1)
-            };
-            let current_lane = permutation_lane(current_source);
-            let mut power = 1u64;
-            let mut current_terms = vec![(current_row, lane, 1)];
-            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-                current_terms.push((
-                    poseidon_row(current_source, layout.poseidon_last_row(), limb),
-                    current_lane,
-                    neg_coeff(power),
-                ));
-                power = mul_mod_u64(power, challenge);
+                let current_source = if level == 0 {
+                    commitment2
+                } else {
+                    bridge_input_merkle_permutation(input, level - 1, 1)
+                };
+                let current_lane = permutation_lane(current_source);
+                let mut power = 1u64;
+                let mut current_terms = vec![(current_row, lane, 1)];
+                for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                    current_terms.push((
+                        poseidon_row(current_source, layout.poseidon_last_row(), limb),
+                        current_lane,
+                        neg_coeff(power),
+                    ));
+                    power = mul_mod_u64(power, challenge);
+                }
+                push_bridge_constraint(&mut constraints, packing_factor, &current_terms, 0);
+
+                let mut left_terms = vec![(left_row, lane, 1)];
+                left_terms.extend(merkle_challenge_terms(challenge, merkle0, None));
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &left_terms,
+                    neg_coeff(MERKLE_DOMAIN_TAG),
+                );
+
+                let mut right_terms = vec![(right_row, lane, 1)];
+                right_terms.extend(merkle_challenge_terms(challenge, merkle1, Some(merkle0)));
+                push_bridge_constraint(&mut constraints, packing_factor, &right_terms, 0);
             }
-            push_bridge_constraint(&mut constraints, packing_factor, &current_terms, 0);
-
-            let mut left_terms = vec![(left_row, lane, 1)];
-            left_terms.extend(merkle_challenge_terms(challenge, merkle0, None));
-            push_bridge_constraint(
-                &mut constraints,
-                packing_factor,
-                &left_terms,
-                neg_coeff(MERKLE_DOMAIN_TAG),
-            );
-
-            let mut right_terms = vec![(right_row, lane, 1)];
-            right_terms.extend(merkle_challenge_terms(challenge, merkle1, Some(merkle0)));
-            push_bridge_constraint(&mut constraints, packing_factor, &right_terms, 0);
 
             push_poseidon_fresh_frame(&mut constraints, merkle0);
             push_poseidon_continuation(&mut constraints, merkle0, merkle1);
@@ -2204,6 +2209,25 @@ fn poseidon_subtrace_rows(
     }
 
     Ok(traces)
+}
+
+pub(crate) fn smallwood_bridge_poseidon_subtrace_rows_v1(
+    witness: &TransactionWitness,
+) -> Result<
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+    TransactionCircuitError,
+> {
+    poseidon_subtrace_rows(witness)
+}
+
+pub(crate) fn smallwood_compact_bridge_helper_rows_v1(
+    witness: &TransactionWitness,
+    packing_factor: usize,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let shape = SmallwoodFrontendShape::direct_packed_compact_bindings_v1(packing_factor);
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    semantic_secret_witness_rows_with_shape(&context.witness, &context.public_inputs_p3, shape)
 }
 
 fn expanded_witness_words(
@@ -2954,6 +2978,7 @@ mod tests {
         )
         .unwrap();
     }
+
 
     #[test]
     fn packed_smallwood_frontend_witness_rejects_mutation() {
