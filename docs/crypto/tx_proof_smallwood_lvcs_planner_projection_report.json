@@ -1,0 +1,85 @@
+{
+  "arithmetization": "DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1",
+  "profile": {
+    "rho": 2,
+    "nb_opened_evals": 3,
+    "beta": 2,
+    "opening_pow_bits": 0,
+    "decs_nb_evals": 32768,
+    "decs_nb_opened_evals": 23,
+    "decs_eta": 3,
+    "decs_pow_bits": 0
+  },
+  "planners": [
+    {
+      "planner": "CurrentTiledRowsV1",
+      "projected_total_bytes": 90830,
+      "inner": {
+        "planner": "CurrentTiledRowsV1",
+        "total_lvcs_cells": 80936,
+        "nb_lvcs_rows": 134,
+        "nb_lvcs_cols": 604,
+        "nb_lvcs_opened_combi": 6,
+        "subset_eval_width": 128,
+        "projected_inner_proof_bytes": 90818,
+        "soundness": {
+          "profile": {
+            "rho": 2,
+            "nb_opened_evals": 3,
+            "beta": 2,
+            "opening_pow_bits": 0,
+            "decs_nb_evals": 32768,
+            "decs_nb_opened_evals": 23,
+            "decs_eta": 3,
+            "decs_pow_bits": 0
+          },
+          "n_pcs": 1192,
+          "d_q": 464,
+          "n_rows": 134,
+          "n_cols": 604,
+          "epsilon1_floor_bits": 182.9943754497732,
+          "epsilon2_floor_bits": 127.99999999932797,
+          "epsilon3_floor_bits": 165.4354015791884,
+          "epsilon4_floor_bits": 131.90860895151388,
+          "security_floor_bits": 127.99999999932797,
+          "meets_128_bit_floor": true
+        }
+      }
+    },
+    {
+      "planner": "SharedPackingRowsProjectionV1",
+      "projected_total_bytes": 92326,
+      "inner": {
+        "planner": "SharedPackingRowsProjectionV1",
+        "total_lvcs_cells": 80936,
+        "nb_lvcs_rows": 70,
+        "nb_lvcs_cols": 1157,
+        "nb_lvcs_opened_combi": 6,
+        "subset_eval_width": 64,
+        "projected_inner_proof_bytes": 92314,
+        "soundness": {
+          "profile": {
+            "rho": 2,
+            "nb_opened_evals": 3,
+            "beta": 2,
+            "opening_pow_bits": 0,
+            "decs_nb_evals": 32768,
+            "decs_nb_opened_evals": 23,
+            "decs_eta": 3,
+            "decs_pow_bits": 0
+          },
+          "n_pcs": 1192,
+          "d_q": 464,
+          "n_rows": 70,
+          "n_cols": 1157,
+          "epsilon1_floor_bits": 182.99437544979654,
+          "epsilon2_floor_bits": 127.99999999932797,
+          "epsilon3_floor_bits": 165.4354015791884,
+          "epsilon4_floor_bits": 110.62342874398416,
+          "security_floor_bits": 110.62342874398416,
+          "meets_128_bit_floor": false
+        }
+      }
+    }
+  ]
+}

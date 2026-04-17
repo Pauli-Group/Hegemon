@@ -84,7 +84,8 @@ impl PackedRowLayout {
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                 skip_initial_mds_poseidon: true,
             },
-            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+            | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
                 Self {
                     input_rows: BASE_INPUT_ROWS,
                     output_rows: 2,
@@ -968,24 +969,33 @@ fn compute_constraints(
                         limb,
                     )];
                 }
-                let current = if statement.arithmetization
-                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                let current = if matches!(
+                    statement.arithmetization,
+                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+                )
                     && auxiliary_words.len() > auxiliary_input_current_agg(input, level)
                 {
                     auxiliary_words[auxiliary_input_current_agg(input, level)]
                 } else {
                     aggregate_hash_limbs(challenge, &current_hash)
                 };
-                let left = if statement.arithmetization
-                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                let left = if matches!(
+                    statement.arithmetization,
+                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+                )
                     && auxiliary_words.len() > auxiliary_input_left_agg(input, level)
                 {
                     auxiliary_words[auxiliary_input_left_agg(input, level)]
                 } else {
                     aggregate_hash_limbs(challenge, &left_hash)
                 };
-                let right = if statement.arithmetization
-                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                let right = if matches!(
+                    statement.arithmetization,
+                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+                )
                     && auxiliary_words.len() > auxiliary_input_right_agg(input, level)
                 {
                     auxiliary_words[auxiliary_input_right_agg(input, level)]

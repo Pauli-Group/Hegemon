@@ -3,6 +3,7 @@ use protocol_versioning::{
     LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
 };
 use serde::{Deserialize, Serialize};
+use std::fs;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
@@ -24,18 +25,22 @@ use transaction_circuit::{
     analyze_smallwood_semantic_lppc_auxiliary_poseidon_spike_from_witness,
     analyze_smallwood_semantic_lppc_frontier_from_witness,
     build_smallwood_semantic_lppc_material_from_witness, decode_smallwood_proof_trace_v1,
-    encode_smallwood_proof_trace_v1, exact_smallwood_candidate_profile_report_from_witness,
+    encode_smallwood_proof_trace_v1,
+    exact_smallwood_candidate_backend_opening_surface_report_from_witness,
+    exact_smallwood_candidate_profile_report_from_witness,
     exact_smallwood_semantic_bridge_lower_bound_report_from_witness,
     exact_smallwood_semantic_helper_aux_report_from_witness,
     exact_smallwood_semantic_helper_floor_report_from_witness,
     exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness,
     exact_smallwood_semantic_lppc_identity_spike_report_from_witness,
+    project_smallwood_candidate_lvcs_planner_report_from_witness,
     projected_smallwood_candidate_proof_bytes,
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
     report_smallwood_candidate_proof_size, InputNoteWitness, OutputNoteWitness,
-    SmallwoodArithmetization, SmallwoodNoGrindingProfileV1, SmallwoodSemanticBridgeLowerBoundShape,
-    SmallwoodSemanticHelperAuxShape, SmallwoodSemanticHelperFloorShape, SmallwoodSemanticLppcShape,
-    StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
+    SmallwoodArithmetization, SmallwoodLvcsPlannerGeometryKindV1, SmallwoodNoGrindingProfileV1,
+    SmallwoodSemanticBridgeLowerBoundShape, SmallwoodSemanticHelperAuxShape,
+    SmallwoodSemanticHelperFloorShape, SmallwoodSemanticLppcShape, StablecoinPolicyBinding,
+    TransactionCircuitError, TransactionWitness,
     ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
 };
 
@@ -419,6 +424,130 @@ fn smallwood_candidate_proof_size_report_matches_current_release_bytes() {
 }
 
 #[test]
+#[ignore = "experimental SmallWood backend opening-surface report is release-only and writes a checked JSON artifact"]
+fn smallwood_backend_opening_surface_report() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let report = exact_smallwood_candidate_backend_opening_surface_report_from_witness(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("backend opening-surface report");
+    let output_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/crypto/tx_proof_smallwood_backend_opening_surface_report.json");
+    let serialized =
+        serde_json::to_string_pretty(&report).expect("serialize backend opening-surface report");
+    fs::write(&output_path, format!("{serialized}\n"))
+        .expect("write backend opening-surface report");
+    eprintln!("{serialized}");
+    assert!(
+        report.exact_total_bytes <= report.structural_upper_bound_bytes,
+        "exact wrapped candidate bytes must stay at or below the projected structural upper bound: exact={} projected={}",
+        report.exact_total_bytes,
+        report.structural_upper_bound_bytes
+    );
+    assert_eq!(
+        report.backend.decs_opened_leaf_count,
+        report.backend.decs_distinct_leaf_count + report.backend.decs_duplicate_leaf_count,
+        "DECS leaf accounting must balance"
+    );
+    assert!(
+        report.backend.decs_total_auth_nodes >= report.backend.decs_unique_auth_nodes,
+        "auth-node dedup accounting must be monotone"
+    );
+    assert_eq!(
+        report.backend.total_inner_proof_bytes, report.exact_ark_proof_bytes,
+        "backend inner proof bytes must match the exact unwrapped proof length"
+    );
+    assert_eq!(
+        report.backend.opened_witness_row_scalar_floor_raw_bytes,
+        report.backend.opened_row_count
+            * report.backend.opened_row_width
+            * std::mem::size_of::<u64>(),
+        "opened row-scalar bytes must stay pinned to one scalar per opened polynomial"
+    );
+    assert_eq!(
+        report.backend.opened_witness_partial_raw_bytes,
+        report.backend.opened_row_count
+            * report.backend.pcs_partial_eval_width
+            * std::mem::size_of::<u64>(),
+        "opened-witness partial bytes must equal the planner-local width spill"
+    );
+    assert_eq!(
+        report.backend.opened_witness_partial_extra_slot_count,
+        report.backend.nb_unstacked_cols - report.backend.nb_polys,
+        "planner-local partial slots must match the width spill over the one-scalar-per-poly floor"
+    );
+    assert!(
+        report.backend.subset_eval_shape_matches_beta_packing_identity,
+        "subset-eval width must stay pinned to beta * packing_factor for the current planner"
+    );
+    assert!(
+        report.backend.pcs_subset_evals_bytes >= report.backend.subset_eval_shape_floor_raw_bytes,
+        "serialized subset-eval bytes must stay at or above the raw shape floor"
+    );
+    assert_eq!(
+        report.backend.subset_eval_shape_floor_raw_bytes,
+        report.backend.decs_opened_leaf_count
+            * report.backend.pcs_subset_eval_width
+            * std::mem::size_of::<u64>(),
+        "subset-eval raw payload must be fixed by the opened-leaf count and the beta*packing row width"
+    );
+    assert_eq!(
+        report.backend.opened_witness_partial_raw_bytes, 384,
+        "the current planner can only save the 16 extra width slots in opened witness, i.e. 384 raw bytes"
+    );
+}
+
+#[test]
+#[ignore = "experimental LVCS planner projection report writes a checked JSON artifact"]
+fn smallwood_lvcs_planner_projection_report() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let report = project_smallwood_candidate_lvcs_planner_report_from_witness(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("LVCS planner projection report");
+    let output_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/crypto/tx_proof_smallwood_lvcs_planner_projection_report.json");
+    let serialized =
+        serde_json::to_string_pretty(&report).expect("serialize LVCS planner projection report");
+    fs::write(&output_path, format!("{serialized}\n"))
+        .expect("write LVCS planner projection report");
+    eprintln!("{serialized}");
+    assert_eq!(report.planners.len(), 2, "expected current and shared-row planners");
+    let current = report
+        .planners
+        .iter()
+        .find(|entry| {
+            entry.planner == SmallwoodLvcsPlannerGeometryKindV1::CurrentTiledRowsV1
+        })
+        .expect("current tiled planner");
+    let shared = report
+        .planners
+        .iter()
+        .find(|entry| {
+            entry.planner == SmallwoodLvcsPlannerGeometryKindV1::SharedPackingRowsProjectionV1
+        })
+        .expect("shared-row planner");
+    assert_eq!(current.projected_total_bytes, 90_830);
+    assert_eq!(current.inner.subset_eval_width, 128);
+    assert_eq!(shared.inner.nb_lvcs_rows, 70);
+    assert_eq!(shared.inner.subset_eval_width, 64);
+    assert!(
+        shared.projected_total_bytes > current.projected_total_bytes,
+        "shared-row planner is a measured negative result and should stay above the current tiled planner"
+    );
+    assert!(
+        !shared.inner.soundness.meets_128_bit_floor,
+        "shared-row planner should stay below the no-grinding 128-bit floor on the current backend"
+    );
+}
+
+#[test]
 #[ignore = "experimental exact SmallWood profile proving is still too slow for the default test profile"]
 fn smallwood_candidate_exact_best_projected_profile_matches_projection() {
     let mut witness = sample_witness();
@@ -589,6 +718,10 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
         ),
         (
+            "packed128_compact_inline_merkle_skip_initial_mds",
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+        ),
+        (
             "packed128_compact",
             SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
         ),
@@ -636,6 +769,14 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
         })
         .map(|(_, _, bytes)| *bytes)
         .expect("packed128 compact frontier point");
+    let packed128_inline_merkle_bytes = projections
+        .iter()
+        .find(|(_, arithmetization, _)| {
+            *arithmetization
+                == SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+        })
+        .map(|(_, _, bytes)| *bytes)
+        .expect("packed128 inline-merkle compact frontier point");
     assert!(
         packed128_bytes > packed64_bytes,
         "packed128 compact-binding is a measured negative result on the current engine and should stay above packed64 until a real backend change lands: packed128={packed128_bytes} packed64={packed64_bytes}"
@@ -647,6 +788,14 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
     assert!(
         packed64_inline_merkle_skip_initial_mds_bytes < packed64_skip_initial_mds_bytes,
         "inline-merkle + skip-initial-mds should beat the explicit-merkle helper frontier point: inline-merkle={packed64_inline_merkle_skip_initial_mds_bytes} explicit-merkle={packed64_skip_initial_mds_bytes}"
+    );
+    assert!(
+        packed128_inline_merkle_bytes < packed128_bytes,
+        "inline-merkle + skip-initial-mds should beat the explicit-merkle 128x point if the auxiliary move is still real at 128x: inline-merkle={packed128_inline_merkle_bytes} explicit-merkle={packed128_bytes}"
+    );
+    assert!(
+        packed128_inline_merkle_bytes > packed64_inline_merkle_skip_initial_mds_bytes,
+        "128x inline-merkle is a measured negative result on the current engine and should stay above the shipped 64x inline-merkle winner until a real backend change lands: packed128_inline={packed128_inline_merkle_bytes} packed64_inline={packed64_inline_merkle_skip_initial_mds_bytes}"
     );
 }
 
@@ -667,6 +816,68 @@ fn smallwood_candidate_active_no_grinding_profile_clears_128_bits() {
         analysis.soundness.meets_128_bit_floor,
         "active profile must clear the 128-bit no-grinding floor: {:?}",
         analysis.soundness
+    );
+}
+
+#[test]
+#[ignore = "negative-result profile frontier scan; confirms that two opening evaluations have no >=128-bit no-grinding candidate on the shipped line"]
+fn smallwood_candidate_two_opening_eval_profile_frontier_is_empty() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let arithmetization =
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+    let active_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        arithmetization,
+    )
+    .expect("active projected proof bytes");
+    let mut candidates = Vec::new();
+    for rho in [2usize, 3] {
+        for beta in [1usize, 2, 3, 4] {
+            for decs_nb_evals in [8192usize, 16384, 32768] {
+                for decs_nb_opened_evals in 18usize..=28 {
+                    for decs_eta in 2usize..=4 {
+                        let profile = SmallwoodNoGrindingProfileV1 {
+                            rho,
+                            nb_opened_evals: 2,
+                            beta,
+                            opening_pow_bits: 0,
+                            decs_nb_evals,
+                            decs_nb_opened_evals,
+                            decs_eta,
+                            decs_pow_bits: 0,
+                        };
+                        let analysis = match analyze_smallwood_candidate_profile_for_arithmetization(
+                            &witness,
+                            arithmetization,
+                            profile,
+                        ) {
+                            Ok(analysis) => analysis,
+                            Err(_) => continue,
+                        };
+                        if analysis.soundness.meets_128_bit_floor {
+                            candidates.push((
+                                analysis.projected_total_bytes,
+                                analysis.profile,
+                                analysis.soundness.security_floor_bits,
+                                analysis.soundness.n_rows,
+                                analysis.soundness.n_cols,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    candidates.sort_by_key(|entry| entry.0);
+    eprintln!(
+        "smallwood two-opening frontier active={active_bytes} top={:?}",
+        candidates.iter().take(10).collect::<Vec<_>>()
+    );
+    assert!(
+        candidates.is_empty(),
+        "two-opening frontier should stay empty at the >=128-bit no-grinding bar; found {:?}",
+        candidates.iter().take(10).collect::<Vec<_>>()
     );
 }
 

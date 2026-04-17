@@ -237,7 +237,8 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
             Ok(())
         }
     }
