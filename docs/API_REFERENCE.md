@@ -217,8 +217,8 @@ Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursi
 
 Artifact market RPC notes:
 
-- `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts. Each entry now includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels.
-- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a prepared artifact hash when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`.
+- `prover_listArtifactAnnouncements` returns lightweight metadata for locally prepared candidate artifacts. Each entry includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels. Remote artifact-protocol announcements are not trusted as authoring inputs.
+- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a locally prepared artifact hash when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`. This is a local discovery surface, not a P2P import path.
 
 `ArtifactAnnouncementResponse` fields:
 - `artifact_hash: String` (`0x`-prefixed hex)
