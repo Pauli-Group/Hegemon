@@ -40,8 +40,7 @@ use transaction_circuit::{
     SmallwoodArithmetization, SmallwoodLvcsPlannerGeometryKindV1, SmallwoodNoGrindingProfileV1,
     SmallwoodSemanticBridgeLowerBoundShape, SmallwoodSemanticHelperAuxShape,
     SmallwoodSemanticHelperFloorShape, SmallwoodSemanticLppcShape, StablecoinPolicyBinding,
-    TransactionCircuitError, TransactionWitness,
-    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    TransactionCircuitError, TransactionWitness, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -480,7 +479,9 @@ fn smallwood_backend_opening_surface_report() {
         "planner-local partial slots must match the width spill over the one-scalar-per-poly floor"
     );
     assert!(
-        report.backend.subset_eval_shape_matches_beta_packing_identity,
+        report
+            .backend
+            .subset_eval_shape_matches_beta_packing_identity,
         "subset-eval width must stay pinned to beta * packing_factor for the current planner"
     );
     assert!(
@@ -518,13 +519,15 @@ fn smallwood_lvcs_planner_projection_report() {
     fs::write(&output_path, format!("{serialized}\n"))
         .expect("write LVCS planner projection report");
     eprintln!("{serialized}");
-    assert_eq!(report.planners.len(), 2, "expected current and shared-row planners");
+    assert_eq!(
+        report.planners.len(),
+        2,
+        "expected current and shared-row planners"
+    );
     let current = report
         .planners
         .iter()
-        .find(|entry| {
-            entry.planner == SmallwoodLvcsPlannerGeometryKindV1::CurrentTiledRowsV1
-        })
+        .find(|entry| entry.planner == SmallwoodLvcsPlannerGeometryKindV1::CurrentTiledRowsV1)
         .expect("current tiled planner");
     let shared = report
         .planners
@@ -826,11 +829,9 @@ fn smallwood_candidate_two_opening_eval_profile_frontier_is_empty() {
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let arithmetization =
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
-    let active_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
-        &witness,
-        arithmetization,
-    )
-    .expect("active projected proof bytes");
+    let active_bytes =
+        projected_smallwood_candidate_proof_bytes_for_arithmetization(&witness, arithmetization)
+            .expect("active projected proof bytes");
     let mut candidates = Vec::new();
     for rho in [2usize, 3] {
         for beta in [1usize, 2, 3, 4] {

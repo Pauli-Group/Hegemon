@@ -1185,12 +1185,13 @@ pub fn project_smallwood_candidate_lvcs_planner_report_from_witness(
         | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
-            let shape = compact_binding_shape_for_arithmetization(arithmetization).ok_or_else(|| {
-                TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "missing compact-binding shape for arithmetization {:?}",
-                    arithmetization
-                ))
-            })?;
+            let shape =
+                compact_binding_shape_for_arithmetization(arithmetization).ok_or_else(|| {
+                    TransactionCircuitError::ConstraintViolationOwned(format!(
+                        "missing compact-binding shape for arithmetization {:?}",
+                        arithmetization
+                    ))
+                })?;
             let material = build_packed_smallwood_frontend_material_from_context_with_shape(
                 &context,
                 witness,

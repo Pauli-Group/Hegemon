@@ -55,7 +55,7 @@ This is the important architectural point: the fixed block artifact is not the o
 
 ## Capacity planning and chain-growth model
 
-This section is a deployment-planning model for the shipped `RecursiveBlockV1` lane. It is deliberately simple and uses current code constants rather than optimistic future compression claims.
+This section is now a legacy deployment-planning model for the old two-step `RecursiveBlockV1` envelope, not a general steady-state recursion law. A current recursive-cap diagnostic shows that the `699,404`-byte `v1` width is only validated through the first `StepA` terminal; steady-state `StepB` on the same backend already projects to `1,870,731` bytes. Use the table below only as the historical `v1` two-step envelope model, not as a true constant-size packed-block model. For a bounded constant-size recursive lane, use `RecursiveBlockV2`.
 
 ### Assumptions
 

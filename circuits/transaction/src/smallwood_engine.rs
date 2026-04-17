@@ -2029,13 +2029,13 @@ pub fn report_smallwood_backend_opening_surface_with_profile_v1(
     let decs_max_auth_path_len = path_lengths.iter().copied().max().unwrap_or(0);
     let opened_witness_invariant_column_count =
         invariant_column_count_u64(&trace.proof.opened_witness_row_scalars);
-    let pcs_subset_invariant_column_count = invariant_column_count_u64(&trace.proof.pcs.subset_evals);
+    let pcs_subset_invariant_column_count =
+        invariant_column_count_u64(&trace.proof.pcs.subset_evals);
     let pcs_partial_invariant_column_count =
         invariant_column_count_u64(&trace.proof.pcs.partial_evals);
-    let opened_witness_invariant_compaction_raw_bytes =
-        opened_witness_invariant_column_count
-            .saturating_mul(opened_row_count.saturating_sub(1))
-            .saturating_mul(std::mem::size_of::<u64>());
+    let opened_witness_invariant_compaction_raw_bytes = opened_witness_invariant_column_count
+        .saturating_mul(opened_row_count.saturating_sub(1))
+        .saturating_mul(std::mem::size_of::<u64>());
     let pcs_subset_invariant_compaction_raw_bytes = pcs_subset_invariant_column_count
         .saturating_mul(trace.proof.pcs.subset_evals.len().saturating_sub(1))
         .saturating_mul(std::mem::size_of::<u64>());
@@ -2045,7 +2045,8 @@ pub fn report_smallwood_backend_opening_surface_with_profile_v1(
     let opened_witness_row_scalar_floor_raw_bytes = opened_row_count
         .saturating_mul(cfg.nb_polys)
         .saturating_mul(std::mem::size_of::<u64>());
-    let opened_witness_partial_extra_slot_count = cfg.nb_unstacked_cols.saturating_sub(cfg.nb_polys);
+    let opened_witness_partial_extra_slot_count =
+        cfg.nb_unstacked_cols.saturating_sub(cfg.nb_polys);
     let opened_witness_partial_poly_count = cfg.width.iter().filter(|&&width| width > 1).count();
     let opened_witness_partial_raw_bytes = opened_row_count
         .saturating_mul(opened_witness_partial_extra_slot_count)
@@ -2152,7 +2153,8 @@ pub fn report_smallwood_lvcs_planner_projection_v1(
 ) -> Result<SmallwoodLvcsPlannerProjectionReportV1, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     let projected_cfg = project_lvcs_planner_geometry_cfg(&cfg, planner)?;
-    let soundness = report_smallwood_no_grinding_soundness_from_cfg(&projected_cfg, public_value_count);
+    let soundness =
+        report_smallwood_no_grinding_soundness_from_cfg(&projected_cfg, public_value_count);
     Ok(SmallwoodLvcsPlannerProjectionReportV1 {
         planner,
         total_lvcs_cells: cfg.nb_unstacked_rows.saturating_mul(cfg.nb_unstacked_cols),

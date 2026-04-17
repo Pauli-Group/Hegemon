@@ -11,7 +11,8 @@ use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use rayon::prelude::*;
 use std::sync::OnceLock;
 use transaction_circuit::{
-    decode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
+    decode_smallwood_proof_trace_prefix_v1, decode_smallwood_proof_trace_v1,
+    encode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
     prove_recursive_statement_v1, recursive_descriptor_v1, recursive_profile_a_v1,
     recursive_profile_b_v1, verify_recursive_statement_direct_v1, SmallwoodArithmetization,
     SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
@@ -1136,6 +1137,29 @@ fn rebuild_tree_relation_from_proof_v2(
     )
 }
 
+fn decode_canonical_tree_proof_prefix_v2(
+    padded_proof_bytes: &[u8],
+) -> Result<(Vec<u8>, usize), BlockRecursionError> {
+    let (proof_trace, consumed_len) = decode_smallwood_proof_trace_prefix_v1(padded_proof_bytes)
+        .map_err(|_| BlockRecursionError::InvalidField("tree_v2 proof trace decode"))?;
+    let canonical_proof_bytes = encode_smallwood_proof_trace_v1(&proof_trace)
+        .map_err(|_| BlockRecursionError::InvalidField("tree_v2 proof trace encode"))?;
+    if canonical_proof_bytes.len() != consumed_len
+        || padded_proof_bytes[..consumed_len] != canonical_proof_bytes
+    {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 proof canonical encoding",
+        ));
+    }
+    if padded_proof_bytes[consumed_len..]
+        .iter()
+        .any(|byte| *byte != 0)
+    {
+        return Err(BlockRecursionError::InvalidField("tree_v2 proof padding"));
+    }
+    Ok((canonical_proof_bytes, consumed_len))
+}
+
 fn verify_tree_child_v2(
     profile: SmallwoodRecursiveProfileTagV1,
     relation_kind: SmallwoodRecursiveRelationKindV1,
@@ -1937,14 +1961,16 @@ pub fn verify_block_recursive_v2(
             "recursive_block_v2 header mismatch",
         ));
     }
-    let actual_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
+    let (canonical_proof_bytes, canonical_len) =
+        decode_canonical_tree_proof_prefix_v2(&artifact.artifact.proof_bytes)?;
+    let projected_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
         &tree_recursive_profile_v2(expected_profile),
         &rebuild_tree_relation_from_proof_v2(
             expected_profile,
             expected_kind,
             expected_level,
             expected_statement.clone(),
-            &artifact.artifact.proof_bytes,
+            &canonical_proof_bytes,
         )?,
     )
     .map_err(|err| {
@@ -1952,27 +1978,19 @@ pub fn verify_block_recursive_v2(
             format!("tree_v2 project proof bytes: {err}").into_boxed_str(),
         ))
     })?;
-    if actual_proof_bytes > artifact.artifact.proof_bytes.len() {
+    if canonical_len > projected_proof_bytes {
         return Err(BlockRecursionError::WidthMismatch {
             what: "recursive_block_v2 proof bytes",
-            expected: actual_proof_bytes,
-            actual: artifact.artifact.proof_bytes.len(),
+            expected: projected_proof_bytes,
+            actual: canonical_len,
         });
-    }
-    if artifact.artifact.proof_bytes[actual_proof_bytes..]
-        .iter()
-        .any(|byte| *byte != 0)
-    {
-        return Err(BlockRecursionError::InvalidField(
-            "recursive_block_v2 proof padding",
-        ));
     }
     verify_tree_child_v2(
         expected_profile,
         expected_kind,
         expected_level,
         &expected_statement,
-        &artifact.artifact.proof_bytes[..actual_proof_bytes],
+        &canonical_proof_bytes,
     )?;
     Ok(expected_public.clone())
 }

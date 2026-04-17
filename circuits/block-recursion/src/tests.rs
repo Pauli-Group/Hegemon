@@ -28,16 +28,19 @@ use super::{
     BlockRecursiveProverInputV2, BlockSemanticInputsV1, HostedRecursiveProofContextV1,
     RecursiveBlockArtifactV1, RecursiveBlockArtifactV2, RecursiveBlockPublicV1,
     RecursiveBlockPublicV2, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
-    StepARelationV1, StepBRelationV1, TREE_RECURSIVE_CHUNK_SIZE_V2,
+    StepARelationV1, StepBRelationV1, RECURSIVE_BLOCK_HEADER_BYTES_V1,
+    RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_PUBLIC_BYTES_V1,
+    RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1, RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1,
+    TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
-    encode_smallwood_recursive_proof_envelope_v1, prove_recursive_statement_v1,
-    recursive_profile_a_v1, recursive_profile_b_v1, verify_recursive_statement_v1,
-    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
-    SmallwoodNonlinearEvalView, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveProofEnvelopeV1,
-    SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
+    encode_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_proof_bytes_v1,
+    prove_recursive_statement_v1, recursive_profile_a_v1, recursive_profile_b_v1,
+    verify_recursive_statement_v1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
+    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveProofEnvelopeV1, SmallwoodRecursiveRelationKindV1, TransactionCircuitError,
 };
 
 fn digest32(tag: u8, idx: u32) -> [u8; 32] {
@@ -382,6 +385,223 @@ fn step_b_context_from_base_context_v1(
     )
 }
 
+fn advanced_step_target(
+    previous: &RecursivePrefixStatementV1,
+    tag_base: u8,
+) -> RecursivePrefixStatementV1 {
+    RecursivePrefixStatementV1 {
+        tx_count: previous.tx_count + 1,
+        start_state_digest: previous.start_state_digest,
+        end_state_digest: digest48(tag_base, previous.tx_count + 1),
+        verified_leaf_commitment: digest48(tag_base.wrapping_add(1), previous.tx_count + 1),
+        tx_statements_commitment: previous.tx_statements_commitment,
+        verified_receipt_commitment: digest48(tag_base.wrapping_add(2), previous.tx_count + 1),
+        start_tree_commitment: previous.start_tree_commitment,
+        end_tree_commitment: digest48(tag_base.wrapping_add(3), previous.tx_count + 1),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RecursiveBlockV1ProofCapReport {
+    base_a_exact_proof_bytes: usize,
+    base_a_projected_proof_bytes: usize,
+    base_a_envelope_bytes: usize,
+    step_b_first_exact_proof_bytes: usize,
+    step_b_first_projected_proof_bytes: usize,
+    step_b_first_envelope_bytes: usize,
+    step_a_exact_proof_bytes: usize,
+    step_a_projected_proof_bytes: usize,
+    step_a_envelope_bytes: usize,
+    step_b_steady_exact_proof_bytes: usize,
+    step_b_steady_projected_proof_bytes: usize,
+    step_b_steady_envelope_bytes: usize,
+    root_projected_proof_cap: usize,
+    derived_artifact_bytes: usize,
+}
+
+fn recursive_block_v1_proof_cap_report() -> RecursiveBlockV1ProofCapReport {
+    let base_statement = base_prefix_statement();
+    let base_relation = BaseARelationV1::new(base_statement.clone(), base_statement.clone());
+    let base_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::BaseA,
+    );
+    let base_binding = hosted_base_binding_bytes_v1(&base_statement);
+    let base_projected = projected_smallwood_recursive_proof_bytes_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &base_relation,
+    )
+    .unwrap();
+    let base_proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &base_descriptor,
+        &base_relation,
+        &[0u64; 64],
+        &base_binding,
+    )
+    .unwrap();
+    let base_context = HostedRecursiveProofContextV1::BaseA {
+        statement: base_statement.clone(),
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: base_descriptor,
+                proof_bytes: base_proof.clone(),
+            },
+        )
+        .unwrap(),
+    };
+
+    let (previous, leaf, target) = step_statement_pair();
+    let step_b_first_relation = StepBRelationV1::new(
+        base_context.clone(),
+        previous.clone(),
+        leaf.clone(),
+        target.clone(),
+    )
+    .unwrap();
+    let step_b_first_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let step_b_first_binding = hosted_step_binding_bytes_v1(&target);
+    let step_b_first_witness =
+        step_recursive_witness_words_v1(&base_context, &previous, &leaf).unwrap();
+    let step_b_first_projected = projected_smallwood_recursive_proof_bytes_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_b_first_relation,
+    )
+    .unwrap();
+    let step_b_first_proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_b_first_descriptor,
+        &step_b_first_relation,
+        &step_b_first_witness,
+        &step_b_first_binding,
+    )
+    .unwrap();
+    let step_b_first_context = HostedRecursiveProofContextV1::StepB {
+        previous_recursive_proof: Box::new(base_context.clone()),
+        previous_statement: previous.clone(),
+        leaf_record: leaf.clone(),
+        target_statement: target.clone(),
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: step_b_first_descriptor,
+                proof_bytes: step_b_first_proof.clone(),
+            },
+        )
+        .unwrap(),
+    };
+
+    let next_leaf = sample_leaf_record(target.tx_count);
+    let next_target = advanced_step_target(&target, 0x21);
+    let step_a_relation = StepARelationV1::new(
+        step_b_first_context.clone(),
+        target.clone(),
+        next_leaf.clone(),
+        next_target.clone(),
+    )
+    .unwrap();
+    let step_a_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::StepA,
+    );
+    let step_a_binding = hosted_step_binding_bytes_v1(&next_target);
+    let step_a_witness =
+        step_recursive_witness_words_v1(&step_b_first_context, &target, &next_leaf).unwrap();
+    let step_a_projected = projected_smallwood_recursive_proof_bytes_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_a_relation,
+    )
+    .unwrap();
+    let step_a_proof = prove_recursive_statement_v1(
+        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_a_descriptor,
+        &step_a_relation,
+        &step_a_witness,
+        &step_a_binding,
+    )
+    .unwrap();
+    let step_a_context = HostedRecursiveProofContextV1::StepA {
+        previous_recursive_proof: Box::new(step_b_first_context.clone()),
+        previous_statement: target.clone(),
+        leaf_record: next_leaf.clone(),
+        target_statement: next_target.clone(),
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: step_a_descriptor,
+                proof_bytes: step_a_proof.clone(),
+            },
+        )
+        .unwrap(),
+    };
+
+    let third_leaf = sample_leaf_record(next_target.tx_count);
+    let third_target = advanced_step_target(&next_target, 0x31);
+    let step_b_steady_relation = StepBRelationV1::new(
+        step_a_context.clone(),
+        next_target.clone(),
+        third_leaf.clone(),
+        third_target.clone(),
+    )
+    .unwrap();
+    let step_b_steady_descriptor = hosted_recursive_descriptor_v1(
+        SmallwoodRecursiveProfileTagV1::B,
+        SmallwoodRecursiveRelationKindV1::StepB,
+    );
+    let step_b_steady_binding = hosted_step_binding_bytes_v1(&third_target);
+    let step_b_steady_witness =
+        step_recursive_witness_words_v1(&step_a_context, &next_target, &third_leaf).unwrap();
+    let step_b_steady_projected = projected_smallwood_recursive_proof_bytes_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_b_steady_relation,
+    )
+    .unwrap();
+    let step_b_steady_proof = prove_recursive_statement_v1(
+        &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &step_b_steady_descriptor,
+        &step_b_steady_relation,
+        &step_b_steady_witness,
+        &step_b_steady_binding,
+    )
+    .unwrap();
+    let step_b_steady_context = HostedRecursiveProofContextV1::StepB {
+        previous_recursive_proof: Box::new(step_a_context.clone()),
+        previous_statement: next_target,
+        leaf_record: third_leaf,
+        target_statement: third_target,
+        proof_envelope_bytes: encode_smallwood_recursive_proof_envelope_v1(
+            &SmallwoodRecursiveProofEnvelopeV1 {
+                descriptor: step_b_steady_descriptor,
+                proof_bytes: step_b_steady_proof.clone(),
+            },
+        )
+        .unwrap(),
+    };
+
+    let step_b_max = step_b_first_projected.max(step_b_steady_projected);
+    let root_projected_proof_cap = step_a_projected.max(step_b_max);
+
+    RecursiveBlockV1ProofCapReport {
+        base_a_exact_proof_bytes: base_proof.len(),
+        base_a_projected_proof_bytes: base_projected,
+        base_a_envelope_bytes: base_context.proof_envelope_bytes().len(),
+        step_b_first_exact_proof_bytes: step_b_first_proof.len(),
+        step_b_first_projected_proof_bytes: step_b_first_projected,
+        step_b_first_envelope_bytes: step_b_first_context.proof_envelope_bytes().len(),
+        step_a_exact_proof_bytes: step_a_proof.len(),
+        step_a_projected_proof_bytes: step_a_projected,
+        step_a_envelope_bytes: step_a_context.proof_envelope_bytes().len(),
+        step_b_steady_exact_proof_bytes: step_b_steady_proof.len(),
+        step_b_steady_projected_proof_bytes: step_b_steady_projected,
+        step_b_steady_envelope_bytes: step_b_steady_context.proof_envelope_bytes().len(),
+        root_projected_proof_cap,
+        derived_artifact_bytes: RECURSIVE_BLOCK_HEADER_BYTES_V1
+            + RECURSIVE_BLOCK_PUBLIC_BYTES_V1
+            + root_projected_proof_cap,
+    }
+}
+
 fn tamper_base_context_proof_bytes_in_range_v1<F>(
     context: &HostedRecursiveProofContextV1,
     start_numer: usize,
@@ -583,6 +803,53 @@ fn prove_and_verify_recursive_artifact_succeeds() {
     let (artifact, public) = cached_two_tx_artifact();
     let verified = verify_block_recursive_v1(&artifact, &public).unwrap();
     assert_eq!(verified, public);
+}
+
+#[test]
+#[ignore = "diagnostic report: v1 steady-state recursion is not a constant-size shipped path"]
+fn recursive_block_v1_proof_cap_report_reveals_steady_state_growth() {
+    let report = recursive_block_v1_proof_cap_report();
+    eprintln!(
+        "recursive_block_v1 cap report: base_a exact/projected={}/{}, step_b_first={}/{}, step_a={}/{}, step_b_steady={}/{}, root_cap={}, artifact_bytes={}",
+        report.base_a_exact_proof_bytes,
+        report.base_a_projected_proof_bytes,
+        report.step_b_first_exact_proof_bytes,
+        report.step_b_first_projected_proof_bytes,
+        report.step_a_exact_proof_bytes,
+        report.step_a_projected_proof_bytes,
+        report.step_b_steady_exact_proof_bytes,
+        report.step_b_steady_projected_proof_bytes,
+        report.root_projected_proof_cap,
+        report.derived_artifact_bytes,
+    );
+    assert!(report.base_a_exact_proof_bytes <= report.base_a_projected_proof_bytes);
+    assert!(report.step_b_first_exact_proof_bytes <= report.step_b_first_projected_proof_bytes);
+    assert!(report.step_a_exact_proof_bytes <= report.step_a_projected_proof_bytes);
+    assert!(report.step_b_steady_exact_proof_bytes <= report.step_b_steady_projected_proof_bytes);
+    assert!(
+        report.step_a_projected_proof_bytes < RECURSIVE_BLOCK_PROOF_BYTES_V1,
+        "first StepA should still fit within the historical v1 container width"
+    );
+    assert!(
+        report.step_b_first_projected_proof_bytes < RECURSIVE_BLOCK_PROOF_BYTES_V1,
+        "first StepB should still fit within the historical v1 container width"
+    );
+    assert!(
+        report.step_b_steady_projected_proof_bytes > RECURSIVE_BLOCK_PROOF_BYTES_V1,
+        "steady-state StepB should exceed the stale shipped v1 cap if the diagnostic is still relevant"
+    );
+    assert!(
+        report.root_projected_proof_cap > RECURSIVE_BLOCK_PROOF_BYTES_V1,
+        "steady-state recursive root cap should exceed the stale shipped v1 artifact width"
+    );
+    assert_eq!(
+        serialize_recursive_block_artifact_v1(&cached_two_tx_artifact().0)
+            .unwrap()
+            .len(),
+        RECURSIVE_BLOCK_HEADER_BYTES_V1
+            + RECURSIVE_BLOCK_PUBLIC_BYTES_V1
+            + RECURSIVE_BLOCK_PROOF_BYTES_V1
+    );
 }
 
 #[test]
