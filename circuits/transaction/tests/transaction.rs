@@ -15,6 +15,7 @@ use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p
 use transaction_circuit::{
     projected_smallwood_candidate_proof_bytes,
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
+    report_smallwood_candidate_proof_size,
     InputNoteWitness, OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding,
     TransactionCircuitError, TransactionWitness,
 };
@@ -332,6 +333,41 @@ fn smallwood_candidate_roundtrip_verifies() {
 }
 
 #[test]
+#[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
+fn smallwood_candidate_proof_size_report_matches_current_release_bytes() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    let report =
+        report_smallwood_candidate_proof_size(&proof.stark_proof).expect("size report for proof");
+    let projected_bytes = projected_smallwood_candidate_proof_bytes(&witness)
+        .expect("projected smallwood candidate proof bytes");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("serialize proof size report")
+    );
+    assert_eq!(
+        report.total_bytes,
+        proof.stark_proof.len(),
+        "reported total bytes must match the exact proof length"
+    );
+    assert_eq!(
+        report.total_bytes,
+        report.wrapper_bytes
+            + report.transcript_bytes
+            + report.commitment_bytes
+            + report.opened_values_bytes
+            + report.opening_payload_bytes
+            + report.other_bytes,
+        "proof size report sections must sum back to the exact proof length"
+    );
+    assert_eq!(
+        report.total_bytes, projected_bytes,
+        "measured proof bytes must match the current projected SmallWood candidate proof size"
+    );
+}
+
+#[test]
 fn smallwood_candidate_proof_stays_below_shipped_plonky3_baseline() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -415,6 +451,29 @@ fn smallwood_candidate_direct_projection_stays_at_or_below_bridge_baseline() {
 }
 
 #[test]
+fn smallwood_candidate_compact_bindings_projection_beats_direct_baseline() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let compact_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("projected compact-binding smallwood candidate proof bytes");
+    let direct_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+    .expect("projected direct smallwood candidate proof bytes");
+    eprintln!(
+        "smallwood candidate compact projection bytes: compact={compact_bytes} direct={direct_bytes}"
+    );
+    assert!(
+        compact_bytes < direct_bytes,
+        "compact-binding SmallWood candidate projection should beat the existing direct baseline: compact={compact_bytes} direct={direct_bytes}"
+    );
+}
+
+#[test]
 fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -436,6 +495,47 @@ fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
         }
         mode => panic!("unexpected direct opened witness mode: {mode:?}"),
     }
+}
+
+#[test]
+#[ignore = "experimental SmallWood compact-binding release proving is still too slow for the default test profile"]
+fn smallwood_candidate_compact_bindings_roundtrip_verifies() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("smallwood candidate compact-binding proof");
+    eprintln!(
+        "smallwood candidate compact-binding proof bytes: {}",
+        proof.stark_proof.len()
+    );
+    let report = verify(&proof, &generate_keys().1).expect("smallwood compact-binding verification");
+    assert!(report.verified);
+}
+
+#[test]
+#[ignore = "experimental SmallWood compact-binding release proving is still too slow for the default test profile"]
+fn smallwood_candidate_compact_bindings_proof_size_report_beats_current_release_bytes() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("smallwood candidate compact-binding proof");
+    let report =
+        report_smallwood_candidate_proof_size(&proof.stark_proof).expect("size report for proof");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("serialize compact proof size report")
+    );
+    assert!(
+        report.total_bytes < 108_028,
+        "expected compact-binding SmallWood proof to beat the current release baseline, got {} bytes",
+        report.total_bytes
+    );
 }
 
 #[test]

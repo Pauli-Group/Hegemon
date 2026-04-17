@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `108012` bytes, the passing release roundtrip emits `108012` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the exact serialized proof envelope for that current candidate now projects to `108028` bytes, the passing release roundtrip emits `108028` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
 - and the latest focused local release runs are now about `2.23s` directly and about `2.69s` through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor, removing the remaining DECS hot-loop allocation churn with preallocated row buffers plus thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `108012`-byte release proof, about `3.28x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `108028`-byte release proof, about `3.28x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
 
 ## Product conclusion
 

@@ -18,12 +18,8 @@ const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
 const INPUT_ROWS: usize = 130;
-const OUTPUT_ROWS: usize = 2 + HASH_LIMBS;
-const STABLE_BINDING_ROWS: usize = 1 + (HASH_LIMBS * 3);
 const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
-const SECRET_ROWS: usize =
-    (MAX_INPUTS * INPUT_ROWS) + (MAX_OUTPUTS * OUTPUT_ROWS) + STABLE_BINDING_ROWS;
 const PACKING_FACTOR: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
@@ -47,6 +43,33 @@ const PUB_STABLE_POLICY_HASH: usize = 58;
 const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
 const EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
+
+#[derive(Clone, Copy)]
+struct PackedRowLayout {
+    output_rows: usize,
+    stable_binding_rows: usize,
+}
+
+impl PackedRowLayout {
+    const fn for_arithmetization(arithmetization: SmallwoodArithmetization) -> Self {
+        match arithmetization {
+            SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => {
+                Self {
+                    output_rows: 2 + HASH_LIMBS,
+                    stable_binding_rows: 1 + (HASH_LIMBS * 3),
+                }
+            }
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => Self {
+                output_rows: 2,
+                stable_binding_rows: 0,
+            },
+        }
+    }
+
+    const fn secret_rows(self) -> usize {
+        (MAX_INPUTS * INPUT_ROWS) + (MAX_OUTPUTS * self.output_rows) + self.stable_binding_rows
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct PackedStatement<'a> {
@@ -445,27 +468,28 @@ fn row_input_right_agg(input: usize, level: usize) -> usize {
 }
 
 #[inline]
-fn row_output_base(output: usize) -> usize {
-    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * OUTPUT_ROWS
+fn row_output_base(statement: &PackedStatement<'_>, output: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * layout.output_rows
 }
 
 #[inline]
-fn row_output_value(output: usize) -> usize {
-    row_output_base(output)
+fn row_output_value(statement: &PackedStatement<'_>, output: usize) -> usize {
+    row_output_base(statement, output)
 }
 
 #[inline]
-fn row_output_asset(output: usize) -> usize {
-    row_output_base(output) + 1
+fn row_output_asset(statement: &PackedStatement<'_>, output: usize) -> usize {
+    row_output_base(statement, output) + 1
 }
 
 #[inline]
-fn poseidon_rows_start() -> usize {
-    PUBLIC_ROWS + SECRET_ROWS
+fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
+    PUBLIC_ROWS + PackedRowLayout::for_arithmetization(statement.arithmetization).secret_rows()
 }
 #[inline]
-fn poseidon_group_row(group: usize, step_row: usize, limb: usize) -> usize {
-    poseidon_rows_start()
+fn poseidon_group_row(statement: &PackedStatement<'_>, group: usize, step_row: usize, limb: usize) -> usize {
+    poseidon_rows_start(statement)
         + (group * POSEIDON_ROWS_PER_PERMUTATION + step_row) * POSEIDON2_WIDTH
         + limb
 }
@@ -657,7 +681,7 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     }
 
     for output_idx in 0..MAX_OUTPUTS {
-        let asset = rows[row_output_asset(output_idx)];
+        let asset = rows[row_output_asset(statement, output_idx)];
         let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
         let inactive = Felt::ONE - flag;
         out[c] = flag * slot_membership_zero(statement, asset);
@@ -746,8 +770,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         }
         for output_idx in 0..MAX_OUTPUTS {
             let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
-            let value = rows[row_output_value(output_idx)];
-            let asset = rows[row_output_asset(output_idx)];
+            let value = rows[row_output_value(statement, output_idx)];
+            let asset = rows[row_output_asset(statement, output_idx)];
             let weight = slot_membership_weights(statement, asset)[slot];
             delta -= flag * value * weight;
         }
@@ -766,8 +790,9 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
             let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
             let mut next_actual = [Felt::ZERO; POSEIDON2_WIDTH];
             for limb in 0..POSEIDON2_WIDTH {
-                state[limb] = rows[poseidon_group_row(group, step, limb)];
-                next_actual[limb] = rows[poseidon_group_row(group, step + 1, limb)];
+                state[limb] = rows[poseidon_group_row(statement, group, step, limb)];
+                next_actual[limb] =
+                    rows[poseidon_group_row(statement, group, step + 1, limb)];
             }
             poseidon2_step(&mut state, step);
             out[c] = aggregate_weighted_differences(

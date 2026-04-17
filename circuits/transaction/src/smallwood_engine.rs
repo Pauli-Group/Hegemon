@@ -42,6 +42,7 @@ static CONSECUTIVE_LAGRANGE_BASIS_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<
 pub enum SmallwoodArithmetization {
     Bridge64V1,
     DirectPacked64V1,
+    DirectPacked64CompactBindingsV1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +92,37 @@ pub struct SmallwoodProofTraceV1 {
     pub opened_witness_row_scalars: Vec<Vec<u64>>,
     pub auxiliary_witness_words: Vec<u64>,
     pub auxiliary_witness_limb_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodProofSizeReportV1 {
+    pub total_bytes: usize,
+    pub transcript_bytes: usize,
+    pub commitment_bytes: usize,
+    pub opened_values_bytes: usize,
+    pub opening_payload_bytes: usize,
+    pub opened_witness_bytes: usize,
+    pub other_bytes: usize,
+    pub salt_bytes: usize,
+    pub nonce_bytes: usize,
+    pub h_piop_bytes: usize,
+    pub piop_bytes: usize,
+    pub pcs_rcombi_tails_bytes: usize,
+    pub pcs_subset_evals_bytes: usize,
+    pub pcs_partial_evals_bytes: usize,
+    pub decs_auth_paths_bytes: usize,
+    pub decs_masking_evals_bytes: usize,
+    pub decs_high_coeffs_bytes: usize,
+}
+
+fn serialized_size_v1<T: Serialize>(value: &T) -> Result<usize, TransactionCircuitError> {
+    bincode::serialize(value)
+        .map(|bytes| bytes.len())
+        .map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to serialize smallwood proof component: {err}"
+            ))
+        })
 }
 
 impl SmallwoodProofTraceV1 {
@@ -605,7 +637,9 @@ pub fn ensure_row_polynomial_arithmetization(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<(), TransactionCircuitError> {
     match statement.arithmetization() {
-        SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => Ok(()),
+        SmallwoodArithmetization::Bridge64V1
+        | SmallwoodArithmetization::DirectPacked64V1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => Ok(()),
     }
 }
 
@@ -1137,6 +1171,63 @@ pub fn decode_smallwood_proof_trace_v1(
             .unwrap_or(&[])
             .to_vec(),
         auxiliary_witness_limb_count: proof.opened_witness.auxiliary_limb_count(),
+    })
+}
+
+pub fn report_smallwood_proof_size_v1(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodProofSizeReportV1, TransactionCircuitError> {
+    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to deserialize rust smallwood proof: {err}"
+        ))
+    })?;
+    let total_bytes = proof_bytes.len();
+    let salt_bytes = serialized_size_v1(&proof.salt)?;
+    let nonce_bytes = serialized_size_v1(&proof.nonce)?;
+    let h_piop_bytes = serialized_size_v1(&proof.h_piop)?;
+    let piop_bytes = serialized_size_v1(&proof.piop)?;
+    let pcs_rcombi_tails_bytes = serialized_size_v1(&proof.pcs.rcombi_tails)?;
+    let pcs_subset_evals_bytes = serialized_size_v1(&proof.pcs.subset_evals)?;
+    let pcs_partial_evals_bytes = serialized_size_v1(&proof.pcs.partial_evals)?;
+    let decs_auth_paths_bytes = serialized_size_v1(&proof.pcs.decs.auth_paths)?;
+    let decs_masking_evals_bytes = serialized_size_v1(&proof.pcs.decs.masking_evals)?;
+    let decs_high_coeffs_bytes = serialized_size_v1(&proof.pcs.decs.high_coeffs)?;
+    let opened_witness_bytes = serialized_size_v1(&proof.opened_witness)?;
+    let transcript_bytes = salt_bytes + nonce_bytes + h_piop_bytes + piop_bytes;
+    let commitment_bytes = decs_auth_paths_bytes;
+    let opened_values_bytes = pcs_subset_evals_bytes + pcs_partial_evals_bytes;
+    let opening_payload_bytes = pcs_rcombi_tails_bytes
+        + decs_masking_evals_bytes
+        + decs_high_coeffs_bytes
+        + opened_witness_bytes;
+    let accounted = transcript_bytes
+        + commitment_bytes
+        + opened_values_bytes
+        + opening_payload_bytes;
+    if accounted > total_bytes {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood proof size report over-accounted bytes: accounted={accounted} total={total_bytes}"
+        )));
+    }
+    Ok(SmallwoodProofSizeReportV1 {
+        total_bytes,
+        transcript_bytes,
+        commitment_bytes,
+        opened_values_bytes,
+        opening_payload_bytes,
+        opened_witness_bytes,
+        other_bytes: total_bytes - accounted,
+        salt_bytes,
+        nonce_bytes,
+        h_piop_bytes,
+        piop_bytes,
+        pcs_rcombi_tails_bytes,
+        pcs_subset_evals_bytes,
+        pcs_partial_evals_bytes,
+        decs_auth_paths_bytes,
+        decs_masking_evals_bytes,
+        decs_high_coeffs_bytes,
     })
 }
 

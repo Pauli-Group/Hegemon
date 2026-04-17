@@ -1,0 +1,402 @@
+# Transaction Proof Shrink: Try Every Serious Branch
+
+This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+
+Reference: repository root `.agent/PLANS.md` defines the ExecPlan format and maintenance requirements. Every update to this file must remain consistent with that guidance.
+
+This plan starts from the current product reality captured in `DESIGN.md`, `METHODS.md`, `docs/crypto/tx_proof_size_reduction_paths.md`, and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`: Hegemon’s active transaction-proof family is the in-repo SmallWood candidate, the exact current release proof is `108028` bytes, the statement is already witness-free, and the easy local waste has already been removed. The remaining work is therefore not “trim a wrapper” work. It is a deliberate campaign to test every serious branch that could still move the proof materially lower while keeping the current transparent, post-quantum, no-grinding `128-bit` release bar.
+
+## Purpose / Big Picture
+
+Make Hegemon’s per-transaction proof materially smaller than the current `108028`-byte release object without weakening the current security rule, without changing wallet-visible transaction semantics, and without introducing a fake benchmark story. After this plan is complete, a developer should be able to check out the repository, run a small set of commands, and see one of two honest outcomes:
+
+Either the repo has a clearly better proof line, with exact measured proof bytes and runtime improvement over the current `108028`-byte baseline, or the repo has a checked-in negative result showing that a serious branch was tried, measured, and killed for a concrete reason.
+
+The point is to beat Hegemon’s current proof, not to argue abstractly. Every branch in this plan therefore has explicit keep criteria, kill criteria, and exact commands that must demonstrate whether the branch helped.
+
+## Progress
+
+- [x] (2026-04-16T22:40Z) Re-read `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, `docs/crypto/tx_proof_size_reduction_paths.md`, `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`, `docs/crypto/tx_proof_stir_soundness.md`, and `docs/crypto/tx_proof_smallwood_size_probe.md` to ground the plan in the current shipped proof surface and measured prior work.
+- [x] (2026-04-16T22:40Z) Drafted this ExecPlan as the single place to coordinate all high-effort tx-proof shrink branches, including geometry reduction, semantic frontend replacement, PCS replacement, and transcript/authentication redesign.
+- [x] (2026-04-16T23:12Z) Added an exact current-proof byte budget reporter for the live SmallWood proof in `circuits/transaction/src/smallwood_engine.rs` and `circuits/transaction/src/smallwood_frontend.rs`, exposed it through the public crate surface, and added a release test that emits a machine-readable JSON report from a real proof.
+- [x] (2026-04-16T23:12Z) Checked the first real baseline against the live tree and found documentation drift: the current proof is `108028` bytes, not `108012`, and the projection matches the measured release proof exactly. Updated `DESIGN.md`, `METHODS.md`, and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` to match reality.
+- [x] (2026-04-17T00:31Z) Landed the first real alternate geometry behind the new shape seam: `DirectPacked64CompactBindingsV1` removes the duplicated output ciphertext-hash rows and stablecoin binding rows that the nonlinear semantics already read directly from public values. The experimental compact-binding branch proves and verifies, shrinks the row geometry from `1447` to `1416`, and reduces exact release proof bytes from `108028` to `106900`.
+- [ ] Parameterize the current SmallWood frontend and engine so alternative witness geometries, packing factors, and public-binding layouts can be generated and measured without hand-editing constants across multiple files (completed: added `SmallwoodFrontendShape`, shape-aware frontend entrypoints, and the first real compact-binding branch; remaining: add more than one serious alternate geometry instead of a single experimental line).
+- [ ] Implement and measure the “shrink the current engine” branch: push the live `1447`-row statement down toward the frozen smaller geometry while preserving the current no-grinding `128-bit` floor.
+- [ ] Implement and measure the “real semantic LPPC frontend” branch: build a direct `NativeTxValidityRelation` frontend on the smaller packed witness target instead of the current row-aligned bridge geometry.
+- [ ] Implement and measure the “new opening layer” branch: attach at least one stronger transparent opening/proximity layer to the current SmallWood statement and measure whether it beats the current proof enough to justify the complexity.
+- [ ] Gate the optional field-native transcript/authentication branch on actual byte-budget evidence. If transcript/authentication is not a meaningful share of the proof, kill this branch early and record the evidence.
+- [ ] Promote only the best measured branch. Update `DESIGN.md`, `METHODS.md`, and the checked-in crypto notes to reflect the winning line and the killed branches honestly.
+
+## Surprises & Discoveries
+
+- Observation: the current active proof is already much smaller than the older Plonky3 release object, but the remaining structural gap is still real.
+  Evidence: `DESIGN.md` and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` now record the current release proof at `108028` bytes, while the older release `TransactionAirP3` path was `354081` bytes.
+
+- Observation: the first live size-report pass exposed stale proof-size documentation instead of a projected-vs-real mismatch.
+  Evidence: `cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture` emitted a real proof report with `total_bytes = 108028`, and `cargo test -p transaction-circuit smallwood_candidate_proof_stays_below_shipped_plonky3_baseline -- --nocapture` reported a matching projected size of `108028`.
+
+- Observation: the current proof is no longer large because of an embedded witness blob.
+  Evidence: `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` states that the active statement is witness-free and public, and `circuits/transaction/src/smallwood_frontend.rs` derives the statement from public values plus fixed witness-shape metadata.
+
+- Observation: the current size-reduction story already has one strong negative result.
+  Evidence: `docs/crypto/tx_proof_stir_soundness.md` and `docs/crypto/tx_proof_stir_spike.json` show the first conservative STIR branch only projected about `1.30x` total-byte shrink on the older tx proof surface, which is not enough to justify a migration by itself.
+
+- Observation: the repo already contains evidence that a smaller SmallWood-style frontend could still help materially.
+  Evidence: `DESIGN.md`, `METHODS.md`, and `docs/crypto/tx_proof_smallwood_size_probe.md` all record a real gap between the live `1447`-row geometry and the smaller target region, with the size probe reporting structural points roughly in the `75 KB .. 121 KB` range.
+
+- Observation: removing obviously duplicated public-binding rows does work, but it is only a marginal win on the current backend.
+  Evidence: the new `DirectPacked64CompactBindingsV1` branch drops `31` secret rows and measured `106900` release bytes in `docs/crypto/tx_proof_smallwood_compact_bindings_size_report.json`, only `1128` bytes below the `108028` baseline.
+
+## Decision Log
+
+- Decision: treat `108028` bytes as the baseline to beat, not the old `354081`-byte Plonky3 proof.
+  Rationale: the user’s goal is to beat Hegemon’s current best line, not to keep re-beating an obsolete baseline.
+  Date/Author: 2026-04-16 / Codex
+
+- Decision: keep the current no-grinding `128-bit` post-quantum release bar fixed for every serious branch in this plan.
+  Rationale: lowering the bar would produce fake wins and make the comparison meaningless. The point is to improve the proof object honestly.
+  Date/Author: 2026-04-16 / Codex
+
+- Decision: run the branches in this order: current-geometry shrink, semantic frontend replacement, opening-layer replacement, then optional transcript/authentication redesign.
+  Rationale: this order follows the repo’s existing evidence. The most credible branch with the least new security surface is shrinking the current geometry. The next most credible branch is a real semantic LPPC frontend. Opening-layer replacement is higher risk and should only be pursued after the frontend work is honestly measured. Transcript/authentication redesign should be evidence-driven, not cargo cult.
+  Date/Author: 2026-04-16 / Codex
+
+- Decision: every branch must have a hard keep threshold and a hard kill threshold.
+  Rationale: the user asked to try everything, not to let half-proven branches linger forever. A branch that does not hit a material threshold should die and leave behind a measured negative result.
+  Date/Author: 2026-04-16 / Codex
+
+## Outcomes & Retrospective
+
+The first milestone is landed, and the second milestone now has its first real branch instead of only scaffolding. The repo has an exact current-proof size reporter, a checked real baseline of `108028` bytes, and one experimental alternate geometry, `DirectPacked64CompactBindingsV1`, that proves and verifies cleanly at `106900` bytes. That branch is honest and useful, but it is not yet a category win; it only saves `1128` bytes, so the next iterations still need to chase larger structural changes instead of pretending this alone solved the problem.
+
+## Context and Orientation
+
+The current active per-transaction proof is the `SmallwoodCandidate` path. In this repository, a “transaction proof” means the proof bytes that show one native private payment is valid. Those proof bytes are then wrapped into a native `tx_leaf` artifact and eventually aggregated at the block layer, but this plan is about the standalone per-transaction proof object itself.
+
+The key files today are:
+
+`circuits/transaction/src/smallwood_frontend.rs` builds the public SmallWood statement and the live packed witness material. This file is where the live proof shape is defined. It currently exposes the active statement geometry and the exact no-grinding profile constants.
+
+`circuits/transaction/src/smallwood_semantics.rs` contains the actual transaction-validity relation. In plain language, this is the code that enforces note commitments, nullifiers, Merkle authentication, spend authorization binding, selector routing, and balance equations. Any branch that claims to preserve semantics must still satisfy this relation.
+
+`circuits/transaction/src/smallwood_engine.rs` is the Rust SmallWood prover/verifier engine. In plain language, this is the code that commits to the witness-shape polynomials, recomputes the transcript, answers opening challenges, and verifies the algebraic equalities. Any branch that changes the opening layer or authentication path will touch this file.
+
+`circuits/transaction/src/smallwood_native.rs` is the bridge from the frontend statement to the native transaction-proof APIs. It is the right place to add projected-size reporting and shape-parameterized proof construction without polluting the higher-level wallet or node interfaces.
+
+`circuits/transaction/src/proof.rs` is the transaction-proof wrapper that higher layers use. This file matters because any serious proof replacement must remain dispatchable through the existing backend seam and must keep the public `tx_leaf` path working.
+
+`docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` is the exact note for the current shipped proof. It records the current statement shape:
+
+- `public_value_count = 78`
+- `raw_witness_len = 295`
+- `poseidon_permutation_count = 143`
+- `poseidon_state_row_count = 4576`
+- `expanded_witness_len = 92608`
+- `lppc_row_count = 1447`
+- `lppc_packing_factor = 64`
+- `effective_constraint_degree = 8`
+
+It also records the current no-grinding profile:
+
+- `rho = 2`
+- `nb_opened_evals = 3`
+- `beta = 2`
+- `decs_nb_evals = 16384`
+- `decs_nb_opened_evals = 29`
+- `decs_eta = 3`
+- zero grinding bits
+
+The important current constraints are:
+
+1. The active proof is already witness-free, so wrapper trimming is not the main lever.
+2. The current proof already reflects many low-level optimizations, so the remaining work is structural.
+3. The repo still records a smaller target region. `DESIGN.md`, `METHODS.md`, and `docs/crypto/tx_proof_smallwood_size_probe.md` all make clear that the live `1447`-row object is not the only plausible geometry.
+4. The user-visible semantics must not change. Wallets, nodes, and the native `tx_leaf` product path still need to prove the same private payment validity statement.
+
+Two phrases need plain-language definitions because they matter for this plan.
+
+A “polynomial commitment scheme”, abbreviated PCS, is the proof layer that lets the prover commit to many polynomials and later prove what those polynomials evaluate to at challenge points. In this repository, that layer is currently responsible for most of the serialized bytes.
+
+“DECS” is the evaluation-authentication subsystem inside the current SmallWood engine. In plain language, it is the part that expands evaluations over a larger domain and authenticates the opened rows. The current size and runtime profile depends heavily on its parameters `decs_nb_evals`, `decs_nb_opened_evals`, and `decs_eta`.
+
+The current baseline to beat is:
+
+- exact current proof bytes: `108028`
+- exact current release target: no-grinding `128-bit` floor
+- exact current tx-proof wrapper target: keep the same backend seam and same `tx_leaf` product behavior
+
+The three target bands for this plan are:
+
+- acceptable win: below `95000` bytes and not materially slower
+- strong win: below `80000` bytes and still within the current release discipline
+- stretch win: below `65000` bytes with acceptable runtime and verifier cost
+
+Nothing in this plan is considered a real success if it lowers the security bar, breaks the native `tx_leaf` path, or only helps a synthetic benchmark that no product code uses.
+
+## Plan of Work
+
+The work begins by making the current `108028`-byte object impossible to hand-wave away. The repository already has good historical notes, but it still lacks one machine-readable byte budget for the exact current SmallWood proof object. The first step therefore adds a proof report that splits the live proof bytes into the exact serialized sections that matter today: wrapper, commitments, opened values, opening/authentication payload, transcript-related payload, and any remaining fixed overhead. The purpose is not to admire the current proof. The purpose is to decide which later branches are even worth trying.
+
+Once that current-proof report exists, the work splits into two serious frontend branches.
+
+The first frontend branch keeps the current SmallWood engine and shrinks the live statement geometry. The current engine is already proving a real semantic witness-free statement. The missing question is whether the live `1447`-row object can be pushed materially downward without breaking the exact no-grinding floor. That means parameterizing the frontend shape instead of freezing constants across `smallwood_frontend.rs`, moving bridge/public-binding rows around deliberately, compressing or fusing dedicated secret rows where semantics permit it, and re-measuring the exact proof after every geometry step. This branch is the lowest-risk way to buy bytes because it does not add a new proof system or a new security model.
+
+The second frontend branch stops trying to make the current row-aligned bridge perfect and instead builds the real semantic LPPC frontend that the size probes were implicitly asking for. In plain language, LPPC here means the packed witness layout that SmallWood likes for small-instance proofs: a compact witness polynomial layout chosen to minimize opening payload rather than to mirror the current row-local bridge. The repo already contains structural evidence that a smaller packed witness target could land in roughly the `75 KB .. 121 KB` region. The purpose of this branch is to replace the live bridge geometry with a real `NativeTxValidityRelation` frontend on that smaller target and then find out whether the structural win survives the real semantics.
+
+Only after those two frontend branches are honestly measured does the plan move to the opening layer. The opening layer branch asks a narrower question than the older STIR discussion: not “does STIR beat old Plonky3 AIR,” but “can a stronger transparent opening/proximity layer beat the current SmallWood opening layer on this exact witness-free statement enough to matter?” The answer may still be no. That is acceptable. The branch exists because the current proof is still mostly opening/authentication bytes, and because a frontend shrink alone may not be enough to reach the best target band.
+
+The optional final branch is the transcript/authentication redesign. This branch only activates if the new current-proof byte report shows that transcript and authentication machinery are still a meaningful share of the object after the higher-value branches are tried. If the proof report shows that the remaining size is overwhelmingly in unavoidable opening payload, this branch dies early and the plan records the negative result.
+
+The plan ends by promoting exactly one winner, if there is one, and deleting or quarantining the losers. No branch is allowed to linger as an “almost shipped” story.
+
+## Milestones
+
+### Milestone 1: Make the current `108028`-byte proof auditable
+
+At the end of this milestone, a novice can run one command and get a JSON report for the exact current SmallWood proof object, not a historical note. The report must name each serialized section and its byte count. Add the reporting code in `circuits/transaction/src/smallwood_frontend.rs`, `circuits/transaction/src/smallwood_native.rs`, and any supporting proof-wrapper file needed to expose this structure. Add a focused test in `circuits/transaction/tests/transaction.rs` that generates a live proof, emits the section report, and asserts that the section totals sum back to the exact proof bytes.
+
+This milestone also adds one checked-in artifact under `docs/crypto/` or `.agent/benchmarks/` with the exact current report and the exact command used to generate it. The report is the basis for every later go/no-go decision.
+
+Acceptance is simple: run the report command, confirm that it prints `108028` as the total and a nontrivial section breakdown, and confirm that the new test passes.
+
+### Milestone 2: Shrink the current SmallWood geometry before changing proof systems
+
+At the end of this milestone, the repository can generate at least three alternative frontends from the same semantics and measure them honestly:
+
+- the current live `1447`-row geometry,
+- one intermediate reduced geometry,
+- one geometry at or near the frozen smaller target.
+
+Implement this by parameterizing the frontend shape in `circuits/transaction/src/smallwood_frontend.rs` and keeping the semantic kernel in `circuits/transaction/src/smallwood_semantics.rs` fixed. The parameterization must cover at least the row count, packing factor, public-binding row layout, and any fixed Poseidon2 subtrace grouping that materially affects proof size.
+
+Every candidate geometry must be run through:
+
+- projected proof size,
+- actual proof generation,
+- actual verification,
+- exact no-grinding soundness recomputation recorded in a checked-in note or JSON report.
+
+The keep threshold for a local geometry change is a real product threshold:
+
+- keep if proof bytes improve by at least `10%` and prove time does not regress by more than `15%`, or
+- keep if proof bytes improve by at least `20%` even if runtime is roughly flat.
+
+Kill the geometry branch if all serious candidates fail those thresholds or if the exact no-grinding floor cannot be kept at `128` bits.
+
+### Milestone 3: Build the real semantic LPPC frontend
+
+At the end of this milestone, the repo has a second full semantic SmallWood frontend that is not the current row-aligned bridge. This is the high-effort branch that tests whether the checked-in structural size probe can survive contact with the actual transaction-validity semantics.
+
+The implementation belongs in a new frontend module under `circuits/transaction/src/`, with a name that makes the distinction obvious, for example `smallwood_lppc_frontend.rs`. It must prove the same `NativeTxValidityRelation` semantics and dispatch through the same backend seam in `circuits/transaction/src/proof.rs`. It must not bypass the semantic kernel with a synthetic witness. The core design requirement is that the packed witness shape follows the smaller LPPC target instead of the live bridge geometry.
+
+This milestone is not complete when the code compiles. It is complete only when the branch produces:
+
+- a real projected proof size,
+- a real passing prove/verify roundtrip,
+- a soundness note or report under the same no-grinding `128-bit` rule,
+- and an exact comparison against the best result from Milestone 2.
+
+The keep threshold for this branch is higher because the effort is much higher:
+
+- keep if actual proof bytes land below `85000`, or
+- keep if proof bytes improve by at least `20%` over the best Milestone 2 line and runtime is still operationally acceptable.
+
+Kill the branch if the real semantics destroy the structural win and it cannot beat the best geometry-only line.
+
+### Milestone 4: Attack the opening layer on the winning statement, not on a dead baseline
+
+At the end of this milestone, the repository has measured at least one serious alternate transparent opening/proximity layer against the best surviving statement from Milestones 2 and 3. This is not the old STIR-on-Plonky3 experiment repeated blindly. It is a new experiment on the actual current winning statement.
+
+Build the spike under `spikes/` so it does not destabilize product code. The spike must consume the exact same witness-free public statement and report:
+
+- total proof bytes,
+- opening/authentication bytes,
+- prove time,
+- verify time,
+- exact security gate result under the no-grinding `128-bit` rule.
+
+If the branch requires a new engine module, keep it isolated until the spike proves it is worth integrating.
+
+The keep threshold is strict:
+
+- keep only if the alternate opening layer improves total proof bytes by at least `15%` over the best current statement while preserving the security rule and keeping verify time within a sane multiple of the current verifier.
+
+Kill the branch if it cannot clear that threshold. The repository already has one negative STIR result. This milestone is only worth keeping if it beats the current SmallWood line materially, not if it merely reproduces “about the same.”
+
+### Milestone 5: Only if warranted, replace byte-oriented transcript/authentication machinery
+
+At the end of this milestone, either the repo has a measured smaller transcript/authentication line, or it has a short checked-in note saying this branch was not worth running because the byte-budget report proved it was not material.
+
+This milestone starts only if Milestone 1 and the later proof reports show that transcript/authentication machinery is still a meaningful slice of the proof after the higher-value branches. If activated, the likely code surfaces are `circuits/transaction/src/smallwood_engine.rs` and any helper modules that own transcript encoding and authentication hashing. The work may include field-native transcript serialization, field-native authentication trees, or a simpler proof encoding if and only if the branch produces a measurable size win on the exact winning statement.
+
+The keep threshold is:
+
+- keep only if the branch cuts at least `5%` off total proof bytes or produces a very clear runtime win on top of an already smaller proof.
+
+Otherwise kill it and record the evidence.
+
+### Milestone 6: Promote the winner, update docs, and freeze the losers honestly
+
+At the end of this milestone, there is one clearly best tx-proof line. The best line becomes the default shipped narrative in `DESIGN.md`, `METHODS.md`, and the checked-in crypto notes. Every losing branch remains either isolated in `spikes/` with a short negative-result note or is deleted entirely.
+
+This milestone updates:
+
+- `DESIGN.md`
+- `METHODS.md`
+- `docs/crypto/tx_proof_size_reduction_paths.md`
+- the winning branch’s exact soundness note
+- benchmark artifacts under `docs/crypto/` or `.agent/benchmarks/`
+
+Acceptance is not “docs updated.” Acceptance is that a novice can run the commands in this plan, produce the winning proof, and see the exact new bytes and runtime against the old `108028`-byte baseline.
+
+## Concrete Steps
+
+Work from the repository root.
+
+To confirm the current baseline before touching code, run:
+
+    cargo test -p transaction-circuit smallwood_candidate_roundtrip_verifies --release -- --ignored --nocapture
+
+Expect the output to include the current proof size line at or near `108028` bytes. If the output has drifted, update this ExecPlan’s baseline first before proceeding.
+
+To add the current-proof report in Milestone 1, add a test and a command shaped like:
+
+    cargo test -p transaction-circuit smallwood_candidate_proof_size_report --release -- --ignored --nocapture
+
+The expected output must include a machine-readable summary with a total equal to the exact generated proof size and named sections that sum back to that total.
+
+To measure candidate frontends in Milestones 2 and 3, add explicit ignored tests or a small benchmark driver in `circuits/transaction` that can be run one candidate at a time. The commands should remain simple:
+
+    cargo test -p transaction-circuit smallwood_candidate_geometry_frontier --release -- --ignored --nocapture
+    cargo test -p transaction-circuit smallwood_candidate_lppc_frontier --release -- --ignored --nocapture
+
+The expected output for each candidate must include:
+
+- candidate name,
+- exact proof bytes,
+- exact prove time,
+- exact verify time,
+- and whether the candidate clears the current `128-bit` no-grinding gate.
+
+To run the opening-layer spike in Milestone 4, use a separate spike crate under `spikes/` and a command shaped like:
+
+    cargo run --manifest-path spikes/<new-spike>/Cargo.toml --release -- --json > /tmp/<new-spike>.json
+
+The JSON must include the same four outputs: bytes, prove time, verify time, and gate result.
+
+After any branch that survives, run the product-path sanity commands:
+
+    cargo check -p transaction-circuit -p superneo-hegemon -p pallet-shielded-pool -p consensus -p hegemon-node
+    cargo test -p transaction-circuit --release -- --nocapture
+    cargo test -p superneo-hegemon native_tx_leaf_artifact_accepts_smallwood_candidate_backend --release -- --ignored --nocapture
+
+If a branch touches the shipped default or benchmark story, also run:
+
+    ./scripts/check-core.sh test
+
+The exact command names may expand as the milestones add dedicated tests, but the commands above must remain the reproducible entrypoints a novice can follow.
+
+## Validation and Acceptance
+
+This plan succeeds only if all of the following are true.
+
+The repo can prove and verify the same native transaction-validity statement as before. Wallet-visible private payment semantics do not change. The public `tx_leaf` path still works.
+
+At least one serious branch is either kept or killed on measured evidence. There must be no hand-wavy “promising” branch left without exact bytes and exact runtime.
+
+Any branch that is kept must satisfy the branch-specific keep threshold in this plan. The final promoted branch must beat the current `108028`-byte baseline materially under the same no-grinding `128-bit` rule.
+
+The exact current best line must be documented in `DESIGN.md`, `METHODS.md`, and the checked-in crypto notes with exact proof bytes, exact security profile, and exact command(s) used to reproduce the result.
+
+The final acceptance demonstration is:
+
+1. run the old-baseline report command and confirm the historical `108028`-byte line;
+2. run the winning-branch report command and confirm the new smaller proof;
+3. run the product-path tests and confirm the proof still verifies through the native artifact path.
+
+## Idempotence and Recovery
+
+This plan is intentionally additive until the final promotion milestone. New frontends belong in separate modules, and new opening-layer experiments belong under `spikes/`. The current shipped line must remain intact until one branch has clearly won.
+
+If a prototype stalls or fails halfway, leave behind:
+
+- one checked-in note or JSON report,
+- one short `Decision Log` entry here,
+- and either a quarantined spike or a clean revert.
+
+Do not let half-integrated branches leak into the product path. If a branch needs environment flags or custom profile switches to run, keep those isolated to tests or spikes until promotion.
+
+## Artifacts and Notes
+
+The current hard numbers this plan starts from are:
+
+    active SmallWood proof bytes: 108028
+    active statement shape: raw_witness_len=295, lppc_row_count=1447, expanded_witness_len=92608
+    active no-grinding profile: rho=2, nb_opened_evals=3, beta=2, decs_nb_evals=16384, decs_nb_opened_evals=29, decs_eta=3
+
+The current stretch region this plan is chasing is:
+
+    acceptable: < 95000 bytes
+    strong:     < 80000 bytes
+    stretch:    < 65000 bytes
+
+The current already-measured reference points are:
+
+    older Plonky3 release proof: 354081 bytes
+    conservative STIR result on the old tx surface: about 273145 bytes projected
+    structural SmallWood probe region: about 75128 .. 120568 bytes
+
+Those numbers are the reason the plan prioritizes frontend/geometry work before more speculative PCS changes.
+
+## Interfaces and Dependencies
+
+At the end of Milestone 1, the repository must have one stable reporting interface for the live proof shape. In `circuits/transaction/src/smallwood_native.rs` or a sibling module, define:
+
+    pub struct SmallwoodCandidateProofSizeReport {
+        pub total_bytes: usize,
+        pub wrapper_bytes: usize,
+        pub commitment_bytes: usize,
+        pub opened_values_bytes: usize,
+        pub opening_payload_bytes: usize,
+        pub transcript_bytes: usize,
+        pub other_bytes: usize,
+    }
+
+    pub fn report_smallwood_candidate_proof_size(
+        proof_bytes: &[u8],
+    ) -> Result<SmallwoodCandidateProofSizeReport, TransactionCircuitError>
+
+At the end of Milestone 2, the current frontend must be parameterizable by an explicit shape object instead of hidden constants scattered across multiple modules. In `circuits/transaction/src/smallwood_frontend.rs`, define a stable shape descriptor:
+
+    pub struct SmallwoodFrontendShape {
+        pub lppc_row_count: usize,
+        pub lppc_packing_factor: usize,
+        pub public_binding_mode: SmallwoodPublicBindingMode,
+        pub poseidon_layout: SmallwoodPoseidonLayout,
+    }
+
+and expose one function that builds a statement from that shape:
+
+    pub fn build_smallwood_candidate_statement_with_shape(
+        witness: &TransactionWitness,
+        public_inputs: &TransactionPublicInputs,
+        shape: &SmallwoodFrontendShape,
+        arithmetization: SmallwoodArithmetization,
+    ) -> Result<SmallwoodConstraintAdapter, TransactionCircuitError>
+
+At the end of Milestone 3, the semantic LPPC branch must exist behind the same backend seam instead of bypassing it. The winning shape must still feed the existing verification path in:
+
+    crate::proof::verify_transaction_proof_bytes_for_backend
+
+At the end of Milestone 4, any alternate opening-layer spike must emit a machine-readable report with:
+
+    total_proof_bytes
+    opening_payload_bytes
+    prover_ms
+    verifier_ms
+    clears_release_gate
+
+Any branch that cannot report those values is not mature enough to compare honestly.
+
+Revision note: created on 2026-04-16 to consolidate every serious tx-proof shrink branch after the live SmallWood line reached `108028` bytes. Updated on 2026-04-16 after the first live proof-size report landed and exposed a stale `108012` documentation baseline. Updated again on 2026-04-17 after the first real alternate geometry, `DirectPacked64CompactBindingsV1`, landed and measured `106900` release bytes. The reason for this plan remains the same: the remaining work is structural and multi-branch; a single “optimize more” thread is no longer precise enough. 

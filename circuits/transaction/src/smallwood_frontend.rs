@@ -21,7 +21,9 @@ use crate::{
         VerificationReport,
     },
     public_inputs::TransactionPublicInputs,
-    smallwood_engine::SmallwoodArithmetization,
+    smallwood_engine::{
+        report_smallwood_proof_size_v1, SmallwoodArithmetization, SmallwoodProofSizeReportV1,
+    },
     smallwood_native::{
         projected_candidate_proof_bytes as projected_smallwood_backend_proof_bytes,
         prove_candidate as prove_smallwood_backend, test_candidate_witness,
@@ -53,13 +55,7 @@ const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
 const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 0;
 const SMALLWOOD_INPUT_SECRET_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
-const SMALLWOOD_OUTPUT_SECRET_ROWS: usize = 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES;
-const SMALLWOOD_STABLE_BINDING_ROWS: usize = 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3);
 const SMALLWOOD_TOTAL_INPUT_ROWS: usize = SMALLWOOD_INPUT_SECRET_ROWS + (MERKLE_TREE_DEPTH * 3);
-const SMALLWOOD_SECRET_WITNESS_ROWS: usize = (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS)
-    + (MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS)
-    + (MAX_INPUTS * (MERKLE_TREE_DEPTH * 3))
-    + SMALLWOOD_STABLE_BINDING_ROWS;
 const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
@@ -89,10 +85,10 @@ fn bridge_input_base(input: usize) -> usize {
 }
 
 #[inline]
-fn bridge_output_base(output: usize) -> usize {
+fn bridge_output_base(layout: SmallwoodBridgeRowLayout, output: usize) -> usize {
     SMALLWOOD_PUBLIC_ROWS
         + MAX_INPUTS * SMALLWOOD_TOTAL_INPUT_ROWS
-        + output * SMALLWOOD_OUTPUT_SECRET_ROWS
+        + output * layout.output_secret_rows
 }
 
 #[inline]
@@ -135,56 +131,26 @@ fn bridge_row_input_right_agg(input: usize, level: usize) -> usize {
 }
 
 #[inline]
-fn bridge_row_output_value(output: usize) -> usize {
-    bridge_output_base(output)
-}
-
-#[inline]
-fn bridge_row_output_asset(output: usize) -> usize {
-    bridge_output_base(output) + 1
-}
-
-#[inline]
-fn bridge_row_output_ciphertext_hash(output: usize, limb: usize) -> usize {
-    bridge_output_base(output) + 2 + limb
-}
-
-#[inline]
-fn bridge_stable_base() -> usize {
+fn bridge_stable_base(layout: SmallwoodBridgeRowLayout) -> usize {
     SMALLWOOD_PUBLIC_ROWS
         + MAX_INPUTS * SMALLWOOD_TOTAL_INPUT_ROWS
-        + MAX_OUTPUTS * SMALLWOOD_OUTPUT_SECRET_ROWS
+        + MAX_OUTPUTS * layout.output_secret_rows
 }
 
 #[inline]
-fn bridge_row_stable_policy_version() -> usize {
-    bridge_stable_base()
+fn bridge_poseidon_rows_start(layout: SmallwoodBridgeRowLayout) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + layout.secret_witness_rows() + SMALLWOOD_LANE_SELECTOR_ROWS
 }
 
 #[inline]
-fn bridge_row_stable_policy_hash(limb: usize) -> usize {
-    bridge_stable_base() + 1 + limb
-}
-
-#[inline]
-fn bridge_row_stable_oracle(limb: usize) -> usize {
-    bridge_stable_base() + 1 + SMALLWOOD_WORDS_PER_48_BYTES + limb
-}
-
-#[inline]
-fn bridge_row_stable_attestation(limb: usize) -> usize {
-    bridge_stable_base() + 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 2) + limb
-}
-
-#[inline]
-fn bridge_poseidon_rows_start() -> usize {
-    SMALLWOOD_PUBLIC_ROWS + SMALLWOOD_SECRET_WITNESS_ROWS + SMALLWOOD_LANE_SELECTOR_ROWS
-}
-
-#[inline]
-fn bridge_poseidon_row(permutation: usize, step_row: usize, limb: usize) -> usize {
+fn bridge_poseidon_row(
+    layout: SmallwoodBridgeRowLayout,
+    permutation: usize,
+    step_row: usize,
+    limb: usize,
+) -> usize {
     let group = permutation / SMALLWOOD_BRIDGE_PACKING_FACTOR;
-    bridge_poseidon_rows_start()
+    bridge_poseidon_rows_start(layout)
         + (group * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION + step_row) * POSEIDON2_WIDTH
         + limb
 }
@@ -227,6 +193,84 @@ pub struct SmallwoodCandidateProof {
     pub ark_proof: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodPublicBindingMode {
+    RowAlignedSecretBindingsV1,
+    CompactPublicBindingsV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodPoseidonLayout {
+    GroupedRowsV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodFrontendShape {
+    pub lppc_packing_factor: usize,
+    pub public_binding_mode: SmallwoodPublicBindingMode,
+    pub poseidon_layout: SmallwoodPoseidonLayout,
+}
+
+impl SmallwoodFrontendShape {
+    pub const fn bridge64_v1() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            public_binding_mode: SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsV1,
+        }
+    }
+
+    pub const fn direct_packed64_compact_bindings_v1() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsV1,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SmallwoodBridgeRowLayout {
+    output_secret_rows: usize,
+    stable_binding_rows: usize,
+}
+
+impl SmallwoodBridgeRowLayout {
+    const fn for_binding_mode(mode: SmallwoodPublicBindingMode) -> Self {
+        match mode {
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1 => Self {
+                output_secret_rows: 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES,
+                stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
+            },
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1 => Self {
+                output_secret_rows: 1 + 1,
+                stable_binding_rows: 0,
+            },
+        }
+    }
+
+    const fn secret_witness_rows(self) -> usize {
+        (MAX_INPUTS * SMALLWOOD_INPUT_SECRET_ROWS)
+            + (MAX_OUTPUTS * self.output_secret_rows)
+            + (MAX_INPUTS * (MERKLE_TREE_DEPTH * 3))
+            + self.stable_binding_rows
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodCandidateProofSizeReport {
+    pub total_bytes: usize,
+    pub wrapper_bytes: usize,
+    pub ark_proof_bytes: usize,
+    pub transcript_bytes: usize,
+    pub commitment_bytes: usize,
+    pub opened_values_bytes: usize,
+    pub opening_payload_bytes: usize,
+    pub other_bytes: usize,
+    pub arithmetization: SmallwoodArithmetization,
+    pub inner: SmallwoodProofSizeReportV1,
+}
+
 fn default_smallwood_candidate_arithmetization() -> SmallwoodArithmetization {
     SmallwoodArithmetization::Bridge64V1
 }
@@ -260,10 +304,11 @@ pub struct PackedBridgeSmallwoodFrontendMaterial {
 }
 
 struct SmallwoodWitnessContext {
+    witness: TransactionWitness,
     public_inputs: TransactionPublicInputs,
     serialized_public_inputs: SerializedStarkInputs,
+    public_inputs_p3: TransactionPublicInputsP3,
     public_values: Vec<u64>,
-    semantic_secret_rows: Vec<u64>,
     bridge_poseidon_rows:
         Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
 }
@@ -367,6 +412,51 @@ pub fn prove_smallwood_candidate_with_arithmetization(
                 stark_public_inputs: Some(context.serialized_public_inputs.clone()),
             })
         }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            let direct_material = build_packed_smallwood_frontend_material_from_context_with_shape(
+                &context,
+                witness,
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+                SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            )?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+                    &direct_material.public_statement.public_values,
+                    &direct_material.packed_expanded_witness,
+                    direct_material.public_statement.lppc_row_count as usize,
+                    direct_material.public_statement.lppc_packing_factor as usize,
+                    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                    &direct_material.linear_constraints.term_offsets,
+                    &direct_material.linear_constraints.term_indices,
+                    &direct_material.linear_constraints.term_coefficients,
+                    &direct_material.linear_constraints.targets,
+                )?;
+            }
+            let ark_proof = prove_smallwood_backend(
+                SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+                &direct_material.public_statement.public_values,
+                &direct_material.packed_expanded_witness,
+                direct_material.public_statement.lppc_row_count as usize,
+                direct_material.public_statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &direct_material.linear_constraints.term_offsets,
+                &direct_material.linear_constraints.term_indices,
+                &direct_material.linear_constraints.term_coefficients,
+                &direct_material.linear_constraints.targets,
+                &direct_material.transcript_binding,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof)?;
+            Ok(TransactionProof {
+                nullifiers: context.public_inputs.nullifiers.clone(),
+                commitments: context.public_inputs.commitments.clone(),
+                balance_slots: context.public_inputs.balance_slots.clone(),
+                public_inputs: context.public_inputs.clone(),
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(context.serialized_public_inputs.clone()),
+            })
+        }
     }
 }
 
@@ -410,6 +500,23 @@ pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization(
             )?;
             projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes)
         }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            let material = build_packed_smallwood_frontend_material_from_context_with_shape(
+                &context,
+                witness,
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+                SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            )?;
+            let ark_proof_bytes = projected_smallwood_backend_proof_bytes(
+                SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree,
+                material.linear_constraints.targets.len(),
+            )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes)
+        }
     }
 }
 
@@ -428,12 +535,30 @@ pub fn verify_smallwood_candidate_proof_bytes(
     let (public_statement, linear_constraints) = match candidate.arithmetization {
         SmallwoodArithmetization::Bridge64V1 => {
             let statement = build_packed_smallwood_bridge_public_statement(pub_inputs, version)?;
-            let constraints = build_packed_bridge_linear_constraints(&statement);
+            let constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            );
             (statement, constraints)
         }
         SmallwoodArithmetization::DirectPacked64V1 => {
             let statement = build_direct_packed_smallwood_public_statement(pub_inputs, version)?;
-            let constraints = build_packed_bridge_linear_constraints(&statement);
+            let constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            );
+            (statement, constraints)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            let statement = build_packed_smallwood_bridge_public_statement_with_shape(
+                pub_inputs,
+                version,
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+            )?;
+            let constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            );
             (statement, constraints)
         }
     };
@@ -514,6 +639,9 @@ pub fn smallwood_candidate_verifier_profile_material(
         SmallwoodArithmetization::Bridge64V1 => b"candidate-smallwood-bridge-pcs-ark".as_slice(),
         SmallwoodArithmetization::DirectPacked64V1 => {
             b"candidate-smallwood-direct-packed-payload".as_slice()
+        },
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            b"candidate-smallwood-direct-packed-compact-bindings".as_slice()
         }
     });
     material.extend_from_slice(b"hegemon.blake3-field-xof.v1");
@@ -555,10 +683,55 @@ pub fn build_packed_smallwood_frontend_material_from_witness(
     build_packed_smallwood_frontend_material(witness)
 }
 
+pub fn build_packed_smallwood_frontend_material_with_shape_from_witness(
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_frontend_material_from_context_with_shape(
+        &context,
+        witness,
+        shape,
+        direct_packed_arithmetization_for_shape(shape),
+    )
+}
+
 pub fn build_packed_smallwood_bridge_material_from_witness(
     witness: &TransactionWitness,
 ) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
     build_packed_smallwood_bridge_material(witness)
+}
+
+fn ensure_supported_smallwood_frontend_shape(
+    shape: &SmallwoodFrontendShape,
+) -> Result<(), TransactionCircuitError> {
+    if shape.lppc_packing_factor != SMALLWOOD_BRIDGE_PACKING_FACTOR {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "unsupported SmallWood frontend packing factor {}, expected {} for the current engine",
+            shape.lppc_packing_factor, SMALLWOOD_BRIDGE_PACKING_FACTOR
+        )));
+    }
+    match shape.public_binding_mode {
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+        | SmallwoodPublicBindingMode::CompactPublicBindingsV1 => {}
+    }
+    match shape.poseidon_layout {
+        SmallwoodPoseidonLayout::GroupedRowsV1 => {}
+    }
+    Ok(())
+}
+
+fn direct_packed_arithmetization_for_shape(
+    shape: SmallwoodFrontendShape,
+) -> SmallwoodArithmetization {
+    match shape.public_binding_mode {
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1 => {
+            SmallwoodArithmetization::DirectPacked64V1
+        }
+        SmallwoodPublicBindingMode::CompactPublicBindingsV1 => {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        }
+    }
 }
 
 fn decode_smallwood_candidate_proof(
@@ -568,6 +741,42 @@ fn decode_smallwood_candidate_proof(
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to decode smallwood candidate proof: {err}"
         ))
+    })
+}
+
+pub fn report_smallwood_candidate_proof_size(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProofSizeReport, TransactionCircuitError> {
+    let candidate = decode_smallwood_candidate_proof(proof_bytes)?;
+    let inner = report_smallwood_proof_size_v1(&candidate.ark_proof)?;
+    let wrapper_bytes = proof_bytes.len().checked_sub(candidate.ark_proof.len()).ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper length underflow",
+        ),
+    )?;
+    let accounted = wrapper_bytes
+        + inner.transcript_bytes
+        + inner.commitment_bytes
+        + inner.opened_values_bytes
+        + inner.opening_payload_bytes
+        + inner.other_bytes;
+    if accounted != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood candidate proof size report mismatch: accounted={accounted} total={}",
+            proof_bytes.len()
+        )));
+    }
+    Ok(SmallwoodCandidateProofSizeReport {
+        total_bytes: proof_bytes.len(),
+        wrapper_bytes,
+        ark_proof_bytes: candidate.ark_proof.len(),
+        transcript_bytes: inner.transcript_bytes,
+        commitment_bytes: inner.commitment_bytes,
+        opened_values_bytes: inner.opened_values_bytes,
+        opening_payload_bytes: inner.opening_payload_bytes,
+        other_bytes: inner.other_bytes,
+        arithmetization: candidate.arithmetization,
+        inner,
     })
 }
 
@@ -619,30 +828,52 @@ fn build_packed_smallwood_frontend_material_from_context(
     context: &SmallwoodWitnessContext,
     witness: &TransactionWitness,
 ) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    build_packed_smallwood_frontend_material_from_context_with_shape(
+        context,
+        witness,
+        SmallwoodFrontendShape::bridge64_v1(),
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+}
+
+fn build_packed_smallwood_frontend_material_from_context_with_shape(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(shape.public_binding_mode);
+    let semantic_secret_rows = semantic_secret_witness_rows_with_mode(
+        &context.witness,
+        &context.public_inputs_p3,
+        shape.public_binding_mode,
+    )?;
     let packed_expanded_witness = packed_bridge_witness_rows(
-        &context.semantic_secret_rows,
+        &semantic_secret_rows,
         &context.bridge_poseidon_rows,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        shape.lppc_packing_factor,
     );
-    let row_count = packed_expanded_witness.len() / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+    let row_count = packed_expanded_witness.len() / shape.lppc_packing_factor;
     let public_statement = SmallwoodPublicStatement {
         public_values: context.public_values.clone(),
         public_value_count: context.public_values.len() as u32,
-        raw_witness_len: context.semantic_secret_rows.len() as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
         lppc_row_count: row_count as u32,
         poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
         poseidon_state_row_count: (context.bridge_poseidon_rows.len()
             * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
             as u32,
         expanded_witness_len: packed_expanded_witness.len() as u32,
-        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
-    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
+    let linear_constraints =
+        build_packed_bridge_linear_constraints(&public_statement, shape.public_binding_mode);
     let transcript_binding = smallwood_transcript_binding(
         &public_statement,
         witness.version,
-        SmallwoodArithmetization::DirectPacked64V1,
+        arithmetization,
     )?;
     Ok(PackedSmallwoodFrontendMaterial {
         public_statement,
@@ -663,26 +894,34 @@ fn build_packed_smallwood_bridge_material_from_context(
     context: &SmallwoodWitnessContext,
     witness: &TransactionWitness,
 ) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let shape = SmallwoodFrontendShape::bridge64_v1();
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(shape.public_binding_mode);
     let packed_witness_rows = packed_bridge_witness_rows(
-        &context.semantic_secret_rows,
+        &semantic_secret_witness_rows_with_mode(
+            &context.witness,
+            &context.public_inputs_p3,
+            shape.public_binding_mode,
+        )?,
         &context.bridge_poseidon_rows,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        shape.lppc_packing_factor,
     );
-    let row_count = packed_witness_rows.len() / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+    let row_count = packed_witness_rows.len() / shape.lppc_packing_factor;
     let public_statement = SmallwoodPublicStatement {
         public_values: context.public_values.clone(),
         public_value_count: context.public_values.len() as u32,
-        raw_witness_len: context.semantic_secret_rows.len() as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
         lppc_row_count: row_count as u32,
         poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
         poseidon_state_row_count: (context.bridge_poseidon_rows.len()
             * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
             as u32,
         expanded_witness_len: packed_witness_rows.len() as u32,
-        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
-    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement);
+    let linear_constraints =
+        build_packed_bridge_linear_constraints(&public_statement, shape.public_binding_mode);
     let transcript_binding = smallwood_transcript_binding(
         &public_statement,
         witness.version,
@@ -716,13 +955,13 @@ fn build_smallwood_witness_context(
             u64::from(witness.version.crypto),
         ])
         .collect();
-    let semantic_secret_rows = semantic_secret_witness_rows(witness, &public_inputs_p3)?;
     let bridge_poseidon_rows = poseidon_subtrace_rows(witness)?;
     Ok(SmallwoodWitnessContext {
+        witness: witness.clone(),
         public_inputs,
         serialized_public_inputs,
+        public_inputs_p3,
         public_values,
-        semantic_secret_rows,
         bridge_poseidon_rows,
     })
 }
@@ -732,6 +971,21 @@ fn build_packed_smallwood_bridge_public_statement(
     public_inputs: &TransactionPublicInputsP3,
     version: VersionBinding,
 ) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    build_packed_smallwood_bridge_public_statement_with_shape(
+        public_inputs,
+        version,
+        SmallwoodFrontendShape::bridge64_v1(),
+    )
+}
+
+#[allow(dead_code)]
+fn build_packed_smallwood_bridge_public_statement_with_shape(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+    shape: SmallwoodFrontendShape,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(shape.public_binding_mode);
     let public_values: Vec<u64> = public_inputs
         .to_vec()
         .into_iter()
@@ -748,23 +1002,23 @@ fn build_packed_smallwood_bridge_public_statement(
     let poseidon_permutation_count = smallwood_poseidon_permutation_count();
     let poseidon_group_count = smallwood_bridge_poseidon_group_count(
         poseidon_permutation_count,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        shape.lppc_packing_factor,
     );
     let lppc_row_count = SMALLWOOD_PUBLIC_ROWS
-        + SMALLWOOD_SECRET_WITNESS_ROWS
+        + layout.secret_witness_rows()
         + SMALLWOOD_LANE_SELECTOR_ROWS
         + (poseidon_group_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH);
     Ok(SmallwoodPublicStatement {
         public_values,
         public_value_count: SMALLWOOD_BASE_PUBLIC_VALUE_COUNT as u32,
-        raw_witness_len: SMALLWOOD_SECRET_WITNESS_ROWS as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
         lppc_row_count: lppc_row_count as u32,
         poseidon_permutation_count: poseidon_permutation_count as u32,
         poseidon_state_row_count: (poseidon_permutation_count
             * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
             as u32,
-        expanded_witness_len: (lppc_row_count * SMALLWOOD_BRIDGE_PACKING_FACTOR) as u32,
-        lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR as u16,
+        expanded_witness_len: (lppc_row_count * shape.lppc_packing_factor) as u32,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     })
 }
@@ -773,6 +1027,9 @@ fn build_smallwood_public_statement(
     public_inputs: &TransactionPublicInputsP3,
     version: VersionBinding,
 ) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+    );
     let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
     public_values.extend(
         public_inputs
@@ -783,7 +1040,7 @@ fn build_smallwood_public_statement(
     public_values.push(u64::from(version.circuit));
     public_values.push(u64::from(version.crypto));
 
-    let raw_witness_len = SMALLWOOD_SECRET_WITNESS_ROWS;
+    let raw_witness_len = layout.secret_witness_rows();
     let poseidon_permutation_count = smallwood_poseidon_permutation_count();
     let poseidon_state_row_count =
         poseidon_permutation_count * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION;
@@ -859,7 +1116,9 @@ fn push_bridge_constraint(
 
 fn build_packed_bridge_linear_constraints(
     statement: &SmallwoodPublicStatement,
+    public_binding_mode: SmallwoodPublicBindingMode,
 ) -> SmallwoodLinearConstraints {
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(public_binding_mode);
     let packing_factor = statement.lppc_packing_factor as usize;
     let secret_row_start = SMALLWOOD_PUBLIC_ROWS;
     let secret_row_count = statement.raw_witness_len as usize;
@@ -894,24 +1153,24 @@ fn build_packed_bridge_linear_constraints(
         |constraints: &mut SmallwoodLinearConstraints, row: usize, lane: usize, target: u64| {
             push_bridge_constraint(constraints, &[(row, lane, 1)], target);
         };
-    let push_poseidon_fresh_frame = |constraints: &mut SmallwoodLinearConstraints,
-                                     permutation: usize| {
-        let lane = packed_bridge_permutation_lane(permutation);
-        for limb in 6..(POSEIDON2_WIDTH - 1) {
+    let push_poseidon_fresh_frame =
+        |constraints: &mut SmallwoodLinearConstraints, permutation: usize| {
+            let lane = packed_bridge_permutation_lane(permutation);
+            for limb in 6..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    constraints,
+                    bridge_poseidon_row(layout, permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
             push_bridge_constant(
                 constraints,
-                bridge_poseidon_row(permutation, 0, limb),
+                bridge_poseidon_row(layout, permutation, 0, POSEIDON2_WIDTH - 1),
                 lane,
-                0,
+                1,
             );
-        }
-        push_bridge_constant(
-            constraints,
-            bridge_poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
-            lane,
-            1,
-        );
-    };
+        };
     let push_poseidon_continuation = |constraints: &mut SmallwoodLinearConstraints,
                                       prev_permutation: usize,
                                       permutation: usize| {
@@ -921,9 +1180,10 @@ fn build_packed_bridge_linear_constraints(
             push_bridge_constraint(
                 constraints,
                 &[
-                    (bridge_poseidon_row(permutation, 0, limb), lane, 1),
+                    (bridge_poseidon_row(layout, permutation, 0, limb), lane, 1),
                     (
                         bridge_poseidon_row(
+                            layout,
                             prev_permutation,
                             SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                             limb,
@@ -945,7 +1205,7 @@ fn build_packed_bridge_linear_constraints(
         let mut terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES * 2);
         for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
             terms.push((
-                bridge_poseidon_row(permutation, 0, limb),
+                bridge_poseidon_row(layout, permutation, 0, limb),
                 lane,
                 neg_coeff(power),
             ));
@@ -953,6 +1213,7 @@ fn build_packed_bridge_linear_constraints(
                 let prev_lane = packed_bridge_permutation_lane(prev);
                 terms.push((
                     bridge_poseidon_row(
+                        layout,
                         prev,
                         SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                         limb,
@@ -965,32 +1226,32 @@ fn build_packed_bridge_linear_constraints(
         }
         terms
     };
-    // PRF permutation: only the unused rate tail and capacity are fixed.
+
     let prf_permutation = bridge_prf_permutation();
     let prf_lane = packed_bridge_permutation_lane(prf_permutation);
     push_bridge_constant(
         &mut constraints,
-        bridge_poseidon_row(prf_permutation, 0, 4),
+        bridge_poseidon_row(layout, prf_permutation, 0, 4),
         prf_lane,
         0,
     );
     push_bridge_constant(
         &mut constraints,
-        bridge_poseidon_row(prf_permutation, 0, 5),
+        bridge_poseidon_row(layout, prf_permutation, 0, 5),
         prf_lane,
         0,
     );
     for limb in 6..(POSEIDON2_WIDTH - 1) {
         push_bridge_constant(
             &mut constraints,
-            bridge_poseidon_row(prf_permutation, 0, limb),
+            bridge_poseidon_row(layout, prf_permutation, 0, limb),
             prf_lane,
             0,
         );
     }
     push_bridge_constant(
         &mut constraints,
-        bridge_poseidon_row(prf_permutation, 0, POSEIDON2_WIDTH - 1),
+        bridge_poseidon_row(layout, prf_permutation, 0, POSEIDON2_WIDTH - 1),
         prf_lane,
         1,
     );
@@ -1007,7 +1268,7 @@ fn build_packed_bridge_linear_constraints(
         push_bridge_constraint(
             &mut constraints,
             &[
-                (bridge_poseidon_row(commitment0, 0, 0), lane0, 1),
+                (bridge_poseidon_row(layout, commitment0, 0, 0), lane0, 1),
                 (bridge_row_input_value(input), lane0, neg_one),
             ],
             NOTE_DOMAIN_TAG,
@@ -1015,7 +1276,7 @@ fn build_packed_bridge_linear_constraints(
         push_bridge_constraint(
             &mut constraints,
             &[
-                (bridge_poseidon_row(commitment0, 0, 1), lane0, 1),
+                (bridge_poseidon_row(layout, commitment0, 0, 1), lane0, 1),
                 (bridge_row_input_asset(input), lane0, neg_one),
             ],
             0,
@@ -1045,6 +1306,7 @@ fn build_packed_bridge_linear_constraints(
             for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
                 current_terms.push((
                     bridge_poseidon_row(
+                        layout,
                         current_source,
                         SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                         limb,
@@ -1073,9 +1335,10 @@ fn build_packed_bridge_linear_constraints(
         push_bridge_constraint(
             &mut constraints,
             &[
-                (bridge_poseidon_row(nullifier, 0, 0), nullifier_lane, 1),
+                (bridge_poseidon_row(layout, nullifier, 0, 0), nullifier_lane, 1),
                 (
                     bridge_poseidon_row(
+                        layout,
                         prf_permutation,
                         SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                         0,
@@ -1087,7 +1350,7 @@ fn build_packed_bridge_linear_constraints(
             NULLIFIER_DOMAIN_TAG,
         );
         let mut position_terms = Vec::with_capacity(MERKLE_TREE_DEPTH + 1);
-        position_terms.push((bridge_poseidon_row(nullifier, 0, 1), nullifier_lane, 1));
+        position_terms.push((bridge_poseidon_row(layout, nullifier, 0, 1), nullifier_lane, 1));
         for bit in 0..MERKLE_TREE_DEPTH {
             position_terms.push((
                 bridge_row_input_direction(input, bit),
@@ -1099,14 +1362,14 @@ fn build_packed_bridge_linear_constraints(
         for limb in 6..(POSEIDON2_WIDTH - 1) {
             push_bridge_constant(
                 &mut constraints,
-                bridge_poseidon_row(nullifier, 0, limb),
+                bridge_poseidon_row(layout, nullifier, 0, limb),
                 nullifier_lane,
                 0,
             );
         }
         push_bridge_constant(
             &mut constraints,
-            bridge_poseidon_row(nullifier, 0, POSEIDON2_WIDTH - 1),
+            bridge_poseidon_row(layout, nullifier, 0, POSEIDON2_WIDTH - 1),
             nullifier_lane,
             1,
         );
@@ -1114,6 +1377,7 @@ fn build_packed_bridge_linear_constraints(
             push_bridge_constant(
                 &mut constraints,
                 bridge_poseidon_row(
+                    layout,
                     nullifier,
                     SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                     limb,
@@ -1129,6 +1393,7 @@ fn build_packed_bridge_linear_constraints(
             push_bridge_constant(
                 &mut constraints,
                 bridge_poseidon_row(
+                    layout,
                     root_source,
                     SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                     limb,
@@ -1141,14 +1406,19 @@ fn build_packed_bridge_linear_constraints(
 
     for output in 0..MAX_OUTPUTS {
         if statement.public_values[PUB_OUTPUT_FLAG0 + output] == 0 {
-            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-                push_bridge_constant(
-                    &mut constraints,
-                    bridge_row_output_ciphertext_hash(output, limb),
-                    0,
-                    statement.public_values
-                        [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
-                );
+            if matches!(
+                public_binding_mode,
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+            ) {
+                for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                    push_bridge_constant(
+                        &mut constraints,
+                        bridge_output_base(layout, output) + 2 + limb,
+                        0,
+                        statement.public_values
+                            [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                    );
+                }
             }
             continue;
         }
@@ -1156,20 +1426,21 @@ fn build_packed_bridge_linear_constraints(
         let commitment1 = bridge_output_commitment_permutation(output, 1);
         let commitment2 = bridge_output_commitment_permutation(output, 2);
         let lane0 = packed_bridge_permutation_lane(commitment0);
+        let output_base = bridge_output_base(layout, output);
 
         push_bridge_constraint(
             &mut constraints,
             &[
-                (bridge_poseidon_row(commitment0, 0, 0), lane0, 1),
-                (bridge_row_output_value(output), lane0, neg_one),
+                (bridge_poseidon_row(layout, commitment0, 0, 0), lane0, 1),
+                (output_base, lane0, neg_one),
             ],
             NOTE_DOMAIN_TAG,
         );
         push_bridge_constraint(
             &mut constraints,
             &[
-                (bridge_poseidon_row(commitment0, 0, 1), lane0, 1),
-                (bridge_row_output_asset(output), lane0, neg_one),
+                (bridge_poseidon_row(layout, commitment0, 0, 1), lane0, 1),
+                (output_base + 1, lane0, neg_one),
             ],
             0,
         );
@@ -1181,6 +1452,7 @@ fn build_packed_bridge_linear_constraints(
             push_bridge_constant(
                 &mut constraints,
                 bridge_poseidon_row(
+                    layout,
                     commitment2,
                     SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1,
                     limb,
@@ -1190,42 +1462,53 @@ fn build_packed_bridge_linear_constraints(
                     [PUB_COMMITMENTS + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
             );
         }
-        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
-            push_bridge_constant(
-                &mut constraints,
-                bridge_row_output_ciphertext_hash(output, limb),
-                lane0,
-                statement.public_values
-                    [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
-            );
+        if matches!(
+            public_binding_mode,
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+        ) {
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                push_bridge_constant(
+                    &mut constraints,
+                    output_base + 2 + limb,
+                    lane0,
+                    statement.public_values
+                        [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                );
+            }
         }
     }
 
-    push_bridge_constant(
-        &mut constraints,
-        bridge_row_stable_policy_version(),
-        0,
-        statement.public_values[PUB_STABLE_POLICY_VERSION],
-    );
-    for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+    if matches!(
+        public_binding_mode,
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+    ) {
+        let stable_base = bridge_stable_base(layout);
         push_bridge_constant(
             &mut constraints,
-            bridge_row_stable_policy_hash(limb),
+            stable_base,
             0,
-            statement.public_values[PUB_STABLE_POLICY_HASH + limb],
+            statement.public_values[PUB_STABLE_POLICY_VERSION],
         );
-        push_bridge_constant(
-            &mut constraints,
-            bridge_row_stable_oracle(limb),
-            0,
-            statement.public_values[PUB_STABLE_ORACLE + limb],
-        );
-        push_bridge_constant(
-            &mut constraints,
-            bridge_row_stable_attestation(limb),
-            0,
-            statement.public_values[PUB_STABLE_ATTESTATION + limb],
-        );
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + limb,
+                0,
+                statement.public_values[PUB_STABLE_POLICY_HASH + limb],
+            );
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + SMALLWOOD_WORDS_PER_48_BYTES + limb,
+                0,
+                statement.public_values[PUB_STABLE_ORACLE + limb],
+            );
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 2) + limb,
+                0,
+                statement.public_values[PUB_STABLE_ATTESTATION + limb],
+            );
+        }
     }
 
     constraints
@@ -1400,6 +1683,19 @@ fn semantic_secret_witness_rows(
     witness: &TransactionWitness,
     public_inputs: &TransactionPublicInputsP3,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
+    semantic_secret_witness_rows_with_mode(
+        witness,
+        public_inputs,
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+    )
+}
+
+fn semantic_secret_witness_rows_with_mode(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputsP3,
+    public_binding_mode: SmallwoodPublicBindingMode,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let layout = SmallwoodBridgeRowLayout::for_binding_mode(public_binding_mode);
     let (inputs, _input_flags) = padded_inputs(&witness.inputs);
     let (outputs, _output_flags) = padded_outputs(&witness.outputs);
     let public_values: Vec<u64> = public_inputs
@@ -1411,7 +1707,7 @@ fn semantic_secret_witness_rows(
             u64::from(witness.version.crypto),
         ])
         .collect();
-    let mut values = Vec::with_capacity(SMALLWOOD_SECRET_WITNESS_ROWS);
+    let mut values = Vec::with_capacity(layout.secret_witness_rows());
 
     for (idx, input) in inputs.iter().enumerate() {
         values.push(input.note.value);
@@ -1449,31 +1745,41 @@ fn semantic_secret_witness_rows(
     for (idx, output) in outputs.iter().enumerate() {
         values.push(output.note.value);
         values.push(output.note.asset_id);
-        let ciphertext_hash = witness.ciphertext_hashes.get(idx).copied();
-        let ciphertext_hash = ciphertext_hash.unwrap_or([0u8; 48]);
-        let ciphertext_hash_words = bytes48_to_felts(&ciphertext_hash).ok_or(
-            TransactionCircuitError::ConstraintViolation("invalid ciphertext hash encoding"),
-        )?;
-        values.extend(
-            ciphertext_hash_words
-                .iter()
-                .map(|felt| felt.as_canonical_u64()),
-        );
+        if matches!(
+            public_binding_mode,
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+        ) {
+            let ciphertext_hash = witness.ciphertext_hashes.get(idx).copied();
+            let ciphertext_hash = ciphertext_hash.unwrap_or([0u8; 48]);
+            let ciphertext_hash_words = bytes48_to_felts(&ciphertext_hash).ok_or(
+                TransactionCircuitError::ConstraintViolation("invalid ciphertext hash encoding"),
+            )?;
+            values.extend(
+                ciphertext_hash_words
+                    .iter()
+                    .map(|felt| felt.as_canonical_u64()),
+            );
+        }
     }
 
-    values.push(u64::from(witness.stablecoin.policy_version));
-    for digest in [
-        witness.stablecoin.policy_hash,
-        witness.stablecoin.oracle_commitment,
-        witness.stablecoin.attestation_commitment,
-    ] {
-        let words = bytes48_to_felts(&digest).ok_or(
-            TransactionCircuitError::ConstraintViolation("invalid stablecoin binding encoding"),
-        )?;
-        values.extend(words.iter().map(|felt| felt.as_canonical_u64()));
+    if matches!(
+        public_binding_mode,
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+    ) {
+        values.push(u64::from(witness.stablecoin.policy_version));
+        for digest in [
+            witness.stablecoin.policy_hash,
+            witness.stablecoin.oracle_commitment,
+            witness.stablecoin.attestation_commitment,
+        ] {
+            let words = bytes48_to_felts(&digest).ok_or(
+                TransactionCircuitError::ConstraintViolation("invalid stablecoin binding encoding"),
+            )?;
+            values.extend(words.iter().map(|felt| felt.as_canonical_u64()));
+        }
     }
 
-    debug_assert_eq!(values.len(), SMALLWOOD_SECRET_WITNESS_ROWS);
+    debug_assert_eq!(values.len(), layout.secret_witness_rows());
     Ok(values)
 }
 
@@ -2009,12 +2315,60 @@ mod tests {
     }
 
     #[test]
+    fn packed_smallwood_frontend_compact_bindings_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 264);
+        assert_eq!(statement.poseidon_permutation_count, 143);
+        assert_eq!(statement.poseidon_state_row_count, 4_576);
+        assert_eq!(statement.expanded_witness_len, 90_624);
+        assert_eq!(statement.lppc_row_count, 1_416);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
     fn packed_smallwood_frontend_witness_satisfies_constraints() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
         test_candidate_witness(
             SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
             &material.public_statement.public_values,
             &material.packed_expanded_witness,
             material.public_statement.lppc_row_count as usize,
@@ -2064,7 +2418,10 @@ mod tests {
         ] {
             let mut statement = material.public_statement.clone();
             statement.public_values[public_index] ^= 1;
-            let linear_constraints = build_packed_bridge_linear_constraints(&statement);
+            let linear_constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            );
             let err = test_candidate_witness(
                 SmallwoodArithmetization::DirectPacked64V1,
                 &statement.public_values,
@@ -2095,7 +2452,10 @@ mod tests {
         ] {
             let mut statement = material.public_statement.clone();
             statement.public_values[public_index] ^= 1;
-            let linear_constraints = build_packed_bridge_linear_constraints(&statement);
+            let linear_constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            );
             let err = test_candidate_witness(
                 SmallwoodArithmetization::DirectPacked64V1,
                 &statement.public_values,

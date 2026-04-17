@@ -1,0 +1,30 @@
+{
+  "total_bytes": 106900,
+  "wrapper_bytes": 12,
+  "ark_proof_bytes": 106888,
+  "transcript_bytes": 9524,
+  "commitment_bytes": 13232,
+  "opened_values_bytes": 30352,
+  "opening_payload_bytes": 53780,
+  "other_bytes": 0,
+  "arithmetization": "DirectPacked64CompactBindingsV1",
+  "inner": {
+    "total_bytes": 106888,
+    "transcript_bytes": 9524,
+    "commitment_bytes": 13232,
+    "opened_values_bytes": 30352,
+    "opening_payload_bytes": 53780,
+    "opened_witness_bytes": 34132,
+    "other_bytes": 0,
+    "salt_bytes": 32,
+    "nonce_bytes": 4,
+    "h_piop_bytes": 32,
+    "piop_bytes": 9456,
+    "pcs_rcombi_tails_bytes": 1448,
+    "pcs_subset_evals_bytes": 29936,
+    "pcs_partial_evals_bytes": 416,
+    "decs_auth_paths_bytes": 13232,
+    "decs_masking_evals_bytes": 936,
+    "decs_high_coeffs_bytes": 17264
+  }
+}
