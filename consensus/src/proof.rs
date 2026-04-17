@@ -40,11 +40,11 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{
-    decode_transaction_proof_bytes_exact, SerializedStarkInputs, TransactionProof,
-    transaction_proof_digest,
-    transaction_public_inputs_digest, transaction_public_inputs_digest_from_serialized,
-    transaction_statement_hash, transaction_verifier_profile_digest,
-    transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
+    SerializedStarkInputs, TransactionProof, decode_transaction_proof_bytes_exact,
+    transaction_proof_digest, transaction_public_inputs_digest,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
+    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
+    verify as verify_transaction_proof,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -423,13 +423,17 @@ mod tests {
                     note: input_note_native,
                     position: 0,
                     rho_seed: [9u8; 32],
-                    merkle_path: MerklePath { siblings: siblings0 },
+                    merkle_path: MerklePath {
+                        siblings: siblings0,
+                    },
                 },
                 InputNoteWitness {
                     note: input_note_asset,
                     position: 1,
                     rho_seed: [8u8; 32],
-                    merkle_path: MerklePath { siblings: siblings1 },
+                    merkle_path: MerklePath {
+                        siblings: siblings1,
+                    },
                 },
             ],
             outputs: vec![

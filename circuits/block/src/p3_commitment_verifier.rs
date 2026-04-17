@@ -32,9 +32,8 @@ pub fn verify_block_commitment_proof_p3(
 
     let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
         .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
-    let canonical = bincode::serialize(&proof).map_err(|_| {
-        BlockError::CommitmentProofVerification("invalid proof format".into())
-    })?;
+    let canonical = bincode::serialize(&proof)
+        .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
     if canonical != proof_bytes {
         return Err(BlockError::CommitmentProofVerification(
             "invalid proof format".into(),

@@ -5041,6 +5041,7 @@ fn ready_proofless_binding_hashes_for_preview(
     preview_extrinsics: &[runtime::UncheckedExtrinsic],
     min_ready_batch_txs: usize,
     lookup_wait: Duration,
+    selector: PreparedArtifactSelector,
 ) -> Result<BTreeSet<[u8; 64]>, String> {
     let mut candidate = preview_extrinsics.to_vec();
 
@@ -5072,6 +5073,9 @@ fn ready_proofless_binding_hashes_for_preview(
             parent_hash,
             tx_statements_commitment,
             shielded_tx_count,
+            selector.compat_mode,
+            selector.proof_kind,
+            selector.verifier_profile,
         );
         if ready.is_none() && !lookup_wait.is_zero() {
             let deadline = Instant::now() + lookup_wait;
@@ -5081,6 +5085,9 @@ fn ready_proofless_binding_hashes_for_preview(
                     parent_hash,
                     tx_statements_commitment,
                     shielded_tx_count,
+                    selector.compat_mode,
+                    selector.proof_kind,
+                    selector.verifier_profile,
                 );
             }
         }
@@ -5152,7 +5159,14 @@ fn mining_pause_reason_for_pending_shielded_batch(
             .map_err(|err| format!("tx_statements_commitment preflight failed: {err}"))?;
 
     if prover_coordinator
-        .lookup_prepared_bundle(parent_hash, tx_statements_commitment, shielded_tx_count)
+        .lookup_prepared_bundle(
+            parent_hash,
+            tx_statements_commitment,
+            shielded_tx_count,
+            selector.compat_mode,
+            selector.proof_kind,
+            selector.verifier_profile,
+        )
         .is_some()
     {
         return Ok(None);
@@ -5234,6 +5248,9 @@ fn ready_bundle_trace_for_candidate(
         parent_hash,
         tx_statements_commitment,
         shielded_tx_count,
+        selector.compat_mode,
+        selector.proof_kind,
+        selector.verifier_profile,
     ) else {
         return Ok(None);
     };
@@ -5874,6 +5891,7 @@ pub fn wire_block_builder_api(
                         &preview_extrinsics,
                         min_ready_proven_batch_txs,
                         proofless_ready_wait,
+                        selected_artifact,
                     )?;
                     if ready_bindings.is_empty() {
                         defer_proofless_until_ready_batch = true;
@@ -6133,6 +6151,9 @@ pub fn wire_block_builder_api(
                 parent_substrate_hash,
                 tx_statements_commitment,
                 shielded_tx_count,
+                selected_artifact.compat_mode,
+                selected_artifact.proof_kind,
+                selected_artifact.verifier_profile,
             );
 
             if let Some(ready_batch) = ready_batch {
@@ -9077,25 +9098,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 artifact_hash,
                                                 ..
                                             }) => {
-                                                let coordinator =
-                                                    prover_coordinator_for_events.read().clone();
-                                                if let Some(coordinator) = coordinator {
-                                                    if coordinator
-                                                        .lookup_prepared_bundle_by_hash(artifact_hash)
-                                                        .is_none()
-                                                    {
-                                                        let request = ArtifactProtocolMessage::Request {
-                                                            artifact_hash,
-                                                        };
-                                                        let _ = pq_handle_for_status
-                                                            .send_message(
-                                                                peer_id,
-                                                                ARTIFACTS_PROTOCOL.to_string(),
-                                                                request.encode(),
-                                                            )
-                                                            .await;
-                                                    }
-                                                }
+                                                tracing::debug!(
+                                                    peer = %hex::encode(peer_id),
+                                                    artifact_hash = %hex::encode(artifact_hash),
+                                                    "Ignoring unverified remote artifact announcement; p2p prepared-bundle import is disabled"
+                                                );
                                             }
                                             Ok(ArtifactProtocolMessage::Request { artifact_hash }) => {
                                                 let coordinator =
@@ -9126,21 +9133,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 }
                                             }
                                             Ok(ArtifactProtocolMessage::Response {
-                                                artifact_hash: _,
+                                                artifact_hash,
                                                 payload,
                                                 candidate_txs,
                                             }) => {
-                                                let coordinator =
-                                                    prover_coordinator_for_events.read().clone();
-                                                if let Some(coordinator) = coordinator {
-                                                    let parent_hash =
-                                                        client_for_network.chain_info().best_hash;
-                                                    coordinator.import_network_artifact(
-                                                        parent_hash,
-                                                        payload,
-                                                        candidate_txs,
-                                                    );
-                                                }
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    artifact_hash = %hex::encode(artifact_hash),
+                                                    tx_count = payload.tx_count,
+                                                    proof_mode = ?payload.proof_mode,
+                                                    proof_kind = ?payload.proof_kind,
+                                                    verifier_profile = %hex::encode(payload.verifier_profile),
+                                                    candidate_txs = candidate_txs.len(),
+                                                    "Dropping unverified remote artifact response; p2p prepared-bundle import is disabled"
+                                                );
                                             }
                                             Ok(ArtifactProtocolMessage::NotFound { .. }) => {}
                                             Err(e) => {

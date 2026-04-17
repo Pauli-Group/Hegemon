@@ -25,14 +25,14 @@ use superneo_ring::{
 };
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
-    encode_smallwood_proof_trace_v1,
-    projected_smallwood_recursive_envelope_bytes_v1, projected_smallwood_recursive_proof_bytes_v1,
-    recursive_binding_bytes_v1, recursive_descriptor_v1, recursive_profile_a_v1,
-    recursive_profile_b_v1, smallwood_binding_words_v1, verify_recursive_statement_direct_v1,
-    RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
-    SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
-    SmallwoodRecursiveVerifierDescriptorV1, SmallwoodTranscriptBackend, TransactionCircuitError,
+    encode_smallwood_proof_trace_v1, projected_smallwood_recursive_envelope_bytes_v1,
+    projected_smallwood_recursive_proof_bytes_v1, recursive_binding_bytes_v1,
+    recursive_descriptor_v1, recursive_profile_a_v1, recursive_profile_b_v1,
+    smallwood_binding_words_v1, verify_recursive_statement_direct_v1, RecursiveSmallwoodProfileV1,
+    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
+    SmallwoodNonlinearEvalView, SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1,
+    SmallwoodRecursiveRelationKindV1, SmallwoodRecursiveVerifierDescriptorV1,
+    SmallwoodTranscriptBackend, TransactionCircuitError,
 };
 
 const RECURSIVE_BLOCK_RELATION_LABEL_V1: &str = "hegemon.superneo.block-recursive.v1";
@@ -1940,11 +1940,12 @@ fn validate_previous_proof_witness_v1(
     };
     let Ok((_, relation, binding, projected_proof_bytes_cap)) =
         build_recursive_inputs_from_descriptor_v1(
-        &descriptor,
-        previous_statement,
-        &proof_trace.auxiliary_witness_words,
-        proof_trace.auxiliary_witness_limb_count,
-    ) else {
+            &descriptor,
+            previous_statement,
+            &proof_trace.auxiliary_witness_words,
+            proof_trace.auxiliary_witness_limb_count,
+        )
+    else {
         return validation;
     };
     if proof_bytes.is_empty() || proof_bytes.len() > projected_proof_bytes_cap {
@@ -2049,11 +2050,12 @@ pub(crate) fn debug_previous_proof_witness_validation_reason_v1(
     };
     let Ok((_, relation, binding, projected_proof_bytes_cap)) =
         build_recursive_inputs_from_descriptor_v1(
-        &descriptor,
-        previous_statement,
-        &proof_trace.auxiliary_witness_words,
-        proof_trace.auxiliary_witness_limb_count,
-    ) else {
+            &descriptor,
+            previous_statement,
+            &proof_trace.auxiliary_witness_words,
+            proof_trace.auxiliary_witness_limb_count,
+        )
+    else {
         return "recursive inputs reconstruction failed".to_string();
     };
     if proof_bytes.is_empty() || proof_bytes.len() > projected_proof_bytes_cap {

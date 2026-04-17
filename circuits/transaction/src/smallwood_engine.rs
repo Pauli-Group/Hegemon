@@ -1518,8 +1518,12 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
     validate_proof_shape(&cfg, &proof)?;
 
     let binding_words = bytes_to_words(binded_data)?;
-    let eval_points =
-        xof_piop_opening_points_for_profile(&proof.nonce, &proof.h_piop, profile, transcript_backend);
+    let eval_points = xof_piop_opening_points_for_profile(
+        &proof.nonce,
+        &proof.h_piop,
+        profile,
+        transcript_backend,
+    );
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
 
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];

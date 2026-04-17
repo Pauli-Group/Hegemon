@@ -128,12 +128,11 @@ pub fn decode_transaction_proof_bytes_exact(
     proof_bytes: &[u8],
 ) -> Result<TransactionProof, TransactionCircuitError> {
     let mut cursor = Cursor::new(proof_bytes);
-    let proof: TransactionProof =
-        bincode::deserialize_from(&mut cursor).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to decode transaction proof wrapper: {err}"
-            ))
-        })?;
+    let proof: TransactionProof = bincode::deserialize_from(&mut cursor).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to decode transaction proof wrapper: {err}"
+        ))
+    })?;
     if cursor.position() as usize != proof_bytes.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "transaction proof wrapper has trailing bytes",
@@ -860,7 +859,9 @@ mod tests {
     #[test]
     fn trailing_bytes_in_smallwood_wrapper_fail_closed_for_profile_digest() {
         let mut proof = dummy_smallwood_proof(SmallwoodArithmetization::Bridge64V1);
-        proof.stark_proof.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        proof
+            .stark_proof
+            .extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
         let err =
             transaction_verifier_profile_digest(&proof).expect_err("trailing wrapper bytes fail");
         assert!(

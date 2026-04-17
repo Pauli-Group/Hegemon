@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use transaction_circuit::{
-    SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
-    SmallwoodNoGrindingProfileV1, SmallwoodProofTraceV1, SmallwoodTranscriptBackend,
-    TransactionCircuitError, DIGEST_BYTES, NONCE_BYTES,
-    smallwood_no_grinding_profile_for_arithmetization,
+    smallwood_no_grinding_profile_for_arithmetization, SmallwoodArithmetization,
+    SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNoGrindingProfileV1,
+    SmallwoodProofTraceV1, SmallwoodTranscriptBackend, TransactionCircuitError, DIGEST_BYTES,
+    NONCE_BYTES,
 };
 use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 
@@ -661,10 +661,8 @@ pub fn lvcs_recompute_rows(
     subset_evals: &[Vec<u64>],
     eval_points: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
-    let mut extended_combis = vec![
-        vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()];
-        cfg.nb_lvcs_opened_combi
-    ];
+    let mut extended_combis =
+        vec![vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()]; cfg.nb_lvcs_opened_combi];
     for k in 0..cfg.nb_lvcs_opened_combi {
         extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
         extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&rcombi_tails[k]);
@@ -724,7 +722,10 @@ pub fn decs_recompute_root(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
     let depth = cfg.decs_nb_evals().ilog2() as usize;
-    let indices = eval_points.iter().map(|&point| point as usize).collect::<Vec<_>>();
+    let indices = eval_points
+        .iter()
+        .map(|&point| point as usize)
+        .collect::<Vec<_>>();
     let expected_lengths = expected_compact_merkle_auth_path_lengths(&indices, depth);
     if proof_trace.decs_auth_paths_v1().len() != expected_lengths.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -775,11 +776,12 @@ pub fn decs_recompute_root(
                 *hash
             } else {
                 let cursor = auth_path_cursors[j];
-                let hash = proof_trace.decs_auth_paths_v1()[j].get(cursor).copied().ok_or(
-                    TransactionCircuitError::ConstraintViolation(
+                let hash = proof_trace.decs_auth_paths_v1()[j]
+                    .get(cursor)
+                    .copied()
+                    .ok_or(TransactionCircuitError::ConstraintViolation(
                         "smallwood decs compact auth path underflow",
-                    ),
-                )?;
+                    ))?;
                 auth_path_cursors[j] += 1;
                 hash
             };

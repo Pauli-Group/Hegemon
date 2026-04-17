@@ -59,9 +59,10 @@ pub fn encode_flat_batch_proof_bytes_with_kind(
 
 pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPayloadV2, ProofError> {
     let mut cursor = Cursor::new(bytes);
-    let payload: FlatBatchProofPayloadV2 = bincode::deserialize_from(&mut cursor).map_err(|err| {
-        ProofError::FlatBatchProofDecodeFailed(format!("flat batch proof decode failed: {err}"))
-    })?;
+    let payload: FlatBatchProofPayloadV2 =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            ProofError::FlatBatchProofDecodeFailed(format!("flat batch proof decode failed: {err}"))
+        })?;
     if cursor.position() as usize != bytes.len() {
         return Err(ProofError::FlatBatchProofDecodeFailed(
             "flat batch proof payload has trailing bytes".to_string(),
@@ -138,8 +139,6 @@ mod tests {
         let mut encoded = encode_flat_batch_proof_bytes(&[9, 8, 7], &[6, 5, 4]).expect("encode");
         encoded.push(0);
         let err = decode_flat_batch_proof_bytes(&encoded).expect_err("trailing bytes accepted");
-        assert!(err
-            .to_string()
-            .contains("trailing bytes"));
+        assert!(err.to_string().contains("trailing bytes"));
     }
 }

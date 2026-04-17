@@ -35,8 +35,8 @@ pub fn verify_disclosure_proof_bytes(
     proof_bytes: &[u8],
     pub_inputs: &DisclosurePublicInputsP3,
 ) -> Result<(), DisclosureVerifyError> {
-    let proof: DisclosureProofP3 = bincode::deserialize(proof_bytes)
-        .map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
+    let proof: DisclosureProofP3 =
+        bincode::deserialize(proof_bytes).map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
     let canonical =
         bincode::serialize(&proof).map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
     if canonical != proof_bytes {

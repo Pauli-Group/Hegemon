@@ -9,9 +9,9 @@ use crate::{
     smallwood_engine::{
         build_smallwood_verifier_trace_v1, ensure_canonical_smallwood_proof_bytes,
         projected_candidate_proof_bytes_with_profile, prove_statement_with_transcript_backend,
+        smallwood_no_grinding_profile_for_arithmetization,
         verify_statement_with_transcript_backend, SmallwoodArithmetization,
         SmallwoodTranscriptBackend, SmallwoodVerifierTraceV1,
-        smallwood_no_grinding_profile_for_arithmetization,
     },
     smallwood_semantics::SmallwoodConstraintAdapter,
 };
