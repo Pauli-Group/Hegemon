@@ -241,6 +241,16 @@ pub fn decode_smallwood_recursive_proof_envelope_v1(
             "smallwood recursive proof envelope has trailing bytes",
         ));
     }
+    let canonical = bincode::serialize(&envelope).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize smallwood recursive proof envelope: {err}"
+        ))
+    })?;
+    if canonical != bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood recursive proof envelope must use canonical serialization",
+        ));
+    }
     Ok(envelope)
 }
 
@@ -585,6 +595,29 @@ mod tests {
             parsed.clone().into_parts(),
             (envelope.descriptor, envelope.proof_bytes)
         );
+    }
+
+    #[test]
+    fn recursive_envelope_rejects_trailing_bytes() {
+        let profile = recursive_profile_b_v1(VersionBinding {
+            circuit: 2,
+            crypto: 2,
+        });
+        let envelope = SmallwoodRecursiveProofEnvelopeV1 {
+            descriptor: recursive_descriptor_v1(
+                &profile,
+                SmallwoodRecursiveRelationKindV1::StepB,
+                [4u8; 32],
+                [5u8; 32],
+                [6u8; 32],
+            ),
+            proof_bytes: vec![7u8; 123],
+        };
+        let mut encoded = encode_smallwood_recursive_proof_envelope_v1(&envelope).unwrap();
+        encoded.push(0);
+        let err = decode_smallwood_recursive_proof_envelope_v1(&encoded)
+            .expect_err("trailing recursive envelope bytes accepted");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]

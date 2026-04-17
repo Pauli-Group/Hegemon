@@ -5720,6 +5720,19 @@ mod tests {
     }
 
     #[test]
+    fn native_receipt_root_rejects_trailing_bytes() {
+        let artifacts = [44u64, 45]
+            .into_iter()
+            .map(|seed| Ok(receipt_root_fixture_artifact(seed)))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
+        let mut tampered = built.artifact_bytes.clone();
+        tampered.push(0);
+        assert!(verify_native_tx_leaf_receipt_root_artifact_bytes(&artifacts, &tampered).is_err());
+    }
+
+    #[test]
     fn native_receipt_root_builder_rejects_too_many_leaves() {
         let artifact = receipt_root_fixture_artifact(36);
         let artifacts =
