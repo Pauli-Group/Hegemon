@@ -18,6 +18,7 @@ use super::{
     segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
     serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
     step_recursive_witness_layout_v1, step_recursive_witness_words_v1, tree_proof_cap_report_v2,
+    tree_witness_geometry_report_v2,
     verify_block_recursive_v1, verify_block_recursive_v2,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
@@ -854,13 +855,19 @@ fn recursive_block_v1_proof_cap_report_reveals_steady_state_growth() {
 #[test]
 fn tree_v2_proof_cap_report_is_self_consistent() {
     let report = tree_proof_cap_report_v2();
+    let geometry = tree_witness_geometry_report_v2();
     println!(
         "tree_v2 chunk_size={} max_supported_txs={} max_chunk_count={} max_tree_level={} \
+         chunk_slot_bytes={} full_chunk_witness_bytes={} merge_summary_bytes={} merge_child_header_bytes={} \
          p_chunk_a={} p_merge_a={} p_merge_b={} p_carry_a={} p_carry_b={} root_proof_cap={} artifact_bytes={}",
         TREE_RECURSIVE_CHUNK_SIZE_V2,
         report.max_supported_txs,
         report.max_chunk_count,
         report.max_tree_level,
+        geometry.chunk_slot_bytes,
+        geometry.full_chunk_witness_bytes,
+        geometry.merge_summary_bytes,
+        geometry.merge_child_header_bytes,
         report.p_chunk_a,
         report.p_merge_a,
         report.p_merge_b,

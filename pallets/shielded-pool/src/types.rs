@@ -44,8 +44,8 @@ pub const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE: usize = 699_404;
 /// - `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`
 /// - the level-capped recursive proof report in `block_recursion`
 ///
-/// The current full serialized `Pi_block_v2(B)` size is `788_431`.
-pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 788_431;
+/// The current full serialized `Pi_block_v2(B)` size is `783_135`.
+pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 783_135;
 
 /// Maximum size of any accepted recursive block artifact payload.
 ///

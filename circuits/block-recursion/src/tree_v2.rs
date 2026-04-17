@@ -29,8 +29,10 @@ const RECURSIVE_BLOCK_HEADER_BYTES_V2: usize = 112;
 const RECURSIVE_BLOCK_PUBLIC_BYTES_V2: usize = 4 + (48 * 14);
 const TREE_SEGMENT_STATEMENT_BYTES_V2: usize = (4 * 3) + (48 * 8);
 const CHUNK_RECORD_BYTES_V2: usize = 4 + (48 * 8) + (32 * 3);
-const CHUNK_SLOT_BYTES_V2: usize = CHUNK_RECORD_BYTES_V2;
+const CHUNK_RECORD_WITNESS_BYTES_V2: usize = CHUNK_RECORD_BYTES_V2 - 4;
+const CHUNK_SLOT_BYTES_V2: usize = CHUNK_RECORD_WITNESS_BYTES_V2;
 const TREE_CHILD_WITNESS_HEADER_BYTES_V2: usize = 8;
+const TREE_MERGE_SUMMARY_BYTES_V2: usize = 4 + (48 * 8);
 const EMPTY_LINEAR_OFFSETS_V2: [u32; 1] = [0];
 static TREE_PROOF_CAP_REPORT_V2: OnceLock<TreeProofCapReportV2> = OnceLock::new();
 
@@ -46,6 +48,14 @@ pub struct TreeProofCapReportV2 {
     pub p_carry_b: usize,
     pub level_caps: Vec<usize>,
     pub root_proof_cap: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeWitnessGeometryReportV2 {
+    pub chunk_slot_bytes: usize,
+    pub full_chunk_witness_bytes: usize,
+    pub merge_summary_bytes: usize,
+    pub merge_child_header_bytes: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,7 +199,7 @@ impl TreeRelationV2 {
         }
         let mut bytes = Vec::with_capacity(TREE_RECURSIVE_CHUNK_SIZE_V2 * CHUNK_SLOT_BYTES_V2);
         for record in records {
-            bytes.extend_from_slice(&canonical_verified_leaf_record_bytes_v1(record));
+            bytes.extend_from_slice(&chunk_record_witness_bytes_v2(record));
         }
         for _ in records.len()..TREE_RECURSIVE_CHUNK_SIZE_V2 {
             bytes.extend_from_slice(&[0u8; CHUNK_SLOT_BYTES_V2]);
@@ -234,22 +244,20 @@ impl TreeRelationV2 {
         }
         let left_kind = TreeWitnessKindV2::from_relation_kind(left.relation_kind)?;
         let right_kind = TreeWitnessKindV2::from_relation_kind(right.relation_kind)?;
-        let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
-        let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
+        let merge_summary_bytes =
+            merge_child_summary_bytes_v2(&target_statement, &left.statement, &right.statement)?;
         let mut bytes = Vec::with_capacity(
             (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2)
-                + left_statement_bytes.len()
-                + right_statement_bytes.len()
+                + merge_summary_bytes.len()
                 + left.proof_bytes.len()
                 + right.proof_bytes.len(),
         );
         put_u32_v2(&mut bytes, left_kind as u32);
         put_u32_v2(&mut bytes, left.proof_bytes.len() as u32);
-        bytes.extend_from_slice(&left_statement_bytes);
-        bytes.extend_from_slice(&left.proof_bytes);
         put_u32_v2(&mut bytes, right_kind as u32);
         put_u32_v2(&mut bytes, right.proof_bytes.len() as u32);
-        bytes.extend_from_slice(&right_statement_bytes);
+        bytes.extend_from_slice(&merge_summary_bytes);
+        bytes.extend_from_slice(&left.proof_bytes);
         bytes.extend_from_slice(&right.proof_bytes);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
@@ -274,21 +282,19 @@ impl TreeRelationV2 {
         let right_kind = TreeWitnessKindV2::from_relation_kind(right.relation_kind)?;
         let left_padded = pad_child_proof_bytes_with_cap_v2(&left.proof_bytes, child_proof_cap)?;
         let right_padded = pad_child_proof_bytes_with_cap_v2(&right.proof_bytes, child_proof_cap)?;
-        let left_statement_bytes = recursive_segment_statement_bytes_v2(&left.statement);
-        let right_statement_bytes = recursive_segment_statement_bytes_v2(&right.statement);
+        let merge_summary_bytes =
+            merge_child_summary_bytes_v2(&target_statement, &left.statement, &right.statement)?;
         let mut bytes = Vec::with_capacity(
             (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2)
-                + left_statement_bytes.len()
-                + right_statement_bytes.len()
+                + merge_summary_bytes.len()
                 + (child_proof_cap * 2),
         );
         put_u32_v2(&mut bytes, left_kind as u32);
         put_u32_v2(&mut bytes, left.proof_bytes.len() as u32);
-        bytes.extend_from_slice(&left_statement_bytes);
-        bytes.extend_from_slice(&left_padded);
         put_u32_v2(&mut bytes, right_kind as u32);
         put_u32_v2(&mut bytes, right.proof_bytes.len() as u32);
-        bytes.extend_from_slice(&right_statement_bytes);
+        bytes.extend_from_slice(&merge_summary_bytes);
+        bytes.extend_from_slice(&left_padded);
         bytes.extend_from_slice(&right_padded);
         let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
         Ok(Self {
@@ -577,6 +583,46 @@ pub fn recursive_segment_statement_bytes_v2(statement: &RecursiveSegmentStatemen
     out
 }
 
+fn chunk_record_witness_bytes_v2(record: &BlockLeafRecordV1) -> Vec<u8> {
+    let mut out = Vec::with_capacity(CHUNK_RECORD_WITNESS_BYTES_V2);
+    put_fixed_v2(&mut out, &record.receipt_statement_hash);
+    put_fixed_v2(&mut out, &record.receipt_proof_digest);
+    put_fixed_v2(&mut out, &record.receipt_public_inputs_digest);
+    put_fixed_v2(&mut out, &record.receipt_verifier_profile);
+    put_fixed_v2(&mut out, &record.leaf_params_fingerprint);
+    put_fixed_v2(&mut out, &record.leaf_spec_digest);
+    put_fixed_v2(&mut out, &record.leaf_relation_id);
+    put_fixed_v2(&mut out, &record.leaf_shape_digest);
+    put_fixed_v2(&mut out, &record.leaf_statement_digest);
+    put_fixed_v2(&mut out, &record.leaf_commitment_digest);
+    put_fixed_v2(&mut out, &record.leaf_proof_digest);
+    out
+}
+
+fn merge_child_summary_bytes_v2(
+    target_statement: &RecursiveSegmentStatementV2,
+    left: &RecursiveSegmentStatementV2,
+    right: &RecursiveSegmentStatementV2,
+) -> Result<Vec<u8>, BlockRecursionError> {
+    let expected = compose_recursive_segment_statements_v2(left, right)?;
+    if &expected != target_statement {
+        return Err(BlockRecursionError::ComposeCheckFailed(
+            "tree_v2 merge child summary requires adjacent child statements matching target",
+        ));
+    }
+    let mut out = Vec::with_capacity(TREE_MERGE_SUMMARY_BYTES_V2);
+    put_u32_v2(&mut out, left.segment_len);
+    put_fixed_v2(&mut out, &left.end_state_digest);
+    put_fixed_v2(&mut out, &left.end_tree_commitment);
+    put_fixed_v2(&mut out, &left.statement_tree_digest_v2);
+    put_fixed_v2(&mut out, &left.verified_leaf_tree_digest_v2);
+    put_fixed_v2(&mut out, &left.verified_receipt_tree_digest_v2);
+    put_fixed_v2(&mut out, &right.statement_tree_digest_v2);
+    put_fixed_v2(&mut out, &right.verified_leaf_tree_digest_v2);
+    put_fixed_v2(&mut out, &right.verified_receipt_tree_digest_v2);
+    Ok(out)
+}
+
 pub fn recursive_segment_statement_digest32_v2(
     statement: &RecursiveSegmentStatementV2,
 ) -> Digest32 {
@@ -584,31 +630,6 @@ pub fn recursive_segment_statement_digest32_v2(
         b"hegemon.block-recursion.segment-statement.v2",
         &[&recursive_segment_statement_bytes_v2(statement)],
     )
-}
-
-fn decode_recursive_segment_statement_from_bytes_v2(
-    bytes: &[u8],
-) -> Result<RecursiveSegmentStatementV2, BlockRecursionError> {
-    let mut cursor = 0usize;
-    let statement = RecursiveSegmentStatementV2 {
-        start_index: read_exact_u32_v2(bytes, &mut cursor)?,
-        end_index: read_exact_u32_v2(bytes, &mut cursor)?,
-        segment_len: read_exact_u32_v2(bytes, &mut cursor)?,
-        tx_statements_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        start_state_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        end_state_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        start_tree_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        end_tree_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        statement_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        verified_leaf_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-        verified_receipt_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
-    };
-    if cursor != bytes.len() {
-        return Err(BlockRecursionError::TrailingBytes {
-            remaining: bytes.len() - cursor,
-        });
-    }
-    Ok(statement)
 }
 
 pub fn recursive_segment_start_state_digest_v2(
@@ -902,10 +923,11 @@ pub fn compose_recursive_segment_statements_v2(
 
 fn decode_leaf_record_from_bytes_v2(
     bytes: &[u8],
+    tx_index: u32,
 ) -> Result<BlockLeafRecordV1, BlockRecursionError> {
     let mut cursor = 0usize;
     let record = BlockLeafRecordV1 {
-        tx_index: read_exact_u32_v2(bytes, &mut cursor)?,
+        tx_index,
         receipt_statement_hash: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
         receipt_proof_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
         receipt_public_inputs_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
@@ -928,6 +950,7 @@ fn decode_leaf_record_from_bytes_v2(
 
 fn decode_chunk_witness_v2(
     auxiliary_words: &[u64],
+    start_index: u32,
     active_len: usize,
 ) -> Result<Vec<BlockLeafRecordV1>, BlockRecursionError> {
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
@@ -948,7 +971,10 @@ fn decode_chunk_witness_v2(
         )?;
         cursor += CHUNK_SLOT_BYTES_V2;
         if idx < active_len {
-            records.push(decode_leaf_record_from_bytes_v2(slot)?);
+            records.push(decode_leaf_record_from_bytes_v2(
+                slot,
+                start_index + idx as u32,
+            )?);
         } else if slot.iter().any(|byte| *byte != 0) {
             return Err(BlockRecursionError::InvalidField(
                 "tree_v2 inactive chunk slot must be zero",
@@ -986,35 +1012,11 @@ fn pad_child_proof_bytes_with_cap_v2(
 fn decode_merge_child_v2(
     bytes: &[u8],
     cursor: &mut usize,
-    tree_level: usize,
+    proof_len: usize,
 ) -> Result<
-    (
-        SmallwoodRecursiveRelationKindV1,
-        RecursiveSegmentStatementV2,
-        Vec<u8>,
-    ),
+    Vec<u8>,
     BlockRecursionError,
 > {
-    let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
-    let kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(bytes, cursor)?)?.relation_kind();
-    let proof_len = read_exact_u32_v2(bytes, cursor)? as usize;
-    if proof_len > child_proof_cap {
-        return Err(BlockRecursionError::WidthMismatch {
-            what: "tree_v2 child proof len",
-            expected: child_proof_cap,
-            actual: proof_len,
-        });
-    }
-    let statement = decode_recursive_segment_statement_from_bytes_v2(
-        bytes
-            .get(*cursor..*cursor + TREE_SEGMENT_STATEMENT_BYTES_V2)
-            .ok_or(BlockRecursionError::InvalidLength {
-                what: "tree_v2 child statement bytes",
-                expected: TREE_SEGMENT_STATEMENT_BYTES_V2,
-                actual: bytes.len().saturating_sub(*cursor),
-            })?,
-    )?;
-    *cursor += TREE_SEGMENT_STATEMENT_BYTES_V2;
     let proof_slice =
         bytes
             .get(*cursor..*cursor + proof_len)
@@ -1024,7 +1026,87 @@ fn decode_merge_child_v2(
                 actual: bytes.len().saturating_sub(*cursor),
             })?;
     *cursor += proof_len;
-    Ok((kind, statement, proof_slice.to_vec()))
+    Ok(proof_slice.to_vec())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MergeChildSummaryV2 {
+    left_segment_len: u32,
+    left_end_state_digest: Digest48,
+    left_end_tree_commitment: Digest48,
+    left_statement_tree_digest_v2: Digest48,
+    left_verified_leaf_tree_digest_v2: Digest48,
+    left_verified_receipt_tree_digest_v2: Digest48,
+    right_statement_tree_digest_v2: Digest48,
+    right_verified_leaf_tree_digest_v2: Digest48,
+    right_verified_receipt_tree_digest_v2: Digest48,
+}
+
+fn decode_merge_child_summary_v2(bytes: &[u8]) -> Result<MergeChildSummaryV2, BlockRecursionError> {
+    let mut cursor = 0usize;
+    let summary = MergeChildSummaryV2 {
+        left_segment_len: read_exact_u32_v2(bytes, &mut cursor)?,
+        left_end_state_digest: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        left_end_tree_commitment: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        left_statement_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        left_verified_leaf_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        left_verified_receipt_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        right_statement_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        right_verified_leaf_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+        right_verified_receipt_tree_digest_v2: read_exact_fixed_v2::<48>(bytes, &mut cursor)?,
+    };
+    if cursor != bytes.len() {
+        return Err(BlockRecursionError::TrailingBytes {
+            remaining: bytes.len() - cursor,
+        });
+    }
+    Ok(summary)
+}
+
+fn reconstruct_merge_child_statements_v2(
+    target_statement: &RecursiveSegmentStatementV2,
+    summary: &MergeChildSummaryV2,
+) -> Result<(RecursiveSegmentStatementV2, RecursiveSegmentStatementV2), BlockRecursionError> {
+    if summary.left_segment_len == 0 || summary.left_segment_len >= target_statement.segment_len {
+        return Err(BlockRecursionError::ComposeCheckFailed(
+            "tree_v2 left child segment_len must split the target segment",
+        ));
+    }
+    let left_end_index = target_statement
+        .start_index
+        .checked_add(summary.left_segment_len)
+        .ok_or(BlockRecursionError::InvalidField("tree_v2 left end_index overflow"))?;
+    let right_segment_len = target_statement
+        .segment_len
+        .checked_sub(summary.left_segment_len)
+        .ok_or(BlockRecursionError::InvalidField("tree_v2 right segment_len underflow"))?;
+    let left = RecursiveSegmentStatementV2 {
+        start_index: target_statement.start_index,
+        end_index: left_end_index,
+        segment_len: summary.left_segment_len,
+        tx_statements_commitment: target_statement.tx_statements_commitment,
+        start_state_digest: target_statement.start_state_digest,
+        end_state_digest: summary.left_end_state_digest,
+        start_tree_commitment: target_statement.start_tree_commitment,
+        end_tree_commitment: summary.left_end_tree_commitment,
+        statement_tree_digest_v2: summary.left_statement_tree_digest_v2,
+        verified_leaf_tree_digest_v2: summary.left_verified_leaf_tree_digest_v2,
+        verified_receipt_tree_digest_v2: summary.left_verified_receipt_tree_digest_v2,
+    };
+    let right = RecursiveSegmentStatementV2 {
+        start_index: left_end_index,
+        end_index: target_statement.end_index,
+        segment_len: right_segment_len,
+        tx_statements_commitment: target_statement.tx_statements_commitment,
+        start_state_digest: summary.left_end_state_digest,
+        end_state_digest: target_statement.end_state_digest,
+        start_tree_commitment: summary.left_end_tree_commitment,
+        end_tree_commitment: target_statement.end_tree_commitment,
+        statement_tree_digest_v2: summary.right_statement_tree_digest_v2,
+        verified_leaf_tree_digest_v2: summary.right_verified_leaf_tree_digest_v2,
+        verified_receipt_tree_digest_v2: summary.right_verified_receipt_tree_digest_v2,
+    };
+    Ok((left, right))
 }
 
 fn chunk_relation_mismatch_v2(
@@ -1032,7 +1114,7 @@ fn chunk_relation_mismatch_v2(
     auxiliary_words: &[u64],
 ) -> Result<u64, BlockRecursionError> {
     let active_len = target_statement.segment_len as usize;
-    let records = decode_chunk_witness_v2(auxiliary_words, active_len)?;
+    let records = decode_chunk_witness_v2(auxiliary_words, target_statement.start_index, active_len)?;
     let active_len = active_len as u32;
     let mut mismatch = 0u64;
     if active_len != target_statement.segment_len {
@@ -1204,10 +1286,39 @@ fn merge_relation_mismatch_v2(
     let bytes = limbs_to_exact_bytes_v2(auxiliary_words, auxiliary_words.len())?;
     let mut cursor = 0usize;
     let child_level = tree_level - 1;
-    let (left_kind, left_statement, left_proof) =
-        decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
-    let (right_kind, right_statement, right_proof) =
-        decode_merge_child_v2(&bytes, &mut cursor, tree_level)?;
+    let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
+    let left_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
+    let left_proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
+    if left_proof_len > child_proof_cap {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "tree_v2 left child proof len",
+            expected: child_proof_cap,
+            actual: left_proof_len,
+        });
+    }
+    let right_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
+    let right_proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
+    if right_proof_len > child_proof_cap {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "tree_v2 right child proof len",
+            expected: child_proof_cap,
+            actual: right_proof_len,
+        });
+    }
+    let summary = decode_merge_child_summary_v2(
+        bytes
+            .get(*&cursor..cursor + TREE_MERGE_SUMMARY_BYTES_V2)
+            .ok_or(BlockRecursionError::InvalidLength {
+                what: "tree_v2 merge child summary bytes",
+                expected: TREE_MERGE_SUMMARY_BYTES_V2,
+                actual: bytes.len().saturating_sub(cursor),
+            })?,
+    )?;
+    cursor += TREE_MERGE_SUMMARY_BYTES_V2;
+    let (left_statement, right_statement) =
+        reconstruct_merge_child_statements_v2(target_statement, &summary)?;
+    let left_proof = decode_merge_child_v2(&bytes, &mut cursor, left_proof_len)?;
+    let right_proof = decode_merge_child_v2(&bytes, &mut cursor, right_proof_len)?;
     if cursor != bytes.len() && bytes[cursor..].iter().any(|byte| *byte != 0) {
         return Err(BlockRecursionError::TrailingBytes {
             remaining: bytes.len() - cursor,
@@ -1448,6 +1559,53 @@ fn dummy_segment_statement_v2(
     }
 }
 
+fn dummy_composed_segment_statements_v2(
+    left_len: u32,
+    right_len: u32,
+    seed: u8,
+) -> (
+    RecursiveSegmentStatementV2,
+    RecursiveSegmentStatementV2,
+    RecursiveSegmentStatementV2,
+) {
+    let tx_statements_commitment = dummy_digest48_v2(seed);
+    let start_state_digest = dummy_digest48_v2(seed.wrapping_add(1));
+    let left_end_state_digest = dummy_digest48_v2(seed.wrapping_add(2));
+    let end_state_digest = dummy_digest48_v2(seed.wrapping_add(3));
+    let start_tree_commitment = dummy_digest48_v2(seed.wrapping_add(4));
+    let left_end_tree_commitment = dummy_digest48_v2(seed.wrapping_add(5));
+    let end_tree_commitment = dummy_digest48_v2(seed.wrapping_add(6));
+    let left = RecursiveSegmentStatementV2 {
+        start_index: 0,
+        end_index: left_len,
+        segment_len: left_len,
+        tx_statements_commitment,
+        start_state_digest,
+        end_state_digest: left_end_state_digest,
+        start_tree_commitment,
+        end_tree_commitment: left_end_tree_commitment,
+        statement_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(7)),
+        verified_leaf_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(8)),
+        verified_receipt_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(9)),
+    };
+    let right = RecursiveSegmentStatementV2 {
+        start_index: left_len,
+        end_index: left_len + right_len,
+        segment_len: right_len,
+        tx_statements_commitment,
+        start_state_digest: left_end_state_digest,
+        end_state_digest,
+        start_tree_commitment: left_end_tree_commitment,
+        end_tree_commitment,
+        statement_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(10)),
+        verified_leaf_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(11)),
+        verified_receipt_tree_digest_v2: dummy_digest48_v2(seed.wrapping_add(12)),
+    };
+    let target = compose_recursive_segment_statements_v2(&left, &right)
+        .expect("dummy composed segment statements must join");
+    (left, right, target)
+}
+
 fn dummy_leaf_record_v2(tx_index: u32, seed: u8) -> BlockLeafRecordV1 {
     BlockLeafRecordV1 {
         tx_index,
@@ -1508,24 +1666,25 @@ fn projected_merge_proof_bytes_v2(
     tree_level: usize,
     child_proof_cap: usize,
 ) -> Result<usize, BlockRecursionError> {
+    let (left_statement, right_statement, target_statement) = dummy_composed_segment_statements_v2(
+        TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+        TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+        0x50,
+    );
     let left = dummy_tree_node_v2(
         tree_level.saturating_sub(1),
         SmallwoodRecursiveRelationKindV1::ChunkA,
-        dummy_segment_statement_v2(0, TREE_RECURSIVE_CHUNK_SIZE_V2 as u32, 0x50),
+        left_statement,
     )?;
     let right = dummy_tree_node_v2(
         tree_level.saturating_sub(1),
         SmallwoodRecursiveRelationKindV1::ChunkA,
-        dummy_segment_statement_v2(
-            TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
-            (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32,
-            0x60,
-        ),
+        right_statement,
     )?;
     let relation = TreeRelationV2::new_merge_with_child_cap(
         relation_kind,
         tree_level,
-        dummy_segment_statement_v2(0, (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32, 0x70),
+        target_statement,
         &left,
         &right,
         child_proof_cap,
@@ -1601,6 +1760,15 @@ pub fn derive_tree_proof_cap_v2() -> Result<TreeProofCapReportV2, BlockRecursion
 pub fn tree_proof_cap_report_v2() -> &'static TreeProofCapReportV2 {
     TREE_PROOF_CAP_REPORT_V2
         .get_or_init(|| derive_tree_proof_cap_v2().expect("tree_v2 proof cap must derive"))
+}
+
+pub fn tree_witness_geometry_report_v2() -> TreeWitnessGeometryReportV2 {
+    TreeWitnessGeometryReportV2 {
+        chunk_slot_bytes: CHUNK_SLOT_BYTES_V2,
+        full_chunk_witness_bytes: TREE_RECURSIVE_CHUNK_SIZE_V2 * CHUNK_SLOT_BYTES_V2,
+        merge_summary_bytes: TREE_MERGE_SUMMARY_BYTES_V2,
+        merge_child_header_bytes: TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2,
+    }
 }
 
 fn tree_recursive_child_proof_bytes_v2(tree_level: usize) -> usize {
