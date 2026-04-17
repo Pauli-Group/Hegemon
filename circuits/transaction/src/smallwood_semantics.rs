@@ -20,13 +20,10 @@ const HASH_LIMBS: usize = 6;
 const INPUT_ROWS: usize = 130;
 const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
-const PACKING_FACTOR: usize = 64;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
 const POSEIDON_PERMUTATION_COUNT: usize =
     1 + MAX_INPUTS * INPUT_PERMUTATIONS + MAX_OUTPUTS * OUTPUT_PERMUTATIONS;
-const POSEIDON_GROUP_COUNT: usize =
-    (POSEIDON_PERMUTATION_COUNT + PACKING_FACTOR - 1) / PACKING_FACTOR;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_CIPHERTEXT_HASHES: usize = 28;
@@ -43,11 +40,16 @@ const PUB_STABLE_POLICY_HASH: usize = 58;
 const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
 const EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
+const BASE_INPUT_ROWS: usize = 1 + 1 + MERKLE_DEPTH;
 
 #[derive(Clone, Copy)]
 struct PackedRowLayout {
+    input_rows: usize,
     output_rows: usize,
     stable_binding_rows: usize,
+    inline_merkle_aggregates: bool,
+    poseidon_rows_per_permutation: usize,
+    skip_initial_mds_poseidon: bool,
 }
 
 impl PackedRowLayout {
@@ -55,19 +57,74 @@ impl PackedRowLayout {
         match arithmetization {
             SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => {
                 Self {
+                    input_rows: INPUT_ROWS,
                     output_rows: 2 + HASH_LIMBS,
                     stable_binding_rows: 1 + (HASH_LIMBS * 3),
+                    inline_merkle_aggregates: false,
+                    poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
+                    skip_initial_mds_poseidon: false,
                 }
             }
-            SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => Self {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+            | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+            | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+            | SmallwoodArithmetization::DirectPacked32CompactBindingsV1 => Self {
+                input_rows: INPUT_ROWS,
                 output_rows: 2,
                 stable_binding_rows: 0,
+                inline_merkle_aggregates: false,
+                poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
+                skip_initial_mds_poseidon: false,
+            },
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Self {
+                input_rows: INPUT_ROWS,
+                output_rows: 2,
+                stable_binding_rows: 0,
+                inline_merkle_aggregates: false,
+                poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
+                skip_initial_mds_poseidon: true,
             },
         }
     }
 
     const fn secret_rows(self) -> usize {
-        (MAX_INPUTS * INPUT_ROWS) + (MAX_OUTPUTS * self.output_rows) + self.stable_binding_rows
+        (MAX_INPUTS * self.input_rows) + (MAX_OUTPUTS * self.output_rows) + self.stable_binding_rows
+    }
+
+    const fn poseidon_transition_count(self) -> usize {
+        self.poseidon_rows_per_permutation - 1
+    }
+
+    const fn poseidon_trace_step(self, logical_step: usize) -> usize {
+        if self.skip_initial_mds_poseidon && logical_step > 0 {
+            logical_step + 1
+        } else {
+            logical_step
+        }
+    }
+
+    const fn input_current_offset(self) -> Option<usize> {
+        if self.inline_merkle_aggregates {
+            None
+        } else {
+            Some(BASE_INPUT_ROWS)
+        }
+    }
+
+    const fn input_left_offset(self) -> Option<usize> {
+        if self.inline_merkle_aggregates {
+            None
+        } else {
+            Some(BASE_INPUT_ROWS + MERKLE_DEPTH)
+        }
+    }
+
+    const fn input_right_offset(self) -> Option<usize> {
+        if self.inline_merkle_aggregates {
+            None
+        } else {
+            Some(BASE_INPUT_ROWS + MERKLE_DEPTH * 2)
+        }
     }
 }
 
@@ -104,9 +161,9 @@ pub(crate) fn test_candidate_witness_rust(
     linear_constraint_coefficients: &[u64],
     linear_constraint_targets: &[u64],
 ) -> Result<(), TransactionCircuitError> {
-    if packing_factor != PACKING_FACTOR || row_count == 0 {
+    if packing_factor == 0 || row_count == 0 {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "unsupported smallwood packing_factor {packing_factor}, expected {PACKING_FACTOR}"
+            "unsupported smallwood packing_factor {packing_factor}"
         )));
     }
     if witness_values.len() != row_count * packing_factor {
@@ -192,6 +249,11 @@ fn verify_linear_constraints(
     Ok(())
 }
 
+#[inline]
+fn poseidon_group_count(packing_factor: usize) -> usize {
+    POSEIDON_PERMUTATION_COUNT.div_ceil(packing_factor)
+}
+
 #[allow(dead_code)]
 impl<'a> PackedStatement<'a> {
     pub(crate) fn new(
@@ -212,7 +274,7 @@ impl<'a> PackedStatement<'a> {
             packing_factor,
             constraint_degree,
             linear_constraint_count: linear_constraint_targets.len(),
-            constraint_count: constraint_count(),
+            constraint_count: constraint_count(arithmetization, packing_factor),
             linear_constraint_offsets,
             linear_constraint_indices,
             linear_constraint_coefficients,
@@ -223,7 +285,14 @@ impl<'a> PackedStatement<'a> {
             stable_policy_hash_challenge: Felt::ZERO,
             stable_oracle_challenge: Felt::ZERO,
             stable_attestation_challenge: Felt::ZERO,
-            poseidon_transition_challenges: vec![Felt::ZERO; POSEIDON_GROUP_COUNT * POSEIDON_STEPS],
+            poseidon_transition_challenges: vec![
+                Felt::ZERO;
+                poseidon_group_count(packing_factor)
+                    * PackedRowLayout::for_arithmetization(
+                        arithmetization
+                    )
+                    .poseidon_transition_count()
+            ],
         };
         for output in 0..MAX_OUTPUTS {
             statement.output_ciphertext_challenges[output] =
@@ -232,9 +301,10 @@ impl<'a> PackedStatement<'a> {
         statement.stable_policy_hash_challenge = nontrivial_challenge(&statement, 6, 0, 0);
         statement.stable_oracle_challenge = nontrivial_challenge(&statement, 7, 0, 0);
         statement.stable_attestation_challenge = nontrivial_challenge(&statement, 8, 0, 0);
-        for group in 0..POSEIDON_GROUP_COUNT {
-            for step in 0..POSEIDON_STEPS {
-                let idx = poseidon_transition_challenge_index(group, step);
+        let layout = PackedRowLayout::for_arithmetization(arithmetization);
+        for group in 0..poseidon_group_count(packing_factor) {
+            for step in 0..layout.poseidon_transition_count() {
+                let idx = poseidon_transition_challenge_index(layout, group, step);
                 statement.poseidon_transition_challenges[idx] =
                     nontrivial_challenge(&statement, 11, group as u64, step as u64);
             }
@@ -433,44 +503,54 @@ fn public_value(statement: &PackedStatement<'_>, row: usize) -> Felt {
 }
 
 #[inline]
-fn row_input_base(input: usize) -> usize {
-    PUBLIC_ROWS + input * INPUT_ROWS
+fn row_input_base(statement: &PackedStatement<'_>, input: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    PUBLIC_ROWS + input * layout.input_rows
 }
 
 #[inline]
-fn row_input_direction(input: usize, bit: usize) -> usize {
-    row_input_base(input) + 2 + bit
+fn row_input_direction(statement: &PackedStatement<'_>, input: usize, bit: usize) -> usize {
+    row_input_base(statement, input) + 2 + bit
 }
 
 #[inline]
-fn row_input_value(input: usize) -> usize {
-    row_input_base(input)
+fn row_input_value(statement: &PackedStatement<'_>, input: usize) -> usize {
+    row_input_base(statement, input)
 }
 
 #[inline]
-fn row_input_asset(input: usize) -> usize {
-    row_input_base(input) + 1
+fn row_input_asset(statement: &PackedStatement<'_>, input: usize) -> usize {
+    row_input_base(statement, input) + 1
 }
 
 #[inline]
-fn row_input_current_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 34 + level
+fn row_input_current_agg(statement: &PackedStatement<'_>, input: usize, level: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    row_input_base(statement, input)
+        + layout.input_current_offset().expect("merkle rows present")
+        + level
 }
 
 #[inline]
-fn row_input_left_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 66 + level
+fn row_input_left_agg(statement: &PackedStatement<'_>, input: usize, level: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    row_input_base(statement, input)
+        + layout.input_left_offset().expect("merkle rows present")
+        + level
 }
 
 #[inline]
-fn row_input_right_agg(input: usize, level: usize) -> usize {
-    row_input_base(input) + 98 + level
+fn row_input_right_agg(statement: &PackedStatement<'_>, input: usize, level: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    row_input_base(statement, input)
+        + layout.input_right_offset().expect("merkle rows present")
+        + level
 }
 
 #[inline]
 fn row_output_base(statement: &PackedStatement<'_>, output: usize) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
-    PUBLIC_ROWS + MAX_INPUTS * INPUT_ROWS + output * layout.output_rows
+    PUBLIC_ROWS + MAX_INPUTS * layout.input_rows + output * layout.output_rows
 }
 
 #[inline]
@@ -488,14 +568,24 @@ fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
     PUBLIC_ROWS + PackedRowLayout::for_arithmetization(statement.arithmetization).secret_rows()
 }
 #[inline]
-fn poseidon_group_row(statement: &PackedStatement<'_>, group: usize, step_row: usize, limb: usize) -> usize {
+fn poseidon_group_row(
+    statement: &PackedStatement<'_>,
+    group: usize,
+    step_row: usize,
+    limb: usize,
+) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
     poseidon_rows_start(statement)
-        + (group * POSEIDON_ROWS_PER_PERMUTATION + step_row) * POSEIDON2_WIDTH
+        + (group * layout.poseidon_rows_per_permutation + step_row) * POSEIDON2_WIDTH
         + limb
 }
 #[inline]
-fn poseidon_transition_challenge_index(group: usize, step: usize) -> usize {
-    group * POSEIDON_STEPS + step
+fn poseidon_transition_challenge_index(
+    layout: PackedRowLayout,
+    group: usize,
+    step: usize,
+) -> usize {
+    group * layout.poseidon_transition_count() + step
 }
 
 #[inline]
@@ -591,9 +681,22 @@ fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
     magnitude - (sign + sign) * magnitude
 }
 
+fn apply_poseidon_transition(
+    layout: PackedRowLayout,
+    logical_step: usize,
+    state: &mut [Felt; POSEIDON2_WIDTH],
+) {
+    if layout.skip_initial_mds_poseidon && logical_step == 0 {
+        poseidon2_step(state, 0);
+        poseidon2_step(state, 1);
+        return;
+    }
+    poseidon2_step(state, layout.poseidon_trace_step(logical_step));
+}
+
 #[allow(dead_code)]
 pub(crate) fn packed_constraint_count() -> usize {
-    constraint_count()
+    constraint_count(SmallwoodArithmetization::Bridge64V1, 64)
 }
 
 pub(crate) fn compute_bridge_constraints_u64(
@@ -601,7 +704,7 @@ pub(crate) fn compute_bridge_constraints_u64(
     view: SmallwoodNonlinearEvalView<'_>,
     out: &mut [u64],
 ) -> Result<(), TransactionCircuitError> {
-    let expected = constraint_count();
+    let expected = constraint_count(statement.arithmetization, statement.packing_factor);
     if out.len() != expected {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "smallwood constraint buffer has length {}, expected {expected}",
@@ -622,13 +725,15 @@ pub(crate) fn compute_bridge_constraints_u64(
     Ok(())
 }
 
-fn constraint_count() -> usize {
+fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(arithmetization);
     let public_bools = MAX_INPUTS + MAX_OUTPUTS + 3;
     let input_constraints = MAX_INPUTS * (MERKLE_DEPTH + 1 + MERKLE_DEPTH);
     let output_constraints = MAX_OUTPUTS * (1 + 1);
     let stablecoin_constraints = 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
-    let poseidon_transition = POSEIDON_GROUP_COUNT * POSEIDON_STEPS;
+    let poseidon_transition =
+        poseidon_group_count(packing_factor) * layout.poseidon_transition_count();
     public_bools
         + input_constraints
         + output_constraints
@@ -656,25 +761,26 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
     c += 1;
 
     for input in 0..MAX_INPUTS {
-        let asset = rows[row_input_asset(input)];
+        let asset = rows[row_input_asset(statement, input)];
         let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
         for bit in 0..MERKLE_DEPTH {
-            out[c] = felt_bool_v(rows[row_input_direction(input, bit)]);
+            out[c] = felt_bool_v(rows[row_input_direction(statement, input, bit)]);
             c += 1;
         }
         let mut position_sum = Felt::ZERO;
         for bit in 0..MERKLE_DEPTH {
-            position_sum += rows[row_input_direction(input, bit)] * Felt::from_u64(1u64 << bit);
+            position_sum +=
+                rows[row_input_direction(statement, input, bit)] * Felt::from_u64(1u64 << bit);
         }
         let _ = position_sum;
         out[c] = flag * slot_membership_zero(statement, asset);
         c += 1;
 
         for level in 0..MERKLE_DEPTH {
-            let dir = rows[row_input_direction(input, level)];
-            let current = rows[row_input_current_agg(input, level)];
-            let left = rows[row_input_left_agg(input, level)];
-            let right = rows[row_input_right_agg(input, level)];
+            let dir = rows[row_input_direction(statement, input, level)];
+            let current = rows[row_input_current_agg(statement, input, level)];
+            let left = rows[row_input_left_agg(statement, input, level)];
+            let right = rows[row_input_right_agg(statement, input, level)];
             out[c] = flag * (current - (left + dir * (right - left)));
             c += 1;
         }
@@ -763,8 +869,8 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         let mut delta = Felt::ZERO;
         for input in 0..MAX_INPUTS {
             let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
-            let value = rows[row_input_value(input)];
-            let asset = rows[row_input_asset(input)];
+            let value = rows[row_input_value(statement, input)];
+            let asset = rows[row_input_asset(statement, input)];
             let weight = slot_membership_weights(statement, asset)[slot];
             delta += flag * value * weight;
         }
@@ -785,19 +891,19 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         c += 1;
     }
 
-    for group in 0..POSEIDON_GROUP_COUNT {
-        for step in 0..POSEIDON_STEPS {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    for group in 0..poseidon_group_count(statement.packing_factor) {
+        for step in 0..layout.poseidon_transition_count() {
             let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
             let mut next_actual = [Felt::ZERO; POSEIDON2_WIDTH];
             for limb in 0..POSEIDON2_WIDTH {
                 state[limb] = rows[poseidon_group_row(statement, group, step, limb)];
-                next_actual[limb] =
-                    rows[poseidon_group_row(statement, group, step + 1, limb)];
+                next_actual[limb] = rows[poseidon_group_row(statement, group, step + 1, limb)];
             }
-            poseidon2_step(&mut state, step);
+            apply_poseidon_transition(layout, step, &mut state);
             out[c] = aggregate_weighted_differences(
                 statement.poseidon_transition_challenges
-                    [poseidon_transition_challenge_index(group, step)],
+                    [poseidon_transition_challenge_index(layout, group, step)],
                 &next_actual,
                 &state,
             );

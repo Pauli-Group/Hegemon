@@ -1,8 +1,9 @@
 use crate::error::TransactionCircuitError;
 use crate::smallwood_engine::{
     projected_candidate_proof_bytes as projected_candidate_proof_bytes_rust,
+    projected_candidate_proof_bytes_with_profile as projected_candidate_proof_bytes_with_profile_rust,
     prove_candidate as prove_candidate_rust, verify_candidate as verify_candidate_rust,
-    SmallwoodArithmetization,
+    SmallwoodArithmetization, SmallwoodNoGrindingProfileV1,
 };
 use crate::smallwood_semantics::{test_candidate_witness_rust, PackedStatement};
 
@@ -120,4 +121,28 @@ pub fn projected_candidate_proof_bytes(
         &linear_constraint_targets,
     );
     projected_candidate_proof_bytes_rust(&statement)
+}
+
+pub fn projected_candidate_proof_bytes_with_profile(
+    arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: u16,
+    linear_constraint_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<usize, TransactionCircuitError> {
+    let linear_constraint_targets = vec![0u64; linear_constraint_count];
+    let statement = PackedStatement::new(
+        arithmetization,
+        public_values,
+        row_count,
+        packing_factor,
+        constraint_degree as usize,
+        &[],
+        &[],
+        &[],
+        &linear_constraint_targets,
+    );
+    projected_candidate_proof_bytes_with_profile_rust(&statement, profile)
 }

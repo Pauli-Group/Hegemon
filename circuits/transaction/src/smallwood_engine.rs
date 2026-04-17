@@ -28,13 +28,39 @@ const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
 const SMALLWOOD_POSEIDON2_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-compress2.v1";
-pub const SMALLWOOD_RHO: usize = 2;
-pub const SMALLWOOD_NB_OPENED_EVALS: usize = 3;
-pub const SMALLWOOD_BETA: usize = 2;
-pub const SMALLWOOD_DECS_NB_EVALS: usize = 16384;
-pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize = 29;
-const SMALLWOOD_DECS_ETA: usize = 3;
-pub const SMALLWOOD_DECS_POW_BITS: u32 = 0;
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodNoGrindingProfileV1 {
+    pub rho: usize,
+    pub nb_opened_evals: usize,
+    pub beta: usize,
+    pub opening_pow_bits: u32,
+    pub decs_nb_evals: usize,
+    pub decs_nb_opened_evals: usize,
+    pub decs_eta: usize,
+    pub decs_pow_bits: u32,
+}
+
+pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 2,
+        nb_opened_evals: 3,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 32768,
+        decs_nb_opened_evals: 24,
+        decs_eta: 3,
+        decs_pow_bits: 0,
+    };
+
+pub const SMALLWOOD_RHO: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho;
+pub const SMALLWOOD_NB_OPENED_EVALS: usize =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.nb_opened_evals;
+pub const SMALLWOOD_BETA: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta;
+pub const SMALLWOOD_DECS_NB_EVALS: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
+const SMALLWOOD_DECS_ETA: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_eta;
+pub const SMALLWOOD_DECS_POW_BITS: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_pow_bits;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
 static CONSECUTIVE_LAGRANGE_BASIS_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<u64>>>>>> =
     OnceLock::new();
@@ -43,6 +69,10 @@ pub enum SmallwoodArithmetization {
     Bridge64V1,
     DirectPacked64V1,
     DirectPacked64CompactBindingsV1,
+    DirectPacked128CompactBindingsV1,
+    DirectPacked16CompactBindingsV1,
+    DirectPacked32CompactBindingsV1,
+    DirectPacked64CompactBindingsSkipInitialMdsV1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +143,21 @@ pub struct SmallwoodProofSizeReportV1 {
     pub decs_auth_paths_bytes: usize,
     pub decs_masking_evals_bytes: usize,
     pub decs_high_coeffs_bytes: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SmallwoodNoGrindingSoundnessReportV1 {
+    pub profile: SmallwoodNoGrindingProfileV1,
+    pub n_pcs: usize,
+    pub d_q: usize,
+    pub n_rows: usize,
+    pub n_cols: usize,
+    pub epsilon1_floor_bits: f64,
+    pub epsilon2_floor_bits: f64,
+    pub epsilon3_floor_bits: f64,
+    pub epsilon4_floor_bits: f64,
+    pub security_floor_bits: f64,
+    pub meets_128_bit_floor: bool,
 }
 
 fn serialized_size_v1<T: Serialize>(value: &T) -> Result<usize, TransactionCircuitError> {
@@ -611,6 +656,7 @@ impl SmallwoodOpenedWitnessBundle {
 
 #[derive(Clone, Debug)]
 pub struct SmallwoodConfig {
+    profile: SmallwoodNoGrindingProfileV1,
     row_count: usize,
     packing_factor: usize,
     constraint_degree: usize,
@@ -639,7 +685,11 @@ pub fn ensure_row_polynomial_arithmetization(
     match statement.arithmetization() {
         SmallwoodArithmetization::Bridge64V1
         | SmallwoodArithmetization::DirectPacked64V1
-        | SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => Ok(()),
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Ok(()),
     }
 }
 
@@ -821,7 +871,11 @@ pub(crate) fn prove_statement_with_transcript_backend(
             cfg.nb_polys,
             cfg.nb_lvcs_rows,
             cfg.nb_lvcs_cols,
-            serialized_proof_size_hint(&cfg, statement.auxiliary_witness_words().len())
+            serialized_proof_size_hint_with_profile(
+                &cfg,
+                ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+                statement.auxiliary_witness_words().len(),
+            )
         );
     }
     log_stage("statement", &mut last_stage);
@@ -1201,10 +1255,8 @@ pub fn report_smallwood_proof_size_v1(
         + decs_masking_evals_bytes
         + decs_high_coeffs_bytes
         + opened_witness_bytes;
-    let accounted = transcript_bytes
-        + commitment_bytes
-        + opened_values_bytes
-        + opening_payload_bytes;
+    let accounted =
+        transcript_bytes + commitment_bytes + opened_values_bytes + opening_payload_bytes;
     if accounted > total_bytes {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "smallwood proof size report over-accounted bytes: accounted={accounted} total={total_bytes}"
@@ -1228,6 +1280,66 @@ pub fn report_smallwood_proof_size_v1(
         decs_auth_paths_bytes,
         decs_masking_evals_bytes,
         decs_high_coeffs_bytes,
+    })
+}
+
+fn log2_binom_ratio_large_over_small(large_n: u128, small_n: u128, k: usize) -> f64 {
+    (0..k)
+        .map(|i| {
+            let i = i as u128;
+            ((large_n - i) as f64 / (small_n - i) as f64).log2()
+        })
+        .sum()
+}
+
+pub fn report_smallwood_no_grinding_soundness_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodNoGrindingSoundnessReportV1, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    let field_order = FIELD_ORDER as f64;
+    let n_rows = cfg.nb_lvcs_rows;
+    let n_cols = cfg.nb_lvcs_cols;
+    let n_pcs = cfg.nb_polys;
+    let d_q = cfg.mpol_poly_degree;
+    let epsilon1 = ((profile.decs_nb_evals as f64
+        / (cfg.constraint_degree as f64).powi(profile.beta as i32))
+        + 2.0)
+        * field_order.powi(-(profile.decs_eta as i32))
+        * (1.0 + (n_rows as f64).powi((profile.decs_eta + 1) as i32) / field_order);
+    let epsilon2 = field_order.powi(-(profile.rho as i32))
+        * (1.0
+            + ((cfg.packing_factor + public_value_count) as f64).powi((profile.rho + 1) as i32)
+                / field_order);
+    let epsilon1_floor_bits = -epsilon1.log2();
+    let epsilon2_floor_bits = -epsilon2.log2();
+    let epsilon3_floor_bits = log2_binom_ratio_large_over_small(
+        FIELD_ORDER as u128,
+        d_q as u128,
+        profile.nb_opened_evals,
+    );
+    let epsilon4_floor_bits = log2_binom_ratio_large_over_small(
+        profile.decs_nb_evals as u128,
+        (n_cols + profile.decs_nb_opened_evals - 1) as u128,
+        profile.decs_nb_opened_evals,
+    );
+    let security_floor_bits = epsilon1_floor_bits
+        .min(epsilon2_floor_bits)
+        .min(epsilon3_floor_bits)
+        .min(epsilon4_floor_bits);
+    Ok(SmallwoodNoGrindingSoundnessReportV1 {
+        profile,
+        n_pcs,
+        d_q,
+        n_rows,
+        n_cols,
+        epsilon1_floor_bits,
+        epsilon2_floor_bits,
+        epsilon3_floor_bits,
+        epsilon4_floor_bits,
+        security_floor_bits,
+        meets_128_bit_floor: security_floor_bits + 1e-6 >= 128.0,
     })
 }
 
@@ -1664,8 +1776,22 @@ pub(crate) fn projected_candidate_proof_bytes(
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new(statement)?;
     ensure_row_polynomial_arithmetization(statement)?;
-    Ok(serialized_proof_size_hint(
+    Ok(serialized_proof_size_hint_with_profile(
         &cfg,
+        cfg.profile,
+        statement.auxiliary_witness_words().len(),
+    ))
+}
+
+pub(crate) fn projected_candidate_proof_bytes_with_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<usize, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    Ok(serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
         statement.auxiliary_witness_words().len(),
     ))
 }
@@ -1745,6 +1871,13 @@ impl SmallwoodConfig {
     pub fn new(
         statement: &(dyn SmallwoodConstraintAdapter + Sync),
     ) -> Result<Self, TransactionCircuitError> {
+        Self::new_with_profile(statement, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1)
+    }
+
+    pub fn new_with_profile(
+        statement: &(dyn SmallwoodConstraintAdapter + Sync),
+        profile: SmallwoodNoGrindingProfileV1,
+    ) -> Result<Self, TransactionCircuitError> {
         let row_count = statement.row_count();
         let packing_factor = statement.packing_factor();
         let constraint_degree = statement.constraint_degree();
@@ -1757,23 +1890,35 @@ impl SmallwoodConfig {
         }
         let witness_size = row_count * packing_factor;
         validate_identity_witness_form(statement, witness_size, linear_constraint_count)?;
-        let wit_poly_degree = packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1;
+        if profile.rho == 0
+            || profile.nb_opened_evals == 0
+            || profile.beta == 0
+            || profile.decs_nb_evals == 0
+            || !profile.decs_nb_evals.is_power_of_two()
+            || profile.decs_nb_opened_evals == 0
+            || profile.decs_eta == 0
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood profile parameters must be non-zero and use a power-of-two DECS domain",
+            ));
+        }
+        let wit_poly_degree = packing_factor + profile.nb_opened_evals - 1;
         let mpol_poly_degree =
-            constraint_degree * (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) - packing_factor;
+            constraint_degree * (packing_factor + profile.nb_opened_evals - 1) - packing_factor;
         let mlin_poly_degree =
-            (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) + (packing_factor - 1);
-        let nb_polys = row_count + 2 * SMALLWOOD_RHO;
+            (packing_factor + profile.nb_opened_evals - 1) + (packing_factor - 1);
+        let nb_polys = row_count + 2 * profile.rho;
         let mut degree = vec![wit_poly_degree; row_count];
-        degree.extend(std::iter::repeat_n(mpol_poly_degree, SMALLWOOD_RHO));
-        degree.extend(std::iter::repeat_n(mlin_poly_degree, SMALLWOOD_RHO));
+        degree.extend(std::iter::repeat_n(mpol_poly_degree, profile.rho));
+        degree.extend(std::iter::repeat_n(mlin_poly_degree, profile.rho));
         let mut width = Vec::with_capacity(nb_polys);
         let mut delta = Vec::with_capacity(nb_polys);
-        let nb_unstacked_rows = packing_factor + SMALLWOOD_NB_OPENED_EVALS;
+        let nb_unstacked_rows = packing_factor + profile.nb_opened_evals;
         let mut nb_unstacked_cols = 0usize;
         for &deg in &degree {
-            let w = (deg + 1 - SMALLWOOD_NB_OPENED_EVALS + (packing_factor - 1)) / packing_factor;
+            let w = (deg + 1 - profile.nb_opened_evals + (packing_factor - 1)) / packing_factor;
             width.push(w);
-            let d = (packing_factor * w + SMALLWOOD_NB_OPENED_EVALS) - (deg + 1);
+            let d = (packing_factor * w + profile.nb_opened_evals) - (deg + 1);
             if w == 1 && d != 0 {
                 return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
                     "smallwood invalid polynomial width/delta pair for degree {deg}"
@@ -1782,17 +1927,18 @@ impl SmallwoodConfig {
             delta.push(d);
             nb_unstacked_cols += w;
         }
-        let nb_lvcs_rows = nb_unstacked_rows * SMALLWOOD_BETA;
-        let nb_lvcs_cols = nb_unstacked_cols.div_ceil(SMALLWOOD_BETA);
-        let nb_lvcs_opened_combi = SMALLWOOD_BETA * SMALLWOOD_NB_OPENED_EVALS;
+        let nb_lvcs_rows = nb_unstacked_rows * profile.beta;
+        let nb_lvcs_cols = nb_unstacked_cols.div_ceil(profile.beta);
+        let nb_lvcs_opened_combi = profile.beta * profile.nb_opened_evals;
         let mut fullrank_cols = Vec::with_capacity(nb_lvcs_opened_combi);
-        for i in 0..SMALLWOOD_BETA {
-            for j in 0..SMALLWOOD_NB_OPENED_EVALS {
-                fullrank_cols.push(i * (packing_factor + SMALLWOOD_NB_OPENED_EVALS) + j);
+        for i in 0..profile.beta {
+            for j in 0..profile.nb_opened_evals {
+                fullrank_cols.push(i * (packing_factor + profile.nb_opened_evals) + j);
             }
         }
         let packing_points = (0..packing_factor).map(|i| i as u64).collect();
         Ok(Self {
+            profile,
             row_count,
             packing_factor,
             constraint_degree,
@@ -3100,45 +3246,46 @@ fn choose_opening_nonce(
     }
 }
 
-fn serialized_proof_size_hint(cfg: &SmallwoodConfig, auxiliary_words_len: usize) -> usize {
+fn serialized_proof_size_hint_with_profile(
+    cfg: &SmallwoodConfig,
+    profile: SmallwoodNoGrindingProfileV1,
+    auxiliary_words_len: usize,
+) -> usize {
     let proof = SmallwoodProof {
         salt: [0u8; SALT_BYTES],
         nonce: [0u8; NONCE_BYTES],
         h_piop: [0u8; DIGEST_BYTES],
         piop: PiopProof {
             ppol_highs: vec![
-                vec![0u64; cfg.mpol_poly_degree + 1 - SMALLWOOD_NB_OPENED_EVALS];
-                SMALLWOOD_RHO
+                vec![0u64; cfg.mpol_poly_degree + 1 - profile.nb_opened_evals];
+                profile.rho
             ],
             plin_highs: vec![
-                vec![0u64; cfg.mlin_poly_degree + 1 - (SMALLWOOD_NB_OPENED_EVALS + 1)];
-                SMALLWOOD_RHO
+                vec![0u64; cfg.mlin_poly_degree + 1 - (profile.nb_opened_evals + 1)];
+                profile.rho
             ],
         },
         pcs: PcsProof {
-            rcombi_tails: vec![
-                vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS];
-                cfg.nb_lvcs_opened_combi
-            ],
+            rcombi_tails: vec![vec![0u64; profile.decs_nb_opened_evals]; cfg.nb_lvcs_opened_combi],
             subset_evals: vec![
                 vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
-                SMALLWOOD_DECS_NB_OPENED_EVALS
+                profile.decs_nb_opened_evals
             ],
             partial_evals: vec![
                 vec![0u64; cfg.nb_unstacked_cols - cfg.nb_polys];
-                SMALLWOOD_NB_OPENED_EVALS
+                profile.nb_opened_evals
             ],
             decs: DecsProof {
                 auth_paths: vec![
-                    vec![[0u8; DIGEST_BYTES]; SMALLWOOD_DECS_NB_EVALS.ilog2() as usize];
-                    SMALLWOOD_DECS_NB_OPENED_EVALS
+                    vec![[0u8; DIGEST_BYTES]; profile.decs_nb_evals.ilog2() as usize];
+                    profile.decs_nb_opened_evals
                 ],
-                masking_evals: vec![vec![0u64; SMALLWOOD_DECS_ETA]; SMALLWOOD_DECS_NB_OPENED_EVALS],
-                high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
+                masking_evals: vec![vec![0u64; profile.decs_eta]; profile.decs_nb_opened_evals],
+                high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; profile.decs_eta],
             },
         },
         opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(
-            vec![vec![0u64; cfg.nb_polys]; SMALLWOOD_NB_OPENED_EVALS],
+            vec![vec![0u64; cfg.nb_polys]; profile.nb_opened_evals],
             vec![0u64; auxiliary_words_len],
             auxiliary_words_len,
         ),

@@ -4,13 +4,13 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 Reference: repository root `.agent/PLANS.md` defines the ExecPlan format and maintenance requirements. Every update to this file must remain consistent with that guidance.
 
-This plan starts from the current product reality captured in `DESIGN.md`, `METHODS.md`, `docs/crypto/tx_proof_size_reduction_paths.md`, and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`: Hegemon’s active transaction-proof family is the in-repo SmallWood candidate, the exact current release proof is `108028` bytes, the statement is already witness-free, and the easy local waste has already been removed. The remaining work is therefore not “trim a wrapper” work. It is a deliberate campaign to test every serious branch that could still move the proof materially lower while keeping the current transparent, post-quantum, no-grinding `128-bit` release bar.
+This plan starts from the current product reality captured in `DESIGN.md`, `METHODS.md`, `docs/crypto/tx_proof_size_reduction_paths.md`, and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`: Hegemon’s active transaction-proof family is the in-repo SmallWood candidate, the exact current release proof is `100956` bytes, the statement is already witness-free, and the easy local waste has already been removed. The remaining work is therefore not “trim a wrapper” work. It is a deliberate campaign to test every serious branch that could still move the proof materially lower while keeping the current transparent, post-quantum, no-grinding `128-bit` release bar.
 
 ## Purpose / Big Picture
 
-Make Hegemon’s per-transaction proof materially smaller than the current `108028`-byte release object without weakening the current security rule, without changing wallet-visible transaction semantics, and without introducing a fake benchmark story. After this plan is complete, a developer should be able to check out the repository, run a small set of commands, and see one of two honest outcomes:
+Make Hegemon’s per-transaction proof materially smaller than the current `100956`-byte release object without weakening the current security rule, without changing wallet-visible transaction semantics, and without introducing a fake benchmark story. After this plan is complete, a developer should be able to check out the repository, run a small set of commands, and see one of two honest outcomes:
 
-Either the repo has a clearly better proof line, with exact measured proof bytes and runtime improvement over the current `108028`-byte baseline, or the repo has a checked-in negative result showing that a serious branch was tried, measured, and killed for a concrete reason.
+Either the repo has a clearly better proof line, with exact measured proof bytes and runtime improvement over the current `100956`-byte baseline, or the repo has a checked-in negative result showing that a serious branch was tried, measured, and killed for a concrete reason.
 
 The point is to beat Hegemon’s current proof, not to argue abstractly. Every branch in this plan therefore has explicit keep criteria, kill criteria, and exact commands that must demonstrate whether the branch helped.
 
@@ -21,7 +21,10 @@ The point is to beat Hegemon’s current proof, not to argue abstractly. Every b
 - [x] (2026-04-16T23:12Z) Added an exact current-proof byte budget reporter for the live SmallWood proof in `circuits/transaction/src/smallwood_engine.rs` and `circuits/transaction/src/smallwood_frontend.rs`, exposed it through the public crate surface, and added a release test that emits a machine-readable JSON report from a real proof.
 - [x] (2026-04-16T23:12Z) Checked the first real baseline against the live tree and found documentation drift: the current proof is `108028` bytes, not `108012`, and the projection matches the measured release proof exactly. Updated `DESIGN.md`, `METHODS.md`, and `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` to match reality.
 - [x] (2026-04-17T00:31Z) Landed the first real alternate geometry behind the new shape seam: `DirectPacked64CompactBindingsV1` removes the duplicated output ciphertext-hash rows and stablecoin binding rows that the nonlinear semantics already read directly from public values. The experimental compact-binding branch proves and verifies, shrinks the row geometry from `1447` to `1416`, and reduces exact release proof bytes from `108028` to `106900`.
-- [ ] Parameterize the current SmallWood frontend and engine so alternative witness geometries, packing factors, and public-binding layouts can be generated and measured without hand-editing constants across multiple files (completed: added `SmallwoodFrontendShape`, shape-aware frontend entrypoints, and the first real compact-binding branch; remaining: add more than one serious alternate geometry instead of a single experimental line).
+- [x] (2026-04-17T03:20Z) Added an exact no-grinding SmallWood profile sweep over the live bridge and compact-binding statements, checked the machine-readable artifact into `docs/crypto/tx_proof_smallwood_profile_sweep.json`, and promoted the best realistic passing point (`rho = 2`, `nb_opened_evals = 3`, `beta = 2`, `decs_nb_evals = 32768`, `decs_nb_opened_evals = 24`, `decs_eta = 3`). That moved the active release proof from `108028` bytes to `100956`, and moved the compact-binding branch from `106900` to `99828`.
+- [x] (2026-04-17T07:32Z) Finished the first real compact-binding packing frontier on the live backend. `DirectPacked16CompactBindingsV1`, `DirectPacked32CompactBindingsV1`, and `DirectPacked128CompactBindingsV1` all prove the same semantics correctly, but all lose on exact bytes. The measured projection frontier is `packed16=157428`, `packed32=110580`, `packed64=99828`, `packed128=119796`, and the `32` and `128` points were also validated with full prove/verify roundtrips as explicit negative results.
+- [x] (2026-04-17T09:18Z) Implemented and measured the first real Poseidon-subtrace compression branch on the winning compact64 geometry: `DirectPacked64CompactBindingsSkipInitialMdsV1` removes the stored post-MDS boundary row for each grouped Poseidon permutation while preserving the same effective degree by folding step `0` and step `1` into one nonlinear transition. The exact projection improved from `99828` to `98532`, and a full prove/verify roundtrip confirmed the exact same `98532` bytes.
+- [x] (2026-04-17T07:32Z) Parameterized the current SmallWood frontend and engine so alternative witness geometries, packing factors, and public-binding layouts can be generated and measured without hand-editing constants across multiple files. The live compact-binding frontier now spans `16 / 32 / 64 / 128` packing variants through the same shape-aware entrypoints, and the engine/verifier surface accepts each explicit experimental arithmetization cleanly.
 - [ ] Implement and measure the “shrink the current engine” branch: push the live `1447`-row statement down toward the frozen smaller geometry while preserving the current no-grinding `128-bit` floor.
 - [ ] Implement and measure the “real semantic LPPC frontend” branch: build a direct `NativeTxValidityRelation` frontend on the smaller packed witness target instead of the current row-aligned bridge geometry.
 - [ ] Implement and measure the “new opening layer” branch: attach at least one stronger transparent opening/proximity layer to the current SmallWood statement and measure whether it beats the current proof enough to justify the complexity.
@@ -48,6 +51,15 @@ The point is to beat Hegemon’s current proof, not to argue abstractly. Every b
 - Observation: removing obviously duplicated public-binding rows does work, but it is only a marginal win on the current backend.
   Evidence: the new `DirectPacked64CompactBindingsV1` branch drops `31` secret rows and measured `106900` release bytes in `docs/crypto/tx_proof_smallwood_compact_bindings_size_report.json`, only `1128` bytes below the `108028` baseline.
 
+- Observation: the live no-grinding profile was not locally optimal even after the earlier hardening passes.
+  Evidence: `docs/crypto/tx_proof_smallwood_profile_sweep.json` shows the previous `16384 / 29 / 3` DECS point is beaten by the checked realistic `32768 / 24 / 3` point on both the live bridge and the compact-binding branch; the promoted bridge proof is now `100956` bytes and the compact-binding branch is now `99828`.
+
+- Observation: widening or narrowing the current grouped-row compact-binding packing does not buy bytes on the live backend.
+  Evidence: the compact-binding geometry frontier now measures `packed16=157428`, `packed32=110580`, `packed64=99828`, and `packed128=119796` projected bytes on the same semantics, and the `packed32` / `packed128` points also passed full prove/verify roundtrips while still losing to `packed64`. The current row-polynomial PCS still prefers the `64`-lane point.
+
+- Observation: one pure-linear Poseidon boundary row per grouped permutation was still dead weight.
+  Evidence: `DirectPacked64CompactBindingsSkipInitialMdsV1` keeps the same compact64 packing and the same semantics, but removes the stored post-MDS boundary row and replays step `0` plus step `1` as one transition in the nonlinear check. The shape drops from `1416` rows / `90624` expanded witness cells to `1380` rows / `88320` cells, and the exact proof drops from `99828` to `98532`.
+
 ## Decision Log
 
 - Decision: treat `108028` bytes as the baseline to beat, not the old `354081`-byte Plonky3 proof.
@@ -68,7 +80,7 @@ The point is to beat Hegemon’s current proof, not to argue abstractly. Every b
 
 ## Outcomes & Retrospective
 
-The first milestone is landed, and the second milestone now has its first real branch instead of only scaffolding. The repo has an exact current-proof size reporter, a checked real baseline of `108028` bytes, and one experimental alternate geometry, `DirectPacked64CompactBindingsV1`, that proves and verifies cleanly at `106900` bytes. That branch is honest and useful, but it is not yet a category win; it only saves `1128` bytes, so the next iterations still need to chase larger structural changes instead of pretending this alone solved the problem.
+The first milestone is landed, and the second milestone now has both a real alternate geometry and a resolved no-grinding profile branch. The repo has an exact current-proof size reporter, a checked real baseline of `100956` bytes, a machine-readable realistic profile sweep, and two measured geometry improvements on top of the current row-aligned bridge. `DirectPacked64CompactBindingsV1` proves and verifies cleanly at `99828` bytes, and the stronger `DirectPacked64CompactBindingsSkipInitialMdsV1` line proves and verifies cleanly at `98532` bytes. The profile sweep came back clean: no smaller realistic passing point was found than the active `32768 / 24 / 3` DECS line. The packing frontier also came back clean: `16`, `32`, and `128` lane compact-binding variants are explicit negative results, and the new Poseidon-subtrace compression only buys another `1296` bytes over the previous compact64 winner. That is a real win, but it is still below the plan’s material keep threshold, so the next iterations still need larger structural changes instead of pretending the current bridge is already solved.
 
 ## Context and Orientation
 
@@ -102,8 +114,8 @@ It also records the current no-grinding profile:
 - `rho = 2`
 - `nb_opened_evals = 3`
 - `beta = 2`
-- `decs_nb_evals = 16384`
-- `decs_nb_opened_evals = 29`
+- `decs_nb_evals = 32768`
+- `decs_nb_opened_evals = 24`
 - `decs_eta = 3`
 - zero grinding bits
 
@@ -122,7 +134,7 @@ A “polynomial commitment scheme”, abbreviated PCS, is the proof layer that l
 
 The current baseline to beat is:
 
-- exact current proof bytes: `108028`
+- exact current proof bytes: `100956`
 - exact current release target: no-grinding `128-bit` floor
 - exact current tx-proof wrapper target: keep the same backend seam and same `tx_leaf` product behavior
 
@@ -136,7 +148,7 @@ Nothing in this plan is considered a real success if it lowers the security bar,
 
 ## Plan of Work
 
-The work begins by making the current `108028`-byte object impossible to hand-wave away. The repository already has good historical notes, but it still lacks one machine-readable byte budget for the exact current SmallWood proof object. The first step therefore adds a proof report that splits the live proof bytes into the exact serialized sections that matter today: wrapper, commitments, opened values, opening/authentication payload, transcript-related payload, and any remaining fixed overhead. The purpose is not to admire the current proof. The purpose is to decide which later branches are even worth trying.
+The work begins by making the current `100956`-byte object impossible to hand-wave away. The repository already has good historical notes, but it still lacks one machine-readable byte budget for the exact current SmallWood proof object. The first step therefore adds a proof report that splits the live proof bytes into the exact serialized sections that matter today: wrapper, commitments, opened values, opening/authentication payload, transcript-related payload, and any remaining fixed overhead. The purpose is not to admire the current proof. The purpose is to decide which later branches are even worth trying.
 
 Once that current-proof report exists, the work splits into two serious frontend branches.
 
@@ -152,13 +164,13 @@ The plan ends by promoting exactly one winner, if there is one, and deleting or 
 
 ## Milestones
 
-### Milestone 1: Make the current `108028`-byte proof auditable
+### Milestone 1: Make the current proof auditable
 
 At the end of this milestone, a novice can run one command and get a JSON report for the exact current SmallWood proof object, not a historical note. The report must name each serialized section and its byte count. Add the reporting code in `circuits/transaction/src/smallwood_frontend.rs`, `circuits/transaction/src/smallwood_native.rs`, and any supporting proof-wrapper file needed to expose this structure. Add a focused test in `circuits/transaction/tests/transaction.rs` that generates a live proof, emits the section report, and asserts that the section totals sum back to the exact proof bytes.
 
 This milestone also adds one checked-in artifact under `docs/crypto/` or `.agent/benchmarks/` with the exact current report and the exact command used to generate it. The report is the basis for every later go/no-go decision.
 
-Acceptance is simple: run the report command, confirm that it prints `108028` as the total and a nontrivial section breakdown, and confirm that the new test passes.
+Acceptance is simple: run the report command, confirm that it prints the active checked-in total (`100956` bytes today) and a nontrivial section breakdown, and confirm that the new test passes.
 
 ### Milestone 2: Shrink the current SmallWood geometry before changing proof systems
 
@@ -331,9 +343,9 @@ Do not let half-integrated branches leak into the product path. If a branch need
 
 The current hard numbers this plan starts from are:
 
-    active SmallWood proof bytes: 108028
+    active SmallWood proof bytes: 100956
     active statement shape: raw_witness_len=295, lppc_row_count=1447, expanded_witness_len=92608
-    active no-grinding profile: rho=2, nb_opened_evals=3, beta=2, decs_nb_evals=16384, decs_nb_opened_evals=29, decs_eta=3
+    active no-grinding profile: rho=2, nb_opened_evals=3, beta=2, decs_nb_evals=32768, decs_nb_opened_evals=24, decs_eta=3
 
 The current stretch region this plan is chasing is:
 
@@ -399,4 +411,4 @@ At the end of Milestone 4, any alternate opening-layer spike must emit a machine
 
 Any branch that cannot report those values is not mature enough to compare honestly.
 
-Revision note: created on 2026-04-16 to consolidate every serious tx-proof shrink branch after the live SmallWood line reached `108028` bytes. Updated on 2026-04-16 after the first live proof-size report landed and exposed a stale `108012` documentation baseline. Updated again on 2026-04-17 after the first real alternate geometry, `DirectPacked64CompactBindingsV1`, landed and measured `106900` release bytes. The reason for this plan remains the same: the remaining work is structural and multi-branch; a single “optimize more” thread is no longer precise enough. 
+Revision note: created on 2026-04-16 to consolidate every serious tx-proof shrink branch after the live SmallWood line reached `108028` bytes. Updated on 2026-04-16 after the first live proof-size report landed and exposed a stale `108012` documentation baseline. Updated again on 2026-04-17 after the first real alternate geometry, `DirectPacked64CompactBindingsV1`, landed and measured `106900` release bytes. Updated again on 2026-04-17 after the exact no-grinding profile sweep promoted the `32768 / 24 / 3` DECS point, moving the active bridge proof to `100956` bytes and the compact-binding branch to `99828`. The reason for this plan remains the same: the remaining work is structural and multi-branch; a single “optimize more” thread is no longer precise enough.

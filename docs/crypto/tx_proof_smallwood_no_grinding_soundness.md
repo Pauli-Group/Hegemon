@@ -6,8 +6,8 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for that current candidate now projects to `108028` bytes, the passing release roundtrip emits `108028` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
-- and the latest focused local release runs are now about `2.23s` directly and about `2.69s` through the wrapped `tx_leaf` seam after retuning the DECS point to the smallest power-of-two evaluation domain that still clears the active no-grinding floor, removing the remaining DECS hot-loop allocation churn with preallocated row buffers plus thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
+- the exact serialized proof envelope for that current candidate now projects to `100956` bytes, the passing release roundtrip emits `100956` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- and the latest focused local release roundtrip on the current host is about `6.1s` directly on the bridge statement and about `5.4s` on the compact-binding branch after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
@@ -74,8 +74,8 @@ The current candidate profile is now:
 - `nb_opened_evals = 3`
 - `beta = 2`
 - `opening_pow_bits = 0`
-- `decs_nb_evals = 16384`
-- `decs_nb_opened_evals = 29`
+- `decs_nb_evals = 32768`
+- `decs_nb_opened_evals = 24`
 - `decs_eta = 3`
 - `decs_pow_bits = 0`
 
@@ -119,8 +119,8 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 - `ℓ' = 3`
 - `ρ = 2`
 - `β = 2`
-- `ℓ = 29`
-- `N = 16384`
+- `ℓ = 24`
+- `N = 32768`
 - `η = 3`
 
 The exact derived PCS/LVCS terms are:
@@ -132,7 +132,7 @@ The exact derived PCS/LVCS terms are:
 - LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 734`
 - DECS polynomial count `n_decs = n_rows = 134`
 
-The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 29` count used below instead of silently accepting duplicate openings.
+The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 24` count used below instead of silently accepting duplicate openings.
 
 The old `n_cols = 1001` value was the dangerous one. The current integrated backend is materially narrower, but this note still uses the exact LVCS row-vector size from the active Rust backend rather than the smaller frozen structural target.
 
@@ -147,14 +147,14 @@ With the mappings above, the SmallWood terms become:
 
 For the exact current candidate profile:
 
-- `ε1 < 2^-183.99`
+- `ε1 < 2^-182.99`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-129.11`
+- `ε4 < 2^-130.98`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
-- `min(183.99, 128.00, 165.44, 129.11) = 128.00 bits`
+- `min(182.99, 128.00, 165.44, 130.98) = 128.00 bits`
 
 The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 
@@ -163,18 +163,18 @@ The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 Two earlier candidate profiles fail if instantiated honestly:
 
 - the old `nb_opened_evals = 2` profile leaves `ε3` at only about `2^-110.34`
-- the old active-bridge `decs_nb_opened_evals = 37` profile leaves `ε4` at only about `2^-74.03`
+- the old active-bridge `16384 / 29 / 3` profile cleared the floor, but the new checked sweep shows it was not the smallest passing point on the live bridge statement
 - the old `4096 / 65 / 10` rescue profile was conservative but bloated, landing at about `224 KB` instead of using the narrower live bridge geometry honestly
-- the later `32768 / 22 / 4` point cleared the floor, but it overbought the DECS domain and left the release prover spending too much time in `domain_evals`
+- the later `32768 / 22 / 4` point also cleared the floor, but it is larger than the active line in the checked realistic sweep
 
 That is why the current no-grinding candidate moved to:
 
 - `nb_opened_evals = 3`
-- `decs_nb_evals = 16384`
-- `decs_nb_opened_evals = 29`
+- `decs_nb_evals = 32768`
+- `decs_nb_opened_evals = 24`
 - `decs_eta = 3`
 
-Those are not cosmetic tweaks. They are the smallest power-of-two DECS settings that make the implemented witness-free statement clear the term-wise `128-bit` bar without invoking grinding.
+Those are not cosmetic tweaks. They are the smallest passing DECS settings in the checked realistic no-grinding sweep artifact `docs/crypto/tx_proof_smallwood_profile_sweep.json` for both the live bridge and the compact-binding branch.
 
 ## What this note does and does not prove
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `108028`-byte release proof, about `3.28x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and that active succinct path now emits an actual `100956`-byte release proof, about `3.51x` smaller than the shipped Plonky3 proof. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
 
 ## Product conclusion
 

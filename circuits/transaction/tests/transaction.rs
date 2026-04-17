@@ -13,10 +13,11 @@ use transaction_circuit::p3_verifier::{
 };
 use transaction_circuit::proof::{prove, prove_with_params, stark_public_inputs_p3, verify};
 use transaction_circuit::{
+    analyze_smallwood_candidate_profile_for_arithmetization,
     projected_smallwood_candidate_proof_bytes,
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
-    report_smallwood_candidate_proof_size,
-    InputNoteWitness, OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding,
+    report_smallwood_candidate_proof_size, InputNoteWitness, OutputNoteWitness,
+    SmallwoodArithmetization, SmallwoodNoGrindingProfileV1, StablecoinPolicyBinding,
     TransactionCircuitError, TransactionWitness,
 };
 
@@ -474,6 +475,138 @@ fn smallwood_candidate_compact_bindings_projection_beats_direct_baseline() {
 }
 
 #[test]
+fn smallwood_candidate_compact_binding_geometry_frontier_report() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let candidates = [
+        (
+            "packed16_compact",
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1,
+        ),
+        (
+            "packed32_compact",
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+        ),
+        (
+            "packed64_compact",
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+        ),
+        (
+            "packed64_compact_skip_initial_mds",
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+        ),
+        (
+            "packed128_compact",
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+        ),
+    ];
+    let mut projections = Vec::new();
+    for (label, arithmetization) in candidates {
+        let projected = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+            &witness,
+            arithmetization,
+        )
+        .unwrap_or_else(|err| panic!("projected {label} compact-binding bytes: {err}"));
+        projections.push((label, arithmetization, projected));
+    }
+    eprintln!(
+        "smallwood compact-binding geometry frontier: {:?}",
+        projections
+    );
+    let packed64_bytes = projections
+        .iter()
+        .find(|(_, arithmetization, _)| {
+            *arithmetization == SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        })
+        .map(|(_, _, bytes)| *bytes)
+        .expect("packed64 compact frontier point");
+    let packed64_skip_initial_mds_bytes = projections
+        .iter()
+        .find(|(_, arithmetization, _)| {
+            *arithmetization
+                == SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
+        })
+        .map(|(_, _, bytes)| *bytes)
+        .expect("packed64 compact skip-initial-mds frontier point");
+    let packed128_bytes = projections
+        .iter()
+        .find(|(_, arithmetization, _)| {
+            *arithmetization == SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        })
+        .map(|(_, _, bytes)| *bytes)
+        .expect("packed128 compact frontier point");
+    assert!(
+        packed128_bytes > packed64_bytes,
+        "packed128 compact-binding is a measured negative result on the current engine and should stay above packed64 until a real backend change lands: packed128={packed128_bytes} packed64={packed64_bytes}"
+    );
+    assert!(
+        packed64_skip_initial_mds_bytes < packed64_bytes,
+        "skip-initial-mds should beat the current compact64 frontier point: skip-initial-mds={packed64_skip_initial_mds_bytes} packed64={packed64_bytes}"
+    );
+}
+
+#[test]
+fn smallwood_candidate_active_no_grinding_profile_clears_128_bits() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let profile = transaction_circuit::ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1;
+    let analysis = analyze_smallwood_candidate_profile_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::Bridge64V1,
+        profile,
+    )
+    .expect("analyze active smallwood profile");
+    assert!(
+        analysis.soundness.meets_128_bit_floor,
+        "active profile must clear the 128-bit no-grinding floor: {:?}",
+        analysis.soundness
+    );
+}
+
+#[test]
+fn smallwood_candidate_active_profile_beats_previous_decs_point() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let previous_profile = SmallwoodNoGrindingProfileV1 {
+        rho: 2,
+        nb_opened_evals: 3,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 16_384,
+        decs_nb_opened_evals: 29,
+        decs_eta: 3,
+        decs_pow_bits: 0,
+    };
+    let previous = analyze_smallwood_candidate_profile_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::Bridge64V1,
+        previous_profile,
+    )
+    .expect("analyze previous smallwood profile");
+    let active = analyze_smallwood_candidate_profile_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::Bridge64V1,
+        transaction_circuit::ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("analyze active smallwood profile");
+    eprintln!(
+        "smallwood candidate bridge profile bytes: previous={} active={}",
+        previous.projected_total_bytes, active.projected_total_bytes
+    );
+    assert!(
+        active.soundness.meets_128_bit_floor,
+        "active profile must clear the 128-bit no-grinding floor: {:?}",
+        active.soundness
+    );
+    assert!(
+        active.projected_total_bytes < previous.projected_total_bytes,
+        "active profile should beat the previous DECS point: previous={} active={}",
+        previous.projected_total_bytes,
+        active.projected_total_bytes
+    );
+}
+
+#[test]
 fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -498,6 +631,98 @@ fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
 }
 
 #[test]
+#[ignore = "experimental negative-result geometry measurement; proves correctly but is materially larger than the compact64 winner"]
+fn smallwood_candidate_packed32_compact_roundtrip_verifies_but_loses_to_compact64() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+    )
+    .expect("smallwood candidate packed32 compact proof");
+    let wrapper: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    assert_eq!(
+        wrapper.arithmetization,
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+        "packed32 compact SmallWood proof should carry the packed32 compact arithmetization tag"
+    );
+    let size_report =
+        report_smallwood_candidate_proof_size(&proof.stark_proof).expect("packed32 size report");
+    let projected_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+    )
+    .expect("projected packed32 compact bytes");
+    let compact64_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("projected compact64 bytes");
+    eprintln!(
+        "packed32 compact actual bytes={} compact64 baseline={compact64_bytes}",
+        size_report.total_bytes
+    );
+    assert_eq!(
+        size_report.total_bytes, projected_bytes,
+        "packed32 compact actual bytes should match the exact current projection"
+    );
+    assert!(
+        size_report.total_bytes > compact64_bytes,
+        "packed32 compact is a measured negative result and should stay above the compact64 winner: packed32={} compact64={compact64_bytes}",
+        size_report.total_bytes
+    );
+    let report = verify(&proof, &generate_keys().1).expect("packed32 compact verification");
+    assert!(report.verified);
+}
+
+#[test]
+#[ignore = "experimental negative-result geometry measurement; proves correctly but is materially larger than the compact64 winner"]
+fn smallwood_candidate_packed128_compact_roundtrip_verifies_but_loses_to_compact64() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+    )
+    .expect("smallwood candidate packed128 compact proof");
+    let wrapper: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    assert_eq!(
+        wrapper.arithmetization,
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+        "packed128 compact SmallWood proof should carry the packed128 compact arithmetization tag"
+    );
+    let size_report =
+        report_smallwood_candidate_proof_size(&proof.stark_proof).expect("packed128 size report");
+    let projected_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+    )
+    .expect("projected packed128 compact bytes");
+    let compact64_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("projected compact64 bytes");
+    eprintln!(
+        "packed128 compact actual bytes={} compact64 baseline={compact64_bytes}",
+        size_report.total_bytes
+    );
+    assert_eq!(
+        size_report.total_bytes, projected_bytes,
+        "packed128 compact actual bytes should match the exact current projection"
+    );
+    assert!(
+        size_report.total_bytes > compact64_bytes,
+        "packed128 compact is a measured negative result and should stay above the compact64 winner: packed128={} compact64={compact64_bytes}",
+        size_report.total_bytes
+    );
+    let report = verify(&proof, &generate_keys().1).expect("packed128 compact verification");
+    assert!(report.verified);
+}
+
+#[test]
 #[ignore = "experimental SmallWood compact-binding release proving is still too slow for the default test profile"]
 fn smallwood_candidate_compact_bindings_roundtrip_verifies() {
     let mut witness = sample_witness();
@@ -511,7 +736,55 @@ fn smallwood_candidate_compact_bindings_roundtrip_verifies() {
         "smallwood candidate compact-binding proof bytes: {}",
         proof.stark_proof.len()
     );
-    let report = verify(&proof, &generate_keys().1).expect("smallwood compact-binding verification");
+    let report =
+        verify(&proof, &generate_keys().1).expect("smallwood compact-binding verification");
+    assert!(report.verified);
+}
+
+#[test]
+#[ignore = "experimental near-miss geometry measurement; proves correctly and beats compact64 slightly, but is not promoted unless the exact win is worth the extra surface"]
+fn smallwood_candidate_compact_bindings_skip_initial_mds_roundtrip_verifies_and_beats_compact64() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+    )
+    .expect("smallwood candidate compact-binding skip-initial-mds proof");
+    let wrapper: MirrorSmallwoodCandidateProof =
+        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    assert_eq!(
+        wrapper.arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+        "skip-initial-mds proof should carry the skip-initial-mds arithmetization tag"
+    );
+    let size_report = report_smallwood_candidate_proof_size(&proof.stark_proof)
+        .expect("skip-initial-mds size report");
+    let projected_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+    )
+    .expect("projected skip-initial-mds bytes");
+    let compact64_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+    )
+    .expect("projected compact64 bytes");
+    eprintln!(
+        "skip-initial-mds actual bytes={} compact64 baseline={compact64_bytes}",
+        size_report.total_bytes
+    );
+    assert_eq!(
+        size_report.total_bytes, projected_bytes,
+        "skip-initial-mds actual bytes should match the exact current projection"
+    );
+    assert!(
+        size_report.total_bytes < compact64_bytes,
+        "skip-initial-mds should beat the current compact64 geometry on exact bytes: skip-initial-mds={} compact64={compact64_bytes}",
+        size_report.total_bytes
+    );
+    let report = verify(&proof, &generate_keys().1)
+        .expect("smallwood compact-binding skip-initial-mds verification");
     assert!(report.verified);
 }
 
@@ -532,7 +805,7 @@ fn smallwood_candidate_compact_bindings_proof_size_report_beats_current_release_
         serde_json::to_string_pretty(&report).expect("serialize compact proof size report")
     );
     assert!(
-        report.total_bytes < 108_028,
+        report.total_bytes < 100_956,
         "expected compact-binding SmallWood proof to beat the current release baseline, got {} bytes",
         report.total_bytes
     );
