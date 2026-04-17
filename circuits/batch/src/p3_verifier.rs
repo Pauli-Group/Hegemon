@@ -161,8 +161,12 @@ pub fn verify_batch_proof_bytes_p3(
         .validate()
         .map_err(BatchCircuitError::InvalidPublicInputs)?;
 
-    let proof: BatchProofP3 =
-        bincode::deserialize(proof_bytes).map_err(|_| BatchCircuitError::InvalidProofFormat)?;
+    let proof: BatchProofP3 = bincode::deserialize(proof_bytes)
+        .map_err(|_| BatchCircuitError::InvalidProofFormat)?;
+    let canonical = bincode::serialize(&proof).map_err(|_| BatchCircuitError::InvalidProofFormat)?;
+    if canonical != proof_bytes {
+        return Err(BatchCircuitError::InvalidProofFormat);
+    }
     verify_batch_proof_p3(&proof, pub_inputs)
 }
 

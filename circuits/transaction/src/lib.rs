@@ -51,7 +51,8 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_engine::{
-    build_smallwood_poseidon2_verifier_trace_v1, decode_smallwood_proof_trace_v1,
+    build_smallwood_poseidon2_verifier_trace_v1, decode_smallwood_proof_trace_prefix_v1,
+    decode_smallwood_proof_trace_v1,
     decs_commitment_transcript, decs_recompute_root, derive_gamma_prime,
     encode_smallwood_proof_trace_v1, ensure_no_packing_collisions,
     ensure_row_polynomial_arithmetization, hash_challenge_opening_decs, hash_piop_transcript,

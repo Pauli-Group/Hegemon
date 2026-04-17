@@ -7,6 +7,7 @@ use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
 };
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
@@ -121,6 +122,34 @@ impl TransactionProof {
     pub fn has_stark_proof(&self) -> bool {
         !self.stark_proof.is_empty()
     }
+}
+
+pub fn decode_transaction_proof_bytes_exact(
+    proof_bytes: &[u8],
+) -> Result<TransactionProof, TransactionCircuitError> {
+    let mut cursor = Cursor::new(proof_bytes);
+    let proof: TransactionProof =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to decode transaction proof wrapper: {err}"
+            ))
+        })?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "transaction proof wrapper has trailing bytes",
+        ));
+    }
+    let canonical = bincode::serialize(&proof).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize transaction proof wrapper: {err}"
+        ))
+    })?;
+    if canonical != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "transaction proof wrapper must use canonical serialization",
+        ));
+    }
+    Ok(proof)
 }
 
 pub const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
@@ -826,6 +855,35 @@ mod tests {
                 .contains("failed to decode smallwood candidate proof wrapper"),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn trailing_bytes_in_smallwood_wrapper_fail_closed_for_profile_digest() {
+        let mut proof = dummy_smallwood_proof(SmallwoodArithmetization::Bridge64V1);
+        proof.stark_proof.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let err =
+            transaction_verifier_profile_digest(&proof).expect_err("trailing wrapper bytes fail");
+        assert!(
+            err.to_string()
+                .contains("smallwood candidate proof wrapper has trailing bytes"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn decode_transaction_proof_bytes_exact_rejects_trailing_bytes() {
+        let encoded = bincode::serialize(&dummy_proof()).expect("encode proof");
+        let mut malformed = encoded.clone();
+        malformed.extend_from_slice(&[0xaa, 0xbb]);
+        let err = decode_transaction_proof_bytes_exact(&malformed)
+            .expect_err("trailing bytes must be rejected");
+        assert!(
+            err.to_string()
+                .contains("transaction proof wrapper has trailing bytes"),
+            "unexpected error: {err:?}"
+        );
+        let decoded = decode_transaction_proof_bytes_exact(&encoded).expect("exact decode");
+        assert_eq!(decoded, dummy_proof());
     }
 
     #[test]

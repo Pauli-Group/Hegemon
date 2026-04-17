@@ -1,5 +1,6 @@
 use crate::error::ProofError;
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 
 /// Flat batch proof payload format id accepted in this branch.
 pub const FLAT_BATCH_PROOF_FORMAT_ID_V5: u8 = crate::types::BLOCK_PROOF_FORMAT_ID_V5;
@@ -57,9 +58,25 @@ pub fn encode_flat_batch_proof_bytes_with_kind(
 }
 
 pub fn decode_flat_batch_proof_bytes(bytes: &[u8]) -> Result<FlatBatchProofPayloadV2, ProofError> {
-    let payload: FlatBatchProofPayloadV2 = bincode::deserialize(bytes).map_err(|err| {
+    let mut cursor = Cursor::new(bytes);
+    let payload: FlatBatchProofPayloadV2 = bincode::deserialize_from(&mut cursor).map_err(|err| {
         ProofError::FlatBatchProofDecodeFailed(format!("flat batch proof decode failed: {err}"))
     })?;
+    if cursor.position() as usize != bytes.len() {
+        return Err(ProofError::FlatBatchProofDecodeFailed(
+            "flat batch proof payload has trailing bytes".to_string(),
+        ));
+    }
+    let canonical = bincode::serialize(&payload).map_err(|err| {
+        ProofError::FlatBatchProofDecodeFailed(format!(
+            "flat batch proof canonical re-encode failed: {err}"
+        ))
+    })?;
+    if canonical != bytes {
+        return Err(ProofError::FlatBatchProofDecodeFailed(
+            "flat batch proof payload must use canonical serialization".to_string(),
+        ));
+    }
     if payload.version != FLAT_BATCH_PROOF_SCHEMA_V2 {
         return Err(ProofError::FlatBatchProofDecodeFailed(format!(
             "unsupported flat batch payload version {}",
@@ -114,5 +131,15 @@ mod tests {
         let encoded = encode_flat_batch_proof_bytes(&[9, 8, 7], &[6, 5, 4]).expect("encode");
         let decoded = decode_flat_batch_proof_bytes(&encoded).expect("decode");
         assert_eq!(decoded.proof_kind, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK);
+    }
+
+    #[test]
+    fn trailing_bytes_in_flat_batch_payload_reject() {
+        let mut encoded = encode_flat_batch_proof_bytes(&[9, 8, 7], &[6, 5, 4]).expect("encode");
+        encoded.push(0);
+        let err = decode_flat_batch_proof_bytes(&encoded).expect_err("trailing bytes accepted");
+        assert!(err
+            .to_string()
+            .contains("trailing bytes"));
     }
 }

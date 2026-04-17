@@ -12155,6 +12155,7 @@ dependencies = [
  "bincode",
  "blake3",
  "p3-field",
+ "protocol-versioning",
  "serde",
  "thiserror 1.0.69",
  "transaction-circuit",

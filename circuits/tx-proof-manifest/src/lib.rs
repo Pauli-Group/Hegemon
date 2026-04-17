@@ -5,7 +5,7 @@ use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     hashing_pq::{bytes48_to_felts, Commitment},
     p3_verifier::verify_transaction_proof_bytes_p3_for_version,
-    proof::{stark_public_inputs_p3, TransactionProof},
+    proof::{decode_transaction_proof_bytes_exact, stark_public_inputs_p3, TransactionProof},
     public_inputs::TransactionPublicInputs,
 };
 
@@ -195,6 +195,13 @@ pub fn verify_tx_proof_manifest(
     public_inputs.validate()?;
     let proof: TxProofManifest = bincode::deserialize(proof_bytes)
         .map_err(|err| TxProofManifestError::ProofDecode(err.to_string()))?;
+    let canonical = bincode::serialize(&proof)
+        .map_err(|err| TxProofManifestError::ProofDecode(err.to_string()))?;
+    if canonical != proof_bytes {
+        return Err(TxProofManifestError::ProofDecode(
+            "tx-proof-manifest proof bytes must use canonical serialization".to_string(),
+        ));
+    }
     let derived = summarize_entries(&proof.entries)?;
     if derived.batch_size as usize != proof.entries.len() {
         return Err(TxProofManifestError::BatchSizeMismatch {
@@ -246,7 +253,7 @@ fn summarize_entries(
     let mut circuit_version = None;
 
     for entry in entries {
-        let proof: TransactionProof = bincode::deserialize(&entry.proof_bytes)
+        let proof: TransactionProof = decode_transaction_proof_bytes_exact(&entry.proof_bytes)
             .map_err(|err| TxProofManifestError::ProofDecode(err.to_string()))?;
         if proof.public_inputs != entry.public_inputs {
             return Err(TxProofManifestError::EntryPublicInputsMismatch);
@@ -368,11 +375,14 @@ mod tests {
         build_transaction_proof_manifest, manifest_entries_from_transaction_proofs,
         verify_tx_proof_manifest, TxProofManifestPublicInputs,
     };
+    use p3_field::PrimeCharacteristicRing;
+    use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
     use transaction_circuit::{
         generate_keys,
         hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes},
-        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-        proof::{prove, TransactionProof},
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
+        p3_prover::TransactionProofParams,
+        proof::{decode_transaction_proof_bytes_exact, prove_with_params, TransactionProof},
         public_inputs::StablecoinPolicyBinding,
         witness::TransactionWitness,
     };
@@ -380,7 +390,7 @@ mod tests {
     fn sample_witness() -> TransactionWitness {
         let sk_spend = [42u8; 32];
         let pk_auth = spend_auth_key_bytes(&sk_spend);
-        let input_note = NoteData {
+        let input_note_native = NoteData {
             value: 20,
             asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
             pk_recipient: [2u8; 32],
@@ -388,36 +398,69 @@ mod tests {
             rho: [3u8; 32],
             r: [4u8; 32],
         };
-        let output_note = OutputNoteWitness {
-            note: NoteData {
-                value: 15,
-                asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
-                pk_recipient: [5u8; 32],
-                pk_auth: [6u8; 32],
-                rho: [7u8; 32],
-                r: [8u8; 32],
-            },
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: 1,
+            pk_recipient: [5u8; 32],
+            pk_auth,
+            rho: [6u8; 32],
+            r: [7u8; 32],
         };
-        let merkle_path = MerklePath::default();
-        let mut merkle_root = input_note.commitment();
-        for sibling in &merkle_path.siblings {
-            merkle_root = merkle_node(merkle_root, *sibling);
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut merkle_root = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            merkle_root = merkle_node(merkle_root, zero);
         }
         TransactionWitness {
-            inputs: vec![InputNoteWitness {
-                note: input_note,
-                position: 0,
-                rho_seed: [9u8; 32],
-                merkle_path,
-            }],
-            outputs: vec![output_note],
-            ciphertext_hashes: vec![[0u8; 48]],
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [9u8; 32],
+                    merkle_path: MerklePath { siblings: siblings0 },
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [8u8; 32],
+                    merkle_path: MerklePath { siblings: siblings1 },
+                },
+            ],
+            outputs: vec![
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 15,
+                        asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+                        pk_recipient: [11u8; 32],
+                        pk_auth: [111u8; 32],
+                        rho: [12u8; 32],
+                        r: [13u8; 32],
+                    },
+                },
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 5,
+                        asset_id: 1,
+                        pk_recipient: [21u8; 32],
+                        pk_auth: [121u8; 32],
+                        rho: [22u8; 32],
+                        r: [23u8; 32],
+                    },
+                },
+            ],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
             sk_spend,
             merkle_root: felts_to_bytes48(&merkle_root),
             fee: 5,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            version: TransactionWitness::default_version_binding(),
+            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
         }
     }
 
@@ -426,7 +469,12 @@ mod tests {
         witness.fee = fee;
         witness.outputs[0].note.value = 20 - fee;
         let (proving_key, _) = generate_keys();
-        prove(&witness, &proving_key).expect("sample tx proof")
+        prove_with_params(
+            &witness,
+            &proving_key,
+            TransactionProofParams::release_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+        )
+        .expect("sample tx proof")
     }
 
     #[test]
@@ -448,7 +496,7 @@ mod tests {
         let entries = manifest_entries_from_transaction_proofs(&proofs).expect("entries");
         assert_eq!(entries.len(), 1);
         let proof: TransactionProof =
-            bincode::deserialize(&entries[0].proof_bytes).expect("proof decode");
+            decode_transaction_proof_bytes_exact(&entries[0].proof_bytes).expect("proof decode");
         assert_eq!(proof.public_inputs, entries[0].public_inputs);
     }
 
@@ -471,5 +519,14 @@ mod tests {
             TxProofManifestPublicInputs::try_from_values(&decoded_values).expect("decode");
         verify_tx_proof_manifest(&proof_bytes, &round_trip).expect("verify");
         assert_eq!(round_trip.batch_size, 1);
+    }
+
+    #[test]
+    fn trailing_bytes_in_manifest_reject() {
+        let proofs = vec![prove_sample(13)];
+        let (mut proof_bytes, public_inputs) =
+            build_transaction_proof_manifest(&proofs).expect("tx-proof-manifest");
+        proof_bytes.extend_from_slice(&[0xaa, 0xbb]);
+        assert!(verify_tx_proof_manifest(&proof_bytes, &public_inputs).is_err());
     }
 }

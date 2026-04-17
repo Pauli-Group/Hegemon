@@ -15,7 +15,6 @@ use crate::{
 };
 use p3_goldilocks::Goldilocks;
 use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
-use std::io::Cursor;
 use superneo_ccs::{
     digest_shape, Assignment, CcsShape, RelationId, ShapeDigest, SparseMatrix, WitnessField,
     WitnessSchema,
@@ -26,14 +25,14 @@ use superneo_ring::{
 };
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
+    encode_smallwood_proof_trace_v1,
     projected_smallwood_recursive_envelope_bytes_v1, projected_smallwood_recursive_proof_bytes_v1,
     recursive_binding_bytes_v1, recursive_descriptor_v1, recursive_profile_a_v1,
     recursive_profile_b_v1, smallwood_binding_words_v1, verify_recursive_statement_direct_v1,
     RecursiveSmallwoodProfileV1, SmallwoodArithmetization, SmallwoodConstraintAdapter,
-    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView, SmallwoodProof,
+    SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
     SmallwoodProofTraceV1, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
     SmallwoodRecursiveVerifierDescriptorV1, SmallwoodTranscriptBackend, TransactionCircuitError,
-    SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_DECS_POW_BITS,
 };
 
 const RECURSIVE_BLOCK_RELATION_LABEL_V1: &str = "hegemon.superneo.block-recursive.v1";
@@ -595,12 +594,13 @@ fn verify_recursive_proof_envelope_structure_v1(
             "recursive proof envelope verifier key digest mismatch",
         ));
     }
-    let expected_proof_bytes_len =
+    let projected_proof_bytes_cap =
         projected_smallwood_recursive_proof_bytes_v1(profile, statement)?;
-    if envelope.proof_bytes.len() != expected_proof_bytes_len {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "recursive proof envelope proof length mismatch",
-        ));
+    if envelope.proof_bytes.is_empty() || envelope.proof_bytes.len() > projected_proof_bytes_cap {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "recursive proof envelope proof length exceeds projected cap: actual={} cap={projected_proof_bytes_cap}",
+            envelope.proof_bytes.len()
+        )));
     }
     let projected_envelope_len = projected_smallwood_recursive_envelope_bytes_v1(
         expected_descriptor,
@@ -964,19 +964,6 @@ impl RecomputedPreviousProofComponentsV1 {
                 "recursive verifier Merkle section count mismatch",
             ));
         }
-        let expected_path_len = self
-            .proof_trace
-            .decs_auth_paths_v1()
-            .first()
-            .map(Vec::len)
-            .ok_or(TransactionCircuitError::ConstraintViolation(
-                "recursive verifier Merkle auth paths missing",
-            ))?;
-        if expected_path_len == 0 {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "recursive verifier Merkle auth path is empty",
-            ));
-        }
         if self.root_digest == [0u8; 32] {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "recursive verifier Merkle root digest missing",
@@ -988,7 +975,8 @@ impl RecomputedPreviousProofComponentsV1 {
                     "recursive verifier Merkle row is empty",
                 ));
             }
-            if self.proof_trace.decs_auth_paths_v1()[idx].len() != expected_path_len {
+            let path_len = self.proof_trace.decs_auth_paths_v1()[idx].len();
+            if path_len == 0 {
                 return Err(TransactionCircuitError::ConstraintViolation(
                     "recursive verifier Merkle auth path length mismatch",
                 ));
@@ -1003,12 +991,13 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     relation: &(dyn SmallwoodConstraintAdapter + Sync),
     binding: Vec<u8>,
     proof_bytes: Vec<u8>,
-    proof_bytes_len: usize,
+    projected_proof_bytes_cap: usize,
 ) -> Result<RecomputedPreviousProofComponentsV1, TransactionCircuitError> {
-    if proof_bytes.len() != proof_bytes_len {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "recursive proof envelope proof length mismatch",
-        ));
+    if proof_bytes.is_empty() || proof_bytes.len() > projected_proof_bytes_cap {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "recursive proof envelope proof length exceeds projected cap: actual={} cap={projected_proof_bytes_cap}",
+            proof_bytes.len()
+        )));
     }
     let cfg = SmallwoodConfig::new(relation)?;
     ensure_row_polynomial_arithmetization(relation)?;
@@ -1017,6 +1006,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     let binding_words =
         smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
     let eval_points = xof_piop_opening_points(
+        &cfg,
         &proof_trace.nonce,
         &proof_trace.h_piop,
         SmallwoodTranscriptBackend::Poseidon2,
@@ -1038,9 +1028,9 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         SmallwoodTranscriptBackend::Poseidon2,
     );
     let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
-        SMALLWOOD_DECS_NB_EVALS,
-        SMALLWOOD_DECS_NB_OPENED_EVALS,
-        SMALLWOOD_DECS_POW_BITS,
+        cfg.profile_v1().decs_nb_evals,
+        cfg.profile_v1().decs_nb_opened_evals,
+        cfg.profile_v1().decs_pow_bits,
         &decs_trans_hash,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
@@ -1700,15 +1690,13 @@ fn decode_canonical_proof_from_witness_words_v1(
         let Ok(proof_bytes) = witness_words_to_bytes_v1(proof_words, proof_len) else {
             continue;
         };
-        let mut cursor = Cursor::new(proof_bytes.as_slice());
-        let Ok(decoded) = bincode::deserialize_from::<_, SmallwoodProof>(&mut cursor) else {
+        let Ok(trace) = decode_smallwood_proof_trace_v1(&proof_bytes) else {
             continue;
         };
-        let Ok(roundtrip) = bincode::serialize(&decoded) else {
+        let Ok(roundtrip) = encode_smallwood_proof_trace_v1(&trace) else {
             continue;
         };
-        if roundtrip == proof_bytes && cursor.position() as usize == proof_bytes.len() {
-            let trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
+        if roundtrip == proof_bytes {
             return Ok((proof_bytes, trace));
         }
     }
@@ -1834,9 +1822,9 @@ fn build_recursive_inputs_from_descriptor_v1(
             ))
         }
     };
-    let proof_bytes_len =
+    let projected_proof_bytes_cap =
         projected_smallwood_recursive_proof_bytes_v1(&profile, relation.as_ref())?;
-    Ok((profile, relation, binding, proof_bytes_len))
+    Ok((profile, relation, binding, projected_proof_bytes_cap))
 }
 
 fn build_expected_recursive_inputs_v1(
@@ -1950,7 +1938,8 @@ fn validate_previous_proof_witness_v1(
     else {
         return validation;
     };
-    let Ok((_, relation, binding, proof_bytes_len)) = build_recursive_inputs_from_descriptor_v1(
+    let Ok((_, relation, binding, projected_proof_bytes_cap)) =
+        build_recursive_inputs_from_descriptor_v1(
         &descriptor,
         previous_statement,
         &proof_trace.auxiliary_witness_words,
@@ -1958,7 +1947,7 @@ fn validate_previous_proof_witness_v1(
     ) else {
         return validation;
     };
-    if proof_bytes.len() != proof_bytes_len {
+    if proof_bytes.is_empty() || proof_bytes.len() > projected_proof_bytes_cap {
         return validation;
     }
 
@@ -1967,7 +1956,7 @@ fn validate_previous_proof_witness_v1(
         relation.as_ref(),
         binding.clone(),
         proof_bytes,
-        proof_bytes_len,
+        projected_proof_bytes_cap,
     ) else {
         return validation;
     };
@@ -2058,7 +2047,8 @@ pub(crate) fn debug_previous_proof_witness_validation_reason_v1(
     else {
         return "proof bytes do not decode canonically".to_string();
     };
-    let Ok((_, relation, binding, proof_bytes_len)) = build_recursive_inputs_from_descriptor_v1(
+    let Ok((_, relation, binding, projected_proof_bytes_cap)) =
+        build_recursive_inputs_from_descriptor_v1(
         &descriptor,
         previous_statement,
         &proof_trace.auxiliary_witness_words,
@@ -2066,11 +2056,11 @@ pub(crate) fn debug_previous_proof_witness_validation_reason_v1(
     ) else {
         return "recursive inputs reconstruction failed".to_string();
     };
-    if proof_bytes.len() != proof_bytes_len {
+    if proof_bytes.is_empty() || proof_bytes.len() > projected_proof_bytes_cap {
         return format!(
-            "proof length mismatch actual={} projected={}",
+            "proof length exceeds projected cap actual={} cap={}",
             proof_bytes.len(),
-            proof_bytes_len
+            projected_proof_bytes_cap
         );
     }
 
@@ -2079,7 +2069,7 @@ pub(crate) fn debug_previous_proof_witness_validation_reason_v1(
         relation.as_ref(),
         binding,
         proof_bytes,
-        proof_bytes_len,
+        projected_proof_bytes_cap,
     ) {
         Ok(_) => "ok".to_string(),
         Err(err) => format!("recompute failed: {err}"),

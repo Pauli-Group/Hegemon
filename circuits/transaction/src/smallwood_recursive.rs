@@ -8,9 +8,10 @@ use crate::{
     error::TransactionCircuitError,
     smallwood_engine::{
         build_smallwood_verifier_trace_v1, ensure_canonical_smallwood_proof_bytes,
-        projected_candidate_proof_bytes, prove_statement_with_transcript_backend,
+        projected_candidate_proof_bytes_with_profile, prove_statement_with_transcript_backend,
         verify_statement_with_transcript_backend, SmallwoodArithmetization,
         SmallwoodTranscriptBackend, SmallwoodVerifierTraceV1,
+        smallwood_no_grinding_profile_for_arithmetization,
     },
     smallwood_semantics::SmallwoodConstraintAdapter,
 };
@@ -439,7 +440,10 @@ pub fn projected_smallwood_recursive_proof_bytes_v1(
             "recursive statement arithmetization does not match profile",
         ));
     }
-    projected_candidate_proof_bytes(statement)
+    projected_candidate_proof_bytes_with_profile(
+        statement,
+        smallwood_no_grinding_profile_for_arithmetization(profile.arithmetization),
+    )
 }
 
 #[cfg(test)]

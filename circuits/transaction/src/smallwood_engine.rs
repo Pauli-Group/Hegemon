@@ -486,9 +486,9 @@ fn encode_smallwood_proof_bytes_v1(
     Ok(out)
 }
 
-fn decode_smallwood_proof_bytes_v1(
+fn decode_smallwood_proof_bytes_prefix_v1(
     proof_bytes: &[u8],
-) -> Result<SmallwoodProof, TransactionCircuitError> {
+) -> Result<(SmallwoodProof, usize), TransactionCircuitError> {
     let mut cursor = 0usize;
     let magic = read_exact_v1(
         proof_bytes,
@@ -515,31 +515,41 @@ fn decode_smallwood_proof_bytes_v1(
     let masking_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
     let high_coeffs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
     let opened_witness = decode_opened_witness_v1(proof_bytes, &mut cursor)?;
+    Ok((
+        SmallwoodProof {
+            salt,
+            nonce,
+            h_piop,
+            piop: PiopProof {
+                ppol_highs,
+                plin_highs,
+            },
+            pcs: PcsProof {
+                rcombi_tails,
+                subset_evals,
+                partial_evals,
+                decs: DecsProof {
+                    auth_paths,
+                    masking_evals,
+                    high_coeffs,
+                },
+            },
+            opened_witness,
+        },
+        cursor,
+    ))
+}
+
+fn decode_smallwood_proof_bytes_v1(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodProof, TransactionCircuitError> {
+    let (proof, cursor) = decode_smallwood_proof_bytes_prefix_v1(proof_bytes)?;
     if cursor != proof_bytes.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof trailing bytes",
         ));
     }
-    Ok(SmallwoodProof {
-        salt,
-        nonce,
-        h_piop,
-        piop: PiopProof {
-            ppol_highs,
-            plin_highs,
-        },
-        pcs: PcsProof {
-            rcombi_tails,
-            subset_evals,
-            partial_evals,
-            decs: DecsProof {
-                auth_paths,
-                masking_evals,
-                high_coeffs,
-            },
-        },
-        opened_witness,
-    })
+    Ok(proof)
 }
 
 impl SmallwoodProofTraceV1 {
@@ -1246,7 +1256,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
         statement,
         witness_values,
         binded_data,
-        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        smallwood_no_grinding_profile_for_arithmetization(statement.arithmetization()),
         transcript_backend,
     )
 }
@@ -1419,7 +1429,7 @@ pub(crate) fn verify_statement_with_transcript_backend(
         statement,
         binded_data,
         proof_bytes,
-        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        smallwood_no_grinding_profile_for_arithmetization(statement.arithmetization()),
         transcript_backend,
     )
 }
@@ -1491,7 +1501,8 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
     let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
-    let cfg = SmallwoodConfig::new(statement)?;
+    let profile = smallwood_no_grinding_profile_for_arithmetization(statement.arithmetization());
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     ensure_row_polynomial_arithmetization(statement)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
         TransactionCircuitError::ConstraintViolation(
@@ -1499,7 +1510,7 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
         ),
     )?;
     let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
-    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
+    if row_scalars.len() != cfg.nb_opened_evals() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
         ));
@@ -1507,7 +1518,8 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
     validate_proof_shape(&cfg, &proof)?;
 
     let binding_words = bytes_to_words(binded_data)?;
-    let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop, transcript_backend);
+    let eval_points =
+        xof_piop_opening_points_for_profile(&proof.nonce, &proof.h_piop, profile, transcript_backend);
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
 
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
@@ -1522,9 +1534,9 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
         transcript_backend,
     );
     let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
-        SMALLWOOD_DECS_NB_EVALS,
-        SMALLWOOD_DECS_NB_OPENED_EVALS,
-        SMALLWOOD_DECS_POW_BITS,
+        profile.decs_nb_evals,
+        profile.decs_nb_opened_evals,
+        profile.decs_pow_bits,
         &decs_trans_hash,
         transcript_backend,
     )?;
@@ -1647,6 +1659,19 @@ pub fn decode_smallwood_proof_trace_v1(
     proof_bytes: &[u8],
 ) -> Result<SmallwoodProofTraceV1, TransactionCircuitError> {
     let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    smallwood_proof_to_trace_v1(&proof)
+}
+
+pub fn decode_smallwood_proof_trace_prefix_v1(
+    proof_bytes: &[u8],
+) -> Result<(SmallwoodProofTraceV1, usize), TransactionCircuitError> {
+    let (proof, consumed) = decode_smallwood_proof_bytes_prefix_v1(proof_bytes)?;
+    Ok((smallwood_proof_to_trace_v1(&proof)?, consumed))
+}
+
+fn smallwood_proof_to_trace_v1(
+    proof: &SmallwoodProof,
+) -> Result<SmallwoodProofTraceV1, TransactionCircuitError> {
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
         TransactionCircuitError::ConstraintViolation(
             "smallwood proof missing row-scalar opened witness data",
@@ -1656,8 +1681,8 @@ pub fn decode_smallwood_proof_trace_v1(
         salt: proof.salt,
         nonce: proof.nonce,
         h_piop: proof.h_piop,
-        piop: proof.piop,
-        pcs: proof.pcs,
+        piop: proof.piop.clone(),
+        pcs: proof.pcs.clone(),
         opened_witness_row_scalars: row_scalars.to_vec(),
         auxiliary_witness_words: proof
             .opened_witness

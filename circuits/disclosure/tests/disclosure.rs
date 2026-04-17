@@ -73,6 +73,14 @@ fn tamper_commitment_rejects() {
 }
 
 #[test]
+fn trailing_bytes_in_disclosure_proof_reject() {
+    let (claim, witness) = sample_claim_and_witness();
+    let mut bundle = prove_payment_disclosure(&claim, &witness).expect("proof");
+    bundle.proof_bytes.extend_from_slice(&[0xde, 0xad]);
+    assert!(verify_payment_disclosure(&bundle).is_err());
+}
+
+#[test]
 fn reject_non_canonical_commitment() {
     let (mut claim, witness) = sample_claim_and_witness();
     claim.commitment = [0xFF; 48];

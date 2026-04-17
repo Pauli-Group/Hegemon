@@ -1,19 +1,19 @@
 use std::cmp::min;
+use std::collections::{BTreeMap, BTreeSet};
 
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use transaction_circuit::{
     SmallwoodArithmetization, SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm,
-    SmallwoodProofTraceV1, SmallwoodTranscriptBackend, TransactionCircuitError, DIGEST_BYTES,
-    NONCE_BYTES, SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS,
-    SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
+    SmallwoodNoGrindingProfileV1, SmallwoodProofTraceV1, SmallwoodTranscriptBackend,
+    TransactionCircuitError, DIGEST_BYTES, NONCE_BYTES,
+    smallwood_no_grinding_profile_for_arithmetization,
 };
 use transaction_core::poseidon2::{poseidon2_permutation, Felt};
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
-const SMALLWOOD_DECS_ETA: usize = 3;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
 const DIGEST_WORDS: usize = DIGEST_BYTES / 8;
 const SALT_BYTES: usize = 32;
@@ -21,6 +21,7 @@ const SALT_WORDS: usize = SALT_BYTES / 8;
 
 #[derive(Clone, Debug)]
 pub struct SmallwoodConfig {
+    profile: SmallwoodNoGrindingProfileV1,
     row_count: usize,
     packing_factor: usize,
     linear_constraint_count: usize,
@@ -88,6 +89,16 @@ impl SmallwoodConfig {
     pub fn new(
         statement: &(dyn SmallwoodConstraintAdapter + Sync),
     ) -> Result<Self, TransactionCircuitError> {
+        Self::new_with_profile(
+            statement,
+            smallwood_no_grinding_profile_for_arithmetization(statement.arithmetization()),
+        )
+    }
+
+    pub fn new_with_profile(
+        statement: &(dyn SmallwoodConstraintAdapter + Sync),
+        profile: SmallwoodNoGrindingProfileV1,
+    ) -> Result<Self, TransactionCircuitError> {
         let row_count = statement.row_count();
         let packing_factor = statement.packing_factor();
         let constraint_degree = statement.constraint_degree();
@@ -100,23 +111,35 @@ impl SmallwoodConfig {
         }
         let witness_size = row_count * packing_factor;
         validate_identity_witness_form(statement, witness_size, linear_constraint_count)?;
-        let wit_poly_degree = packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1;
+        if profile.rho == 0
+            || profile.nb_opened_evals == 0
+            || profile.beta == 0
+            || profile.decs_nb_evals == 0
+            || !profile.decs_nb_evals.is_power_of_two()
+            || profile.decs_nb_opened_evals == 0
+            || profile.decs_eta == 0
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood profile parameters must be non-zero and use a power-of-two DECS domain",
+            ));
+        }
+        let wit_poly_degree = packing_factor + profile.nb_opened_evals - 1;
         let mpol_poly_degree =
-            constraint_degree * (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) - packing_factor;
+            constraint_degree * (packing_factor + profile.nb_opened_evals - 1) - packing_factor;
         let mlin_poly_degree =
-            (packing_factor + SMALLWOOD_NB_OPENED_EVALS - 1) + (packing_factor - 1);
-        let nb_polys = row_count + 2 * SMALLWOOD_RHO;
+            (packing_factor + profile.nb_opened_evals - 1) + (packing_factor - 1);
+        let nb_polys = row_count + 2 * profile.rho;
         let mut degree = vec![wit_poly_degree; row_count];
-        degree.extend(std::iter::repeat_n(mpol_poly_degree, SMALLWOOD_RHO));
-        degree.extend(std::iter::repeat_n(mlin_poly_degree, SMALLWOOD_RHO));
+        degree.extend(std::iter::repeat_n(mpol_poly_degree, profile.rho));
+        degree.extend(std::iter::repeat_n(mlin_poly_degree, profile.rho));
         let mut width = Vec::with_capacity(nb_polys);
         let mut delta = Vec::with_capacity(nb_polys);
-        let nb_unstacked_rows = packing_factor + SMALLWOOD_NB_OPENED_EVALS;
+        let nb_unstacked_rows = packing_factor + profile.nb_opened_evals;
         let mut nb_unstacked_cols = 0usize;
         for &deg in &degree {
-            let w = (deg + 1 - SMALLWOOD_NB_OPENED_EVALS + (packing_factor - 1)) / packing_factor;
+            let w = (deg + 1 - profile.nb_opened_evals + (packing_factor - 1)) / packing_factor;
             width.push(w);
-            let d = (packing_factor * w + SMALLWOOD_NB_OPENED_EVALS) - (deg + 1);
+            let d = (packing_factor * w + profile.nb_opened_evals) - (deg + 1);
             if w == 1 && d != 0 {
                 return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
                     "smallwood invalid polynomial width/delta pair for degree {deg}"
@@ -125,17 +148,18 @@ impl SmallwoodConfig {
             delta.push(d);
             nb_unstacked_cols += w;
         }
-        let nb_lvcs_rows = nb_unstacked_rows * SMALLWOOD_BETA;
-        let nb_lvcs_cols = nb_unstacked_cols.div_ceil(SMALLWOOD_BETA);
-        let nb_lvcs_opened_combi = SMALLWOOD_BETA * SMALLWOOD_NB_OPENED_EVALS;
+        let nb_lvcs_rows = nb_unstacked_rows * profile.beta;
+        let nb_lvcs_cols = nb_unstacked_cols.div_ceil(profile.beta);
+        let nb_lvcs_opened_combi = profile.beta * profile.nb_opened_evals;
         let mut fullrank_cols = Vec::with_capacity(nb_lvcs_opened_combi);
-        for i in 0..SMALLWOOD_BETA {
-            for j in 0..SMALLWOOD_NB_OPENED_EVALS {
-                fullrank_cols.push(i * (packing_factor + SMALLWOOD_NB_OPENED_EVALS) + j);
+        for i in 0..profile.beta {
+            for j in 0..profile.nb_opened_evals {
+                fullrank_cols.push(i * (packing_factor + profile.nb_opened_evals) + j);
             }
         }
         let packing_points = (0..packing_factor).map(|i| i as u64).collect();
         Ok(Self {
+            profile,
             row_count,
             packing_factor,
             linear_constraint_count,
@@ -166,6 +190,40 @@ impl SmallwoodConfig {
     pub fn nb_lvcs_opened_combi_v1(&self) -> usize {
         self.nb_lvcs_opened_combi
     }
+
+    pub fn profile_v1(&self) -> SmallwoodNoGrindingProfileV1 {
+        self.profile
+    }
+
+    #[inline]
+    fn rho(&self) -> usize {
+        self.profile.rho
+    }
+
+    #[inline]
+    fn nb_opened_evals(&self) -> usize {
+        self.profile.nb_opened_evals
+    }
+
+    #[inline]
+    fn beta(&self) -> usize {
+        self.profile.beta
+    }
+
+    #[inline]
+    fn decs_nb_evals(&self) -> usize {
+        self.profile.decs_nb_evals
+    }
+
+    #[inline]
+    fn decs_nb_opened_evals(&self) -> usize {
+        self.profile.decs_nb_opened_evals
+    }
+
+    #[inline]
+    fn decs_eta(&self) -> usize {
+        self.profile.decs_eta
+    }
 }
 
 pub fn ensure_row_polynomial_arithmetization(
@@ -189,7 +247,7 @@ pub fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof_trace: &SmallwoodProofTraceV1,
 ) -> Result<(), TransactionCircuitError> {
-    if proof_trace.opened_witness_row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS
+    if proof_trace.opened_witness_row_scalars.len() != cfg.nb_opened_evals()
         || proof_trace
             .opened_witness_row_scalars
             .iter()
@@ -212,16 +270,16 @@ pub fn validate_proof_shape(
             "smallwood auxiliary witness padding must be zero",
         ));
     }
-    if proof_trace.piop_ppol_highs_v1().len() != SMALLWOOD_RHO
+    if proof_trace.piop_ppol_highs_v1().len() != cfg.rho()
         || proof_trace
             .piop_ppol_highs_v1()
             .iter()
-            .any(|poly| poly.len() != cfg.mpol_poly_degree + 1 - SMALLWOOD_NB_OPENED_EVALS)
-        || proof_trace.piop_plin_highs_v1().len() != SMALLWOOD_RHO
+            .any(|poly| poly.len() != cfg.mpol_poly_degree + 1 - cfg.nb_opened_evals())
+        || proof_trace.piop_plin_highs_v1().len() != cfg.rho()
         || proof_trace
             .piop_plin_highs_v1()
             .iter()
-            .any(|poly| poly.len() != cfg.mlin_poly_degree + 1 - (SMALLWOOD_NB_OPENED_EVALS + 1))
+            .any(|poly| poly.len() != cfg.mlin_poly_degree + 1 - (cfg.nb_opened_evals() + 1))
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood piop proof shape mismatch",
@@ -231,28 +289,28 @@ pub fn validate_proof_shape(
         || proof_trace
             .pcs_rcombi_tails_v1()
             .iter()
-            .any(|tail| tail.len() != SMALLWOOD_DECS_NB_OPENED_EVALS)
-        || proof_trace.pcs_subset_evals_v1().len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+            .any(|tail| tail.len() != cfg.decs_nb_opened_evals())
+        || proof_trace.pcs_subset_evals_v1().len() != cfg.decs_nb_opened_evals()
         || proof_trace
             .pcs_subset_evals_v1()
             .iter()
             .any(|row| row.len() != cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi)
-        || proof_trace.pcs_partial_evals_v1().len() != SMALLWOOD_NB_OPENED_EVALS
+        || proof_trace.pcs_partial_evals_v1().len() != cfg.nb_opened_evals()
         || proof_trace
             .pcs_partial_evals_v1()
             .iter()
             .any(|row| row.len() != cfg.nb_unstacked_cols - cfg.nb_polys)
-        || proof_trace.decs_auth_paths_v1().len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+        || proof_trace.decs_auth_paths_v1().len() != cfg.decs_nb_opened_evals()
         || proof_trace
             .decs_auth_paths_v1()
             .iter()
-            .any(|path| path.len() != SMALLWOOD_DECS_NB_EVALS.ilog2() as usize)
-        || proof_trace.decs_masking_evals_v1().len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+            .any(|path| path.is_empty() || path.len() > cfg.decs_nb_evals().ilog2() as usize)
+        || proof_trace.decs_masking_evals_v1().len() != cfg.decs_nb_opened_evals()
         || proof_trace
             .decs_masking_evals_v1()
             .iter()
-            .any(|row| row.len() != SMALLWOOD_DECS_ETA)
-        || proof_trace.decs_high_coeffs_v1().len() != SMALLWOOD_DECS_ETA
+            .any(|row| row.len() != cfg.decs_eta())
+        || proof_trace.decs_high_coeffs_v1().len() != cfg.decs_eta()
         || proof_trace
             .decs_high_coeffs_v1()
             .iter()
@@ -360,29 +418,29 @@ pub fn derive_gamma_prime(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &digest_to_words(hash_fpp),
-        (SMALLWOOD_RHO + 1) + (SMALLWOOD_RHO + 1) * SMALLWOOD_RHO,
+        (cfg.rho() + 1) + (cfg.rho() + 1) * cfg.rho(),
     );
-    let mut mat_rnd = vec![vec![0u64; SMALLWOOD_RHO + 1]; SMALLWOOD_RHO];
-    let mut mat_powers = vec![vec![0u64; nb_max_constraints]; SMALLWOOD_RHO + 1];
-    for k in 0..SMALLWOOD_RHO {
-        for j in 0..(SMALLWOOD_RHO + 1) {
-            mat_rnd[k][j] = gamma_words[k * (SMALLWOOD_RHO + 1) + j];
+    let mut mat_rnd = vec![vec![0u64; cfg.rho() + 1]; cfg.rho()];
+    let mut mat_powers = vec![vec![0u64; nb_max_constraints]; cfg.rho() + 1];
+    for k in 0..cfg.rho() {
+        for j in 0..(cfg.rho() + 1) {
+            mat_rnd[k][j] = gamma_words[k * (cfg.rho() + 1) + j];
         }
     }
-    for k in 0..(SMALLWOOD_RHO + 1) {
-        let base = gamma_words[SMALLWOOD_RHO * (SMALLWOOD_RHO + 1) + k];
+    for k in 0..(cfg.rho() + 1) {
+        let base = gamma_words[cfg.rho() * (cfg.rho() + 1) + k];
         mat_powers[k][0] = 1;
         for j in 1..nb_max_constraints {
             mat_powers[k][j] = mul_mod(mat_powers[k][j - 1], base);
         }
     }
-    let mut out = vec![vec![0u64; nb_max_constraints]; SMALLWOOD_RHO];
+    let mut out = vec![vec![0u64; nb_max_constraints]; cfg.rho()];
     mat_mul(
         &mut out,
         &mat_rnd,
         &mat_powers,
-        SMALLWOOD_RHO,
-        SMALLWOOD_RHO + 1,
+        cfg.rho(),
+        cfg.rho() + 1,
         nb_max_constraints,
     );
     out
@@ -401,6 +459,7 @@ pub fn ensure_no_packing_collisions(
 }
 
 pub fn xof_piop_opening_points(
+    cfg: &SmallwoodConfig,
     nonce: &[u8; NONCE_BYTES],
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
@@ -412,7 +471,7 @@ pub fn xof_piop_opening_points(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &input,
-        SMALLWOOD_NB_OPENED_EVALS,
+        cfg.nb_opened_evals(),
     )
 }
 
@@ -530,15 +589,15 @@ pub fn xof_decs_opening(
 }
 
 pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs: &mut [Vec<u64>]) {
-    let m = cfg.packing_factor + SMALLWOOD_NB_OPENED_EVALS;
+    let m = cfg.packing_factor + cfg.nb_opened_evals();
     for (j, &r) in eval_points.iter().enumerate() {
         let mut powers = vec![0u64; m];
         powers[0] = 1;
         for k in 1..m {
             powers[k] = mul_mod(powers[k - 1], r);
         }
-        for k in 0..SMALLWOOD_BETA {
-            let row = &mut coeffs[j * SMALLWOOD_BETA + k];
+        for k in 0..cfg.beta() {
+            let row = &mut coeffs[j * cfg.beta() + k];
             row.fill(0);
             let start = m * k;
             row[start..start + m].copy_from_slice(&powers);
@@ -580,8 +639,8 @@ pub fn pcs_reconstruct_combi_heads(
             unstacked_vec[poly_ind] = sub_mod(*row_scalar, sum);
             poly_ind += cfg.width[k];
         }
-        for i in 0..SMALLWOOD_BETA {
-            let num_combi = j * SMALLWOOD_BETA + i;
+        for i in 0..cfg.beta() {
+            let num_combi = j * cfg.beta() + i;
             let offset = i * cfg.nb_lvcs_cols;
             combi_heads[num_combi].fill(0);
             if offset < cfg.nb_unstacked_cols {
@@ -603,7 +662,7 @@ pub fn lvcs_recompute_rows(
     eval_points: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let mut extended_combis = vec![
-        vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS];
+        vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()];
         cfg.nb_lvcs_opened_combi
     ];
     for k in 0..cfg.nb_lvcs_opened_combi {
@@ -664,30 +723,108 @@ pub fn decs_recompute_root(
     proof_trace: &SmallwoodProofTraceV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
-    let mut root = None;
+    let depth = cfg.decs_nb_evals().ilog2() as usize;
+    let indices = eval_points.iter().map(|&point| point as usize).collect::<Vec<_>>();
+    let expected_lengths = expected_compact_merkle_auth_path_lengths(&indices, depth);
+    if proof_trace.decs_auth_paths_v1().len() != expected_lengths.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood decs auth path count mismatch",
+        ));
+    }
+    let mut current_hashes = Vec::with_capacity(eval_points.len());
+    let mut current_indices = Vec::with_capacity(eval_points.len());
+    let mut auth_path_cursors = vec![0usize; eval_points.len()];
     for j in 0..eval_points.len() {
+        if proof_trace.decs_auth_paths_v1()[j].len() != expected_lengths[j] {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs compact auth path length mismatch",
+            ));
+        }
         let mut leaf_evals = evals[j].clone();
         leaf_evals.extend_from_slice(&proof_trace.decs_masking_evals_v1()[j]);
-        let leaf = hash_merkle_leave(cfg.nb_lvcs_rows, &leaf_evals, salt, transcript_backend);
-        let computed = merkle_compute_root(
-            eval_points[j] as usize,
-            &leaf,
-            &proof_trace.decs_auth_paths_v1()[j],
+        current_hashes.push(hash_merkle_leave(
+            cfg.nb_lvcs_rows,
+            &leaf_evals,
+            salt,
             transcript_backend,
-        );
-        match root {
-            Some(current) if current != computed => {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "smallwood decs root mismatch across opened leaves",
-                ));
+        ));
+        current_indices.push(eval_points[j] as usize);
+    }
+    for _level in 0..depth {
+        let mut level_hashes = BTreeMap::new();
+        for (&index, &hash) in current_indices.iter().zip(current_hashes.iter()) {
+            match level_hashes.insert(index, hash) {
+                Some(existing) if existing != hash => {
+                    return Err(TransactionCircuitError::ConstraintViolation(
+                        "smallwood decs duplicate subtree hash mismatch",
+                    ));
+                }
+                _ => {}
             }
-            None => root = Some(computed),
-            _ => {}
+        }
+        let mut next_hashes = Vec::with_capacity(current_hashes.len());
+        let mut next_indices = Vec::with_capacity(current_indices.len());
+        for j in 0..current_indices.len() {
+            let index = current_indices[j];
+            let sibling_index = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
+            let sibling_hash = if let Some(hash) = level_hashes.get(&sibling_index) {
+                *hash
+            } else {
+                let cursor = auth_path_cursors[j];
+                let hash = proof_trace.decs_auth_paths_v1()[j].get(cursor).copied().ok_or(
+                    TransactionCircuitError::ConstraintViolation(
+                        "smallwood decs compact auth path underflow",
+                    ),
+                )?;
+                auth_path_cursors[j] += 1;
+                hash
+            };
+            let parent = hash_merkle_children(
+                if index.is_multiple_of(2) {
+                    &current_hashes[j]
+                } else {
+                    &sibling_hash
+                },
+                if index.is_multiple_of(2) {
+                    &sibling_hash
+                } else {
+                    &current_hashes[j]
+                },
+                transcript_backend,
+            );
+            next_hashes.push(parent);
+            next_indices.push(index / 2);
+        }
+        current_hashes = next_hashes;
+        current_indices = next_indices;
+    }
+    for (cursor, path) in auth_path_cursors
+        .iter()
+        .zip(proof_trace.decs_auth_paths_v1().iter())
+    {
+        if *cursor != path.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs compact auth path overflow",
+            ));
         }
     }
-    root.ok_or(TransactionCircuitError::ConstraintViolation(
-        "smallwood decs root recomputation missing",
-    ))
+    let root =
+        current_hashes
+            .first()
+            .copied()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs root recomputation missing",
+            ))?;
+    if current_hashes.iter().any(|hash| *hash != root) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood decs root mismatch across opened leaves",
+        ));
+    }
+    Ok(root)
 }
 
 pub fn decs_commitment_transcript(
@@ -700,12 +837,12 @@ pub fn decs_commitment_transcript(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let hash_mt = hash_merkle_root(salt, root_words, transcript_backend);
-    let gamma_all = derive_decs_challenge(cfg.nb_lvcs_rows, &hash_mt, transcript_backend);
+    let gamma_all = derive_decs_challenge(cfg, cfg.nb_lvcs_rows, &hash_mt, transcript_backend);
     let mut transcript = Vec::new();
     transcript.extend(digest_to_words(&hash_mt));
-    for (k, gamma_row) in gamma_all.iter().enumerate().take(SMALLWOOD_DECS_ETA) {
-        let mut dec_evals = vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS];
-        for i in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
+    for (k, gamma_row) in gamma_all.iter().enumerate().take(cfg.decs_eta()) {
+        let mut dec_evals = vec![0u64; cfg.decs_nb_opened_evals()];
+        for i in 0..cfg.decs_nb_opened_evals() {
             let mut acc = 0u64;
             for j in 0..cfg.nb_lvcs_rows {
                 acc = add_mod(acc, mul_mod(evals[i][j], gamma_row[j]));
@@ -717,7 +854,7 @@ pub fn decs_commitment_transcript(
             &proof_trace.decs_high_coeffs_v1()[k],
             &dec_evals,
             eval_points,
-            cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
+            cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
         )?;
         transcript.extend_from_slice(&dec_poly);
     }
@@ -743,12 +880,12 @@ pub fn piop_recompute_transcript(
     let meval_ppoly = proof_trace
         .opened_witness_row_scalars
         .iter()
-        .map(|row| row[cfg.row_count..cfg.row_count + SMALLWOOD_RHO].to_vec())
+        .map(|row| row[cfg.row_count..cfg.row_count + cfg.rho()].to_vec())
         .collect::<Vec<_>>();
     let meval_plin = proof_trace
         .opened_witness_row_scalars
         .iter()
-        .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
+        .map(|row| row[cfg.row_count + cfg.rho()..cfg.row_count + 2 * cfg.rho()].to_vec())
         .collect::<Vec<_>>();
     let in_epol =
         get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
@@ -762,14 +899,14 @@ pub fn piop_recompute_transcript(
         v.push(0);
         v
     };
-    let lag = poly_set_lagrange(&eval_points_with_zero, SMALLWOOD_NB_OPENED_EVALS);
+    let lag = poly_set_lagrange(&eval_points_with_zero, cfg.nb_opened_evals());
     let mut correction_factor = 0u64;
     for num in 0..cfg.packing_factor {
         correction_factor = add_mod(correction_factor, poly_eval(&lag, cfg.packing_points[num]));
     }
-    for rep in 0..SMALLWOOD_RHO {
-        let mut out_epol = vec![0u64; SMALLWOOD_NB_OPENED_EVALS];
-        for j in 0..SMALLWOOD_NB_OPENED_EVALS {
+    for rep in 0..cfg.rho() {
+        let mut out_epol = vec![0u64; cfg.nb_opened_evals()];
+        for j in 0..cfg.nb_opened_evals() {
             let mut acc = 0u64;
             for num in 0..cfg.constraint_count {
                 acc = add_mod(acc, mul_mod(in_epol[j][num], gammas[rep][num]));
@@ -788,15 +925,15 @@ pub fn piop_recompute_transcript(
             cfg.mpol_poly_degree,
         )?;
 
-        let mut out_elin = vec![0u64; SMALLWOOD_NB_OPENED_EVALS + 1];
-        for j in 0..SMALLWOOD_NB_OPENED_EVALS {
+        let mut out_elin = vec![0u64; cfg.nb_opened_evals() + 1];
+        for j in 0..cfg.nb_opened_evals() {
             let mut acc = 0u64;
             for num in 0..cfg.linear_constraint_count {
                 acc = add_mod(acc, mul_mod(in_elin[j][num], gammas[rep][num]));
             }
             out_elin[j] = add_mod(acc, meval_plin[j][rep]);
         }
-        let mut out_plin = if cfg.mlin_poly_degree > SMALLWOOD_NB_OPENED_EVALS {
+        let mut out_plin = if cfg.mlin_poly_degree > cfg.nb_opened_evals() {
             poly_restore(
                 &proof_trace.piop_plin_highs_v1()[rep],
                 &out_elin,
@@ -963,6 +1100,7 @@ fn hash_merkle_root(
 }
 
 fn derive_decs_challenge(
+    cfg: &SmallwoodConfig,
     nb_polys: usize,
     hash_mt: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
@@ -971,10 +1109,10 @@ fn derive_decs_challenge(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &digest_to_words(hash_mt),
-        SMALLWOOD_DECS_ETA,
+        cfg.decs_eta(),
     );
-    let mut out = vec![vec![0u64; nb_polys]; SMALLWOOD_DECS_ETA];
-    for k in 0..SMALLWOOD_DECS_ETA {
+    let mut out = vec![vec![0u64; nb_polys]; cfg.decs_eta()];
+    for k in 0..cfg.decs_eta() {
         out[k][0] = gamma_words[k];
         for j in 1..nb_polys {
             out[k][j] = mul_mod(out[k][j - 1], gamma_words[k]);
@@ -983,26 +1121,37 @@ fn derive_decs_challenge(
     out
 }
 
-fn merkle_compute_root(
-    mut index: usize,
-    leaf: &[u8; DIGEST_BYTES],
-    path: &[[u8; DIGEST_BYTES]],
+fn hash_merkle_children(
+    left: &[u8; DIGEST_BYTES],
+    right: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
-    let mut current = *leaf;
-    for sibling in path {
-        let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
-        if index.is_multiple_of(2) {
-            input.extend(digest_to_words(&current));
-            input.extend(digest_to_words(sibling));
-        } else {
-            input.extend(digest_to_words(sibling));
-            input.extend(digest_to_words(&current));
+    let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
+    input.extend(digest_to_words(left));
+    input.extend(digest_to_words(right));
+    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+}
+
+fn expected_compact_merkle_auth_path_lengths(indices: &[usize], depth: usize) -> Vec<usize> {
+    let mut lengths = vec![0usize; indices.len()];
+    let mut current_indices = indices.to_vec();
+    for _ in 0..depth {
+        let level_opened = current_indices.iter().copied().collect::<BTreeSet<_>>();
+        for (path_idx, &index) in current_indices.iter().enumerate() {
+            let sibling = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
+            if !level_opened.contains(&sibling) {
+                lengths[path_idx] += 1;
+            }
         }
-        current = transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input);
-        index /= 2;
+        for index in &mut current_indices {
+            *index /= 2;
+        }
     }
-    current
+    lengths
 }
 
 fn rotate_left_words(values: &[u64], by: usize) -> Vec<u64> {

@@ -2,6 +2,7 @@ use blake3::Hasher;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 use transaction_core::{
     constants::{
         MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
@@ -1512,19 +1513,73 @@ fn build_compact_aux_merkle_material_from_context(
 pub(crate) fn decode_smallwood_candidate_proof(
     proof_bytes: &[u8],
 ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
-    match bincode::deserialize(proof_bytes) {
-        Ok(candidate) => Ok(candidate),
-        Err(err) => bincode::deserialize::<LegacySmallwoodCandidateProof>(proof_bytes)
-            .map(|legacy| SmallwoodCandidateProof {
-                arithmetization: legacy.arithmetization,
-                ark_proof: legacy.ark_proof,
-                auxiliary_witness_words: Vec::new(),
-            })
-            .map_err(|legacy_err| {
+    fn decode_exact_current(
+        proof_bytes: &[u8],
+    ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+        let mut cursor = Cursor::new(proof_bytes);
+        let candidate: SmallwoodCandidateProof =
+            bincode::deserialize_from(&mut cursor).map_err(|err| {
                 TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "failed to decode smallwood candidate proof: {err}; legacy decode also failed: {legacy_err}"
+                    "failed to decode smallwood candidate proof wrapper: {err}"
                 ))
-            }),
+            })?;
+        if cursor.position() as usize != proof_bytes.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood candidate proof wrapper has trailing bytes",
+            ));
+        }
+        let canonical = bincode::serialize(&candidate).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to reserialize smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+        if canonical != proof_bytes {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood candidate proof wrapper must use canonical serialization",
+            ));
+        }
+        Ok(candidate)
+    }
+
+    fn decode_exact_legacy(
+        proof_bytes: &[u8],
+    ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+        let mut cursor = Cursor::new(proof_bytes);
+        let legacy: LegacySmallwoodCandidateProof = bincode::deserialize_from(&mut cursor)
+            .map_err(|err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "failed to decode legacy smallwood candidate proof wrapper: {err}"
+                ))
+            })?;
+        if cursor.position() as usize != proof_bytes.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "legacy smallwood candidate proof wrapper has trailing bytes",
+            ));
+        }
+        let canonical = bincode::serialize(&legacy).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to reserialize legacy smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+        if canonical != proof_bytes {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "legacy smallwood candidate proof wrapper must use canonical serialization",
+            ));
+        }
+        Ok(SmallwoodCandidateProof {
+            arithmetization: legacy.arithmetization,
+            ark_proof: legacy.ark_proof,
+            auxiliary_witness_words: Vec::new(),
+        })
+    }
+
+    match decode_exact_current(proof_bytes) {
+        Ok(candidate) => Ok(candidate),
+        Err(err) => decode_exact_legacy(proof_bytes).map_err(|legacy_err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "{err}; legacy decode also failed: {legacy_err}"
+            ))
+        }),
     }
 }
 

@@ -2,8 +2,7 @@ use crate::{
     artifacts::{
         recursive_block_proof_encoding_digest_v1, recursive_block_tx_line_digest_v1,
         HeaderRecStepV1, RecursiveBlockArtifactV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-        RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1,
-        RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1,
+        RECURSIVE_BLOCK_PROOF_BYTES_V1,
     },
     public_replay::RecursiveBlockPublicV1,
     relation::{
@@ -17,7 +16,8 @@ use crate::{
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
-    decode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
+    decode_smallwood_proof_trace_prefix_v1, decode_smallwood_proof_trace_v1,
+    encode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
     recursive_profile_a_v1, recursive_profile_b_v1, verify_recursive_statement_v1,
     SmallwoodConstraintAdapter, SmallwoodRecursiveProfileTagV1, SmallwoodRecursiveRelationKindV1,
 };
@@ -74,25 +74,6 @@ fn expected_header_v1(
         proof_bytes_rec: RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32,
         statement_digest_rec: recursive_prefix_statement_digest32_v1(&statement),
     })
-}
-
-fn expected_terminal_proof_bytes_v1(
-    relation_kind: SmallwoodRecursiveRelationKindV1,
-) -> Result<usize, BlockRecursionError> {
-    match relation_kind {
-        SmallwoodRecursiveRelationKindV1::StepA => Ok(RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1),
-        SmallwoodRecursiveRelationKindV1::StepB => Ok(RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1),
-        SmallwoodRecursiveRelationKindV1::BaseA => Err(BlockRecursionError::InvalidField(
-            "terminal_relation_kind_k",
-        )),
-        SmallwoodRecursiveRelationKindV1::ChunkA
-        | SmallwoodRecursiveRelationKindV1::MergeA
-        | SmallwoodRecursiveRelationKindV1::MergeB
-        | SmallwoodRecursiveRelationKindV1::CarryA
-        | SmallwoodRecursiveRelationKindV1::CarryB => Err(BlockRecursionError::InvalidField(
-            "terminal_relation_kind_k",
-        )),
-    }
 }
 
 fn build_terminal_relation_v1(
@@ -195,24 +176,35 @@ pub fn verify_block_recursive_v1(
 
     let relation_kind = expected_terminal_relation_kind_v1(expected_public.tx_count);
     let profile_tag = expected_terminal_profile_tag_v1(expected_public.tx_count);
-    let actual_proof_bytes = expected_terminal_proof_bytes_v1(relation_kind)?;
-    if inner.proof_bytes[actual_proof_bytes..]
+    let (proof_trace, consumed_len) = decode_smallwood_proof_trace_prefix_v1(&inner.proof_bytes)
+        .map_err(|err| static_error("decode recursive proof trace failed", err))?;
+    let canonical_proof_bytes = encode_smallwood_proof_trace_v1(&proof_trace)
+        .map_err(|err| static_error("re-encode recursive proof trace failed", err))?;
+    if canonical_proof_bytes.len() != consumed_len
+        || inner.proof_bytes[..consumed_len] != canonical_proof_bytes
+    {
+        return Err(BlockRecursionError::InvalidField(
+            "proof_bytes_rec canonical encoding",
+        ));
+    }
+    if inner.proof_bytes[consumed_len..]
         .iter()
         .any(|byte| *byte != 0)
     {
         return Err(BlockRecursionError::InvalidField("proof_bytes_rec padding"));
     }
+    let actual_proof_bytes = canonical_proof_bytes.len();
 
     let (profile, descriptor, relation, binding) = build_terminal_relation_v1(
         relation_kind,
         profile_tag,
         expected_public,
-        &inner.proof_bytes[..actual_proof_bytes],
+        &canonical_proof_bytes,
     )?;
     let projected_proof_bytes =
         projected_smallwood_recursive_proof_bytes_v1(&profile, relation.as_ref())
             .map_err(|err| static_error("project recursive proof bytes failed", err))?;
-    if actual_proof_bytes != projected_proof_bytes {
+    if actual_proof_bytes > projected_proof_bytes {
         return Err(BlockRecursionError::WidthMismatch {
             what: "proof_bytes_rec",
             expected: projected_proof_bytes,
@@ -225,7 +217,7 @@ pub fn verify_block_recursive_v1(
         &descriptor,
         relation.as_ref(),
         &binding,
-        &inner.proof_bytes[..actual_proof_bytes],
+        &canonical_proof_bytes,
     )
     .map_err(|err| static_error("verify terminal recursive proof failed", err))?;
     Ok(expected_public.clone())

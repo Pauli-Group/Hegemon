@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
@@ -2829,8 +2830,20 @@ pub fn serialized_stark_inputs_from_witness_for_review(
 }
 
 pub fn decode_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<TxLeafArtifact> {
-    bincode::deserialize(artifact_bytes)
-        .map_err(|err| anyhow::anyhow!("failed to decode tx-leaf artifact: {err}"))
+    let mut cursor = Cursor::new(artifact_bytes);
+    let artifact: TxLeafArtifact = bincode::deserialize_from(&mut cursor)
+        .map_err(|err| anyhow::anyhow!("failed to decode tx-leaf artifact: {err}"))?;
+    ensure!(
+        cursor.position() as usize == artifact_bytes.len(),
+        "tx-leaf artifact has trailing bytes"
+    );
+    let canonical = bincode::serialize(&artifact)
+        .map_err(|err| anyhow::anyhow!("failed to re-encode tx-leaf artifact: {err}"))?;
+    ensure!(
+        canonical == artifact_bytes,
+        "tx-leaf artifact must use canonical serialization"
+    );
+    Ok(artifact)
 }
 
 pub fn decode_native_tx_leaf_artifact_bytes(artifact_bytes: &[u8]) -> Result<NativeTxLeafArtifact> {
@@ -5294,6 +5307,16 @@ mod tests {
     }
 
     #[test]
+    fn tx_leaf_artifact_rejects_trailing_bytes() {
+        let proof = sample_transaction_proof(11);
+        let mut built = build_tx_leaf_artifact_bytes(&proof).unwrap();
+        built.artifact_bytes.push(0);
+        let err = decode_tx_leaf_artifact_bytes(&built.artifact_bytes)
+            .expect_err("trailing tx-leaf artifact bytes accepted");
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
     fn tx_leaf_public_witness_accepts_smallwood_direct_profile_digest() {
         let mut proof = sample_transaction_proof(70);
         proof.backend = TxProofBackend::SmallwoodCandidate;
@@ -5301,6 +5324,7 @@ mod tests {
             &transaction_circuit::smallwood_frontend::SmallwoodCandidateProof {
                 arithmetization: SmallwoodArithmetization::DirectPacked64V1,
                 ark_proof: vec![1, 2, 3, 4],
+                auxiliary_witness_words: Vec::new(),
             },
         )
         .unwrap();
