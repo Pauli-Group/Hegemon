@@ -42,7 +42,7 @@ pub struct SmallwoodNoGrindingProfileV1 {
     pub decs_pow_bits: u32,
 }
 
-pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+pub const LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
     SmallwoodNoGrindingProfileV1 {
         rho: 2,
         nb_opened_evals: 3,
@@ -50,6 +50,18 @@ pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
         opening_pow_bits: 0,
         decs_nb_evals: 32768,
         decs_nb_opened_evals: 24,
+        decs_eta: 3,
+        decs_pow_bits: 0,
+    };
+
+pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 2,
+        nb_opened_evals: 3,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 32768,
+        decs_nb_opened_evals: 23,
         decs_eta: 3,
         decs_pow_bits: 0,
     };
@@ -75,6 +87,26 @@ pub enum SmallwoodArithmetization {
     DirectPacked16CompactBindingsV1,
     DirectPacked32CompactBindingsV1,
     DirectPacked64CompactBindingsSkipInitialMdsV1,
+    DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+}
+
+pub fn smallwood_no_grinding_profile_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> SmallwoodNoGrindingProfileV1 {
+    match arithmetization {
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1
+        }
+        SmallwoodArithmetization::Bridge64V1
+        | SmallwoodArithmetization::DirectPacked64V1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,14 +194,352 @@ pub struct SmallwoodNoGrindingSoundnessReportV1 {
     pub meets_128_bit_floor: bool,
 }
 
-fn serialized_size_v1<T: Serialize>(value: &T) -> Result<usize, TransactionCircuitError> {
-    bincode::serialize(value)
-        .map(|bytes| bytes.len())
-        .map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to serialize smallwood proof component: {err}"
+const SMALLWOOD_PROOF_WIRE_MAGIC_V1: [u8; 4] = *b"SMW1";
+const SMALLWOOD_OPENED_WITNESS_MODE_NONE_V1: u8 = 0;
+const SMALLWOOD_OPENED_WITNESS_MODE_ROW_SCALARS_V1: u8 = 1;
+
+fn push_u8_v1(out: &mut Vec<u8>, value: u8) {
+    out.push(value);
+}
+
+fn push_u16_v1(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32_v1(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u64_v1(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_exact_v1<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    len: usize,
+) -> Result<&'a [u8], TransactionCircuitError> {
+    let end = cursor
+        .checked_add(len)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof cursor overflow",
+        ))?;
+    let slice = bytes
+        .get(*cursor..end)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof underflow",
+        ))?;
+    *cursor = end;
+    Ok(slice)
+}
+
+fn read_u8_v1(bytes: &[u8], cursor: &mut usize) -> Result<u8, TransactionCircuitError> {
+    Ok(*read_exact_v1(bytes, cursor, 1)?.first().ok_or(
+        TransactionCircuitError::ConstraintViolation("smallwood proof missing byte"),
+    )?)
+}
+
+fn read_u16_v1(bytes: &[u8], cursor: &mut usize) -> Result<u16, TransactionCircuitError> {
+    let mut word = [0u8; 2];
+    word.copy_from_slice(read_exact_v1(bytes, cursor, 2)?);
+    Ok(u16::from_le_bytes(word))
+}
+
+fn read_u32_v1(bytes: &[u8], cursor: &mut usize) -> Result<u32, TransactionCircuitError> {
+    let mut word = [0u8; 4];
+    word.copy_from_slice(read_exact_v1(bytes, cursor, 4)?);
+    Ok(u32::from_le_bytes(word))
+}
+
+fn read_u64_v1(bytes: &[u8], cursor: &mut usize) -> Result<u64, TransactionCircuitError> {
+    let mut word = [0u8; 8];
+    word.copy_from_slice(read_exact_v1(bytes, cursor, 8)?);
+    Ok(u64::from_le_bytes(word))
+}
+
+fn shape_u16_v1(matrix: &[Vec<u64>]) -> Result<(u16, u16), TransactionCircuitError> {
+    let rows = u16::try_from(matrix.len()).map_err(|_| {
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix row count exceeds compact wire limit",
+        )
+    })?;
+    let cols = matrix.first().map_or(0usize, |row| row.len());
+    if matrix.iter().any(|row| row.len() != cols) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix row width mismatch",
+        ));
+    }
+    let cols = u16::try_from(cols).map_err(|_| {
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix column count exceeds compact wire limit",
+        )
+    })?;
+    Ok((rows, cols))
+}
+
+fn encoded_matrix_u64_bytes_v1(matrix: &[Vec<u64>]) -> Result<usize, TransactionCircuitError> {
+    let (rows, cols) = shape_u16_v1(matrix)?;
+    Ok(4 + rows as usize * cols as usize * std::mem::size_of::<u64>())
+}
+
+fn encode_matrix_u64_v1(
+    out: &mut Vec<u8>,
+    matrix: &[Vec<u64>],
+) -> Result<(), TransactionCircuitError> {
+    let (rows, cols) = shape_u16_v1(matrix)?;
+    push_u16_v1(out, rows);
+    push_u16_v1(out, cols);
+    for row in matrix {
+        for &value in row {
+            push_u64_v1(out, value);
+        }
+    }
+    Ok(())
+}
+
+fn decode_matrix_u64_v1(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let rows = read_u16_v1(bytes, cursor)? as usize;
+    let cols = read_u16_v1(bytes, cursor)? as usize;
+    let mut out = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        for _ in 0..cols {
+            row.push(read_u64_v1(bytes, cursor)?);
+        }
+        out.push(row);
+    }
+    Ok(out)
+}
+
+fn encoded_auth_paths_bytes_v1(
+    paths: &[Vec<[u8; DIGEST_BYTES]>],
+) -> Result<usize, TransactionCircuitError> {
+    let rows = u16::try_from(paths.len()).map_err(|_| {
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof auth-path count exceeds compact wire limit",
+        )
+    })?;
+    for path in paths {
+        u8::try_from(path.len()).map_err(|_| {
+            TransactionCircuitError::ConstraintViolation(
+                "smallwood proof auth-path length exceeds compact wire limit",
+            )
+        })?;
+    }
+    let total_nodes = paths.iter().map(|path| path.len()).sum::<usize>();
+    Ok(2 + rows as usize + total_nodes * DIGEST_BYTES)
+}
+
+fn encode_auth_paths_v1(
+    out: &mut Vec<u8>,
+    paths: &[Vec<[u8; DIGEST_BYTES]>],
+) -> Result<(), TransactionCircuitError> {
+    let rows = u16::try_from(paths.len()).map_err(|_| {
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood proof auth-path count exceeds compact wire limit",
+        )
+    })?;
+    push_u16_v1(out, rows);
+    for path in paths {
+        push_u8_v1(
+            out,
+            u8::try_from(path.len()).map_err(|_| {
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auth-path length exceeds compact wire limit",
+                )
+            })?,
+        );
+    }
+    for path in paths {
+        for node in path {
+            out.extend_from_slice(node);
+        }
+    }
+    Ok(())
+}
+
+fn decode_auth_paths_v1(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<Vec<Vec<[u8; DIGEST_BYTES]>>, TransactionCircuitError> {
+    let rows = read_u16_v1(bytes, cursor)? as usize;
+    let mut lengths = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        lengths.push(read_u8_v1(bytes, cursor)? as usize);
+    }
+    let mut out = Vec::with_capacity(rows);
+    for len in lengths {
+        let mut path = Vec::with_capacity(len);
+        for _ in 0..len {
+            let mut node = [0u8; DIGEST_BYTES];
+            node.copy_from_slice(read_exact_v1(bytes, cursor, DIGEST_BYTES)?);
+            path.push(node);
+        }
+        out.push(path);
+    }
+    Ok(out)
+}
+
+fn encoded_opened_witness_bytes_v1(
+    opened_witness: &SmallwoodOpenedWitnessBundle,
+) -> Result<usize, TransactionCircuitError> {
+    Ok(match &opened_witness.mode {
+        SmallwoodOpenedWitnessMode::None => 1,
+        SmallwoodOpenedWitnessMode::RowScalars {
+            row_scalars,
+            auxiliary_words,
+            ..
+        } => {
+            let count = u32::try_from(auxiliary_words.len()).map_err(|_| {
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary witness count exceeds compact wire limit",
+                )
+            })?;
+            1 + encoded_matrix_u64_bytes_v1(row_scalars)? + 8 + count as usize * 8
+        }
+    })
+}
+
+fn encode_opened_witness_v1(
+    out: &mut Vec<u8>,
+    opened_witness: &SmallwoodOpenedWitnessBundle,
+) -> Result<(), TransactionCircuitError> {
+    match &opened_witness.mode {
+        SmallwoodOpenedWitnessMode::None => {
+            push_u8_v1(out, SMALLWOOD_OPENED_WITNESS_MODE_NONE_V1);
+        }
+        SmallwoodOpenedWitnessMode::RowScalars {
+            row_scalars,
+            auxiliary_words,
+            auxiliary_limb_count,
+        } => {
+            let aux_count = u32::try_from(auxiliary_words.len()).map_err(|_| {
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary witness count exceeds compact wire limit",
+                )
+            })?;
+            let aux_limb_count = u32::try_from(*auxiliary_limb_count).map_err(|_| {
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary limb count exceeds compact wire limit",
+                )
+            })?;
+            push_u8_v1(out, SMALLWOOD_OPENED_WITNESS_MODE_ROW_SCALARS_V1);
+            encode_matrix_u64_v1(out, row_scalars)?;
+            push_u32_v1(out, aux_count);
+            push_u32_v1(out, aux_limb_count);
+            for &word in auxiliary_words {
+                push_u64_v1(out, word);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_opened_witness_v1(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<SmallwoodOpenedWitnessBundle, TransactionCircuitError> {
+    match read_u8_v1(bytes, cursor)? {
+        SMALLWOOD_OPENED_WITNESS_MODE_NONE_V1 => Ok(SmallwoodOpenedWitnessBundle {
+            mode: SmallwoodOpenedWitnessMode::None,
+        }),
+        SMALLWOOD_OPENED_WITNESS_MODE_ROW_SCALARS_V1 => {
+            let row_scalars = decode_matrix_u64_v1(bytes, cursor)?;
+            let auxiliary_word_count = read_u32_v1(bytes, cursor)? as usize;
+            let auxiliary_limb_count = read_u32_v1(bytes, cursor)? as usize;
+            let mut auxiliary_words = Vec::with_capacity(auxiliary_word_count);
+            for _ in 0..auxiliary_word_count {
+                auxiliary_words.push(read_u64_v1(bytes, cursor)?);
+            }
+            Ok(SmallwoodOpenedWitnessBundle::row_scalars(
+                row_scalars,
+                auxiliary_words,
+                auxiliary_limb_count,
             ))
-        })
+        }
+        _ => Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof opened-witness mode tag mismatch",
+        )),
+    }
+}
+
+fn encode_smallwood_proof_bytes_v1(
+    proof: &SmallwoodProof,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&SMALLWOOD_PROOF_WIRE_MAGIC_V1);
+    out.extend_from_slice(&proof.salt);
+    out.extend_from_slice(&proof.nonce);
+    out.extend_from_slice(&proof.h_piop);
+    encode_matrix_u64_v1(&mut out, &proof.piop.ppol_highs)?;
+    encode_matrix_u64_v1(&mut out, &proof.piop.plin_highs)?;
+    encode_matrix_u64_v1(&mut out, &proof.pcs.rcombi_tails)?;
+    encode_matrix_u64_v1(&mut out, &proof.pcs.subset_evals)?;
+    encode_matrix_u64_v1(&mut out, &proof.pcs.partial_evals)?;
+    encode_auth_paths_v1(&mut out, &proof.pcs.decs.auth_paths)?;
+    encode_matrix_u64_v1(&mut out, &proof.pcs.decs.masking_evals)?;
+    encode_matrix_u64_v1(&mut out, &proof.pcs.decs.high_coeffs)?;
+    encode_opened_witness_v1(&mut out, &proof.opened_witness)?;
+    Ok(out)
+}
+
+fn decode_smallwood_proof_bytes_v1(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodProof, TransactionCircuitError> {
+    let mut cursor = 0usize;
+    let magic = read_exact_v1(
+        proof_bytes,
+        &mut cursor,
+        SMALLWOOD_PROOF_WIRE_MAGIC_V1.len(),
+    )?;
+    if magic != SMALLWOOD_PROOF_WIRE_MAGIC_V1 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof wire magic mismatch",
+        ));
+    }
+    let mut salt = [0u8; SALT_BYTES];
+    salt.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, SALT_BYTES)?);
+    let mut nonce = [0u8; NONCE_BYTES];
+    nonce.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, NONCE_BYTES)?);
+    let mut h_piop = [0u8; DIGEST_BYTES];
+    h_piop.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, DIGEST_BYTES)?);
+    let ppol_highs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let plin_highs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let rcombi_tails = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let subset_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let partial_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let auth_paths = decode_auth_paths_v1(proof_bytes, &mut cursor)?;
+    let masking_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let high_coeffs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let opened_witness = decode_opened_witness_v1(proof_bytes, &mut cursor)?;
+    if cursor != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof trailing bytes",
+        ));
+    }
+    Ok(SmallwoodProof {
+        salt,
+        nonce,
+        h_piop,
+        piop: PiopProof {
+            ppol_highs,
+            plin_highs,
+        },
+        pcs: PcsProof {
+            rcombi_tails,
+            subset_evals,
+            partial_evals,
+            decs: DecsProof {
+                auth_paths,
+                masking_evals,
+                high_coeffs,
+            },
+        },
+        opened_witness,
+    })
 }
 
 impl SmallwoodProofTraceV1 {
@@ -207,6 +577,22 @@ impl SmallwoodProofTraceV1 {
 
     pub fn decs_high_coeffs_v1(&self) -> &[Vec<u64>] {
         &self.pcs.decs.high_coeffs
+    }
+}
+
+impl PcsProof {
+    pub fn partial_evals_mut_v1(&mut self) -> &mut Vec<Vec<u64>> {
+        &mut self.partial_evals
+    }
+
+    pub fn decs_mut_v1(&mut self) -> &mut DecsProof {
+        &mut self.decs
+    }
+}
+
+impl DecsProof {
+    pub fn masking_evals_mut_v1(&mut self) -> &mut Vec<Vec<u64>> {
+        &mut self.masking_evals
     }
 }
 
@@ -565,25 +951,15 @@ impl SmallwoodVerifierTraceV1 {
                 "smallwood verifier trace Merkle section count mismatch",
             ));
         }
-        let expected_path_len = self.proof.pcs.decs.auth_paths.first().map(Vec::len).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "smallwood verifier trace Merkle auth paths missing",
-            ),
-        )?;
-        if expected_path_len == 0 {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "smallwood verifier trace Merkle auth path is empty",
-            ));
-        }
         for idx in 0..opened_count {
             if self.pcs_trace.rows[idx].is_empty() {
                 return Err(TransactionCircuitError::ConstraintViolation(
                     "smallwood verifier trace Merkle row is empty",
                 ));
             }
-            if self.proof.pcs.decs.auth_paths[idx].len() != expected_path_len {
+            if self.proof.pcs.decs.auth_paths[idx].is_empty() {
                 return Err(TransactionCircuitError::ConstraintViolation(
-                    "smallwood verifier trace Merkle auth path length mismatch",
+                    "smallwood verifier trace Merkle auth path is empty",
                 ));
             }
         }
@@ -691,7 +1067,10 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
-        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Ok(()),
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            Ok(())
+        }
     }
 }
 
@@ -833,10 +1212,26 @@ pub(crate) fn prove_candidate(
     witness_values: &[u64],
     binded_data: &[u8],
 ) -> Result<Vec<u8>, TransactionCircuitError> {
-    prove_statement_with_transcript_backend(
+    prove_statement_with_transcript_backend_and_profile(
         statement,
         witness_values,
         binded_data,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        SmallwoodTranscriptBackend::Blake3,
+    )
+}
+
+pub(crate) fn prove_candidate_with_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_values: &[u64],
+    binded_data: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    prove_statement_with_transcript_backend_and_profile(
+        statement,
+        witness_values,
+        binded_data,
+        profile,
         SmallwoodTranscriptBackend::Blake3,
     )
 }
@@ -845,6 +1240,22 @@ pub(crate) fn prove_statement_with_transcript_backend(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_values: &[u64],
     binded_data: &[u8],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    prove_statement_with_transcript_backend_and_profile(
+        statement,
+        witness_values,
+        binded_data,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        transcript_backend,
+    )
+}
+
+pub(crate) fn prove_statement_with_transcript_backend_and_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_values: &[u64],
+    binded_data: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     ensure_row_polynomial_arithmetization(statement)?;
@@ -862,7 +1273,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
             *last = now;
         }
     };
-    let cfg = SmallwoodConfig::new(statement)?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     if trace_enabled {
         eprintln!(
             "[smallwood] cfg rows={} packing={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} projected_proof_bytes={}",
@@ -875,7 +1286,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
             cfg.nb_lvcs_cols,
             serialized_proof_size_hint_with_profile(
                 &cfg,
-                ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+                profile,
                 statement.auxiliary_witness_words().len(),
             )
         );
@@ -886,12 +1297,12 @@ pub(crate) fn prove_statement_with_transcript_backend(
     let witness_polys = witness_values
         .par_chunks_exact(cfg.packing_factor)
         .map(|row_values| {
-            poly_interpolate_random(row_values, &cfg.packing_points, SMALLWOOD_NB_OPENED_EVALS)
+            poly_interpolate_random(row_values, &cfg.packing_points, cfg.nb_opened_evals())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut mpol_ppoly = Vec::with_capacity(SMALLWOOD_RHO);
-    let mut mpol_plin = Vec::with_capacity(SMALLWOOD_RHO);
-    for _ in 0..SMALLWOOD_RHO {
+    let mut mpol_ppoly = Vec::with_capacity(cfg.rho());
+    let mut mpol_plin = Vec::with_capacity(cfg.rho());
+    for _ in 0..cfg.rho() {
         mpol_ppoly.push(random_poly(cfg.mpol_poly_degree)?);
         mpol_plin.push(poly_random_sum_zero(
             &cfg.packing_points,
@@ -923,7 +1334,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
     )?;
     log_stage("piop_run", &mut last_stage);
     let h_piop = hash_piop_transcript(&piop.transcript_words, transcript_backend);
-    let nonce = choose_opening_nonce(&cfg.packing_points, &h_piop, transcript_backend)?;
+    let nonce = choose_opening_nonce(&cfg, &h_piop, transcript_backend)?;
     log_stage("opening_nonce", &mut last_stage);
     let eval_points = xof_piop_opening_points(&nonce, &h_piop, transcript_backend);
     let (pcs_proof, opened_witness) = pcs_open(
@@ -958,11 +1369,7 @@ pub(crate) fn prove_statement_with_transcript_backend(
             auxiliary_witness_limb_count,
         ),
     };
-    let encoded = bincode::serialize(&proof).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to serialize rust smallwood proof: {err}"
-        ))
-    })?;
+    let encoded = encode_smallwood_proof_bytes_v1(&proof)?;
     if trace_enabled {
         eprintln!(
             "[smallwood] serialized proof bytes={} total={:?}",
@@ -978,10 +1385,26 @@ pub(crate) fn verify_candidate(
     binded_data: &[u8],
     proof_bytes: &[u8],
 ) -> Result<(), TransactionCircuitError> {
-    verify_statement_with_transcript_backend(
+    verify_statement_with_transcript_backend_and_profile(
         statement,
         binded_data,
         proof_bytes,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        SmallwoodTranscriptBackend::Blake3,
+    )
+}
+
+pub(crate) fn verify_candidate_with_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<(), TransactionCircuitError> {
+    verify_statement_with_transcript_backend_and_profile(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
         SmallwoodTranscriptBackend::Blake3,
     )
 }
@@ -992,12 +1415,24 @@ pub(crate) fn verify_statement_with_transcript_backend(
     proof_bytes: &[u8],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<(), TransactionCircuitError> {
-    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to deserialize rust smallwood proof: {err}"
-        ))
-    })?;
-    let cfg = SmallwoodConfig::new(statement)?;
+    verify_statement_with_transcript_backend_and_profile(
+        statement,
+        binded_data,
+        proof_bytes,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        transcript_backend,
+    )
+}
+
+pub(crate) fn verify_statement_with_transcript_backend_and_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<(), TransactionCircuitError> {
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     ensure_row_polynomial_arithmetization(statement)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
         TransactionCircuitError::ConstraintViolation(
@@ -1005,14 +1440,19 @@ pub(crate) fn verify_statement_with_transcript_backend(
         ),
     )?;
     let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
-    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS {
+    if row_scalars.len() != cfg.nb_opened_evals() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof opened evaluation count mismatch",
         ));
     }
     validate_proof_shape(&cfg, &proof)?;
     let binded_words = bytes_to_words(binded_data)?;
-    let eval_points = xof_piop_opening_points(&proof.nonce, &proof.h_piop, transcript_backend);
+    let eval_points = xof_piop_opening_points_for_profile(
+        &proof.nonce,
+        &proof.h_piop,
+        profile,
+        transcript_backend,
+    );
     ensure_no_packing_collisions(&cfg.packing_points, &eval_points)?;
     let pcs_transcript = pcs_recompute_transcript(
         &cfg,
@@ -1050,11 +1490,7 @@ pub(crate) fn build_smallwood_verifier_trace_v1(
     proof_bytes: &[u8],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
-    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to deserialize rust smallwood proof: {err}"
-        ))
-    })?;
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
     let cfg = SmallwoodConfig::new(statement)?;
     ensure_row_polynomial_arithmetization(statement)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
@@ -1201,14 +1637,16 @@ pub fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> Smallwood
     }
 }
 
+pub fn encode_smallwood_proof_trace_v1(
+    trace: &SmallwoodProofTraceV1,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    encode_smallwood_proof_bytes_v1(&smallwood_proof_from_trace_v1(trace))
+}
+
 pub fn decode_smallwood_proof_trace_v1(
     proof_bytes: &[u8],
 ) -> Result<SmallwoodProofTraceV1, TransactionCircuitError> {
-    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to deserialize rust smallwood proof: {err}"
-        ))
-    })?;
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
         TransactionCircuitError::ConstraintViolation(
             "smallwood proof missing row-scalar opened witness data",
@@ -1233,23 +1671,20 @@ pub fn decode_smallwood_proof_trace_v1(
 pub fn report_smallwood_proof_size_v1(
     proof_bytes: &[u8],
 ) -> Result<SmallwoodProofSizeReportV1, TransactionCircuitError> {
-    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to deserialize rust smallwood proof: {err}"
-        ))
-    })?;
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
     let total_bytes = proof_bytes.len();
-    let salt_bytes = serialized_size_v1(&proof.salt)?;
-    let nonce_bytes = serialized_size_v1(&proof.nonce)?;
-    let h_piop_bytes = serialized_size_v1(&proof.h_piop)?;
-    let piop_bytes = serialized_size_v1(&proof.piop)?;
-    let pcs_rcombi_tails_bytes = serialized_size_v1(&proof.pcs.rcombi_tails)?;
-    let pcs_subset_evals_bytes = serialized_size_v1(&proof.pcs.subset_evals)?;
-    let pcs_partial_evals_bytes = serialized_size_v1(&proof.pcs.partial_evals)?;
-    let decs_auth_paths_bytes = serialized_size_v1(&proof.pcs.decs.auth_paths)?;
-    let decs_masking_evals_bytes = serialized_size_v1(&proof.pcs.decs.masking_evals)?;
-    let decs_high_coeffs_bytes = serialized_size_v1(&proof.pcs.decs.high_coeffs)?;
-    let opened_witness_bytes = serialized_size_v1(&proof.opened_witness)?;
+    let salt_bytes = SMALLWOOD_PROOF_WIRE_MAGIC_V1.len() + proof.salt.len();
+    let nonce_bytes = proof.nonce.len();
+    let h_piop_bytes = proof.h_piop.len();
+    let piop_bytes = encoded_matrix_u64_bytes_v1(&proof.piop.ppol_highs)?
+        + encoded_matrix_u64_bytes_v1(&proof.piop.plin_highs)?;
+    let pcs_rcombi_tails_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.rcombi_tails)?;
+    let pcs_subset_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.subset_evals)?;
+    let pcs_partial_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.partial_evals)?;
+    let decs_auth_paths_bytes = encoded_auth_paths_bytes_v1(&proof.pcs.decs.auth_paths)?;
+    let decs_masking_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.decs.masking_evals)?;
+    let decs_high_coeffs_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.decs.high_coeffs)?;
+    let opened_witness_bytes = encoded_opened_witness_bytes_v1(&proof.opened_witness)?;
     let transcript_bytes = salt_bytes + nonce_bytes + h_piop_bytes + piop_bytes;
     let commitment_bytes = decs_auth_paths_bytes;
     let opened_values_bytes = pcs_subset_evals_bytes + pcs_partial_evals_bytes;
@@ -1371,11 +1806,11 @@ impl StructuralIdentityWitnessStatement {
                 "smallwood structural shape requires non-zero row_count and packing_factor",
             ));
         }
-        let witness_size = row_count
-            .checked_mul(packing_factor)
-            .ok_or(TransactionCircuitError::ConstraintViolation(
+        let witness_size = row_count.checked_mul(packing_factor).ok_or(
+            TransactionCircuitError::ConstraintViolation(
                 "smallwood structural witness size overflow",
-            ))?;
+            ),
+        )?;
         let mut linear_offsets = Vec::with_capacity(witness_size + 1);
         let mut linear_indices = Vec::with_capacity(witness_size);
         let mut linear_coefficients = Vec::with_capacity(witness_size);
@@ -1415,11 +1850,11 @@ impl StructuralIdentityWitnessStatement {
             constraint_count,
             auxiliary_words.len(),
         )?;
-        let witness_size = row_count
-            .checked_mul(packing_factor)
-            .ok_or(TransactionCircuitError::ConstraintViolation(
+        let witness_size = row_count.checked_mul(packing_factor).ok_or(
+            TransactionCircuitError::ConstraintViolation(
                 "smallwood structural witness size overflow",
-            ))?;
+            ),
+        )?;
         if linear_targets.len() != witness_size {
             return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
                 "smallwood structural identity target length {} does not match witness size {witness_size}",
@@ -1978,7 +2413,7 @@ pub fn validate_proof_shape(
             "smallwood bridge proof opened witness mode mismatch",
         ),
     )?;
-    if row_scalars.len() != SMALLWOOD_NB_OPENED_EVALS
+    if row_scalars.len() != cfg.nb_opened_evals()
         || row_scalars.iter().any(|row| row.len() != cfg.nb_polys)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -2000,18 +2435,18 @@ pub fn validate_proof_shape(
             "smallwood auxiliary witness padding must be zero",
         ));
     }
-    if proof.piop.ppol_highs.len() != SMALLWOOD_RHO
+    if proof.piop.ppol_highs.len() != cfg.rho()
         || proof
             .piop
             .ppol_highs
             .iter()
-            .any(|poly| poly.len() != cfg.mpol_poly_degree + 1 - SMALLWOOD_NB_OPENED_EVALS)
-        || proof.piop.plin_highs.len() != SMALLWOOD_RHO
+            .any(|poly| poly.len() != cfg.mpol_poly_degree + 1 - cfg.nb_opened_evals())
+        || proof.piop.plin_highs.len() != cfg.rho()
         || proof
             .piop
             .plin_highs
             .iter()
-            .any(|poly| poly.len() != cfg.mlin_poly_degree + 1 - (SMALLWOOD_NB_OPENED_EVALS + 1))
+            .any(|poly| poly.len() != cfg.mlin_poly_degree + 1 - (cfg.nb_opened_evals() + 1))
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood piop proof shape mismatch",
@@ -2022,34 +2457,34 @@ pub fn validate_proof_shape(
             .pcs
             .rcombi_tails
             .iter()
-            .any(|tail| tail.len() != SMALLWOOD_DECS_NB_OPENED_EVALS)
-        || proof.pcs.subset_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+            .any(|tail| tail.len() != cfg.decs_nb_opened_evals())
+        || proof.pcs.subset_evals.len() != cfg.decs_nb_opened_evals()
         || proof
             .pcs
             .subset_evals
             .iter()
             .any(|row| row.len() != cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi)
-        || proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
+        || proof.pcs.partial_evals.len() != cfg.nb_opened_evals()
         || proof
             .pcs
             .partial_evals
             .iter()
             .any(|row| row.len() != cfg.nb_unstacked_cols - cfg.nb_polys)
-        || proof.pcs.decs.auth_paths.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+        || proof.pcs.decs.auth_paths.len() != cfg.decs_nb_opened_evals()
         || proof
             .pcs
             .decs
             .auth_paths
             .iter()
-            .any(|path| path.len() != SMALLWOOD_DECS_NB_EVALS.ilog2() as usize)
-        || proof.pcs.decs.masking_evals.len() != SMALLWOOD_DECS_NB_OPENED_EVALS
+            .any(|path| path.is_empty() || path.len() > cfg.decs_nb_evals().ilog2() as usize)
+        || proof.pcs.decs.masking_evals.len() != cfg.decs_nb_opened_evals()
         || proof
             .pcs
             .decs
             .masking_evals
             .iter()
-            .any(|row| row.len() != SMALLWOOD_DECS_ETA)
-        || proof.pcs.decs.high_coeffs.len() != SMALLWOOD_DECS_ETA
+            .any(|row| row.len() != cfg.decs_eta())
+        || proof.pcs.decs.high_coeffs.len() != cfg.decs_eta()
         || proof
             .pcs
             .decs
@@ -2072,7 +2507,9 @@ pub(crate) fn projected_candidate_proof_bytes(
     Ok(serialized_proof_size_hint_with_profile(
         &cfg,
         cfg.profile,
-        statement.auxiliary_witness_words().len(),
+        statement
+            .auxiliary_witness_limb_count()
+            .unwrap_or(statement.auxiliary_witness_words().len()),
     ))
 }
 
@@ -2085,23 +2522,17 @@ pub(crate) fn projected_candidate_proof_bytes_with_profile(
     Ok(serialized_proof_size_hint_with_profile(
         &cfg,
         profile,
-        statement.auxiliary_witness_words().len(),
+        statement
+            .auxiliary_witness_limb_count()
+            .unwrap_or(statement.auxiliary_witness_words().len()),
     ))
 }
 
 pub(crate) fn ensure_canonical_smallwood_proof_bytes(
     proof_bytes: &[u8],
 ) -> Result<(), TransactionCircuitError> {
-    let proof: SmallwoodProof = bincode::deserialize(proof_bytes).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to deserialize rust smallwood proof: {err}"
-        ))
-    })?;
-    let roundtrip = bincode::serialize(&proof).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to reserialize rust smallwood proof: {err}"
-        ))
-    })?;
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    let roundtrip = encode_smallwood_proof_bytes_v1(&proof)?;
     if roundtrip != proof_bytes {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof bytes must use canonical serializer",
@@ -2266,6 +2697,41 @@ impl SmallwoodConfig {
     pub fn nb_lvcs_opened_combi_v1(&self) -> usize {
         self.nb_lvcs_opened_combi
     }
+
+    #[inline]
+    fn rho(&self) -> usize {
+        self.profile.rho
+    }
+
+    #[inline]
+    fn nb_opened_evals(&self) -> usize {
+        self.profile.nb_opened_evals
+    }
+
+    #[inline]
+    fn beta(&self) -> usize {
+        self.profile.beta
+    }
+
+    #[inline]
+    fn decs_nb_evals(&self) -> usize {
+        self.profile.decs_nb_evals
+    }
+
+    #[inline]
+    fn decs_nb_opened_evals(&self) -> usize {
+        self.profile.decs_nb_opened_evals
+    }
+
+    #[inline]
+    fn decs_eta(&self) -> usize {
+        self.profile.decs_eta
+    }
+
+    #[inline]
+    fn decs_pow_bits(&self) -> u32 {
+        self.profile.decs_pow_bits
+    }
 }
 
 fn piop_run(
@@ -2307,9 +2773,9 @@ fn piop_run(
     log_stage("constraint_linear_polynomials", &mut last);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
-    let mut ppol_highs = Vec::with_capacity(SMALLWOOD_RHO);
-    let mut plin_highs = Vec::with_capacity(SMALLWOOD_RHO);
-    for rep in 0..SMALLWOOD_RHO {
+    let mut ppol_highs = Vec::with_capacity(cfg.rho());
+    let mut plin_highs = Vec::with_capacity(cfg.rho());
+    for rep in 0..cfg.rho() {
         let mut out_ppol = vec![0u64; cfg.mpol_poly_degree + cfg.packing_factor + 1];
         for (poly, gamma) in in_ppol.iter().zip(gammas[rep].iter()) {
             poly_add_assign_scaled(&mut out_ppol, poly, *gamma);
@@ -2324,8 +2790,8 @@ fn piop_run(
 
         transcript_words.extend_from_slice(&out_ppol);
         transcript_words.extend_from_slice(&out_plin[1..]);
-        ppol_highs.push(out_ppol[SMALLWOOD_NB_OPENED_EVALS..].to_vec());
-        plin_highs.push(out_plin[(SMALLWOOD_NB_OPENED_EVALS + 1)..].to_vec());
+        ppol_highs.push(out_ppol[cfg.nb_opened_evals()..].to_vec());
+        plin_highs.push(out_plin[(cfg.nb_opened_evals() + 1)..].to_vec());
     }
     log_stage("transcript_assembly", &mut last);
     Ok(PiopRunOutput {
@@ -2355,11 +2821,11 @@ pub fn piop_recompute_transcript(
         .collect::<Vec<_>>();
     let meval_ppoly = row_scalars
         .iter()
-        .map(|row| row[cfg.row_count..cfg.row_count + SMALLWOOD_RHO].to_vec())
+        .map(|row| row[cfg.row_count..cfg.row_count + cfg.rho()].to_vec())
         .collect::<Vec<_>>();
     let meval_plin = row_scalars
         .iter()
-        .map(|row| row[cfg.row_count + SMALLWOOD_RHO..cfg.row_count + 2 * SMALLWOOD_RHO].to_vec())
+        .map(|row| row[cfg.row_count + cfg.rho()..cfg.row_count + 2 * cfg.rho()].to_vec())
         .collect::<Vec<_>>();
     let in_epol =
         get_constraint_polynomial_evals(cfg, statement, eval_points, &wit_evals, auxiliary_words)?;
@@ -2371,7 +2837,7 @@ pub fn piop_recompute_transcript(
         &wit_evals,
         lagrange_basis.as_ref(),
     )?;
-    let linear_targets = effective_linear_targets(statement, auxiliary_words);
+    let linear_targets = effective_linear_targets(cfg, statement, auxiliary_words);
     let mut transcript_words = Vec::new();
     transcript_words.extend(digest_to_words(&hash_fpp));
     let eval_points_with_zero = {
@@ -2379,14 +2845,14 @@ pub fn piop_recompute_transcript(
         v.push(0);
         v
     };
-    let lag = poly_set_lagrange(&eval_points_with_zero, SMALLWOOD_NB_OPENED_EVALS);
+    let lag = poly_set_lagrange(&eval_points_with_zero, cfg.nb_opened_evals());
     let mut correction_factor = 0u64;
     for num in 0..cfg.packing_factor {
         correction_factor = add_mod(correction_factor, poly_eval(&lag, cfg.packing_points[num]));
     }
-    for rep in 0..SMALLWOOD_RHO {
-        let mut out_epol = vec![0u64; SMALLWOOD_NB_OPENED_EVALS];
-        for j in 0..SMALLWOOD_NB_OPENED_EVALS {
+    for rep in 0..cfg.rho() {
+        let mut out_epol = vec![0u64; cfg.nb_opened_evals()];
+        for j in 0..cfg.nb_opened_evals() {
             let mut acc = 0u64;
             for num in 0..cfg.constraint_count {
                 acc = add_mod(acc, mul_mod(in_epol[j][num], gammas[rep][num]));
@@ -2405,15 +2871,15 @@ pub fn piop_recompute_transcript(
             cfg.mpol_poly_degree,
         )?;
 
-        let mut out_elin = vec![0u64; SMALLWOOD_NB_OPENED_EVALS + 1];
-        for j in 0..SMALLWOOD_NB_OPENED_EVALS {
+        let mut out_elin = vec![0u64; cfg.nb_opened_evals() + 1];
+        for j in 0..cfg.nb_opened_evals() {
             let mut acc = 0u64;
             for num in 0..cfg.linear_constraint_count {
                 acc = add_mod(acc, mul_mod(in_elin[j][num], gammas[rep][num]));
             }
             out_elin[j] = add_mod(acc, meval_plin[j][rep]);
         }
-        let mut out_plin = if cfg.mlin_poly_degree > SMALLWOOD_NB_OPENED_EVALS {
+        let mut out_plin = if cfg.mlin_poly_degree > cfg.nb_opened_evals() {
             poly_restore(
                 &proof.plin_highs[rep],
                 &out_elin,
@@ -2483,7 +2949,7 @@ fn pcs_commit(
             ind += 1;
         }
         if width > 1 {
-            for open_idx in 0..SMALLWOOD_NB_OPENED_EVALS {
+            for open_idx in 0..cfg.nb_opened_evals() {
                 let rnd = random_vec(width - 1)?;
                 let target_row = cfg.packing_factor + open_idx;
                 rows[target_row][offset..offset + width - 1].copy_from_slice(&rnd);
@@ -2594,9 +3060,9 @@ fn pcs_recompute_transcript(
         transcript_backend,
     );
     let (decs_leaf_indexes, _decs_nonce) = xof_decs_opening(
-        SMALLWOOD_DECS_NB_EVALS,
-        SMALLWOOD_DECS_NB_OPENED_EVALS,
-        SMALLWOOD_DECS_POW_BITS,
+        cfg.decs_nb_evals(),
+        cfg.decs_nb_opened_evals(),
+        cfg.decs_pow_bits(),
         &decs_trans_hash,
         transcript_backend,
     )?;
@@ -2664,7 +3130,7 @@ fn pcs_build_opened_evaluations(
             r_to_mu = mul_mod(r_to_mu, eval_point);
         }
         let mut num_col = 0usize;
-        let mut num_combi = SMALLWOOD_BETA * j;
+        let mut num_combi = cfg.beta() * j;
         let mut ind = 0usize;
         for (k, row_scalar) in row_scalars[j].iter_mut().enumerate().take(cfg.nb_polys) {
             let mut acc = 0u64;
@@ -2735,8 +3201,8 @@ pub fn pcs_reconstruct_combi_heads(
             poly_ind += cfg.width[k];
         }
         debug_assert_eq!(partial_ind, cfg.nb_unstacked_cols - cfg.nb_polys);
-        for i in 0..SMALLWOOD_BETA {
-            let num_combi = j * SMALLWOOD_BETA + i;
+        for i in 0..cfg.beta() {
+            let num_combi = j * cfg.beta() + i;
             let offset = i * cfg.nb_lvcs_cols;
             combi_heads[num_combi].fill(0);
             if offset < cfg.nb_unstacked_cols {
@@ -2813,7 +3279,7 @@ fn get_constraint_linear_polynomials_batched(
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let out_degree = cfg.wit_poly_degree + (cfg.packing_factor - 1);
     if statement.linear_constraint_form() == SmallwoodLinearConstraintForm::IdentityWitness {
-        return (0..SMALLWOOD_RHO)
+        return (0..cfg.rho())
             .into_par_iter()
             .map(|rep| {
                 let mut tmp_out = vec![0u64; out_degree + 1];
@@ -2845,7 +3311,7 @@ fn get_constraint_linear_polynomials_batched(
             })
             .collect::<Result<Vec<_>, _>>();
     }
-    (0..SMALLWOOD_RHO)
+    (0..cfg.rho())
         .into_par_iter()
         .map(|rep| {
             let mut aggregated = vec![0u64; cfg.witness_size];
@@ -2959,27 +3425,58 @@ fn linear_targets_as_field(statement: &(dyn SmallwoodConstraintAdapter + Sync)) 
         .collect()
 }
 
-fn effective_linear_targets(
+fn adjusted_linear_targets_with_auxiliary(
+    cfg: &SmallwoodConfig,
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     auxiliary_words: &[u64],
 ) -> Vec<u64> {
+    let mut targets = linear_targets_as_field(statement);
     if auxiliary_words.is_empty() {
-        linear_targets_as_field(statement)
-    } else {
-        auxiliary_words.iter().copied().map(canon).collect()
+        return targets;
     }
+    for (check, target) in targets
+        .iter_mut()
+        .enumerate()
+        .take(cfg.linear_constraint_count)
+    {
+        let start = statement.linear_constraint_offsets()[check] as usize;
+        let end = statement.linear_constraint_offsets()[check + 1] as usize;
+        let mut adjustment = 0u64;
+        for term_idx in start..end {
+            let coeff = statement.linear_constraint_coefficients()[term_idx];
+            let idx = statement.linear_constraint_indices()[term_idx] as usize;
+            if coeff == 0 || idx < cfg.witness_size {
+                continue;
+            }
+            let aux_idx = idx - cfg.witness_size;
+            if aux_idx >= auxiliary_words.len() {
+                continue;
+            }
+            adjustment = add_mod(adjustment, mul_mod(coeff, auxiliary_words[aux_idx]));
+        }
+        *target = sub_mod(*target, adjustment);
+    }
+    targets
+}
+
+fn effective_linear_targets(
+    cfg: &SmallwoodConfig,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    auxiliary_words: &[u64],
+) -> Vec<u64> {
+    adjusted_linear_targets_with_auxiliary(cfg, statement, auxiliary_words)
 }
 
 pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs: &mut [Vec<u64>]) {
-    let m = cfg.packing_factor + SMALLWOOD_NB_OPENED_EVALS;
+    let m = cfg.packing_factor + cfg.nb_opened_evals();
     for (j, &r) in eval_points.iter().enumerate() {
         let mut powers = vec![0u64; m];
         powers[0] = 1;
         for k in 1..m {
             powers[k] = mul_mod(powers[k - 1], r);
         }
-        for k in 0..SMALLWOOD_BETA {
-            let row = &mut coeffs[j * SMALLWOOD_BETA + k];
+        for k in 0..cfg.beta() {
+            let row = &mut coeffs[j * cfg.beta() + k];
             row.fill(0);
             let start = m * k;
             row[start..start + m].copy_from_slice(&powers);
@@ -3008,10 +3505,10 @@ fn lvcs_commit(
         }
     };
     let mut extended_rows =
-        vec![vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS]; cfg.nb_lvcs_rows];
+        vec![vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()]; cfg.nb_lvcs_rows];
     for row in 0..cfg.nb_lvcs_rows {
         extended_rows[row][..cfg.nb_lvcs_cols].copy_from_slice(&rows[row]);
-        let rnd = random_vec(SMALLWOOD_DECS_NB_OPENED_EVALS)?;
+        let rnd = random_vec(cfg.decs_nb_opened_evals())?;
         extended_rows[row][cfg.nb_lvcs_cols..].copy_from_slice(&rnd);
     }
     log_stage("extend_rows", &mut last);
@@ -3021,7 +3518,9 @@ fn lvcs_commit(
         .collect::<Vec<_>>();
     let decs_key = decs_commit(
         cfg.nb_lvcs_rows,
-        cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
+        cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
+        cfg.decs_eta(),
+        cfg.decs_nb_evals(),
         &rotated_rows,
         salt,
         transcript_backend,
@@ -3040,17 +3539,15 @@ fn lvcs_open(
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<(Vec<Vec<u64>>, Vec<Vec<u64>>, Vec<Vec<u64>>, DecsProof), TransactionCircuitError> {
-    let mut extended_combis = vec![
-        vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS];
-        cfg.nb_lvcs_opened_combi
-    ];
+    let mut extended_combis =
+        vec![vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()]; cfg.nb_lvcs_opened_combi];
     mat_mul(
         &mut extended_combis,
         coeffs,
         &key.extended_rows,
         cfg.nb_lvcs_opened_combi,
         cfg.nb_lvcs_rows,
-        cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS,
+        cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals(),
     );
     let mut combi_heads = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     let mut rcombi_tails = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
@@ -3061,9 +3558,9 @@ fn lvcs_open(
     let trans_hash =
         hash_challenge_opening_decs(cfg, &combi_heads, h_piop, &rcombi_tails, transcript_backend);
     let (leaves_indexes, nonce) = xof_decs_opening(
-        SMALLWOOD_DECS_NB_EVALS,
-        SMALLWOOD_DECS_NB_OPENED_EVALS,
-        SMALLWOOD_DECS_POW_BITS,
+        cfg.decs_nb_evals(),
+        cfg.decs_nb_opened_evals(),
+        cfg.decs_pow_bits(),
         &trans_hash,
         transcript_backend,
     )?;
@@ -3071,21 +3568,20 @@ fn lvcs_open(
         .iter()
         .map(|&idx| idx as u64)
         .collect::<Vec<_>>();
-    let mut evals = vec![vec![0u64; cfg.nb_lvcs_rows]; SMALLWOOD_DECS_NB_OPENED_EVALS];
+    let mut evals = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.decs_nb_opened_evals()];
     let decs_proof = decs_open(
         cfg.nb_lvcs_rows,
-        cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
+        cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
+        cfg.decs_nb_opened_evals(),
         &key.decs_key,
         &eval_points,
         &mut evals,
         nonce,
         transcript_backend,
     )?;
-    let mut subset_evals = vec![
-        vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
-        SMALLWOOD_DECS_NB_OPENED_EVALS
-    ];
-    for j in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
+    let mut subset_evals =
+        vec![vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi]; cfg.decs_nb_opened_evals()];
+    for j in 0..cfg.decs_nb_opened_evals() {
         let mut ind = 0usize;
         let mut pos = 0usize;
         for (k, eval) in evals[j].iter().enumerate().take(cfg.nb_lvcs_rows) {
@@ -3109,10 +3605,8 @@ pub fn lvcs_recompute_rows(
     subset_evals: &[Vec<u64>],
     eval_points: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
-    let mut extended_combis = vec![
-        vec![0u64; cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS];
-        cfg.nb_lvcs_opened_combi
-    ];
+    let mut extended_combis =
+        vec![vec![0u64; cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals()]; cfg.nb_lvcs_opened_combi];
     for k in 0..cfg.nb_lvcs_opened_combi {
         extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
         extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&rcombi_tails[k]);
@@ -3166,6 +3660,8 @@ pub fn lvcs_recompute_rows(
 fn decs_commit(
     nb_polys: usize,
     poly_degree: usize,
+    decs_eta: usize,
+    decs_nb_evals: usize,
     initial_domain_evals: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
@@ -3184,12 +3680,11 @@ fn decs_commit(
             *last = now;
         }
     };
-    let masking_polys = (0..SMALLWOOD_DECS_ETA)
+    let masking_polys = (0..decs_eta)
         .map(|_| random_poly(poly_degree))
         .collect::<Result<Vec<_>, _>>()?;
     log_stage("masking_polys", &mut last);
-    let mut committed_domain_evals =
-        vec![vec![0u64; SMALLWOOD_DECS_NB_EVALS]; initial_domain_evals.len()];
+    let mut committed_domain_evals = vec![vec![0u64; decs_nb_evals]; initial_domain_evals.len()];
     committed_domain_evals
         .par_iter_mut()
         .zip(initial_domain_evals.par_iter())
@@ -3199,7 +3694,7 @@ fn decs_commit(
                 extend_consecutive_evals_into(evals, out, work, diffs);
             },
         );
-    let mut masking_domain_evals = vec![vec![0u64; SMALLWOOD_DECS_NB_EVALS]; masking_polys.len()];
+    let mut masking_domain_evals = vec![vec![0u64; decs_nb_evals]; masking_polys.len()];
     masking_domain_evals
         .par_iter_mut()
         .zip(masking_polys.par_iter())
@@ -3211,8 +3706,8 @@ fn decs_commit(
         );
     log_stage("domain_evals", &mut last);
     let salt_words = bytes_to_words_unchecked(salt);
-    let mut tree_levels = vec![vec![[0u8; DIGEST_BYTES]; SMALLWOOD_DECS_NB_EVALS]];
-    tree_levels[0] = (0..SMALLWOOD_DECS_NB_EVALS)
+    let mut tree_levels = vec![vec![[0u8; DIGEST_BYTES]; decs_nb_evals]];
+    tree_levels[0] = (0..decs_nb_evals)
         .into_par_iter()
         .map(|leaf_idx| {
             hash_merkle_leave_from_tables(
@@ -3228,15 +3723,15 @@ fn decs_commit(
     let root = merkle_build_levels(&mut tree_levels, transcript_backend);
     log_stage("merkle_tree", &mut last);
     let hash_mt = hash_merkle_root(salt, &root, transcript_backend);
-    let gamma_all = derive_decs_challenge(nb_polys, &hash_mt, transcript_backend);
+    let gamma_all = derive_decs_challenge(nb_polys, decs_eta, &hash_mt, transcript_backend);
     log_stage("challenge", &mut last);
     let initial_len = poly_degree + 1;
-    let mut combined_domain_evals = vec![vec![0u64; initial_len]; SMALLWOOD_DECS_ETA];
+    let mut combined_domain_evals = vec![vec![0u64; initial_len]; decs_eta];
     mat_mul(
         &mut combined_domain_evals,
         &gamma_all,
         initial_domain_evals,
-        SMALLWOOD_DECS_ETA,
+        decs_eta,
         nb_polys,
         initial_len,
     );
@@ -3261,6 +3756,7 @@ fn decs_commit(
 fn decs_open(
     nb_polys: usize,
     poly_degree: usize,
+    decs_nb_opened_evals: usize,
     key: &DecsKey,
     eval_points: &[u64],
     evals_out: &mut [Vec<u64>],
@@ -3268,7 +3764,7 @@ fn decs_open(
     _transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<DecsProof, TransactionCircuitError> {
     let indices = eval_points.iter().map(|&x| x as usize).collect::<Vec<_>>();
-    let mut auth_paths = Vec::with_capacity(indices.len());
+    let auth_paths = compact_merkle_auth_paths(&key.tree_levels, &indices);
     let mut masking_evals = Vec::with_capacity(indices.len());
     for (j, &idx) in indices.iter().enumerate() {
         evals_out[j] = key
@@ -3282,12 +3778,11 @@ fn decs_open(
                 .map(|poly| poly[idx])
                 .collect::<Vec<_>>(),
         );
-        auth_paths.push(merkle_auth_path(&key.tree_levels, idx));
     }
     let high_coeffs = key
         .dec_polys
         .iter()
-        .map(|poly| poly[SMALLWOOD_DECS_NB_OPENED_EVALS..].to_vec())
+        .map(|poly| poly[decs_nb_opened_evals..].to_vec())
         .collect::<Vec<_>>();
     let _ = (nb_polys, poly_degree, nonce);
     Ok(DecsProof {
@@ -3305,30 +3800,110 @@ pub fn decs_recompute_root(
     proof: &DecsProof,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
-    let mut root = None;
+    let depth = cfg.decs_nb_evals().ilog2() as usize;
+    let expected_lengths = expected_compact_merkle_auth_path_lengths(
+        &eval_points
+            .iter()
+            .map(|&point| point as usize)
+            .collect::<Vec<_>>(),
+        depth,
+    );
+    if proof.auth_paths.len() != expected_lengths.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood decs auth path count mismatch",
+        ));
+    }
+    let mut current_hashes = Vec::with_capacity(eval_points.len());
+    let mut current_indices = Vec::with_capacity(eval_points.len());
+    let mut auth_path_cursors = vec![0usize; eval_points.len()];
     for j in 0..eval_points.len() {
+        if proof.auth_paths[j].len() != expected_lengths[j] {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs compact auth path length mismatch",
+            ));
+        }
         let mut leaf_evals = evals[j].clone();
         leaf_evals.extend_from_slice(&proof.masking_evals[j]);
-        let leaf = hash_merkle_leave(cfg.nb_lvcs_rows, &leaf_evals, salt, transcript_backend);
-        let computed = merkle_compute_root(
-            eval_points[j] as usize,
-            &leaf,
-            &proof.auth_paths[j],
+        current_hashes.push(hash_merkle_leave(
+            cfg.nb_lvcs_rows,
+            &leaf_evals,
+            salt,
             transcript_backend,
-        );
-        match root {
-            Some(current) if current != computed => {
-                return Err(TransactionCircuitError::ConstraintViolation(
-                    "smallwood decs root mismatch across opened leaves",
-                ));
+        ));
+        current_indices.push(eval_points[j] as usize);
+    }
+    for _level in 0..depth {
+        let mut level_hashes = BTreeMap::new();
+        for (&index, &hash) in current_indices.iter().zip(current_hashes.iter()) {
+            match level_hashes.insert(index, hash) {
+                Some(existing) if existing != hash => {
+                    return Err(TransactionCircuitError::ConstraintViolation(
+                        "smallwood decs duplicate subtree hash mismatch",
+                    ));
+                }
+                _ => {}
             }
-            None => root = Some(computed),
-            _ => {}
+        }
+        let mut next_hashes = Vec::with_capacity(current_hashes.len());
+        let mut next_indices = Vec::with_capacity(current_indices.len());
+        for j in 0..current_indices.len() {
+            let index = current_indices[j];
+            let sibling_index = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
+            let sibling_hash = if let Some(hash) = level_hashes.get(&sibling_index) {
+                *hash
+            } else {
+                let cursor = auth_path_cursors[j];
+                let hash = proof.auth_paths[j].get(cursor).copied().ok_or(
+                    TransactionCircuitError::ConstraintViolation(
+                        "smallwood decs compact auth path underflow",
+                    ),
+                )?;
+                auth_path_cursors[j] += 1;
+                hash
+            };
+            let parent = hash_merkle_children(
+                if index.is_multiple_of(2) {
+                    &current_hashes[j]
+                } else {
+                    &sibling_hash
+                },
+                if index.is_multiple_of(2) {
+                    &sibling_hash
+                } else {
+                    &current_hashes[j]
+                },
+                transcript_backend,
+            );
+            next_hashes.push(parent);
+            next_indices.push(index / 2);
+        }
+        current_hashes = next_hashes;
+        current_indices = next_indices;
+    }
+    for (cursor, path) in auth_path_cursors.iter().zip(proof.auth_paths.iter()) {
+        if *cursor != path.len() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs compact auth path overflow",
+            ));
         }
     }
-    root.ok_or(TransactionCircuitError::ConstraintViolation(
-        "smallwood decs root recomputation missing",
-    ))
+    let root =
+        current_hashes
+            .first()
+            .copied()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood decs root recomputation missing",
+            ))?;
+    if current_hashes.iter().any(|hash| *hash != root) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood decs root mismatch across opened leaves",
+        ));
+    }
+    Ok(root)
 }
 
 pub fn decs_commitment_transcript(
@@ -3341,12 +3916,17 @@ pub fn decs_commitment_transcript(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let hash_mt = hash_merkle_root(salt, root_words, transcript_backend);
-    let gamma_all = derive_decs_challenge(cfg.nb_lvcs_rows, &hash_mt, transcript_backend);
+    let gamma_all = derive_decs_challenge(
+        cfg.nb_lvcs_rows,
+        cfg.decs_eta(),
+        &hash_mt,
+        transcript_backend,
+    );
     let mut transcript = Vec::new();
     transcript.extend(digest_to_words(&hash_mt));
-    for (k, gamma_row) in gamma_all.iter().enumerate().take(SMALLWOOD_DECS_ETA) {
-        let mut dec_evals = vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS];
-        for i in 0..SMALLWOOD_DECS_NB_OPENED_EVALS {
+    for (k, gamma_row) in gamma_all.iter().enumerate().take(cfg.decs_eta()) {
+        let mut dec_evals = vec![0u64; cfg.decs_nb_opened_evals()];
+        for i in 0..cfg.decs_nb_opened_evals() {
             let mut acc = 0u64;
             for j in 0..cfg.nb_lvcs_rows {
                 acc = add_mod(acc, mul_mod(evals[i][j], gamma_row[j]));
@@ -3358,7 +3938,7 @@ pub fn decs_commitment_transcript(
             &proof.high_coeffs[k],
             &dec_evals,
             eval_points,
-            cfg.nb_lvcs_cols + SMALLWOOD_DECS_NB_OPENED_EVALS - 1,
+            cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
         )?;
         transcript.extend_from_slice(&dec_poly);
     }
@@ -3462,6 +4042,7 @@ fn hash_merkle_root(
 
 fn derive_decs_challenge(
     nb_polys: usize,
+    decs_eta: usize,
     hash_mt: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Vec<Vec<u64>> {
@@ -3469,10 +4050,10 @@ fn derive_decs_challenge(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &digest_to_words(hash_mt),
-        SMALLWOOD_DECS_ETA,
+        decs_eta,
     );
-    let mut out = vec![vec![0u64; nb_polys]; SMALLWOOD_DECS_ETA];
-    for k in 0..SMALLWOOD_DECS_ETA {
+    let mut out = vec![vec![0u64; nb_polys]; decs_eta];
+    for k in 0..decs_eta {
         out[k][0] = gamma_words[k];
         for j in 1..nb_polys {
             out[k][j] = mul_mod(out[k][j - 1], gamma_words[k]);
@@ -3487,48 +4068,50 @@ pub fn derive_gamma_prime(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Vec<Vec<u64>> {
     let nb_max_constraints = cfg.constraint_count.max(cfg.linear_constraint_count);
+    let rho = cfg.rho();
     let gamma_words = transcript_xof_words(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &digest_to_words(hash_fpp),
-        (SMALLWOOD_RHO + 1) + (SMALLWOOD_RHO + 1) * SMALLWOOD_RHO,
+        (rho + 1) + (rho + 1) * rho,
     );
-    let mut mat_rnd = vec![vec![0u64; SMALLWOOD_RHO + 1]; SMALLWOOD_RHO];
-    let mut mat_powers = vec![vec![0u64; nb_max_constraints]; SMALLWOOD_RHO + 1];
-    for k in 0..SMALLWOOD_RHO {
-        for j in 0..(SMALLWOOD_RHO + 1) {
-            mat_rnd[k][j] = gamma_words[k * (SMALLWOOD_RHO + 1) + j];
+    let mut mat_rnd = vec![vec![0u64; rho + 1]; rho];
+    let mut mat_powers = vec![vec![0u64; nb_max_constraints]; rho + 1];
+    for k in 0..rho {
+        for j in 0..(rho + 1) {
+            mat_rnd[k][j] = gamma_words[k * (rho + 1) + j];
         }
     }
-    for k in 0..(SMALLWOOD_RHO + 1) {
-        let base = gamma_words[SMALLWOOD_RHO * (SMALLWOOD_RHO + 1) + k];
+    for k in 0..(rho + 1) {
+        let base = gamma_words[rho * (rho + 1) + k];
         mat_powers[k][0] = 1;
         for j in 1..nb_max_constraints {
             mat_powers[k][j] = mul_mod(mat_powers[k][j - 1], base);
         }
     }
-    let mut out = vec![vec![0u64; nb_max_constraints]; SMALLWOOD_RHO];
+    let mut out = vec![vec![0u64; nb_max_constraints]; rho];
     mat_mul(
         &mut out,
         &mat_rnd,
         &mat_powers,
-        SMALLWOOD_RHO,
-        SMALLWOOD_RHO + 1,
+        rho,
+        rho + 1,
         nb_max_constraints,
     );
     out
 }
 
 fn choose_opening_nonce(
-    packing_points: &[u64],
+    cfg: &SmallwoodConfig,
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<[u8; NONCE_BYTES], TransactionCircuitError> {
     let mut counter = 0u32;
     loop {
         let nonce = counter.to_le_bytes();
-        let eval_points = xof_piop_opening_points(&nonce, h_piop, transcript_backend);
-        if opening_points_are_valid(packing_points, &eval_points) {
+        let eval_points =
+            xof_piop_opening_points_for_profile(&nonce, h_piop, cfg.profile, transcript_backend);
+        if opening_points_are_valid(&cfg.packing_points, &eval_points) {
             return Ok(nonce);
         }
         counter = counter
@@ -3583,7 +4166,7 @@ fn serialized_proof_size_hint_with_profile(
             auxiliary_words_len,
         ),
     };
-    bincode::serialize(&proof)
+    encode_smallwood_proof_bytes_v1(&proof)
         .map(|bytes| bytes.len())
         .unwrap_or(0)
 }
@@ -3617,6 +4200,20 @@ pub fn xof_piop_opening_points(
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Vec<u64> {
+    xof_piop_opening_points_for_profile(
+        nonce,
+        h_piop,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        transcript_backend,
+    )
+}
+
+fn xof_piop_opening_points_for_profile(
+    nonce: &[u8; NONCE_BYTES],
+    h_piop: &[u8; DIGEST_BYTES],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Vec<u64> {
     let mut input = Vec::with_capacity(1 + DIGEST_WORDS);
     input.push(u32::from_le_bytes(*nonce) as u64);
     input.extend(digest_to_words(h_piop));
@@ -3624,7 +4221,7 @@ pub fn xof_piop_opening_points(
         transcript_backend,
         SMALLWOOD_XOF_DOMAIN,
         &input,
-        SMALLWOOD_NB_OPENED_EVALS,
+        profile.nb_opened_evals,
     )
 }
 
@@ -3783,26 +4380,12 @@ fn merkle_build_levels(
         let parents = if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
             current
                 .par_chunks(2)
-                .map(|pair| {
-                    let mut hasher = Hasher::new();
-                    hasher.update(SMALLWOOD_XOF_DOMAIN);
-                    hasher.update(&((pair.len() * DIGEST_WORDS) as u64).to_le_bytes());
-                    for child in pair {
-                        hasher.update(child);
-                    }
-                    read_blake3_xof_digest(hasher.finalize_xof())
-                })
+                .map(|pair| hash_merkle_children(&pair[0], &pair[1], transcript_backend))
                 .collect()
         } else {
             current
                 .par_chunks(2)
-                .map(|pair| {
-                    let mut input = Vec::with_capacity(pair.len() * DIGEST_WORDS);
-                    for child in pair {
-                        input.extend(digest_to_words(child));
-                    }
-                    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
-                })
+                .map(|pair| hash_merkle_children(&pair[0], &pair[1], transcript_backend))
                 .collect()
         };
         levels.push(parents);
@@ -3811,6 +4394,26 @@ fn merkle_build_levels(
     levels[level_idx][0]
 }
 
+fn hash_merkle_children(
+    left: &[u8; DIGEST_BYTES],
+    right: &[u8; DIGEST_BYTES],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> [u8; DIGEST_BYTES] {
+    if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
+        let mut hasher = Hasher::new();
+        hasher.update(SMALLWOOD_XOF_DOMAIN);
+        hasher.update(&((2 * DIGEST_WORDS) as u64).to_le_bytes());
+        hasher.update(left);
+        hasher.update(right);
+        return read_blake3_xof_digest(hasher.finalize_xof());
+    }
+    let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
+    input.extend(digest_to_words(left));
+    input.extend(digest_to_words(right));
+    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+}
+
+#[cfg(test)]
 fn merkle_auth_path(
     levels: &[Vec<[u8; DIGEST_BYTES]>],
     mut index: usize,
@@ -3826,6 +4429,59 @@ fn merkle_auth_path(
         index /= 2;
     }
     path
+}
+
+fn compact_merkle_auth_paths(
+    levels: &[Vec<[u8; DIGEST_BYTES]>],
+    indices: &[usize],
+) -> Vec<Vec<[u8; DIGEST_BYTES]>> {
+    let mut paths = vec![Vec::new(); indices.len()];
+    let mut current_indices = indices.to_vec();
+    for level in levels.iter().take(levels.len().saturating_sub(1)) {
+        let level_opened = current_indices
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        for (path_idx, &index) in current_indices.iter().enumerate() {
+            let sibling = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
+            if !level_opened.contains(&sibling) {
+                paths[path_idx].push(level[sibling]);
+            }
+        }
+        for index in &mut current_indices {
+            *index /= 2;
+        }
+    }
+    paths
+}
+
+fn expected_compact_merkle_auth_path_lengths(indices: &[usize], depth: usize) -> Vec<usize> {
+    let mut lengths = vec![0usize; indices.len()];
+    let mut current_indices = indices.to_vec();
+    for _ in 0..depth {
+        let level_opened = current_indices
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        for (path_idx, &index) in current_indices.iter().enumerate() {
+            let sibling = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
+            if !level_opened.contains(&sibling) {
+                lengths[path_idx] += 1;
+            }
+        }
+        for index in &mut current_indices {
+            *index /= 2;
+        }
+    }
+    lengths
 }
 
 #[cfg(test)]
@@ -4104,7 +4760,7 @@ mod tests {
             "direct packed proof bytes {} exceed native tx-leaf cap",
             proof.len()
         );
-        let decoded: SmallwoodProof = bincode::deserialize(&proof).unwrap();
+        let decoded = decode_smallwood_proof_bytes_v1(&proof).unwrap();
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         match decoded.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
@@ -4189,7 +4845,7 @@ mod tests {
             &material.linear_constraints.term_coefficients,
             &material.linear_constraints.targets,
         );
-        let mut proof: SmallwoodProof = bincode::deserialize(
+        let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
                 &material.packed_expanded_witness,
@@ -4199,7 +4855,7 @@ mod tests {
         )
         .unwrap();
         proof.opened_witness.mode = SmallwoodOpenedWitnessMode::None;
-        let proof_bytes = bincode::serialize(&proof).unwrap();
+        let proof_bytes = encode_smallwood_proof_bytes_v1(&proof).unwrap();
         let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
             .expect_err("mode-mismatched direct proof unexpectedly verified");
         assert!(
@@ -4223,7 +4879,7 @@ mod tests {
             &material.linear_constraints.term_coefficients,
             &material.linear_constraints.targets,
         );
-        let mut proof: SmallwoodProof = bincode::deserialize(
+        let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
                 &material.packed_expanded_witness,
@@ -4246,7 +4902,7 @@ mod tests {
         let err = verify_candidate(
             &statement,
             &material.transcript_binding,
-            &bincode::serialize(&proof).unwrap(),
+            &encode_smallwood_proof_bytes_v1(&proof).unwrap(),
         )
         .expect_err("direct proof with overflowing auxiliary limb count unexpectedly verified");
         assert!(err.to_string().contains("auxiliary"));
@@ -4267,7 +4923,7 @@ mod tests {
             &material.linear_constraints.term_coefficients,
             &material.linear_constraints.targets,
         );
-        let mut proof: SmallwoodProof = bincode::deserialize(
+        let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
                 &material.packed_expanded_witness,
@@ -4290,7 +4946,7 @@ mod tests {
         let err = verify_candidate(
             &statement,
             &material.transcript_binding,
-            &bincode::serialize(&proof).unwrap(),
+            &encode_smallwood_proof_bytes_v1(&proof).unwrap(),
         )
         .expect_err("direct proof with nonzero auxiliary padding unexpectedly verified");
         assert!(err.to_string().contains("padding"));
@@ -4315,7 +4971,7 @@ mod tests {
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         let mut proof = prove_smallwood_candidate(&witness).unwrap();
         let mut outer: SmallwoodCandidateProof = bincode::deserialize(&proof.stark_proof).unwrap();
-        let mut inner: SmallwoodProof = bincode::deserialize(&outer.ark_proof).unwrap();
+        let mut inner = decode_smallwood_proof_bytes_v1(&outer.ark_proof).unwrap();
 
         let forged_combi_heads = vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.nb_lvcs_opened_combi];
         let forged_rcombi_tails =
@@ -4367,7 +5023,7 @@ mod tests {
             },
         };
 
-        outer.ark_proof = bincode::serialize(&inner).unwrap();
+        outer.ark_proof = encode_smallwood_proof_bytes_v1(&inner).unwrap();
         proof.stark_proof = bincode::serialize(&outer).unwrap();
 
         let err = verify_smallwood_candidate_transaction_proof(&proof)
@@ -4434,12 +5090,8 @@ mod tests {
         .unwrap();
         let h_piop =
             hash_piop_transcript(&piop.transcript_words, SmallwoodTranscriptBackend::Blake3);
-        let nonce = choose_opening_nonce(
-            &cfg.packing_points,
-            &h_piop,
-            SmallwoodTranscriptBackend::Blake3,
-        )
-        .unwrap();
+        let nonce =
+            choose_opening_nonce(&cfg, &h_piop, SmallwoodTranscriptBackend::Blake3).unwrap();
         let eval_points =
             xof_piop_opening_points(&nonce, &h_piop, SmallwoodTranscriptBackend::Blake3);
         let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
@@ -4546,6 +5198,83 @@ mod tests {
         }
         assert_eq!(poly_q, direct_q);
         assert_eq!(rows, opened_rows);
+    }
+
+    #[test]
+    #[ignore = "diagnostic for deciding whether a full DECS multiproof is worth the churn"]
+    fn compact_decs_auth_path_dedup_budget_report() {
+        let witness = sample_witness();
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = PackedStatement::new(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        );
+        let proof_bytes = prove_candidate(
+            &statement,
+            &material.packed_expanded_witness,
+            &material.transcript_binding,
+        )
+        .unwrap();
+        let trace = build_smallwood_verifier_trace_v1(
+            &statement,
+            &material.transcript_binding,
+            &proof_bytes,
+            SmallwoodTranscriptBackend::Blake3,
+        )
+        .unwrap();
+        let mut current_indices = trace
+            .pcs_trace
+            .decs_leaf_indexes
+            .iter()
+            .map(|&idx| idx as usize)
+            .collect::<Vec<_>>();
+        let depth = SMALLWOOD_DECS_NB_EVALS.ilog2() as usize;
+        let mut total_nodes = 0usize;
+        let mut unique_nodes = std::collections::BTreeSet::new();
+        for level in 0..depth {
+            let level_indices = current_indices
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            for &index in &current_indices {
+                let sibling_index = if index.is_multiple_of(2) {
+                    index + 1
+                } else {
+                    index - 1
+                };
+                if !level_indices.contains(&sibling_index) {
+                    total_nodes += 1;
+                    unique_nodes.insert((level, sibling_index));
+                }
+            }
+            current_indices = current_indices.iter().map(|index| index / 2).collect();
+        }
+        let duplicated_nodes = total_nodes - unique_nodes.len();
+        eprintln!(
+            "compact auth-path nodes total={} unique={} duplicated={} max_digest_savings_bytes={}",
+            total_nodes,
+            unique_nodes.len(),
+            duplicated_nodes,
+            duplicated_nodes * DIGEST_BYTES
+        );
+        assert_eq!(
+            total_nodes,
+            trace
+                .proof
+                .pcs
+                .decs
+                .auth_paths
+                .iter()
+                .map(|path| path.len())
+                .sum::<usize>()
+        );
     }
 
     #[test]
@@ -4665,28 +5394,6 @@ mod tests {
         ));
         assert_eq!(actual_root_hash, expected_root_hash);
     }
-}
-
-fn merkle_compute_root(
-    mut index: usize,
-    leaf: &[u8; DIGEST_BYTES],
-    path: &[[u8; DIGEST_BYTES]],
-    transcript_backend: SmallwoodTranscriptBackend,
-) -> [u8; DIGEST_BYTES] {
-    let mut current = *leaf;
-    for sibling in path {
-        let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
-        if index.is_multiple_of(2) {
-            input.extend(digest_to_words(&current));
-            input.extend(digest_to_words(sibling));
-        } else {
-            input.extend(digest_to_words(sibling));
-            input.extend(digest_to_words(&current));
-        }
-        current = transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input);
-        index /= 2;
-    }
-    current
 }
 
 fn rotate_left_words(values: &[u64], by: usize) -> Vec<u64> {

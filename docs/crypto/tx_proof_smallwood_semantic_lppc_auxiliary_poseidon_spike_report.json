@@ -1,6 +1,6 @@
 {
   "generated_by": "cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_ -- --nocapture",
-  "current_shipped_smallwood_candidate_bytes": 100956,
+  "current_shipped_smallwood_candidate_bytes": 93156,
   "auxiliary_poseidon_words": 54912,
   "projected_frontier": [
     {

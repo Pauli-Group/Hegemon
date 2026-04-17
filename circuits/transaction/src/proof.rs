@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
-    prove_smallwood_candidate, smallwood_candidate_verifier_profile_material,
-    verify_smallwood_candidate_proof_bytes, verify_smallwood_candidate_transaction_proof,
-    SmallwoodCandidateProof,
+    decode_smallwood_candidate_proof, prove_smallwood_candidate,
+    smallwood_candidate_verifier_profile_material, verify_smallwood_candidate_proof_bytes,
+    verify_smallwood_candidate_transaction_proof,
 };
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
@@ -240,10 +240,9 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
         message.extend_from_slice(&(profile.num_queries as u64).to_le_bytes());
         message.extend_from_slice(&(profile.query_pow_bits as u64).to_le_bytes());
     } else if matches!(backend, TxProofBackend::SmallwoodCandidate) {
-        let arithmetization =
-            smallwood_arithmetization.unwrap_or(
-                SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
-            );
+        let arithmetization = smallwood_arithmetization.unwrap_or(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
         message.extend_from_slice(&smallwood_candidate_verifier_profile_material(
             version,
             arithmetization,
@@ -256,7 +255,7 @@ pub fn transaction_verifier_profile_digest_for_version(version: VersionBinding) 
     transaction_verifier_profile_digest_for_version_and_backend(
         version,
         tx_proof_backend_for_version(version).unwrap_or(DEFAULT_TX_PROOF_BACKEND),
-        Some(SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1),
+        Some(SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1),
     )
 }
 
@@ -267,12 +266,7 @@ pub fn smallwood_arithmetization_from_backend_and_proof_bytes(
     if !matches!(backend, TxProofBackend::SmallwoodCandidate) {
         return Ok(None);
     }
-    let candidate =
-        bincode::deserialize::<SmallwoodCandidateProof>(proof_bytes).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-            "failed to decode smallwood candidate proof wrapper for arithmetization binding: {err}"
-        ))
-        })?;
+    let candidate = decode_smallwood_candidate_proof(proof_bytes)?;
     Ok(Some(candidate.arithmetization))
 }
 
@@ -737,6 +731,7 @@ pub(crate) fn verify_balance_slots(
 mod tests {
     use super::*;
     use crate::public_inputs::TransactionPublicInputs;
+    use crate::SmallwoodCandidateProof;
     use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
 
     fn dummy_serialized_inputs() -> SerializedStarkInputs {
@@ -779,6 +774,7 @@ mod tests {
         let stark_proof = bincode::serialize(&SmallwoodCandidateProof {
             arithmetization,
             ark_proof: vec![1, 2, 3, 4],
+            auxiliary_witness_words: Vec::new(),
         })
         .expect("encode dummy smallwood proof");
         TransactionProof {

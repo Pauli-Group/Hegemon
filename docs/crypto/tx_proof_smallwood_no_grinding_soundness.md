@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the exact serialized proof envelope for the shipped default now projects to `98532` bytes, the passing release roundtrip emits `98532` proof bytes, and both fit below the shipped `354081`-byte tx-proof baseline and the `524288`-byte native `tx_leaf` cap,
+- the shipped default now has a structural upper bound of `90830` bytes on the current backend, while the checked exact sampled release proofs on the current benchmark witness now land in the `87246 .. 87278` byte band after the compact inner wire-format rewrite replaced nested bincode lengths with one flat profile-checked layout,
 - and the latest focused local release roundtrips on the current host measured about `6.1s` directly on the old bridge statement and about `5.4s` on the older compact-binding branch before the final `skip-initial-mds` promotion, after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
@@ -37,20 +37,20 @@ The compact bridge proof no longer serializes any witness envelope. Instead, the
 
 and from fixed shape metadata for the packed expanded native witness.
 
-`DirectPacked64V1` is no longer a witness-carrying alternate envelope. It now uses the same row-aligned `1447`-row public statement geometry and the same normal row-scalar PCS/opening line as `Bridge64V1`, with only the arithmetization tag distinguishing the two modes. The direct lane is regression-locked to stay at or below the compact bridge baseline, so this note covers the exact active statement geometry common to both succinct arithmetizations.
+`DirectPacked64V1` is no longer a witness-carrying alternate envelope. It now uses the same normal row-scalar PCS/opening line as the bridge baselines, with only the arithmetization tag distinguishing the modes. But the shipped default is no longer the old `1447`-row bridge-aligned statement. It is the leaner `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` branch, so this note covers that exact active shipped geometry.
 
 The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 295`
+- `raw_witness_len = 72`
 - `poseidon_permutation_count = 143`
-- `poseidon_state_row_count = 4576`
-- `expanded_witness_len = 92608`
-- `lppc_row_count = 1447`
+- `poseidon_state_row_count = 4433`
+- `expanded_witness_len = 76032`
+- `lppc_row_count = 1188`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
-Those values are locked by the current integrated bridge shape test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs). The repo still also carries the separate frozen structural target (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`), but that is not the statement the live backend is proving today.
+Those values are locked by the current integrated inline-Merkle shape test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs). The repo still also carries the separate frozen structural target (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`), but that is not the statement the live backend is proving today.
 
 The linear constraints are now sparse bridge selectors over the packed witness rows, not transcript-derived dense random checks. Public values are no longer embedded as duplicated witness rows; they are carried directly in the public statement and transcript binding, while the linear system enforces duplicated secret-row equalities plus the bridge-side constant/copy relations that tie the compact witness rows to the grouped Poseidon program. The current row-aligned statement also binds the previously missing public tx fields explicitly: active output ciphertext hashes and stablecoin policy version / policy hash / oracle / attestation commitments now occupy dedicated local secret rows that are linearly tied to the public statement. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
@@ -64,7 +64,7 @@ The current no-grinding claim also assumes the hardened PCS/evaluation binding n
 
 The redteam regressions covering those seams now live in [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs) and [transaction.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/tests/transaction.rs).
 
-Proof-specific verifier-profile digests now also bind the actual SmallWood arithmetization tag extracted from the proof wrapper instead of assuming bridge mode. The version-only helper is now pinned to canonical `DirectPacked64CompactBindingsSkipInitialMdsV1`, because that path has no proof bytes to inspect and the shipped default must still remain version-owned.
+Proof-specific verifier-profile digests now also bind the actual SmallWood arithmetization tag extracted from the proof wrapper instead of assuming bridge mode. The version-only helper is now pinned to canonical `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1`, because that path has no proof bytes to inspect and the shipped default must still remain version-owned.
 
 ## Exact no-grinding profile
 
@@ -75,7 +75,7 @@ The current candidate profile is now:
 - `beta = 2`
 - `opening_pow_bits = 0`
 - `decs_nb_evals = 32768`
-- `decs_nb_opened_evals = 24`
+- `decs_nb_opened_evals = 23`
 - `decs_eta = 3`
 - `decs_pow_bits = 0`
 
@@ -112,27 +112,27 @@ Using the notation from the SmallWood paper’s Table 1 for the active integrate
 
 - `|F| = 2^64 - 2^32 + 1` (Goldilocks)
 - `s = 64`
-- `n = 1447`
+- `n = 1188`
 - `d = 8`
 - `m1 = 1`
 - `m2 = 78`
 - `ℓ' = 3`
 - `ρ = 2`
 - `β = 2`
-- `ℓ = 24`
+- `ℓ = 23`
 - `N = 32768`
 - `η = 3`
 
 The exact derived PCS/LVCS terms are:
 
-- `n_pcs = n + 2ρ = 1451`
+- `n_pcs = n + 2ρ = 1192`
 - witness-polynomial degree convention gives `d_j = s + ℓ' - 1 = 66`
 - masked polynomial-constraint degree `d_Q = d * (s + ℓ' - 1) - s = 464`
 - LVCS row count `n_rows = β * (s + ℓ') = 134`
-- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 734`
+- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 604`
 - DECS polynomial count `n_decs = n_rows = 134`
 
-The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 24` count used below instead of silently accepting duplicate openings.
+The implementation now also enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 23` count used below instead of silently accepting duplicate openings.
 
 The old `n_cols = 1001` value was the dangerous one. The current integrated backend is materially narrower, but this note still uses the exact LVCS row-vector size from the active Rust backend rather than the smaller frozen structural target.
 
@@ -150,11 +150,11 @@ For the exact current candidate profile:
 - `ε1 < 2^-182.99`
 - `ε2 < 2^-128.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-130.98`
+- `ε4 < 2^-131.91`
 
 So the exact no-grinding floor for the implemented witness-free public statement is:
 
-- `min(182.99, 128.00, 165.44, 130.98) = 128.00 bits`
+- `min(182.99, 128.00, 165.44, 131.91) = 128.00 bits`
 
 The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
 
@@ -171,10 +171,10 @@ That is why the current no-grinding candidate moved to:
 
 - `nb_opened_evals = 3`
 - `decs_nb_evals = 32768`
-- `decs_nb_opened_evals = 24`
+- `decs_nb_opened_evals = 23`
 - `decs_eta = 3`
 
-Those are not cosmetic tweaks. They are the smallest passing DECS settings in the checked realistic no-grinding sweep artifact `docs/crypto/tx_proof_smallwood_profile_sweep.json` for both the live bridge and the compact-binding branch.
+Those are not cosmetic tweaks. The checked realistic no-grinding sweep artifact `docs/crypto/tx_proof_smallwood_profile_sweep.json` now shows that Bridge/direct still prefer `32768 / 24 / 3`, while the shipped inline-Merkle arithmetization has one smaller passing point at `32768 / 23 / 3`.
 
 ## What this note does and does not prove
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsSkipInitialMdsV1` path now emits an actual `98532`-byte release proof, about `3.59x` smaller than the shipped Plonky3 proof and about `2.4%` smaller than the old `100956`-byte bridge baseline. The remaining structural research gap is still the distance between the current `1447`-row proving object and the smaller `934`-row target, but the live direct lane no longer cheats with a witness side payload. So this note is exact, but still narrow.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now has a structural upper bound of `90830` bytes with checked exact sampled release proofs landing in the `87246 .. 87278` byte band on the current benchmark witness. That is about `4.1x` smaller than the shipped Plonky3 proof, about `13.6%` smaller than the old `100956`-byte bridge baseline, and about `11.4% .. 11.5%` smaller than the former `98532`-byte shipped default. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
 
 ## Product conclusion
 

@@ -5,7 +5,9 @@ use crate::smallwood_engine::{
     prove_candidate as prove_candidate_rust, verify_candidate as verify_candidate_rust,
     SmallwoodArithmetization, SmallwoodNoGrindingProfileV1,
 };
-use crate::smallwood_semantics::{test_candidate_witness_rust, PackedStatement};
+use crate::smallwood_semantics::{
+    test_candidate_witness_rust, test_candidate_witness_with_auxiliary_rust, PackedStatement,
+};
 
 pub fn prove_candidate(
     arithmetization: SmallwoodArithmetization,
@@ -96,6 +98,48 @@ pub fn test_candidate_witness(
         linear_constraint_targets,
     )?;
     // Ensure the adapter itself is well-formed and can be consumed by the engine.
+    let _ = statement;
+    Ok(())
+}
+
+pub fn test_candidate_witness_with_auxiliary(
+    arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
+    witness_values: &[u64],
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: u16,
+    linear_constraint_offsets: &[u32],
+    linear_constraint_indices: &[u32],
+    linear_constraint_coefficients: &[u64],
+    linear_constraint_targets: &[u64],
+    auxiliary_words: &[u64],
+) -> Result<(), TransactionCircuitError> {
+    let statement = PackedStatement::new_with_auxiliary(
+        arithmetization,
+        public_values,
+        row_count,
+        packing_factor,
+        constraint_degree as usize,
+        linear_constraint_offsets,
+        linear_constraint_indices,
+        linear_constraint_coefficients,
+        linear_constraint_targets,
+        auxiliary_words,
+        auxiliary_words.len(),
+    );
+    test_candidate_witness_with_auxiliary_rust(
+        arithmetization,
+        public_values,
+        witness_values,
+        row_count,
+        packing_factor,
+        linear_constraint_offsets,
+        linear_constraint_indices,
+        linear_constraint_coefficients,
+        linear_constraint_targets,
+        auxiliary_words,
+    )?;
     let _ = statement;
     Ok(())
 }

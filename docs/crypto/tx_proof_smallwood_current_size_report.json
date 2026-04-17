@@ -1,37 +1,37 @@
 {
   "generator": {
     "command": "cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture",
-    "date_utc": "2026-04-17T06:49:00Z",
-    "note": "Generated from the live SmallWoodCandidate release proof on the current tree after promoting DirectPacked64CompactBindingsSkipInitialMdsV1 as the default SmallWood arithmetization."
+    "date_utc": "2026-04-17T00:00:00Z",
+    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the current tree after switching the inner SmallWood proof object from nested bincode serialization to the compact flat wire format. The shipped structural upper bound for this arithmetization is now 90830 bytes, and the checked exact sampled release proofs on the current benchmark witness now land in the 87246..87278 byte band."
   },
   "report": {
-    "total_bytes": 98532,
+    "total_bytes": 87278,
     "wrapper_bytes": 12,
-    "ark_proof_bytes": 98520,
-    "transcript_bytes": 9524,
-    "commitment_bytes": 11720,
-    "opened_values_bytes": 25192,
-    "opening_payload_bytes": 52084,
+    "ark_proof_bytes": 87266,
+    "transcript_bytes": 9488,
+    "commitment_bytes": 7513,
+    "opened_values_bytes": 23944,
+    "opening_payload_bytes": 46321,
     "other_bytes": 0,
-    "arithmetization": "DirectPacked64CompactBindingsSkipInitialMdsV1",
+    "arithmetization": "DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1",
     "inner": {
-      "total_bytes": 98520,
-      "transcript_bytes": 9524,
-      "commitment_bytes": 11720,
-      "opened_values_bytes": 25192,
-      "opening_payload_bytes": 52084,
-      "opened_witness_bytes": 33268,
+      "total_bytes": 87266,
+      "transcript_bytes": 9488,
+      "commitment_bytes": 7513,
+      "opened_values_bytes": 23944,
+      "opening_payload_bytes": 46321,
+      "opened_witness_bytes": 30157,
       "other_bytes": 0,
-      "salt_bytes": 32,
+      "salt_bytes": 36,
       "nonce_bytes": 4,
       "h_piop_bytes": 32,
-      "piop_bytes": 9456,
-      "pcs_rcombi_tails_bytes": 1208,
-      "pcs_subset_evals_bytes": 24776,
-      "pcs_partial_evals_bytes": 416,
-      "decs_auth_paths_bytes": 11720,
-      "decs_masking_evals_bytes": 776,
-      "decs_high_coeffs_bytes": 16832
+      "piop_bytes": 9416,
+      "pcs_rcombi_tails_bytes": 1108,
+      "pcs_subset_evals_bytes": 23556,
+      "pcs_partial_evals_bytes": 388,
+      "decs_auth_paths_bytes": 7513,
+      "decs_masking_evals_bytes": 556,
+      "decs_high_coeffs_bytes": 14500
     }
   }
 }

@@ -1,5 +1,5 @@
-use protocol_versioning::VersionBinding;
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
 use transaction_core::{
@@ -13,22 +13,22 @@ use crate::{
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, merkle_node, Commitment, Felt, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     proof::{
-        transaction_public_inputs_p3_from_parts,
-        transaction_public_inputs_digest_from_serialized, transaction_statement_hash_from_public_inputs,
-        SerializedStarkInputs,
+        transaction_public_inputs_digest_from_serialized, transaction_public_inputs_p3_from_parts,
+        transaction_statement_hash_from_public_inputs, SerializedStarkInputs,
     },
     public_inputs::TransactionPublicInputs,
-    smallwood_frontend::{
-        smallwood_bridge_poseidon_subtrace_rows_v1, smallwood_compact_bridge_helper_rows_v1,
-    },
     smallwood_engine::{
+        projected_smallwood_structural_proof_bytes_v1,
         prove_smallwood_structural_identity_witness_v1,
         prove_smallwood_structural_identity_witness_with_auxiliary_v1,
-        projected_smallwood_structural_proof_bytes_v1,
-        report_smallwood_structural_no_grinding_soundness_v1, SmallwoodNoGrindingProfileV1,
-        SmallwoodNoGrindingSoundnessReportV1, verify_smallwood_structural_identity_witness_v1,
+        report_smallwood_structural_no_grinding_soundness_v1,
+        verify_smallwood_structural_identity_witness_v1,
         verify_smallwood_structural_identity_witness_with_auxiliary_v1,
+        SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
         ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    },
+    smallwood_frontend::{
+        smallwood_bridge_poseidon_subtrace_rows_v1, smallwood_compact_bridge_helper_rows_v1,
     },
     smallwood_semantics::packed_constraint_count_for_packing_factor,
     witness::TransactionWitness,
@@ -50,9 +50,11 @@ const SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_WORDS: usize =
     SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_PERMUTATIONS
         * SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_ROWS_PER_PERMUTATION
         * transaction_core::constants::POSEIDON2_WIDTH;
-const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 100_956;
+const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 98_532;
 const SMALLWOOD_SEMANTIC_HELPER_FLOOR_PROFILE_DOMAIN: &[u8] =
     b"hegemon.tx.smallwood-semantic-helper-floor.v1";
+const SMALLWOOD_SEMANTIC_HELPER_AUX_FLOOR_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.tx.smallwood-semantic-helper-aux-floor.v1";
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SmallwoodSemanticLppcShape {
@@ -156,7 +158,9 @@ impl SmallwoodSemanticBridgeLowerBoundShape {
     }
 
     pub const fn packed_128x_v1() -> Self {
-        Self { packing_factor: 128 }
+        Self {
+            packing_factor: 128,
+        }
     }
 
     pub const fn recommended_v1() -> Self {
@@ -228,7 +232,9 @@ impl SmallwoodSemanticHelperFloorShape {
     }
 
     pub const fn packed_128x_v1() -> Self {
-        Self { packing_factor: 128 }
+        Self {
+            packing_factor: 128,
+        }
     }
 
     pub const fn recommended_v1() -> Self {
@@ -285,6 +291,81 @@ pub struct SmallwoodSemanticHelperFloorReport {
     pub shipped_smallwood_candidate_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodSemanticHelperAuxShape {
+    pub packing_factor: usize,
+}
+
+impl SmallwoodSemanticHelperAuxShape {
+    pub const fn packed_32x_v1() -> Self {
+        Self { packing_factor: 32 }
+    }
+
+    pub const fn packed_64x_v1() -> Self {
+        Self { packing_factor: 64 }
+    }
+
+    pub const fn packed_128x_v1() -> Self {
+        Self {
+            packing_factor: 128,
+        }
+    }
+
+    pub const fn recommended_v1() -> Self {
+        Self::packed_64x_v1()
+    }
+
+    pub const fn semantic_witness_rows(self) -> usize {
+        NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS / self.packing_factor
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodSemanticHelperAuxStatement {
+    pub public_values: Vec<u64>,
+    pub public_value_count: u32,
+    pub auxiliary_helper_words: u32,
+    pub semantic_witness_rows: u32,
+    pub total_secret_rows: u32,
+    pub poseidon_permutation_count: u32,
+    pub poseidon_state_row_count: u32,
+    pub witness_rows: u32,
+    pub packing_factor: u16,
+    pub constraint_degree: u16,
+    pub constraint_count_estimate: u32,
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
+    pub statement_hash: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
+    pub public_inputs_digest: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
+    pub verifier_profile_digest: Commitment,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodSemanticHelperAuxMaterial {
+    pub statement: SmallwoodSemanticHelperAuxStatement,
+    pub packed_witness_matrix: Vec<u64>,
+    pub auxiliary_helper_words: Vec<u64>,
+    pub transcript_binding: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodSemanticHelperAuxAnalysisReport {
+    pub shape: SmallwoodSemanticHelperAuxShape,
+    pub statement: SmallwoodSemanticHelperAuxStatement,
+    pub projected_total_bytes: usize,
+    pub shipped_smallwood_candidate_bytes: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodSemanticHelperAuxReport {
+    pub shape: SmallwoodSemanticHelperAuxShape,
+    pub statement: SmallwoodSemanticHelperAuxStatement,
+    pub exact_total_bytes: usize,
+    pub projected_total_bytes: usize,
+    pub shipped_smallwood_candidate_bytes: usize,
+}
+
 pub fn smallwood_semantic_lppc_verifier_profile_material(
     version: VersionBinding,
     shape: SmallwoodSemanticLppcShape,
@@ -297,15 +378,12 @@ pub fn smallwood_semantic_lppc_verifier_profile_material(
     material.extend_from_slice(&(shape.witness_rows as u64).to_le_bytes());
     material.extend_from_slice(&(shape.packing_factor as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u64).to_le_bytes());
-    material.extend_from_slice(
-        &(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho as u64).to_le_bytes(),
-    );
+    material.extend_from_slice(&(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho as u64).to_le_bytes());
     material.extend_from_slice(
         &(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.nb_opened_evals as u64).to_le_bytes(),
     );
-    material.extend_from_slice(
-        &(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta as u64).to_le_bytes(),
-    );
+    material
+        .extend_from_slice(&(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta as u64).to_le_bytes());
     material.extend_from_slice(
         &(ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals as u64).to_le_bytes(),
     );
@@ -329,8 +407,10 @@ pub fn build_smallwood_semantic_lppc_material_from_witness(
     let statement_hash = transaction_statement_hash_from_public_inputs(&public_inputs);
     let public_inputs_digest =
         transaction_public_inputs_digest_from_serialized(&stark_public_inputs)?;
-    let verifier_profile_digest =
-        blake3_384(&smallwood_semantic_lppc_verifier_profile_material(witness.version, shape));
+    let verifier_profile_digest = blake3_384(&smallwood_semantic_lppc_verifier_profile_material(
+        witness.version,
+        shape,
+    ));
     let public_values = semantic_lppc_public_values(
         statement_hash,
         public_inputs_digest,
@@ -561,21 +641,15 @@ pub fn build_smallwood_semantic_bridge_lower_bound_material_from_witness(
     let statement_hash = transaction_statement_hash_from_public_inputs(&public_inputs);
     let public_inputs_digest =
         transaction_public_inputs_digest_from_serialized(&stark_public_inputs)?;
-    let verifier_profile_digest = blake3_384(&smallwood_semantic_bridge_lower_bound_profile_material(
-        witness.version,
-        shape,
-    ));
-    let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
-    let mut packed_witness_matrix = build_semantic_bridge_lower_bound_secret_rows(
-        witness,
-        &public_values,
-        shape,
-    )?;
-    let total_secret_rows = packed_witness_matrix.len() / shape.packing_factor;
-    let poseidon_group_rows = smallwood_bridge_poseidon_group_rows(
-        poseidon_rows.len(),
-        shape.packing_factor,
+    let verifier_profile_digest = blake3_384(
+        &smallwood_semantic_bridge_lower_bound_profile_material(witness.version, shape),
     );
+    let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
+    let mut packed_witness_matrix =
+        build_semantic_bridge_lower_bound_secret_rows(witness, &public_values, shape)?;
+    let total_secret_rows = packed_witness_matrix.len() / shape.packing_factor;
+    let poseidon_group_rows =
+        smallwood_bridge_poseidon_group_rows(poseidon_rows.len(), shape.packing_factor);
     let statement = SmallwoodSemanticBridgeLowerBoundStatement {
         public_value_count: public_values.len() as u32,
         public_values,
@@ -583,7 +657,8 @@ pub fn build_smallwood_semantic_bridge_lower_bound_material_from_witness(
         merkle_aggregate_rows: SMALLWOOD_SEMANTIC_BRIDGE_MERKLE_AGGREGATE_ROWS as u32,
         total_secret_rows: total_secret_rows as u32,
         poseidon_permutation_count: poseidon_rows.len() as u32,
-        poseidon_state_row_count: (poseidon_rows.len() * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+        poseidon_state_row_count: (poseidon_rows.len()
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
             as u32,
         witness_rows: (total_secret_rows + poseidon_group_rows) as u32,
         packing_factor: shape.packing_factor as u16,
@@ -612,7 +687,8 @@ pub fn analyze_smallwood_semantic_bridge_lower_bound_from_witness(
     shape: SmallwoodSemanticBridgeLowerBoundShape,
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<SmallwoodSemanticBridgeLowerBoundAnalysisReport, TransactionCircuitError> {
-    let material = build_smallwood_semantic_bridge_lower_bound_material_from_witness(witness, shape)?;
+    let material =
+        build_smallwood_semantic_bridge_lower_bound_material_from_witness(witness, shape)?;
     let projected_total_bytes = projected_smallwood_structural_proof_bytes_v1(
         material.statement.witness_rows as usize,
         material.statement.packing_factor as usize,
@@ -639,7 +715,9 @@ pub fn analyze_smallwood_semantic_bridge_lower_bound_frontier_from_witness(
         SmallwoodSemanticBridgeLowerBoundShape::packed_128x_v1(),
     ]
     .into_iter()
-    .map(|shape| analyze_smallwood_semantic_bridge_lower_bound_from_witness(witness, shape, profile))
+    .map(|shape| {
+        analyze_smallwood_semantic_bridge_lower_bound_from_witness(witness, shape, profile)
+    })
     .collect()
 }
 
@@ -647,7 +725,8 @@ pub fn exact_smallwood_semantic_bridge_lower_bound_report_from_witness(
     witness: &TransactionWitness,
     shape: SmallwoodSemanticBridgeLowerBoundShape,
 ) -> Result<SmallwoodSemanticBridgeLowerBoundReport, TransactionCircuitError> {
-    let material = build_smallwood_semantic_bridge_lower_bound_material_from_witness(witness, shape)?;
+    let material =
+        build_smallwood_semantic_bridge_lower_bound_material_from_witness(witness, shape)?;
     let proof = prove_smallwood_structural_identity_witness_v1(
         material.statement.witness_rows as usize,
         material.statement.packing_factor as usize,
@@ -704,24 +783,19 @@ pub fn build_smallwood_semantic_helper_floor_material_from_witness(
     let statement_hash = transaction_statement_hash_from_public_inputs(&public_inputs);
     let public_inputs_digest =
         transaction_public_inputs_digest_from_serialized(&stark_public_inputs)?;
-    let verifier_profile_digest =
-        blake3_384(&smallwood_semantic_helper_floor_profile_material(
-            witness.version,
-            shape,
-        ));
+    let verifier_profile_digest = blake3_384(&smallwood_semantic_helper_floor_profile_material(
+        witness.version,
+        shape,
+    ));
     let helper_rows = smallwood_compact_bridge_helper_rows_v1(witness, shape.packing_factor)?;
     let mut semantic_rows = native_tx_validity_witness_elements(witness)?;
     semantic_rows.resize(NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS, 0);
     let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
-    let poseidon_group_rows = smallwood_bridge_poseidon_group_rows(
-        poseidon_rows.len(),
-        shape.packing_factor,
-    );
+    let poseidon_group_rows =
+        smallwood_bridge_poseidon_group_rows(poseidon_rows.len(), shape.packing_factor);
 
     let mut packed_witness_matrix = Vec::with_capacity(
-        (helper_rows.len()
-            + shape.semantic_witness_rows()
-            + poseidon_group_rows)
+        (helper_rows.len() + shape.semantic_witness_rows() + poseidon_group_rows)
             * shape.packing_factor,
     );
     for value in helper_rows.iter().copied() {
@@ -745,7 +819,8 @@ pub fn build_smallwood_semantic_helper_floor_material_from_witness(
         total_secret_rows: total_secret_rows as u32,
         poseidon_permutation_count: poseidon_rows.len() as u32,
         poseidon_state_row_count: (poseidon_rows.len()
-            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION) as u32,
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            as u32,
         witness_rows: (total_secret_rows + poseidon_group_rows) as u32,
         packing_factor: shape.packing_factor as u16,
         constraint_degree: SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u16,
@@ -838,6 +913,158 @@ pub fn exact_smallwood_semantic_helper_floor_report_from_witness(
     })
 }
 
+pub fn build_smallwood_semantic_helper_aux_material_from_witness(
+    witness: &TransactionWitness,
+    shape: SmallwoodSemanticHelperAuxShape,
+) -> Result<SmallwoodSemanticHelperAuxMaterial, TransactionCircuitError> {
+    ensure_smallwood_semantic_helper_aux_shape(shape)?;
+    witness.validate()?;
+    let public_inputs = witness.public_inputs()?;
+    let stark_public_inputs = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &stark_public_inputs)?;
+    let public_values: Vec<u64> = public_inputs_p3
+        .to_vec()
+        .into_iter()
+        .map(|felt| felt.as_canonical_u64())
+        .chain([
+            u64::from(witness.version.circuit),
+            u64::from(witness.version.crypto),
+        ])
+        .collect();
+    let statement_hash = transaction_statement_hash_from_public_inputs(&public_inputs);
+    let public_inputs_digest =
+        transaction_public_inputs_digest_from_serialized(&stark_public_inputs)?;
+    let verifier_profile_digest = blake3_384(&smallwood_semantic_helper_aux_profile_material(
+        witness.version,
+        shape,
+    ));
+    let auxiliary_helper_words =
+        smallwood_compact_bridge_helper_rows_v1(witness, shape.packing_factor)?;
+    let mut semantic_rows = native_tx_validity_witness_elements(witness)?;
+    semantic_rows.resize(NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS, 0);
+    let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
+    let poseidon_group_rows =
+        smallwood_bridge_poseidon_group_rows(poseidon_rows.len(), shape.packing_factor);
+
+    let mut packed_witness_matrix = Vec::with_capacity(
+        (shape.semantic_witness_rows() + poseidon_group_rows) * shape.packing_factor,
+    );
+    for chunk in semantic_rows.chunks_exact(shape.packing_factor) {
+        packed_witness_matrix.extend_from_slice(chunk);
+    }
+    append_grouped_poseidon_rows(
+        &mut packed_witness_matrix,
+        &poseidon_rows,
+        shape.packing_factor,
+    );
+
+    let total_secret_rows = shape.semantic_witness_rows();
+    let statement = SmallwoodSemanticHelperAuxStatement {
+        public_value_count: public_values.len() as u32,
+        public_values,
+        auxiliary_helper_words: auxiliary_helper_words.len() as u32,
+        semantic_witness_rows: shape.semantic_witness_rows() as u32,
+        total_secret_rows: total_secret_rows as u32,
+        poseidon_permutation_count: poseidon_rows.len() as u32,
+        poseidon_state_row_count: (poseidon_rows.len()
+            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            as u32,
+        witness_rows: (total_secret_rows + poseidon_group_rows) as u32,
+        packing_factor: shape.packing_factor as u16,
+        constraint_degree: SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u16,
+        constraint_count_estimate: packed_constraint_count_for_packing_factor(shape.packing_factor)
+            as u32,
+        statement_hash,
+        public_inputs_digest,
+        verifier_profile_digest,
+    };
+    let transcript_binding = semantic_helper_aux_transcript_binding(&statement)?;
+    Ok(SmallwoodSemanticHelperAuxMaterial {
+        statement,
+        packed_witness_matrix,
+        auxiliary_helper_words,
+        transcript_binding,
+    })
+}
+
+pub fn analyze_smallwood_semantic_helper_aux_from_witness(
+    witness: &TransactionWitness,
+    shape: SmallwoodSemanticHelperAuxShape,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodSemanticHelperAuxAnalysisReport, TransactionCircuitError> {
+    let material = build_smallwood_semantic_helper_aux_material_from_witness(witness, shape)?;
+    let projected_total_bytes = projected_smallwood_structural_proof_bytes_v1(
+        material.statement.witness_rows as usize,
+        material.statement.packing_factor as usize,
+        material.statement.constraint_degree as usize,
+        material.statement.constraint_count_estimate as usize,
+        material.auxiliary_helper_words.len(),
+        profile,
+    )?;
+    Ok(SmallwoodSemanticHelperAuxAnalysisReport {
+        shape,
+        statement: material.statement,
+        projected_total_bytes,
+        shipped_smallwood_candidate_bytes: CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES,
+    })
+}
+
+pub fn analyze_smallwood_semantic_helper_aux_frontier_from_witness(
+    witness: &TransactionWitness,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<Vec<SmallwoodSemanticHelperAuxAnalysisReport>, TransactionCircuitError> {
+    [
+        SmallwoodSemanticHelperAuxShape::packed_32x_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_64x_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_128x_v1(),
+    ]
+    .into_iter()
+    .map(|shape| analyze_smallwood_semantic_helper_aux_from_witness(witness, shape, profile))
+    .collect()
+}
+
+pub fn exact_smallwood_semantic_helper_aux_report_from_witness(
+    witness: &TransactionWitness,
+    shape: SmallwoodSemanticHelperAuxShape,
+) -> Result<SmallwoodSemanticHelperAuxReport, TransactionCircuitError> {
+    let material = build_smallwood_semantic_helper_aux_material_from_witness(witness, shape)?;
+    let proof = prove_smallwood_structural_identity_witness_with_auxiliary_v1(
+        material.statement.witness_rows as usize,
+        material.statement.packing_factor as usize,
+        material.statement.constraint_degree as usize,
+        material.statement.constraint_count_estimate as usize,
+        &material.packed_witness_matrix,
+        &material.auxiliary_helper_words,
+        &material.transcript_binding,
+    )?;
+    verify_smallwood_structural_identity_witness_with_auxiliary_v1(
+        material.statement.witness_rows as usize,
+        material.statement.packing_factor as usize,
+        material.statement.constraint_degree as usize,
+        material.statement.constraint_count_estimate as usize,
+        &material.packed_witness_matrix,
+        &material.auxiliary_helper_words,
+        &material.transcript_binding,
+        &proof,
+    )?;
+    let projected_total_bytes = projected_smallwood_structural_proof_bytes_v1(
+        material.statement.witness_rows as usize,
+        material.statement.packing_factor as usize,
+        material.statement.constraint_degree as usize,
+        material.statement.constraint_count_estimate as usize,
+        material.auxiliary_helper_words.len(),
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )?;
+    Ok(SmallwoodSemanticHelperAuxReport {
+        shape,
+        statement: material.statement,
+        exact_total_bytes: proof.len(),
+        projected_total_bytes,
+        shipped_smallwood_candidate_bytes: CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES,
+    })
+}
+
 fn ensure_smallwood_semantic_lppc_shape(
     shape: SmallwoodSemanticLppcShape,
 ) -> Result<(), TransactionCircuitError> {
@@ -902,18 +1129,38 @@ fn ensure_smallwood_semantic_helper_floor_shape(
     Ok(())
 }
 
+fn ensure_smallwood_semantic_helper_aux_shape(
+    shape: SmallwoodSemanticHelperAuxShape,
+) -> Result<(), TransactionCircuitError> {
+    if shape.packing_factor == 0 || !shape.packing_factor.is_power_of_two() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood semantic helper-aux shape requires a power-of-two packing factor",
+        ));
+    }
+    if !NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS.is_multiple_of(shape.packing_factor) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "semantic helper-aux packing {} does not divide the fixed semantic witness window {}",
+            shape.packing_factor, NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS
+        )));
+    }
+    Ok(())
+}
+
 fn semantic_lppc_public_values(
     statement_hash: Commitment,
     public_inputs_digest: Commitment,
     verifier_profile_digest: Commitment,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut public_values = Vec::with_capacity(NATIVE_TX_VALIDITY_PUBLIC_VALUE_COUNT);
-    for digest in [statement_hash, public_inputs_digest, verifier_profile_digest] {
-        let limbs = bytes48_to_felts(&digest).ok_or(
-            TransactionCircuitError::ConstraintViolation(
+    for digest in [
+        statement_hash,
+        public_inputs_digest,
+        verifier_profile_digest,
+    ] {
+        let limbs =
+            bytes48_to_felts(&digest).ok_or(TransactionCircuitError::ConstraintViolation(
                 "smallwood semantic LPPC digest encoding is non-canonical",
-            ),
-        )?;
+            ))?;
         public_values.extend(limbs.iter().map(|felt| felt.as_canonical_u64()));
     }
     Ok(public_values)
@@ -948,7 +1195,8 @@ fn serialized_stark_inputs_from_witness(
         signed_magnitude_u64(witness.value_balance, "value_balance")?;
     let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
         signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
-    let canonicalize_balance_slot_asset_id = |asset_id: u64| Felt::from_u64(asset_id).as_canonical_u64();
+    let canonicalize_balance_slot_asset_id =
+        |asset_id: u64| Felt::from_u64(asset_id).as_canonical_u64();
     Ok(SerializedStarkInputs {
         input_flags: (0..MAX_INPUTS)
             .map(|idx| u8::from(idx < witness.inputs.len()))
@@ -1039,7 +1287,8 @@ fn smallwood_semantic_bridge_lower_bound_profile_material(
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
     material.extend_from_slice(&(shape.packing_factor as u64).to_le_bytes());
-    material.extend_from_slice(&(SMALLWOOD_SEMANTIC_BRIDGE_MERKLE_AGGREGATE_ROWS as u64).to_le_bytes());
+    material
+        .extend_from_slice(&(SMALLWOOD_SEMANTIC_BRIDGE_MERKLE_AGGREGATE_ROWS as u64).to_le_bytes());
     material.extend_from_slice(&(SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u64).to_le_bytes());
     material
 }
@@ -1080,6 +1329,35 @@ fn semantic_helper_floor_transcript_binding(
     let encoded = bincode::serialize(statement).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to serialize semantic helper floor statement binding: {err}"
+        ))
+    })?;
+    bytes.extend_from_slice(&encoded);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+    Ok(bytes)
+}
+
+fn smallwood_semantic_helper_aux_profile_material(
+    version: VersionBinding,
+    shape: SmallwoodSemanticHelperAuxShape,
+) -> Vec<u8> {
+    let mut material = Vec::new();
+    material.extend_from_slice(SMALLWOOD_SEMANTIC_HELPER_AUX_FLOOR_PROFILE_DOMAIN);
+    material.extend_from_slice(&version.circuit.to_le_bytes());
+    material.extend_from_slice(&version.crypto.to_le_bytes());
+    material.extend_from_slice(&(shape.packing_factor as u64).to_le_bytes());
+    material.extend_from_slice(&(SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u64).to_le_bytes());
+    material
+}
+
+fn semantic_helper_aux_transcript_binding(
+    statement: &SmallwoodSemanticHelperAuxStatement,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let mut bytes = Vec::from(b"hegemon.tx.smallwood-semantic-helper-aux-binding.v1".as_slice());
+    let encoded = bincode::serialize(statement).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize semantic helper-aux statement binding: {err}"
         ))
     })?;
     bytes.extend_from_slice(&encoded);
@@ -1138,10 +1416,7 @@ fn semantic_bridge_merkle_aggregate_rows(
                 current = merkle_node(left, right);
             }
         } else {
-            values.extend(std::iter::repeat_n(
-                0,
-                crate::note::MERKLE_TREE_DEPTH * 3,
-            ));
+            values.extend(std::iter::repeat_n(0, crate::note::MERKLE_TREE_DEPTH * 3));
         }
     }
     Ok(values)
@@ -1285,7 +1560,12 @@ fn push_padded_input_note_fields(
         out.push(inputs.get(idx).map(|input| input.note.value).unwrap_or(0));
     }
     for idx in 0..MAX_INPUTS {
-        out.push(inputs.get(idx).map(|input| input.note.asset_id).unwrap_or(0));
+        out.push(
+            inputs
+                .get(idx)
+                .map(|input| input.note.asset_id)
+                .unwrap_or(0),
+        );
     }
     for idx in 0..MAX_INPUTS {
         if let Some(input) = inputs.get(idx) {
@@ -1350,10 +1630,20 @@ fn push_padded_output_note_fields(
         )));
     }
     for idx in 0..MAX_OUTPUTS {
-        out.push(outputs.get(idx).map(|output| output.note.value).unwrap_or(0));
+        out.push(
+            outputs
+                .get(idx)
+                .map(|output| output.note.value)
+                .unwrap_or(0),
+        );
     }
     for idx in 0..MAX_OUTPUTS {
-        out.push(outputs.get(idx).map(|output| output.note.asset_id).unwrap_or(0));
+        out.push(
+            outputs
+                .get(idx)
+                .map(|output| output.note.asset_id)
+                .unwrap_or(0),
+        );
     }
     for idx in 0..MAX_OUTPUTS {
         if let Some(output) = outputs.get(idx) {

@@ -2,7 +2,7 @@
 
 This note answers one narrow question on the current tree:
 
-What is left to do if Hegemon wants to beat the current `98532`-byte SmallWood tx proof materially, and how much of that job belongs to a real semantic LPPC frontend versus a new opening layer?
+What is left to do if Hegemon wants to beat Hegemon’s current SmallWood tx proof materially, and how much of that job belongs to a real semantic LPPC frontend versus a new opening layer?
 
 The answer is now concrete:
 
@@ -13,23 +13,25 @@ The answer is now concrete:
 
 ## Current exact baseline
 
-The exact current release proof is measured in:
+The current shipped line is measured in:
 
 - [tx_proof_smallwood_current_size_report.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_current_size_report.json)
 
-Current exact bytes:
+Current shipped numbers:
 
-- total proof: `98532`
+- structural upper bound: `90830`
+- checked exact sampled proof bytes on the current benchmark witness: `87246 .. 87278`
+- remaining DECS multiproof headroom on the live opened set: at most `16` duplicate sibling nodes, or `512` raw digest bytes before multiproof flags / format overhead
 - wrapper: `12`
 - transcript: `9524`
-- commitments / auth paths: `11720`
-- opened values: `25192`
-- opening payload: `52084`
+- sampled commitments / auth paths: `7616 .. 7680`
+- opened values: `24160`
+- opening payload: `46628`
 
 Inside the current opening payload:
 
-- opened witness rows: `33268`
-- DECS high coefficients: `16832`
+- opened witness rows: `30196`
+- DECS high coefficients: `14528`
 - PCS recombination tails: `1208`
 - DECS masking evals: `776`
 
@@ -125,13 +127,13 @@ The exact current-engine identity spike for the winning `64x` point also matches
 That is the decisive current-backend result:
 
 - the pure semantic lower bound is `99456`,
-- but the moment the current nonlinear adapter needs lane-visible helper rows back, the floor jumps to `102120`,
-- which is already above the shipped `98532`-byte default proof.
+- but the moment the current nonlinear adapter needs lane-visible helper rows back as explicit opened rows, the floor jumps to `102120`,
+- which is already above the shipped `90830`-byte structural upper bound.
 
 So the blocker is now much narrower and more concrete:
 
-- on the current backend, a true semantic adapter has almost no room left,
-- and any path that restores the lane-visible helper rows the current nonlinear model needs is already a losing line.
+- on the current backend, a true semantic adapter has almost no room left if helper structure returns as explicit opened rows,
+- and the live question is now whether that helper surface can move through a smaller transport path.
 
 ## Auxiliary-subtrace path is dead on the current engine
 
@@ -149,15 +151,19 @@ The measured current-engine projection with the full current Poseidon2 subtrace 
 | `512 x 8` | `54912` | `477072` |
 | `256 x 16` | `54912` | `472008` |
 
-Those numbers are not close to the current shipped `98532`-byte proof. They are all about `4.8x .. 5.0x` worse.
+Those numbers are not close to the current shipped proof. They are all about `5.4x .. 5.7x` worse than the current checked `87246 .. 87278`-byte band and far above the `90830`-byte structural upper bound.
 
-There is also a stronger exact negative result on the current engine:
+There is now also a stronger exact result on the current engine:
 
-- the exact `512 x 8` auxiliary spike does **not** roundtrip cleanly,
-- it fail-closes with `smallwood piop transcript hash mismatch`,
-- because the current engine’s auxiliary-witness replay path substitutes auxiliary words for linear targets during transcript recomputation.
+- the exact `512 x 8` auxiliary spike roundtrips cleanly,
+- and it lands exactly where the projection said it would: `477072` bytes.
 
-That means the auxiliary-subtrace branch is not merely “too big.” On the current engine it is also the wrong transport path for this statement shape.
+The earlier fail-closed exact result was caused by an engine bug, not by a good design property. The verifier replay path was incorrectly substituting auxiliary witness words for linear targets during transcript recomputation. Once that was fixed, the exact spike matched the structural projection and stayed obviously dead on bytes.
+
+That means the auxiliary-subtrace branch is still dead, but now for the honest reason:
+
+- it is far too large,
+- not because the engine replay path happened to reject it.
 
 So the next branch is not:
 
@@ -167,6 +173,33 @@ It is:
 
 - a truly semantic LPPC frontend that keeps the hash work row-local and low-degree without smuggling the current bridge subtrace through the auxiliary witness channel.
 
+## Compact helper-aux backend floor
+
+The same backend fix exposed one live current-engine branch:
+
+- [tx_proof_smallwood_semantic_helper_aux_report.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_semantic_helper_aux_report.json)
+
+This branch keeps:
+
+- the packed semantic `NativeTxValidityRelation` window,
+- the grouped Poseidon trace in the opened row domain,
+
+but moves only the lane-visible helper rows into the auxiliary witness channel instead of paying for them as explicit opened rows.
+
+The measured frontier is:
+
+| shape | auxiliary helper words | witness rows | bytes |
+|---|---:|---:|---:|
+| `32x` | `264` | `2048` | `107784` |
+| `64x` | `264` | `1216` | `94728` |
+| `128x` | `264` | `800` | `113544` |
+
+The exact current-engine identity spike for the winning `64x` point also matches the projection exactly:
+
+- `94728` bytes
+
+This was the first real current-backend branch that beat the old `98532`-byte shipped line. It no longer beats the current shipped inline-Merkle line, which now has a `90830`-byte structural upper bound and checked exact sampled proofs in the `87246 .. 87278` band.
+
 ## What the bridge-side work already proved
 
 The live bridge and compact-binding experiments are now enough to say what the current engine does and does not reward.
@@ -175,7 +208,8 @@ Measured branches:
 
 - bridge baseline: `100956`
 - compact bindings: `99828`
-- active default, compact bindings + skip initial MDS row: `98532`
+- former shipped default, compact bindings + skip initial MDS row: `98532`
+- current shipped default, compact bindings + inline Merkle + skip initial MDS row: structural upper bound `90830`, checked exact sampled proofs in the `87246 .. 87278` band
 
 The important observation is not just that the gains were small. It is where the gains landed.
 
@@ -231,7 +265,7 @@ That note uses the official SmallWood prototype with a conservative Hegemon-nati
 So the right reading is:
 
 - the semantic LPPC branch is real,
-- but it should be judged against the current `98532`-byte object,
+- but it should be judged against the current shipped line (`90830` upper bound, `87246 .. 87278` checked exact bytes),
 - not against the overly optimistic raw-`4096` witness story alone.
 
 ## What the semantic LPPC frontend can actually remove
@@ -299,10 +333,11 @@ The main risk is no longer “will the opening layer kill us?” The main risk i
 Right now the evidence says the answer is probably **no** on the current backend model:
 
 - pure semantic lower bound: `99456`
+- compact helper-aux floor: `94728`
 - lane-visible helper floor: `102120`
-- shipped default proof: `98532`
+- shipped default proof: structural upper bound `90830`, checked exact sampled proofs `87246 .. 87278`
 
-That means the semantic LPPC frontend is still the right conceptual direction, but on the current opened-row model it is no longer the clear next implementation win. The moment the nonlinear relation needs the helper rows back, the branch is already underwater.
+That means the semantic LPPC frontend is still the right conceptual direction, but the live backend question is now narrower. The moment the nonlinear relation pays for helper rows as explicit opened rows, the branch is underwater. If the helper surface moves through auxiliary instead, the backend floor drops below the shipped default again.
 
 ## The current/left/right Merkle aggregate rows are structural on the current engine
 
@@ -350,7 +385,7 @@ On the current exact proof, a new opening layer matters only if it materially re
 - `pcs_subset_evals_bytes = 24776`
 - `decs_auth_paths_bytes = 11720`
 
-Those four buckets alone are `84512` bytes of the `98532`-byte proof.
+Those four buckets alone are `87246 - 12 = 87234` bytes of the current checked sampled proof, and the structural upper-bound report still allocates `90830 - 12 = 90818` bytes inside the wrapper.
 
 That gives two different opening-layer targets.
 
@@ -406,9 +441,13 @@ The exact current-backend evidence is now:
 
 - identity semantic LPPC window: `32712 .. 54240`
 - current-backend lower bound with grouped Poseidon plus structural Merkle linkage: `99456`
+- compact helper-aux floor with grouped Poseidon plus helper transport in auxiliary: `94728`
 - current-backend helper floor once lane-visible nonlinear helper rows return: `102120`
 
-So a real semantic adapter on the current backend is no longer the first thing to build. The likely outcome is a lot of implementation work to land slightly above the shipped line.
+So a real semantic adapter on the current backend is no longer “mostly killed.” It is now conditional:
+
+- if the adapter has to restore explicit helper rows, it loses,
+- if the adapter can consume helper structure through the auxiliary path without inflating that path, there is still a real current-backend win left.
 
 ### 2. Attack the opened-row model or opening layer next
 
@@ -439,13 +478,13 @@ The exact current situation is now:
 
 - the bridge-side local cleanup frontier is mostly exhausted,
 - the pure semantic LPPC witness window is still dramatically smaller,
-- but the current backend loses that win once the nonlinear relation has to regain lane-visible helper rows,
-- and the measured helper floor is already above the shipped bridge proof.
+- the current backend loses that win once the nonlinear relation has to regain lane-visible helper rows as explicit opened rows,
+- but the compact helper-aux floor now lands at `94728`, which is still above the shipped `90830`-byte structural upper bound.
 
-So the correct next move is not more frontend churn on this backend.
+So the correct next move is no longer “frontend churn is dead on this backend.” The next move is narrower and more technical:
 
 It is:
 
-1. either redesign the opened-row/backend model so the nonlinear adapter can see lane-local structure directly,
+1. use the compact helper-aux floor as the new backend target for a real semantic adapter,
 2. or attack the opening/authentication surface on the shipped winning statement,
-3. and only then revisit the semantic LPPC frontend as a product branch.
+3. and kill the branch honestly if the real adapter cannot stay close to the `94728` helper-aux floor.

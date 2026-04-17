@@ -1,0 +1,35 @@
+{
+  "generator": {
+    "command": "cargo test -p transaction-circuit smallwood_semantic_helper_aux_frontier_quantifies_auxiliary_escape_hatch -- --nocapture && cargo test -p transaction-circuit smallwood_semantic_helper_aux_exact_report_matches_projection -- --ignored --nocapture",
+    "date_utc": "2026-04-17T08:55:00Z",
+    "note": "Generated from the current SmallWood structural backend after fixing auxiliary replay to keep linear targets separate from auxiliary witness words. This is still a backend floor, not a full semantic candidate proof."
+  },
+  "baseline": {
+    "current_smallwood_candidate_bytes": 93156,
+    "helper_floor_64x_bytes": 102120
+  },
+  "helper_aux_frontier": [
+    {
+      "label": "semantic_helper_aux_32x_v1",
+      "packing_factor": 32,
+      "auxiliary_helper_words": 264,
+      "witness_rows": 2048,
+      "projected_total_bytes": 107784
+    },
+    {
+      "label": "semantic_helper_aux_64x_v1",
+      "packing_factor": 64,
+      "auxiliary_helper_words": 264,
+      "witness_rows": 1216,
+      "projected_total_bytes": 94728,
+      "exact_total_bytes": 94728
+    },
+    {
+      "label": "semantic_helper_aux_128x_v1",
+      "packing_factor": 128,
+      "auxiliary_helper_words": 264,
+      "witness_rows": 800,
+      "projected_total_bytes": 113544
+    }
+  ]
+}

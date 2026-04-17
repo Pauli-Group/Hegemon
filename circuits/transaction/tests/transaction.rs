@@ -13,17 +13,20 @@ use transaction_circuit::p3_verifier::{
 };
 use transaction_circuit::proof::{
     prove, prove_with_params, stark_public_inputs_p3,
-    transaction_public_inputs_digest_from_serialized, transaction_statement_hash_from_public_inputs,
-    verify,
+    transaction_public_inputs_digest_from_serialized,
+    transaction_statement_hash_from_public_inputs, verify,
 };
 use transaction_circuit::{
+    analyze_smallwood_candidate_profile_for_arithmetization,
     analyze_smallwood_semantic_bridge_lower_bound_frontier_from_witness,
+    analyze_smallwood_semantic_helper_aux_frontier_from_witness,
     analyze_smallwood_semantic_helper_floor_frontier_from_witness,
     analyze_smallwood_semantic_lppc_auxiliary_poseidon_spike_from_witness,
     analyze_smallwood_semantic_lppc_frontier_from_witness,
-    analyze_smallwood_candidate_profile_for_arithmetization,
-    build_smallwood_semantic_lppc_material_from_witness,
+    build_smallwood_semantic_lppc_material_from_witness, decode_smallwood_proof_trace_v1,
+    encode_smallwood_proof_trace_v1, exact_smallwood_candidate_profile_report_from_witness,
     exact_smallwood_semantic_bridge_lower_bound_report_from_witness,
+    exact_smallwood_semantic_helper_aux_report_from_witness,
     exact_smallwood_semantic_helper_floor_report_from_witness,
     exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness,
     exact_smallwood_semantic_lppc_identity_spike_report_from_witness,
@@ -31,8 +34,7 @@ use transaction_circuit::{
     projected_smallwood_candidate_proof_bytes_for_arithmetization, prove_smallwood_candidate,
     report_smallwood_candidate_proof_size, InputNoteWitness, OutputNoteWitness,
     SmallwoodArithmetization, SmallwoodNoGrindingProfileV1, SmallwoodSemanticBridgeLowerBoundShape,
-    SmallwoodSemanticHelperFloorShape,
-    SmallwoodSemanticLppcShape,
+    SmallwoodSemanticHelperAuxShape, SmallwoodSemanticHelperFloorShape, SmallwoodSemanticLppcShape,
     StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness,
     ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
 };
@@ -42,52 +44,83 @@ struct MirrorSmallwoodCandidateProof {
     #[serde(default = "default_mirror_smallwood_arithmetization")]
     arithmetization: SmallwoodArithmetization,
     ark_proof: Vec<u8>,
+    #[serde(default)]
+    auxiliary_witness_words: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyMirrorSmallwoodCandidateProof {
+    #[serde(default = "default_mirror_smallwood_arithmetization")]
+    arithmetization: SmallwoodArithmetization,
+    ark_proof: Vec<u8>,
 }
 
 fn default_mirror_smallwood_arithmetization() -> SmallwoodArithmetization {
-    SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
+    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorSmallwoodProof {
-    salt: [u8; 32],
-    nonce: [u8; 4],
-    h_piop: [u8; 32],
-    piop: MirrorPiopProof,
-    pcs: MirrorPcsProof,
-    opened_witness: MirrorSmallwoodOpenedWitnessBundle,
+fn decode_mirror_smallwood_candidate_proof(proof_bytes: &[u8]) -> MirrorSmallwoodCandidateProof {
+    bincode::deserialize(proof_bytes).unwrap_or_else(|_| {
+        let legacy: LegacyMirrorSmallwoodCandidateProof =
+            bincode::deserialize(proof_bytes).expect("decode legacy candidate wrapper");
+        MirrorSmallwoodCandidateProof {
+            arithmetization: legacy.arithmetization,
+            ark_proof: legacy.ark_proof,
+            auxiliary_witness_words: Vec::new(),
+        }
+    })
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorSmallwoodOpenedWitnessBundle {
-    mode: MirrorSmallwoodOpenedWitnessMode,
+fn encode_mirror_smallwood_candidate_proof(wrapper: &MirrorSmallwoodCandidateProof) -> Vec<u8> {
+    if wrapper.auxiliary_witness_words.is_empty() {
+        return bincode::serialize(&LegacyMirrorSmallwoodCandidateProof {
+            arithmetization: wrapper.arithmetization,
+            ark_proof: wrapper.ark_proof.clone(),
+        })
+        .expect("reencode legacy candidate wrapper");
+    }
+    bincode::serialize(wrapper).expect("reencode candidate wrapper")
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum MirrorSmallwoodOpenedWitnessMode {
-    None,
-    RowScalars { row_scalars: Vec<Vec<u64>> },
+fn read_compact_u16(bytes: &[u8], cursor: &mut usize) -> u16 {
+    let end = *cursor + 2;
+    let mut word = [0u8; 2];
+    word.copy_from_slice(&bytes[*cursor..end]);
+    *cursor = end;
+    u16::from_le_bytes(word)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorPiopProof {
-    ppol_highs: Vec<Vec<u64>>,
-    plin_highs: Vec<Vec<u64>>,
+fn advance_compact_smallwood_matrix(bytes: &[u8], cursor: &mut usize) {
+    let rows = read_compact_u16(bytes, cursor) as usize;
+    let cols = read_compact_u16(bytes, cursor) as usize;
+    *cursor += rows * cols * 8;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorPcsProof {
-    rcombi_tails: Vec<Vec<u64>>,
-    subset_evals: Vec<Vec<u64>>,
-    partial_evals: Vec<Vec<u64>>,
-    decs: MirrorDecsProof,
+fn advance_compact_smallwood_auth_paths(bytes: &[u8], cursor: &mut usize) {
+    let rows = read_compact_u16(bytes, cursor) as usize;
+    let lengths = &bytes[*cursor..*cursor + rows];
+    *cursor += rows;
+    let total_nodes = lengths.iter().map(|&len| len as usize).sum::<usize>();
+    *cursor += total_nodes * 32;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct MirrorDecsProof {
-    auth_paths: Vec<Vec<[u8; 32]>>,
-    masking_evals: Vec<Vec<u64>>,
-    high_coeffs: Vec<Vec<u64>>,
+fn compact_smallwood_masking_header_offset(inner_proof: &[u8]) -> usize {
+    let mut cursor = 4 + 32 + 4 + 32;
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_auth_paths(inner_proof, &mut cursor);
+    cursor
+}
+
+fn compact_smallwood_row_scalars_header_offset(inner_proof: &[u8]) -> usize {
+    let mut cursor = compact_smallwood_masking_header_offset(inner_proof);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    advance_compact_smallwood_matrix(inner_proof, &mut cursor);
+    cursor += 1;
+    cursor
 }
 
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
@@ -378,9 +411,49 @@ fn smallwood_candidate_proof_size_report_matches_current_release_bytes() {
             + report.other_bytes,
         "proof size report sections must sum back to the exact proof length"
     );
+    assert!(
+        report.total_bytes <= projected_bytes,
+        "measured proof bytes must stay at or below the current structural SmallWood candidate upper bound: measured={} projected={projected_bytes}",
+        report.total_bytes
+    );
+}
+
+#[test]
+#[ignore = "experimental exact SmallWood profile proving is still too slow for the default test profile"]
+fn smallwood_candidate_exact_best_projected_profile_matches_projection() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let profile = SmallwoodNoGrindingProfileV1 {
+        rho: 2,
+        nb_opened_evals: 3,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 32768,
+        decs_nb_opened_evals: 23,
+        decs_eta: 3,
+        decs_pow_bits: 0,
+    };
+    let report = exact_smallwood_candidate_profile_report_from_witness(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        profile,
+    )
+    .expect("exact report for best projected smallwood profile");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("serialize exact profile report")
+    );
+    assert!(
+        report.exact_total_bytes <= report.projected_total_bytes,
+        "exact smallwood candidate profile bytes must stay at or below the structural projection: exact={} projected={}",
+        report.exact_total_bytes,
+        report.projected_total_bytes,
+    );
     assert_eq!(
-        report.total_bytes, projected_bytes,
-        "measured proof bytes must match the current projected SmallWood candidate proof size"
+        report.projected_total_bytes,
+        projected_smallwood_candidate_proof_bytes(&witness)
+            .expect("projected current smallwood proof bytes"),
+        "the shipped structural upper bound should stay pinned to the default projection helper",
     );
 }
 
@@ -413,19 +486,20 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
 }
 
 #[test]
-fn smallwood_candidate_default_projection_tracks_skip_initial_mds_arithmetization() {
+fn smallwood_candidate_default_projection_tracks_inline_merkle_skip_initial_mds_arithmetization() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let default_bytes = projected_smallwood_candidate_proof_bytes(&witness)
         .expect("projected smallwood candidate proof bytes");
-    let skip_initial_mds_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
-        &witness,
-        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
-    )
-    .expect("projected skip-initial-mds smallwood candidate proof bytes");
+    let inline_merkle_skip_initial_mds_bytes =
+        projected_smallwood_candidate_proof_bytes_for_arithmetization(
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .expect("projected inline-merkle skip-initial-mds smallwood candidate proof bytes");
     assert_eq!(
-        default_bytes, skip_initial_mds_bytes,
-        "default SmallWood candidate projection should stay pinned to the skip-initial-mds arithmetization"
+        default_bytes, inline_merkle_skip_initial_mds_bytes,
+        "default SmallWood candidate projection should stay pinned to the inline-merkle skip-initial-mds arithmetization"
     );
 }
 
@@ -438,8 +512,7 @@ fn smallwood_candidate_explicit_direct_proof_wrapper_tracks_direct_arithmetizati
         SmallwoodArithmetization::DirectPacked64V1,
     )
     .expect("smallwood candidate direct proof");
-    let mirror: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let mirror = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
     assert_eq!(
         mirror.arithmetization,
         SmallwoodArithmetization::DirectPacked64V1,
@@ -512,6 +585,10 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
             SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
         ),
         (
+            "packed64_compact_inline_merkle_skip_initial_mds",
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        ),
+        (
             "packed128_compact",
             SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
         ),
@@ -544,6 +621,14 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
         })
         .map(|(_, _, bytes)| *bytes)
         .expect("packed64 compact skip-initial-mds frontier point");
+    let packed64_inline_merkle_skip_initial_mds_bytes = projections
+        .iter()
+        .find(|(_, arithmetization, _)| {
+            *arithmetization
+                == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        })
+        .map(|(_, _, bytes)| *bytes)
+        .expect("packed64 compact inline-merkle skip-initial-mds frontier point");
     let packed128_bytes = projections
         .iter()
         .find(|(_, arithmetization, _)| {
@@ -559,13 +644,19 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
         packed64_skip_initial_mds_bytes < packed64_bytes,
         "skip-initial-mds should beat the current compact64 frontier point: skip-initial-mds={packed64_skip_initial_mds_bytes} packed64={packed64_bytes}"
     );
+    assert!(
+        packed64_inline_merkle_skip_initial_mds_bytes < packed64_skip_initial_mds_bytes,
+        "inline-merkle + skip-initial-mds should beat the explicit-merkle helper frontier point: inline-merkle={packed64_inline_merkle_skip_initial_mds_bytes} explicit-merkle={packed64_skip_initial_mds_bytes}"
+    );
 }
 
 #[test]
 fn smallwood_candidate_active_no_grinding_profile_clears_128_bits() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let profile = transaction_circuit::ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1;
+    let profile = transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(
+        SmallwoodArithmetization::Bridge64V1,
+    );
     let analysis = analyze_smallwood_candidate_profile_for_arithmetization(
         &witness,
         SmallwoodArithmetization::Bridge64V1,
@@ -650,12 +741,23 @@ fn smallwood_semantic_lppc_frontier_reports_current_engine_projections() {
     .expect("analyze semantic LPPC frontier");
     eprintln!("smallwood semantic LPPC frontier: {:?}", reports);
     assert_eq!(reports.len(), 3);
-    assert!(reports.iter().all(|report| report.soundness.meets_128_bit_floor));
-    assert_eq!(reports[0].shape, SmallwoodSemanticLppcShape::packed_1024x4_v1());
+    assert!(reports
+        .iter()
+        .all(|report| report.soundness.meets_128_bit_floor));
+    assert_eq!(
+        reports[0].shape,
+        SmallwoodSemanticLppcShape::packed_1024x4_v1()
+    );
     assert_eq!(reports[0].projected_total_bytes, 54_240);
-    assert_eq!(reports[1].shape, SmallwoodSemanticLppcShape::packed_512x8_v1());
+    assert_eq!(
+        reports[1].shape,
+        SmallwoodSemanticLppcShape::packed_512x8_v1()
+    );
     assert_eq!(reports[1].projected_total_bytes, 37_776);
-    assert_eq!(reports[2].shape, SmallwoodSemanticLppcShape::packed_256x16_v1());
+    assert_eq!(
+        reports[2].shape,
+        SmallwoodSemanticLppcShape::packed_256x16_v1()
+    );
     assert_eq!(reports[2].projected_total_bytes, 32_712);
 }
 
@@ -678,14 +780,32 @@ fn smallwood_semantic_lppc_identity_spike_frontier_matches_projection() {
         serde_json::to_string_pretty(&reports).expect("serialize semantic LPPC identity frontier")
     );
     assert_eq!(reports.len(), 3);
-    assert_eq!(reports[0].shape, SmallwoodSemanticLppcShape::packed_1024x4_v1());
-    assert_eq!(reports[0].exact_total_bytes, reports[0].projected_total_bytes);
+    assert_eq!(
+        reports[0].shape,
+        SmallwoodSemanticLppcShape::packed_1024x4_v1()
+    );
+    assert_eq!(
+        reports[0].exact_total_bytes,
+        reports[0].projected_total_bytes
+    );
     assert_eq!(reports[0].exact_total_bytes, 54_240);
-    assert_eq!(reports[1].shape, SmallwoodSemanticLppcShape::packed_512x8_v1());
-    assert_eq!(reports[1].exact_total_bytes, reports[1].projected_total_bytes);
+    assert_eq!(
+        reports[1].shape,
+        SmallwoodSemanticLppcShape::packed_512x8_v1()
+    );
+    assert_eq!(
+        reports[1].exact_total_bytes,
+        reports[1].projected_total_bytes
+    );
     assert_eq!(reports[1].exact_total_bytes, 37_776);
-    assert_eq!(reports[2].shape, SmallwoodSemanticLppcShape::packed_256x16_v1());
-    assert_eq!(reports[2].exact_total_bytes, reports[2].projected_total_bytes);
+    assert_eq!(
+        reports[2].shape,
+        SmallwoodSemanticLppcShape::packed_256x16_v1()
+    );
+    assert_eq!(
+        reports[2].exact_total_bytes,
+        reports[2].projected_total_bytes
+    );
     assert_eq!(reports[2].exact_total_bytes, 32_712);
 }
 
@@ -714,28 +834,35 @@ fn smallwood_semantic_lppc_auxiliary_poseidon_spike_projection_shows_aux_path_lo
             .expect("serialize semantic LPPC auxiliary poseidon spike report")
     );
     assert_eq!(reports.len(), 3);
-    assert!(reports.iter().all(|report| report.auxiliary_poseidon_words == 54_912));
-    assert!(reports.iter().all(|report| {
-        report.projected_total_bytes > report.shipped_smallwood_candidate_bytes
-    }));
+    assert!(reports
+        .iter()
+        .all(|report| report.auxiliary_poseidon_words == 54_912));
+    assert!(reports
+        .iter()
+        .all(|report| { report.projected_total_bytes > report.shipped_smallwood_candidate_bytes }));
 }
 
 #[test]
-fn smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_fail_closes_on_current_engine() {
+fn smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_matches_projection_and_still_loses() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let err = exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness(
+    let report = exact_smallwood_semantic_lppc_auxiliary_poseidon_spike_report_from_witness(
         &witness,
         SmallwoodSemanticLppcShape::recommended_v1(),
     )
-    .expect_err("current engine should fail-close on the auxiliary poseidon spike");
-    eprintln!("semantic LPPC auxiliary poseidon exact spike error: {err}");
+    .expect("build exact semantic LPPC auxiliary poseidon report");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report)
+            .expect("serialize semantic LPPC auxiliary poseidon exact report")
+    );
     assert!(
-        matches!(
-            err,
-            TransactionCircuitError::ConstraintViolation("smallwood piop transcript hash mismatch")
-        ),
-        "expected the current engine to fail closed on the auxiliary poseidon spike replay path, got {err:?}",
+        report.exact_total_bytes == report.projected_total_bytes,
+        "the exact auxiliary poseidon spike should match the structural projection on the fixed engine path"
+    );
+    assert!(
+        report.exact_total_bytes > 400_000,
+        "the full auxiliary poseidon transport should remain obviously unshippable"
     );
 }
 
@@ -770,8 +897,8 @@ fn smallwood_semantic_bridge_lower_bound_frontier_quantifies_current_backend_flo
     assert!(reports[2].projected_total_bytes > reports[1].projected_total_bytes);
     assert_eq!(reports[1].projected_total_bytes, 99_456);
     assert!(
-        reports[1].projected_total_bytes < reports[1].shipped_smallwood_candidate_bytes,
-        "the semantic lower bound should show the remaining headroom on the current backend"
+        reports[1].projected_total_bytes >= reports[1].shipped_smallwood_candidate_bytes,
+        "after promoting the 98,532-byte branch, the pure semantic lower bound should no longer beat the shipped default"
     );
 }
 
@@ -792,8 +919,8 @@ fn smallwood_semantic_bridge_lower_bound_exact_report_matches_projection() {
     );
     assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
     assert!(
-        report.exact_total_bytes < report.shipped_smallwood_candidate_bytes,
-        "the exact lower-bound identity spike should preserve the measured headroom on the current backend"
+        report.exact_total_bytes >= report.shipped_smallwood_candidate_bytes,
+        "after promoting the 98,532-byte branch, the exact lower-bound identity spike should no longer beat the shipped default"
     );
 }
 
@@ -808,12 +935,17 @@ fn smallwood_semantic_helper_floor_frontier_exposes_lane_visible_semantic_tax() 
     .expect("analyze semantic helper floor frontier");
     eprintln!(
         "{}",
-        serde_json::to_string_pretty(&reports)
-            .expect("serialize semantic helper floor frontier")
+        serde_json::to_string_pretty(&reports).expect("serialize semantic helper floor frontier")
     );
     assert_eq!(reports.len(), 3);
-    assert_eq!(reports[0].shape, SmallwoodSemanticHelperFloorShape::packed_32x_v1());
-    assert_eq!(reports[1].shape, SmallwoodSemanticHelperFloorShape::packed_64x_v1());
+    assert_eq!(
+        reports[0].shape,
+        SmallwoodSemanticHelperFloorShape::packed_32x_v1()
+    );
+    assert_eq!(
+        reports[1].shape,
+        SmallwoodSemanticHelperFloorShape::packed_64x_v1()
+    );
     assert_eq!(
         reports[2].shape,
         SmallwoodSemanticHelperFloorShape::packed_128x_v1()
@@ -840,13 +972,69 @@ fn smallwood_semantic_helper_floor_exact_report_matches_projection() {
     .expect("build exact semantic helper floor report");
     eprintln!(
         "{}",
-        serde_json::to_string_pretty(&report)
-            .expect("serialize semantic helper floor report")
+        serde_json::to_string_pretty(&report).expect("serialize semantic helper floor report")
     );
     assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
     assert!(
         report.exact_total_bytes >= report.shipped_smallwood_candidate_bytes,
         "if the exact helper floor stays below the shipped bridge then the current backend still has a semantic-adapter path left"
+    );
+}
+
+#[test]
+fn smallwood_semantic_helper_aux_frontier_quantifies_auxiliary_escape_hatch() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let reports = analyze_smallwood_semantic_helper_aux_frontier_from_witness(
+        &witness,
+        ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    )
+    .expect("analyze semantic helper-aux frontier");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&reports).expect("serialize semantic helper-aux frontier")
+    );
+    assert_eq!(reports.len(), 3);
+    assert_eq!(
+        reports[0].shape,
+        SmallwoodSemanticHelperAuxShape::packed_32x_v1()
+    );
+    assert_eq!(
+        reports[1].shape,
+        SmallwoodSemanticHelperAuxShape::packed_64x_v1()
+    );
+    assert_eq!(
+        reports[2].shape,
+        SmallwoodSemanticHelperAuxShape::packed_128x_v1()
+    );
+    assert!(
+        reports[1].projected_total_bytes < 102_120,
+        "moving helper rows out of the opened row domain should beat the explicit helper-floor branch"
+    );
+    assert!(
+        reports[1].projected_total_bytes < reports[1].shipped_smallwood_candidate_bytes,
+        "if helper rows in auxiliary still lose to the shipped branch then auxiliary transport is not a live backend lever"
+    );
+}
+
+#[test]
+#[ignore = "experimental semantic helper-aux identity proving is still too slow for the default test profile"]
+fn smallwood_semantic_helper_aux_exact_report_matches_projection() {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let report = exact_smallwood_semantic_helper_aux_report_from_witness(
+        &witness,
+        SmallwoodSemanticHelperAuxShape::recommended_v1(),
+    )
+    .expect("build exact semantic helper-aux report");
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&report).expect("serialize semantic helper-aux report")
+    );
+    assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
+    assert!(
+        report.exact_total_bytes < report.shipped_smallwood_candidate_bytes,
+        "if the exact helper-aux branch cannot beat the shipped proof there is no point wiring it into the real candidate path"
     );
 }
 
@@ -873,7 +1061,9 @@ fn smallwood_candidate_active_profile_beats_previous_decs_point() {
     let active = analyze_smallwood_candidate_profile_for_arithmetization(
         &witness,
         SmallwoodArithmetization::Bridge64V1,
-        transaction_circuit::ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(
+            SmallwoodArithmetization::Bridge64V1,
+        ),
     )
     .expect("analyze active smallwood profile");
     eprintln!(
@@ -902,19 +1092,13 @@ fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
         SmallwoodArithmetization::DirectPacked64V1,
     )
     .expect("smallwood candidate direct proof");
-    let outer: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
-    let inner: MirrorSmallwoodProof =
-        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    match inner.opened_witness.mode {
-        MirrorSmallwoodOpenedWitnessMode::RowScalars { row_scalars } => {
-            assert!(
-                !row_scalars.is_empty(),
-                "row-scalar openings must be present"
-            );
-        }
-        mode => panic!("unexpected direct opened witness mode: {mode:?}"),
-    }
+    let outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    let inner = decode_smallwood_proof_trace_v1(&outer.ark_proof)
+        .expect("decode inner smallwood proof trace");
+    assert!(
+        !inner.opened_witness_row_scalars.is_empty(),
+        "row-scalar openings must be present"
+    );
 }
 
 #[test]
@@ -927,8 +1111,7 @@ fn smallwood_candidate_packed32_compact_roundtrip_verifies_but_loses_to_compact6
         SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
     )
     .expect("smallwood candidate packed32 compact proof");
-    let wrapper: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let wrapper = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
     assert_eq!(
         wrapper.arithmetization,
         SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
@@ -950,9 +1133,10 @@ fn smallwood_candidate_packed32_compact_roundtrip_verifies_but_loses_to_compact6
         "packed32 compact actual bytes={} compact64 baseline={compact64_bytes}",
         size_report.total_bytes
     );
-    assert_eq!(
-        size_report.total_bytes, projected_bytes,
-        "packed32 compact actual bytes should match the exact current projection"
+    assert!(
+        size_report.total_bytes <= projected_bytes,
+        "packed32 compact actual bytes should stay at or below the structural projection: actual={} projected={projected_bytes}",
+        size_report.total_bytes
     );
     assert!(
         size_report.total_bytes > compact64_bytes,
@@ -973,8 +1157,7 @@ fn smallwood_candidate_packed128_compact_roundtrip_verifies_but_loses_to_compact
         SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
     )
     .expect("smallwood candidate packed128 compact proof");
-    let wrapper: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let wrapper = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
     assert_eq!(
         wrapper.arithmetization,
         SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
@@ -996,9 +1179,10 @@ fn smallwood_candidate_packed128_compact_roundtrip_verifies_but_loses_to_compact
         "packed128 compact actual bytes={} compact64 baseline={compact64_bytes}",
         size_report.total_bytes
     );
-    assert_eq!(
-        size_report.total_bytes, projected_bytes,
-        "packed128 compact actual bytes should match the exact current projection"
+    assert!(
+        size_report.total_bytes <= projected_bytes,
+        "packed128 compact actual bytes should stay at or below the structural projection: actual={} projected={projected_bytes}",
+        size_report.total_bytes
     );
     assert!(
         size_report.total_bytes > compact64_bytes,
@@ -1038,8 +1222,7 @@ fn smallwood_candidate_compact_bindings_skip_initial_mds_roundtrip_verifies_and_
         SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
     )
     .expect("smallwood candidate compact-binding skip-initial-mds proof");
-    let wrapper: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
+    let wrapper = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
     assert_eq!(
         wrapper.arithmetization,
         SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
@@ -1061,9 +1244,10 @@ fn smallwood_candidate_compact_bindings_skip_initial_mds_roundtrip_verifies_and_
         "skip-initial-mds actual bytes={} compact64 baseline={compact64_bytes}",
         size_report.total_bytes
     );
-    assert_eq!(
-        size_report.total_bytes, projected_bytes,
-        "skip-initial-mds actual bytes should match the exact current projection"
+    assert!(
+        size_report.total_bytes <= projected_bytes,
+        "skip-initial-mds actual bytes should stay at or below the structural projection: actual={} projected={projected_bytes}",
+        size_report.total_bytes
     );
     assert!(
         size_report.total_bytes < compact64_bytes,
@@ -1072,6 +1256,54 @@ fn smallwood_candidate_compact_bindings_skip_initial_mds_roundtrip_verifies_and_
     );
     let report = verify(&proof, &generate_keys().1)
         .expect("smallwood compact-binding skip-initial-mds verification");
+    assert!(report.verified);
+}
+
+#[test]
+#[ignore = "experimental inline-merkle backend branch is still too slow for the default test profile"]
+fn smallwood_candidate_compact_bindings_inline_merkle_skip_initial_mds_roundtrip_verifies_and_beats_skip_initial_mds(
+) {
+    let mut witness = sample_witness();
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+    )
+    .expect("smallwood candidate inline-merkle compact-binding proof");
+    let wrapper = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    assert_eq!(
+        wrapper.arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        "inline-merkle proof should carry the inline-merkle arithmetization tag"
+    );
+    let size_report = report_smallwood_candidate_proof_size(&proof.stark_proof)
+        .expect("inline-merkle size report");
+    let projected_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+    )
+    .expect("projected inline-merkle bytes");
+    let skip_initial_mds_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        &witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+    )
+    .expect("projected skip-initial-mds bytes");
+    eprintln!(
+        "inline-merkle actual bytes={} skip-initial-mds baseline={skip_initial_mds_bytes}",
+        size_report.total_bytes
+    );
+    assert!(
+        size_report.total_bytes <= projected_bytes,
+        "inline-merkle actual bytes should stay at or below the structural projection: actual={} projected={projected_bytes}",
+        size_report.total_bytes
+    );
+    assert!(
+        size_report.total_bytes < skip_initial_mds_bytes,
+        "inline-merkle should beat the explicit-merkle helper geometry on exact bytes: inline-merkle={} explicit-merkle={skip_initial_mds_bytes}",
+        size_report.total_bytes
+    );
+    let report = verify(&proof, &generate_keys().1)
+        .expect("smallwood compact-binding inline-merkle verification");
     assert!(report.verified);
 }
 
@@ -1182,13 +1414,13 @@ fn smallwood_candidate_rejects_partial_eval_tampering() {
     let (_proving_key, verifying_key) = generate_keys();
     let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
 
-    let mut outer: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
-    let mut inner: MirrorSmallwoodProof =
-        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    inner.pcs.partial_evals[0][0] ^= 0xdead_beef_u64;
-    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
-    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+    let mut outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    let mut inner =
+        decode_smallwood_proof_trace_v1(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.pcs.partial_evals_mut_v1()[0][0] ^= 0xdead_beef_u64;
+    outer.ark_proof =
+        encode_smallwood_proof_trace_v1(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = encode_mirror_smallwood_candidate_proof(&outer);
 
     let err =
         verify(&proof, &verifying_key).expect_err("tampered partial_evals unexpectedly verified");
@@ -1206,13 +1438,13 @@ fn smallwood_candidate_malformed_inner_shapes_do_not_panic() {
     let (_proving_key, verifying_key) = generate_keys();
     let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
 
-    let mut outer: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
-    let mut inner: MirrorSmallwoodProof =
-        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    inner.pcs.decs.masking_evals[0].clear();
-    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
-    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+    let mut outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    let mut inner = outer.ark_proof.clone();
+    let masking_header = compact_smallwood_masking_header_offset(&inner);
+    inner[masking_header + 2] = 0;
+    inner[masking_header + 3] = 0;
+    outer.ark_proof = inner;
+    proof.stark_proof = encode_mirror_smallwood_candidate_proof(&outer);
 
     let result = std::panic::catch_unwind(|| verify(&proof, &verifying_key));
     match result {
@@ -1230,16 +1462,13 @@ fn smallwood_candidate_malformed_all_evals_do_not_panic() {
     let (_proving_key, verifying_key) = generate_keys();
     let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
 
-    let mut outer: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
-    let mut inner: MirrorSmallwoodProof =
-        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    match &mut inner.opened_witness.mode {
-        MirrorSmallwoodOpenedWitnessMode::RowScalars { row_scalars } => row_scalars[0].clear(),
-        mode => panic!("unexpected opened witness mode in bridge proof: {mode:?}"),
-    }
-    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
-    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+    let mut outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    let mut inner = outer.ark_proof.clone();
+    let row_scalars_header = compact_smallwood_row_scalars_header_offset(&inner);
+    inner[row_scalars_header + 2] = 0;
+    inner[row_scalars_header + 3] = 0;
+    outer.ark_proof = inner;
+    proof.stark_proof = encode_mirror_smallwood_candidate_proof(&outer);
 
     let result = std::panic::catch_unwind(|| verify(&proof, &verifying_key));
     match result {
@@ -1256,13 +1485,13 @@ fn smallwood_candidate_rejects_opened_witness_mode_mismatch() {
     let (_proving_key, verifying_key) = generate_keys();
     let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
 
-    let mut outer: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof.stark_proof).expect("decode candidate wrapper");
-    let mut inner: MirrorSmallwoodProof =
-        bincode::deserialize(&outer.ark_proof).expect("decode inner smallwood proof");
-    inner.opened_witness.mode = MirrorSmallwoodOpenedWitnessMode::None;
-    outer.ark_proof = bincode::serialize(&inner).expect("reencode inner smallwood proof");
-    proof.stark_proof = bincode::serialize(&outer).expect("reencode candidate wrapper");
+    let mut outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
+    let mut inner =
+        decode_smallwood_proof_trace_v1(&outer.ark_proof).expect("decode inner smallwood proof");
+    inner.opened_witness_row_scalars.clear();
+    outer.ark_proof =
+        encode_smallwood_proof_trace_v1(&inner).expect("reencode inner smallwood proof");
+    proof.stark_proof = encode_mirror_smallwood_candidate_proof(&outer);
 
     let err =
         verify(&proof, &verifying_key).expect_err("mode-mismatched proof unexpectedly verified");
@@ -1283,21 +1512,17 @@ fn smallwood_candidate_rejects_spliced_pcs_layer() {
     let proof_a = prove_smallwood_candidate(&witness).expect("smallwood candidate proof a");
     let proof_b = prove_smallwood_candidate(&witness).expect("smallwood candidate proof b");
 
-    let mut outer_a: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof_a.stark_proof).expect("decode wrapper a");
-    let outer_b: MirrorSmallwoodCandidateProof =
-        bincode::deserialize(&proof_b.stark_proof).expect("decode wrapper b");
-    let mut inner_a: MirrorSmallwoodProof =
-        bincode::deserialize(&outer_a.ark_proof).expect("decode inner a");
-    let inner_b: MirrorSmallwoodProof =
-        bincode::deserialize(&outer_b.ark_proof).expect("decode inner b");
+    let mut outer_a = decode_mirror_smallwood_candidate_proof(&proof_a.stark_proof);
+    let outer_b = decode_mirror_smallwood_candidate_proof(&proof_b.stark_proof);
+    let mut inner_a = decode_smallwood_proof_trace_v1(&outer_a.ark_proof).expect("decode inner a");
+    let inner_b = decode_smallwood_proof_trace_v1(&outer_b.ark_proof).expect("decode inner b");
 
     inner_a.pcs = inner_b.pcs;
     inner_a.salt = inner_b.salt;
-    outer_a.ark_proof = bincode::serialize(&inner_a).expect("reencode inner a");
+    outer_a.ark_proof = encode_smallwood_proof_trace_v1(&inner_a).expect("reencode inner a");
 
     let mut spliced = proof_a.clone();
-    spliced.stark_proof = bincode::serialize(&outer_a).expect("reencode wrapper a");
+    spliced.stark_proof = encode_mirror_smallwood_candidate_proof(&outer_a);
 
     let err = verify(&spliced, &verifying_key).expect_err("spliced PCS unexpectedly verified");
     assert!(

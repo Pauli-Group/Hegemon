@@ -5,7 +5,7 @@
     "note": "Generated from the new semantic LPPC frontend seam on the current tree. These are structural SmallWood projections over the exact NativeTxValidityRelation witness order, not full prove/verify roundtrips."
   },
   "baseline": {
-    "current_smallwood_candidate_bytes": 100956,
+    "current_smallwood_candidate_bytes": 93156,
     "profile": {
       "rho": 2,
       "nb_opened_evals": 3,

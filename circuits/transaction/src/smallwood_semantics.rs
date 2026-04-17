@@ -84,6 +84,16 @@ impl PackedRowLayout {
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                 skip_initial_mds_poseidon: true,
             },
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+                Self {
+                    input_rows: BASE_INPUT_ROWS,
+                    output_rows: 2,
+                    stable_binding_rows: 0,
+                    inline_merkle_aggregates: true,
+                    poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
+                    skip_initial_mds_poseidon: true,
+                }
+            }
         }
     }
 
@@ -95,11 +105,19 @@ impl PackedRowLayout {
         self.poseidon_rows_per_permutation - 1
     }
 
-    const fn poseidon_trace_step(self, logical_step: usize) -> usize {
-        if self.skip_initial_mds_poseidon && logical_step > 0 {
-            logical_step + 1
+    const fn poseidon_last_row(self) -> usize {
+        self.poseidon_rows_per_permutation - 1
+    }
+
+    const fn poseidon_trace_row(self, logical_row: usize) -> usize {
+        if self.skip_initial_mds_poseidon {
+            if logical_row == 0 {
+                0
+            } else {
+                logical_row + 1
+            }
         } else {
-            logical_step
+            logical_row
         }
     }
 
@@ -141,6 +159,8 @@ pub(crate) struct PackedStatement<'a> {
     linear_constraint_indices: &'a [u32],
     linear_constraint_coefficients: &'a [u64],
     linear_constraint_targets: &'a [u64],
+    auxiliary_words: &'a [u64],
+    auxiliary_limb_count: usize,
     output_ciphertext_challenges: [Felt; MAX_OUTPUTS],
     slot_denominator_inverses: [Felt; BALANCE_SLOTS],
     stable_selector_bits: [Felt; 2],
@@ -160,6 +180,32 @@ pub(crate) fn test_candidate_witness_rust(
     linear_constraint_indices: &[u32],
     linear_constraint_coefficients: &[u64],
     linear_constraint_targets: &[u64],
+) -> Result<(), TransactionCircuitError> {
+    test_candidate_witness_with_auxiliary_rust(
+        arithmetization,
+        public_values,
+        witness_values,
+        row_count,
+        packing_factor,
+        linear_constraint_offsets,
+        linear_constraint_indices,
+        linear_constraint_coefficients,
+        linear_constraint_targets,
+        &[],
+    )
+}
+
+pub(crate) fn test_candidate_witness_with_auxiliary_rust(
+    arithmetization: SmallwoodArithmetization,
+    public_values: &[u64],
+    witness_values: &[u64],
+    row_count: usize,
+    packing_factor: usize,
+    linear_constraint_offsets: &[u32],
+    linear_constraint_indices: &[u32],
+    linear_constraint_coefficients: &[u64],
+    linear_constraint_targets: &[u64],
+    auxiliary_words: &[u64],
 ) -> Result<(), TransactionCircuitError> {
     if packing_factor == 0 || row_count == 0 {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -193,12 +239,17 @@ pub(crate) fn test_candidate_witness_rust(
     let constraint_count = statement.constraint_count();
     let mut lane_rows = vec![Felt::ZERO; row_count];
     let mut constraint_row = vec![Felt::ZERO; constraint_count];
+    let felt_auxiliary = auxiliary_words
+        .iter()
+        .copied()
+        .map(Felt::from_u64)
+        .collect::<Vec<_>>();
 
     for lane in 0..packing_factor {
         for row in 0..row_count {
             lane_rows[row] = Felt::from_u64(witness_values[row * packing_factor + lane]);
         }
-        compute_constraints(&statement, &lane_rows, &mut constraint_row);
+        compute_constraints(&statement, &lane_rows, &felt_auxiliary, &mut constraint_row);
         if let Some((idx, value)) = constraint_row
             .iter()
             .enumerate()
@@ -213,6 +264,8 @@ pub(crate) fn test_candidate_witness_rust(
 
     verify_linear_constraints(
         witness_values,
+        auxiliary_words,
+        witness_values.len(),
         linear_constraint_offsets,
         linear_constraint_indices,
         linear_constraint_coefficients,
@@ -223,6 +276,8 @@ pub(crate) fn test_candidate_witness_rust(
 
 fn verify_linear_constraints(
     witness_values: &[u64],
+    auxiliary_words: &[u64],
+    witness_size: usize,
     linear_constraint_offsets: &[u32],
     linear_constraint_indices: &[u32],
     linear_constraint_coefficients: &[u64],
@@ -235,7 +290,18 @@ fn verify_linear_constraints(
         for term_idx in start..end {
             let idx = linear_constraint_indices[term_idx] as usize;
             let coeff = Felt::from_u64(linear_constraint_coefficients[term_idx]);
-            acc += coeff * Felt::from_u64(witness_values[idx]);
+            let value = if idx < witness_size {
+                witness_values[idx]
+            } else {
+                let aux_idx = idx - witness_size;
+                *auxiliary_words.get(aux_idx).ok_or_else(|| {
+                    TransactionCircuitError::ConstraintViolationOwned(format!(
+                        "smallwood packed witness linear constraint auxiliary index out of range at constraint {check}: idx={idx} witness_size={witness_size} auxiliary_len={}",
+                        auxiliary_words.len()
+                    ))
+                })?
+            };
+            acc += coeff * Felt::from_u64(value);
         }
         let expected = Felt::from_u64(linear_constraint_targets[check]);
         if acc != expected {
@@ -267,6 +333,34 @@ impl<'a> PackedStatement<'a> {
         linear_constraint_coefficients: &'a [u64],
         linear_constraint_targets: &'a [u64],
     ) -> Self {
+        Self::new_with_auxiliary(
+            arithmetization,
+            public_values,
+            row_count,
+            packing_factor,
+            constraint_degree,
+            linear_constraint_offsets,
+            linear_constraint_indices,
+            linear_constraint_coefficients,
+            linear_constraint_targets,
+            &[],
+            0,
+        )
+    }
+
+    pub(crate) fn new_with_auxiliary(
+        arithmetization: SmallwoodArithmetization,
+        public_values: &'a [u64],
+        row_count: usize,
+        packing_factor: usize,
+        constraint_degree: usize,
+        linear_constraint_offsets: &'a [u32],
+        linear_constraint_indices: &'a [u32],
+        linear_constraint_coefficients: &'a [u64],
+        linear_constraint_targets: &'a [u64],
+        auxiliary_words: &'a [u64],
+        auxiliary_limb_count: usize,
+    ) -> Self {
         let mut statement = Self {
             arithmetization,
             public_values,
@@ -279,6 +373,8 @@ impl<'a> PackedStatement<'a> {
             linear_constraint_indices,
             linear_constraint_coefficients,
             linear_constraint_targets,
+            auxiliary_words,
+            auxiliary_limb_count,
             output_ciphertext_challenges: [Felt::ZERO; MAX_OUTPUTS],
             slot_denominator_inverses: derive_slot_denominator_inverses(public_values),
             stable_selector_bits: derive_stable_selector_bits(public_values),
@@ -439,11 +535,11 @@ impl<'a> SmallwoodConstraintAdapter for PackedStatement<'a> {
     }
 
     fn auxiliary_witness_words(&self) -> &[u64] {
-        &[]
+        self.auxiliary_words
     }
 
     fn auxiliary_witness_limb_count(&self) -> Option<usize> {
-        None
+        Some(self.auxiliary_limb_count)
     }
 
     fn nonlinear_eval_view<'b>(
@@ -564,6 +660,31 @@ fn row_output_asset(statement: &PackedStatement<'_>, output: usize) -> usize {
 }
 
 #[inline]
+fn bridge_prf_permutation() -> usize {
+    0
+}
+
+#[inline]
+fn bridge_input_commitment_permutation(input: usize, chunk: usize) -> usize {
+    1 + input * (3 + MERKLE_DEPTH * 2 + 1) + chunk
+}
+
+#[inline]
+fn bridge_input_merkle_permutation(input: usize, level: usize, chunk: usize) -> usize {
+    1 + input * (3 + MERKLE_DEPTH * 2 + 1) + 3 + level * 2 + chunk
+}
+
+#[inline]
+fn bridge_input_nullifier_permutation(input: usize) -> usize {
+    1 + input * (3 + MERKLE_DEPTH * 2 + 1) + (3 + MERKLE_DEPTH * 2 + 1) - 1
+}
+
+#[inline]
+fn bridge_output_commitment_permutation(output: usize, chunk: usize) -> usize {
+    1 + MAX_INPUTS * (3 + MERKLE_DEPTH * 2 + 1) + output * 3 + chunk
+}
+
+#[inline]
 fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
     PUBLIC_ROWS + PackedRowLayout::for_arithmetization(statement.arithmetization).secret_rows()
 }
@@ -653,6 +774,28 @@ fn slot_membership_zero(statement: &PackedStatement<'_>, asset: Felt) -> Felt {
     acc
 }
 
+fn aggregate_hash_limbs(challenge: Felt, limbs: &[Felt; HASH_LIMBS]) -> Felt {
+    let mut acc = Felt::ZERO;
+    let mut power = Felt::ONE;
+    for limb in limbs {
+        acc += power * *limb;
+        power *= challenge;
+    }
+    acc
+}
+
+fn auxiliary_input_current_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_DEPTH * 3 + level * 3
+}
+
+fn auxiliary_input_left_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_DEPTH * 3 + level * 3 + 1
+}
+
+fn auxiliary_input_right_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_DEPTH * 3 + level * 3 + 2
+}
+
 fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -> Felt {
     let mut acc = Felt::ZERO;
     let mut power = Felt::ONE;
@@ -691,7 +834,7 @@ fn apply_poseidon_transition(
         poseidon2_step(state, 1);
         return;
     }
-    poseidon2_step(state, layout.poseidon_trace_step(logical_step));
+    poseidon2_step(state, layout.poseidon_trace_row(logical_step));
 }
 
 #[allow(dead_code)]
@@ -718,11 +861,16 @@ pub(crate) fn compute_bridge_constraints_u64(
     let SmallwoodNonlinearEvalView::RowScalars {
         eval_point: _eval_point,
         rows,
-        auxiliary_words: _auxiliary_words,
+        auxiliary_words,
     } = view;
     let felt_rows = rows.iter().copied().map(Felt::from_u64).collect::<Vec<_>>();
+    let felt_auxiliary = auxiliary_words
+        .iter()
+        .copied()
+        .map(Felt::from_u64)
+        .collect::<Vec<_>>();
     let mut felt_out = vec![Felt::ZERO; expected];
-    compute_constraints(statement, &felt_rows, &mut felt_out);
+    compute_constraints(statement, &felt_rows, &felt_auxiliary, &mut felt_out);
     for (dst, src) in out.iter_mut().zip(felt_out.iter()) {
         *dst = src.as_canonical_u64();
     }
@@ -746,8 +894,14 @@ fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: u
         + poseidon_transition
 }
 
-fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut [Felt]) {
+fn compute_constraints(
+    statement: &PackedStatement<'_>,
+    rows: &[Felt],
+    auxiliary_words: &[Felt],
+    out: &mut [Felt],
+) {
     let mut c = 0usize;
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
 
     for input in 0..MAX_INPUTS {
         out[c] = felt_bool_v(public_value(statement, PUB_INPUT_FLAG0 + input));
@@ -782,9 +936,70 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
 
         for level in 0..MERKLE_DEPTH {
             let dir = rows[row_input_direction(statement, input, level)];
-            let current = rows[row_input_current_agg(statement, input, level)];
-            let left = rows[row_input_left_agg(statement, input, level)];
-            let right = rows[row_input_right_agg(statement, input, level)];
+            let (current, left, right) = if layout.inline_merkle_aggregates {
+                let challenge = nontrivial_challenge(statement, 9, input as u64, level as u64);
+                let current_source = if level == 0 {
+                    bridge_input_commitment_permutation(input, 2)
+                } else {
+                    bridge_input_merkle_permutation(input, level - 1, 1)
+                };
+                let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+                let merkle1 = bridge_input_merkle_permutation(input, level, 1);
+                let mut current_hash = [Felt::ZERO; HASH_LIMBS];
+                let mut left_hash = [Felt::ZERO; HASH_LIMBS];
+                let mut right_hash = [Felt::ZERO; HASH_LIMBS];
+                for limb in 0..HASH_LIMBS {
+                    current_hash[limb] = rows[poseidon_group_row(
+                        statement,
+                        current_source / statement.packing_factor,
+                        layout.poseidon_last_row(),
+                        limb,
+                    )];
+                    left_hash[limb] = rows[poseidon_group_row(
+                        statement,
+                        merkle0 / statement.packing_factor,
+                        layout.poseidon_last_row(),
+                        limb,
+                    )];
+                    right_hash[limb] = rows[poseidon_group_row(
+                        statement,
+                        merkle1 / statement.packing_factor,
+                        layout.poseidon_last_row(),
+                        limb,
+                    )];
+                }
+                let current = if statement.arithmetization
+                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                    && auxiliary_words.len() > auxiliary_input_current_agg(input, level)
+                {
+                    auxiliary_words[auxiliary_input_current_agg(input, level)]
+                } else {
+                    aggregate_hash_limbs(challenge, &current_hash)
+                };
+                let left = if statement.arithmetization
+                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                    && auxiliary_words.len() > auxiliary_input_left_agg(input, level)
+                {
+                    auxiliary_words[auxiliary_input_left_agg(input, level)]
+                } else {
+                    aggregate_hash_limbs(challenge, &left_hash)
+                };
+                let right = if statement.arithmetization
+                    == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                    && auxiliary_words.len() > auxiliary_input_right_agg(input, level)
+                {
+                    auxiliary_words[auxiliary_input_right_agg(input, level)]
+                } else {
+                    aggregate_hash_limbs(challenge, &right_hash)
+                };
+                (current, left, right)
+            } else {
+                (
+                    rows[row_input_current_agg(statement, input, level)],
+                    rows[row_input_left_agg(statement, input, level)],
+                    rows[row_input_right_agg(statement, input, level)],
+                )
+            };
             out[c] = flag * (current - (left + dir * (right - left)));
             c += 1;
         }
@@ -895,7 +1110,6 @@ fn compute_constraints(statement: &PackedStatement<'_>, rows: &[Felt], out: &mut
         c += 1;
     }
 
-    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
     for group in 0..poseidon_group_count(statement.packing_factor) {
         for step in 0..layout.poseidon_transition_count() {
             let mut state = [Felt::ZERO; POSEIDON2_WIDTH];

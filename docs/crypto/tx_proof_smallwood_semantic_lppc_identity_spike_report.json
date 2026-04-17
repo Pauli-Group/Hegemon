@@ -5,7 +5,7 @@
     "note": "Generated from the exact current SmallWood opening layer on the semantic LPPC witness window using identity constraints over the full packed witness matrix. This is an opening-layer/backend spike, not a full semantic tx-validity proof."
   },
   "baseline": {
-    "current_smallwood_candidate_bytes": 100956,
+    "current_smallwood_candidate_bytes": 93156,
     "profile": {
       "rho": 2,
       "nb_opened_evals": 3,
