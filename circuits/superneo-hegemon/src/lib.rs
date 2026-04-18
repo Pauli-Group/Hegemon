@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use anyhow::{ensure, Result};
 use blake3::Hasher;
@@ -51,6 +51,13 @@ pub struct NativeReceiptRootBuildCacheStats {
     pub chunk_cache_hits: u64,
     pub chunk_cache_misses: u64,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeTxLeafSetupCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+}
+
 pub const RECEIPT_ROOT_LIMBS_PER_DIGEST: usize = 6;
 pub const RECEIPT_ROOT_WITNESS_LIMBS: usize =
     RECEIPT_ROOT_DIGEST_WIDTH * RECEIPT_ROOT_LIMBS_PER_DIGEST;
@@ -64,6 +71,12 @@ const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
 const NATIVE_TX_LEAF_PROOF_BACKEND_WIRE_BYTES: usize = 1;
 const NATIVE_RECEIPT_ROOT_MINI_ROOT_SIZE: usize = 8;
 const DEFAULT_RECEIPT_ROOT_BUILD_CACHE_CAPACITY: usize = 256;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct NativeTxLeafSetupCacheKey {
+    params_fingerprint: [u8; 48],
+    spec_digest: [u8; 32],
+}
 
 fn native_tx_leaf_self_verify_enabled() -> bool {
     std::env::var("HEGEMON_NATIVE_TX_SELF_VERIFY")
@@ -1139,6 +1152,13 @@ struct CachedNativeReceiptRootLeaf {
     verified: VerifiedNativeReceiptRootLeaf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ReceiptRootLeafBuildCacheKey {
+    params_fingerprint: [u8; 48],
+    spec_digest: [u8; 32],
+    artifact_hash: [u8; 48],
+}
+
 #[derive(Clone, Debug)]
 struct ReceiptRootChunkBuild {
     root: NativeReceiptRootInstance,
@@ -1147,8 +1167,8 @@ struct ReceiptRootChunkBuild {
 
 struct ReceiptRootLeafBuildCache {
     capacity: usize,
-    order: VecDeque<[u8; 48]>,
-    entries: HashMap<[u8; 48], VerifiedNativeReceiptRootLeaf>,
+    order: VecDeque<ReceiptRootLeafBuildCacheKey>,
+    entries: HashMap<ReceiptRootLeafBuildCacheKey, VerifiedNativeReceiptRootLeaf>,
 }
 
 impl ReceiptRootLeafBuildCache {
@@ -1160,7 +1180,7 @@ impl ReceiptRootLeafBuildCache {
         }
     }
 
-    fn get(&mut self, key: [u8; 48]) -> Option<VerifiedNativeReceiptRootLeaf> {
+    fn get(&mut self, key: ReceiptRootLeafBuildCacheKey) -> Option<VerifiedNativeReceiptRootLeaf> {
         let entry = self.entries.get(&key).cloned();
         if entry.is_some() {
             self.order.retain(|existing| *existing != key);
@@ -1169,7 +1189,7 @@ impl ReceiptRootLeafBuildCache {
         entry
     }
 
-    fn insert(&mut self, key: [u8; 48], value: VerifiedNativeReceiptRootLeaf) {
+    fn insert(&mut self, key: ReceiptRootLeafBuildCacheKey, value: VerifiedNativeReceiptRootLeaf) {
         if self.capacity == 0 {
             return;
         }
@@ -1381,6 +1401,90 @@ fn transaction_verifying_key() -> &'static transaction_circuit::keys::VerifyingK
 fn transaction_proving_key() -> &'static transaction_circuit::keys::ProvingKey {
     static PROVING_KEY: OnceLock<transaction_circuit::keys::ProvingKey> = OnceLock::new();
     PROVING_KEY.get_or_init(|| generate_keys().0)
+}
+
+#[derive(Clone, Debug)]
+struct NativeTxLeafSetupContext {
+    relation: TxLeafPublicRelation,
+    backend: LatticeBackend,
+    packer: GoldilocksPayPerBitPacker,
+    pk: superneo_backend_lattice::BackendKey,
+    vk: superneo_backend_lattice::BackendKey,
+}
+
+fn native_tx_leaf_setup_cache_key(params: &NativeBackendParams) -> NativeTxLeafSetupCacheKey {
+    NativeTxLeafSetupCacheKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+    }
+}
+
+fn build_native_tx_leaf_setup_context(
+    params: &NativeBackendParams,
+) -> Result<NativeTxLeafSetupContext> {
+    let relation = TxLeafPublicRelation::default();
+    let backend = LatticeBackend::new(params.clone());
+    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
+    let security = params.security_params();
+    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    Ok(NativeTxLeafSetupContext {
+        relation,
+        backend,
+        packer,
+        pk,
+        vk,
+    })
+}
+
+static NATIVE_TX_LEAF_SETUP_CACHE: LazyLock<
+    Mutex<HashMap<NativeTxLeafSetupCacheKey, Arc<NativeTxLeafSetupContext>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static NATIVE_TX_LEAF_SETUP_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static NATIVE_TX_LEAF_SETUP_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+fn native_tx_leaf_setup_context_with_params(
+    params: &NativeBackendParams,
+) -> Result<Arc<NativeTxLeafSetupContext>> {
+    let key = native_tx_leaf_setup_cache_key(params);
+    if let Some(context) = NATIVE_TX_LEAF_SETUP_CACHE
+        .lock()
+        .map_err(|_| anyhow::anyhow!("native tx-leaf setup cache lock poisoned"))?
+        .get(&key)
+        .cloned()
+    {
+        NATIVE_TX_LEAF_SETUP_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+        return Ok(context);
+    }
+
+    let built = Arc::new(build_native_tx_leaf_setup_context(params)?);
+    let mut guard = NATIVE_TX_LEAF_SETUP_CACHE
+        .lock()
+        .map_err(|_| anyhow::anyhow!("native tx-leaf setup cache lock poisoned"))?;
+    if let Some(existing) = guard.get(&key).cloned() {
+        NATIVE_TX_LEAF_SETUP_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+        return Ok(existing);
+    }
+    NATIVE_TX_LEAF_SETUP_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+    guard.insert(key, Arc::clone(&built));
+    Ok(built)
+}
+
+pub fn native_tx_leaf_setup_cache_stats() -> NativeTxLeafSetupCacheStats {
+    NativeTxLeafSetupCacheStats {
+        hits: NATIVE_TX_LEAF_SETUP_CACHE_HITS.load(Ordering::Relaxed),
+        misses: NATIVE_TX_LEAF_SETUP_CACHE_MISSES.load(Ordering::Relaxed),
+    }
+}
+
+pub fn clear_native_tx_leaf_setup_cache_stats() {
+    NATIVE_TX_LEAF_SETUP_CACHE_HITS.store(0, Ordering::Relaxed);
+    NATIVE_TX_LEAF_SETUP_CACHE_MISSES.store(0, Ordering::Relaxed);
+}
+
+pub fn clear_native_tx_leaf_setup_cache() {
+    if let Ok(mut guard) = NATIVE_TX_LEAF_SETUP_CACHE.lock() {
+        guard.clear();
+    }
 }
 
 fn serialize_fixed_bytes_48<S>(
@@ -2490,16 +2594,12 @@ pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
 pub fn experimental_native_tx_leaf_verifier_profile_for_params(
     params: &NativeBackendParams,
 ) -> [u8; 48] {
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend
-        .setup(&security, relation.shape())
+    let context = native_tx_leaf_setup_context_with_params(params)
         .expect("experimental native tx-leaf setup must succeed");
     derive_verifier_profile(
         params,
-        &relation.relation_id(),
-        &pk.shape_digest,
+        &context.relation.relation_id(),
+        &context.pk.shape_digest,
         b"native-tx-leaf",
     )
 }
@@ -2532,16 +2632,12 @@ pub fn experimental_native_tx_verifier_profile() -> [u8; 48] {
 pub fn experimental_native_receipt_root_verifier_profile_for_params(
     params: &NativeBackendParams,
 ) -> [u8; 48] {
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend
-        .setup(&security, relation.shape())
+    let context = native_tx_leaf_setup_context_with_params(params)
         .expect("experimental native receipt-root setup must succeed");
     derive_verifier_profile(
         params,
-        &relation.relation_id(),
-        &pk.shape_digest,
+        &context.relation.relation_id(),
+        &context.pk.shape_digest,
         b"native-receipt-root",
     )
 }
@@ -2765,11 +2861,7 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
     params: &NativeBackendParams,
     proof: &TransactionProof,
 ) -> Result<BuiltNativeTxLeafArtifact> {
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
-    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
 
     if native_tx_leaf_self_verify_enabled() {
         verify_transaction_proof(proof, transaction_verifying_key())
@@ -2778,14 +2870,14 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
     let tx = tx_leaf_public_tx_from_transaction_proof(proof)?;
     let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
     let receipt = native_tx_leaf_receipt_from_transaction_proof(proof, params)?;
-    let encoding = relation.encode_statement(&receipt)?;
+    let encoding = context.relation.encode_statement(&receipt)?;
     validate_native_tx_leaf_public_witness_with_params(params, &receipt, &witness)?;
     let assignment = tx_leaf_public_witness_assignment(&witness)?;
-    let packed = packer.pack(relation.shape(), &assignment)?;
-    let commitment = backend.commit_witness(&pk, &packed)?;
-    let leaf_proof = backend.prove_leaf(
-        &pk,
-        &relation.relation_id(),
+    let packed = context.packer.pack(context.relation.shape(), &assignment)?;
+    let commitment = context.backend.commit_witness(&context.pk, &packed)?;
+    let leaf_proof = context.backend.prove_leaf(
+        &context.pk,
+        &context.relation.relation_id(),
         &encoding,
         &packed,
         &commitment,
@@ -2794,8 +2886,8 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
         version: native_tx_leaf_artifact_version(params),
         params_fingerprint: params.parameter_fingerprint(),
         spec_digest: params.spec_digest(),
-        relation_id: relation.relation_id().0,
-        shape_digest: pk.shape_digest.0,
+        relation_id: context.relation.relation_id().0,
+        shape_digest: context.pk.shape_digest.0,
         statement_digest: encoding.statement_digest.0,
         receipt: receipt.clone(),
         stark_public_inputs: witness.stark_public_inputs,
@@ -2805,8 +2897,8 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
         commitment: commitment.clone(),
         leaf: LeafArtifact {
             version: native_tx_leaf_artifact_version(params),
-            relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
+            relation_id: context.relation.relation_id(),
+            shape_digest: context.pk.shape_digest,
             statement_digest: encoding.statement_digest,
             proof: leaf_proof,
         },
@@ -2904,10 +2996,7 @@ fn native_receipt_root_leaf_nodes_from_records_with_params(
         params.max_claimed_receipt_root_leaves
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
 
     let mut leaves = Vec::with_capacity(records.len());
     let mut nodes = Vec::with_capacity(records.len());
@@ -2921,11 +3010,11 @@ fn native_receipt_root_leaf_nodes_from_records_with_params(
             "native tx-leaf record spec digest mismatch"
         );
         ensure!(
-            record.relation_id == relation.relation_id().0,
+            record.relation_id == context.relation.relation_id().0,
             "native tx-leaf record relation id mismatch"
         );
         ensure!(
-            record.shape_digest == pk.shape_digest.0,
+            record.shape_digest == context.pk.shape_digest.0,
             "native tx-leaf record shape digest mismatch"
         );
 
@@ -2938,15 +3027,20 @@ fn native_receipt_root_leaf_nodes_from_records_with_params(
             leaf_start: leaf_index,
             leaf_count: 1,
             instance: FoldedInstance {
-                relation_id: relation.relation_id(),
-                shape_digest: pk.shape_digest,
+                relation_id: context.relation.relation_id(),
+                shape_digest: context.pk.shape_digest,
                 statement_digest: superneo_ccs::StatementDigest(record.statement_digest),
                 witness_commitment: record.commitment.clone(),
             },
         });
     }
 
-    Ok((relation.relation_id().0, pk.shape_digest.0, leaves, nodes))
+    Ok((
+        context.relation.relation_id().0,
+        context.pk.shape_digest.0,
+        leaves,
+        nodes,
+    ))
 }
 
 fn build_receipt_root_layers_from_nodes_with_params(
@@ -2962,10 +3056,7 @@ fn build_receipt_root_layers_from_nodes_with_params(
         "native receipt-root hierarchy requires at least one work node"
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
 
     let mut folds = Vec::new();
     let mut layers = vec![current.clone()];
@@ -2974,7 +3065,10 @@ fn build_receipt_root_layers_from_nodes_with_params(
         let mut iter = current.into_iter();
         while let Some(left) = iter.next() {
             if let Some(right) = iter.next() {
-                let (parent, proof) = backend.fold_pair(&pk, &left.instance, &right.instance)?;
+                let (parent, proof) =
+                    context
+                        .backend
+                        .fold_pair(&context.pk, &left.instance, &right.instance)?;
                 folds.push(ReceiptRootFoldStep {
                     challenges: proof.challenges.clone(),
                     parent_statement_digest: parent.statement_digest.0,
@@ -3274,17 +3368,13 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         "native tx-leaf spec digest mismatch"
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
-    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
     ensure!(
-        artifact.relation_id == relation.relation_id().0,
+        artifact.relation_id == context.relation.relation_id().0,
         "native tx-leaf relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == context.pk.shape_digest.0,
         "native tx-leaf shape digest mismatch"
     );
     ensure!(
@@ -3292,11 +3382,11 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         "native tx-leaf inner proof version mismatch"
     );
     ensure!(
-        artifact.leaf.relation_id == relation.relation_id(),
+        artifact.leaf.relation_id == context.relation.relation_id(),
         "native tx-leaf inner relation id mismatch"
     );
     ensure!(
-        artifact.leaf.shape_digest == pk.shape_digest,
+        artifact.leaf.shape_digest == context.pk.shape_digest,
         "native tx-leaf inner shape digest mismatch"
     );
     ensure!(artifact.tx == *tx, "native tx-leaf public tx mismatch");
@@ -3353,10 +3443,10 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         })?,
     );
     validate_native_tx_leaf_public_witness_with_params(params, receipt, &witness)?;
-    let encoding = relation.encode_statement(receipt)?;
+    let encoding = context.relation.encode_statement(receipt)?;
     let assignment = tx_leaf_public_witness_assignment(&witness)?;
-    let packed = packer.pack(relation.shape(), &assignment)?;
-    let expected_commitment = backend.commit_witness(&pk, &packed)?;
+    let packed = context.packer.pack(context.relation.shape(), &assignment)?;
+    let expected_commitment = context.backend.commit_witness(&context.pk, &packed)?;
     ensure!(
         artifact.statement_digest == encoding.statement_digest.0,
         "native tx-leaf statement digest mismatch"
@@ -3373,9 +3463,9 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         artifact.leaf.proof.witness_commitment_digest == expected_commitment.digest,
         "native tx-leaf proof/commitment digest mismatch"
     );
-    backend.verify_leaf(
-        &vk,
-        &relation.relation_id(),
+    context.backend.verify_leaf(
+        &context.vk,
+        &context.relation.relation_id(),
         &encoding,
         &packed,
         &artifact.leaf.proof,
@@ -3397,10 +3487,7 @@ fn verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
     artifact: &NativeTxLeafArtifact,
     artifact_bytes: &[u8],
 ) -> Result<VerifiedNativeReceiptRootLeaf> {
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
     let tx = artifact.tx.clone();
     let receipt = artifact.receipt.clone();
     let metadata =
@@ -3419,19 +3506,19 @@ fn verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
         "native tx-leaf spec digest mismatch"
     );
     ensure!(
-        artifact.relation_id == relation.relation_id().0,
+        artifact.relation_id == context.relation.relation_id().0,
         "native tx-leaf relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == context.pk.shape_digest.0,
         "native tx-leaf shape digest mismatch"
     );
     ensure!(
-        artifact.leaf.relation_id == relation.relation_id(),
+        artifact.leaf.relation_id == context.relation.relation_id(),
         "native tx-leaf inner relation id mismatch"
     );
     ensure!(
-        artifact.leaf.shape_digest == pk.shape_digest,
+        artifact.leaf.shape_digest == context.pk.shape_digest,
         "native tx-leaf inner shape digest mismatch"
     );
     Ok(VerifiedNativeReceiptRootLeaf {
@@ -3441,8 +3528,8 @@ fn verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
             proof_digest: artifact.leaf.proof.proof_digest,
         },
         instance: FoldedInstance {
-            relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
+            relation_id: context.relation.relation_id(),
+            shape_digest: context.pk.shape_digest,
             statement_digest: artifact.leaf.statement_digest,
             witness_commitment: metadata.commitment,
         },
@@ -3468,8 +3555,9 @@ fn cached_native_receipt_root_leaf_from_artifact_with_params(
 ) -> Result<CachedNativeReceiptRootLeaf> {
     let artifact_bytes = encode_native_tx_leaf_artifact(artifact)?;
     let artifact_hash = blake3_384_bytes(&artifact_bytes);
+    let cache_key = native_receipt_root_leaf_cache_key(params, artifact_hash);
     if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
-        if let Some(verified) = guard.get(artifact_hash) {
+        if let Some(verified) = guard.get(cache_key) {
             NATIVE_RECEIPT_ROOT_LEAF_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
             return Ok(CachedNativeReceiptRootLeaf {
                 artifact_hash,
@@ -3484,12 +3572,23 @@ fn cached_native_receipt_root_leaf_from_artifact_with_params(
         &artifact_bytes,
     )?;
     if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
-        guard.insert(artifact_hash, verified.clone());
+        guard.insert(cache_key, verified.clone());
     }
     Ok(CachedNativeReceiptRootLeaf {
         artifact_hash,
         verified,
     })
+}
+
+fn native_receipt_root_leaf_cache_key(
+    params: &NativeBackendParams,
+    artifact_hash: [u8; 48],
+) -> ReceiptRootLeafBuildCacheKey {
+    ReceiptRootLeafBuildCacheKey {
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        artifact_hash,
+    }
 }
 
 fn native_receipt_root_chunk_cache_key(
@@ -3686,10 +3785,7 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         params.max_claimed_receipt_root_leaves
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, _) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
     let verified_leaves = artifacts
         .par_iter()
         .map(|artifact| cached_native_receipt_root_leaf_from_artifact_with_params(params, artifact))
@@ -3698,9 +3794,9 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         .collect::<Result<Vec<_>>>()?;
     build_native_receipt_root_artifact_from_verified_leaves_with_params(
         params,
-        &pk,
-        &relation,
-        &backend,
+        &context.pk,
+        &context.relation,
+        &context.backend,
         &verified_leaves,
     )
 }
@@ -3746,16 +3842,13 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         "native receipt-root spec digest mismatch"
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
     ensure!(
-        artifact.relation_id == relation.relation_id().0,
+        artifact.relation_id == context.relation.relation_id().0,
         "native receipt-root relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == context.pk.shape_digest.0,
         "native receipt-root shape digest mismatch"
     );
     ensure!(
@@ -3806,8 +3899,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
             "native receipt-root leaf proof digest mismatch"
         );
         current.push(FoldedInstance {
-            relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
+            relation_id: context.relation.relation_id(),
+            shape_digest: context.pk.shape_digest,
             statement_digest: native_artifact.leaf.statement_digest,
             witness_commitment: metadata.commitment,
         });
@@ -3824,7 +3917,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
                     .get(fold_index)
                     .ok_or_else(|| anyhow::anyhow!("native receipt-root fold list ended early"))?;
                 fold_index += 1;
-                let (parent, expected_proof) = backend.fold_pair(&pk, &left, &right)?;
+                let (parent, expected_proof) =
+                    context.backend.fold_pair(&context.pk, &left, &right)?;
                 ensure!(
                     fold.challenges == expected_proof.challenges,
                     "native receipt-root fold challenge vector mismatch"
@@ -3845,7 +3939,13 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
                     fold.proof_digest == expected_proof.proof_digest,
                     "native receipt-root fold proof digest mismatch"
                 );
-                backend.verify_fold(&vk, &parent, &left, &right, &expected_proof)?;
+                context.backend.verify_fold(
+                    &context.vk,
+                    &parent,
+                    &left,
+                    &right,
+                    &expected_proof,
+                )?;
                 next.push(parent);
             } else {
                 next.push(left);
@@ -3930,16 +4030,13 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
         "native receipt-root spec digest mismatch"
     );
 
-    let relation = TxLeafPublicRelation::default();
-    let security = params.security_params();
-    let backend = LatticeBackend::new(params.clone());
-    let (pk, vk) = backend.setup(&security, relation.shape())?;
+    let context = native_tx_leaf_setup_context_with_params(params)?;
     ensure!(
-        artifact.relation_id == relation.relation_id().0,
+        artifact.relation_id == context.relation.relation_id().0,
         "native receipt-root relation id mismatch"
     );
     ensure!(
-        artifact.shape_digest == pk.shape_digest.0,
+        artifact.shape_digest == context.pk.shape_digest.0,
         "native receipt-root shape digest mismatch"
     );
     ensure!(
@@ -3966,11 +4063,11 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
             "native tx-leaf record spec digest mismatch"
         );
         ensure!(
-            record.relation_id == relation.relation_id().0,
+            record.relation_id == context.relation.relation_id().0,
             "native tx-leaf record relation id mismatch"
         );
         ensure!(
-            record.shape_digest == pk.shape_digest.0,
+            record.shape_digest == context.pk.shape_digest.0,
             "native tx-leaf record shape digest mismatch"
         );
         ensure!(
@@ -3986,8 +4083,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
             "native receipt-root leaf proof digest mismatch"
         );
         current.push(FoldedInstance {
-            relation_id: relation.relation_id(),
-            shape_digest: pk.shape_digest,
+            relation_id: context.relation.relation_id(),
+            shape_digest: context.pk.shape_digest,
             statement_digest: superneo_ccs::StatementDigest(record.statement_digest),
             witness_commitment: record.commitment.clone(),
         });
@@ -4004,7 +4101,8 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
                     .get(fold_index)
                     .ok_or_else(|| anyhow::anyhow!("native receipt-root fold list ended early"))?;
                 fold_index += 1;
-                let (parent, expected_proof) = backend.fold_pair(&pk, &left, &right)?;
+                let (parent, expected_proof) =
+                    context.backend.fold_pair(&context.pk, &left, &right)?;
                 ensure!(
                     fold.challenges == expected_proof.challenges,
                     "native receipt-root fold challenge vector mismatch"
@@ -4025,7 +4123,13 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
                     fold.proof_digest == expected_proof.proof_digest,
                     "native receipt-root fold proof digest mismatch"
                 );
-                backend.verify_fold(&vk, &parent, &left, &right, &expected_proof)?;
+                context.backend.verify_fold(
+                    &context.vk,
+                    &parent,
+                    &left,
+                    &right,
+                    &expected_proof,
+                )?;
                 next.push(parent);
             } else {
                 next.push(left);
@@ -5391,6 +5495,110 @@ mod tests {
         );
         assert_eq!(metadata.spec_digest, native_backend_params().spec_digest());
         assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
+    }
+
+    #[test]
+    fn native_tx_leaf_setup_cache_hits_on_repeated_builds() {
+        clear_native_tx_leaf_setup_cache();
+        clear_native_tx_leaf_setup_cache_stats();
+
+        let params = native_backend_params();
+        let first = native_tx_leaf_setup_context_with_params(&params)
+            .expect("first cached native tx-leaf setup context");
+        let first_stats = native_tx_leaf_setup_cache_stats();
+        assert_eq!(first_stats.misses, 1, "first build must populate cache");
+        assert_eq!(
+            first_stats.hits, 0,
+            "direct setup acquisition should not report a hit on first population"
+        );
+
+        let second = native_tx_leaf_setup_context_with_params(&params)
+            .expect("second cached native tx-leaf setup context");
+        let second_stats = native_tx_leaf_setup_cache_stats();
+        assert_eq!(
+            second_stats.misses, 1,
+            "repeated setup fetches with identical params must not allocate a second context"
+        );
+        assert!(
+            second_stats.hits > first_stats.hits,
+            "repeated build must hit the tx-leaf setup cache"
+        );
+        assert_eq!(first.pk.shape_digest, second.pk.shape_digest);
+    }
+
+    #[test]
+    fn native_tx_leaf_setup_cache_separates_alternate_params() {
+        clear_native_tx_leaf_setup_cache();
+        clear_native_tx_leaf_setup_cache_stats();
+
+        let default_params = native_backend_params();
+        let alternate_params = alternate_native_backend_params();
+        let default_context = native_tx_leaf_setup_context_with_params(&default_params)
+            .expect("default-params native tx-leaf setup");
+        let after_default = native_tx_leaf_setup_cache_stats();
+        assert_eq!(after_default.misses, 1);
+
+        let alternate_context = native_tx_leaf_setup_context_with_params(&alternate_params)
+            .expect("alternate-params native tx-leaf setup");
+        let after_alternate = native_tx_leaf_setup_cache_stats();
+        assert_eq!(
+            after_alternate.misses, 2,
+            "distinct parameter sets must allocate distinct setup contexts"
+        );
+        assert_ne!(
+            default_params.parameter_fingerprint(),
+            alternate_params.parameter_fingerprint(),
+            "alternate params fixture must actually differ"
+        );
+        assert_ne!(
+            native_tx_leaf_setup_cache_key(&default_params),
+            native_tx_leaf_setup_cache_key(&alternate_params),
+            "setup cache keys must stay parameter-bound"
+        );
+        assert!(
+            !Arc::ptr_eq(&default_context, &alternate_context),
+            "distinct parameter sets must allocate distinct cached setup contexts"
+        );
+    }
+
+    #[test]
+    fn native_receipt_root_leaf_cache_is_parameter_bound() {
+        clear_native_receipt_root_build_caches();
+        clear_native_receipt_root_build_cache_stats();
+
+        let artifact = sample_decoded_native_tx_leaf_artifact(72);
+        let default_params = native_backend_params();
+        let alternate_params = alternate_native_backend_params();
+
+        cached_native_receipt_root_leaf_from_artifact_with_params(&default_params, &artifact)
+            .expect("default-params receipt-root leaf cache population");
+        let after_default = native_receipt_root_build_cache_stats();
+        assert_eq!(after_default.leaf_cache_hits, 0);
+        assert_eq!(after_default.leaf_cache_misses, 1);
+
+        let alternate =
+            cached_native_receipt_root_leaf_from_artifact_with_params(&alternate_params, &artifact);
+        assert!(
+            alternate.is_err(),
+            "alternate params must not reuse a leaf cached under the default setup"
+        );
+        let after_alternate = native_receipt_root_build_cache_stats();
+        assert_eq!(
+            after_alternate.leaf_cache_hits, 0,
+            "parameter-mismatched access must miss instead of reusing a cached verified leaf"
+        );
+        assert_eq!(
+            after_alternate.leaf_cache_misses, 2,
+            "parameter-mismatched access must force a fresh verification attempt"
+        );
+
+        cached_native_receipt_root_leaf_from_artifact_with_params(&default_params, &artifact)
+            .expect("default-params receipt-root leaf cache hit");
+        let after_repeat = native_receipt_root_build_cache_stats();
+        assert!(
+            after_repeat.leaf_cache_hits > after_alternate.leaf_cache_hits,
+            "repeated access under the same params must hit the leaf cache"
+        );
     }
 
     #[test]

@@ -127,8 +127,16 @@ pub struct ProofStats {
     pub input_selection_time: Duration,
     /// Time to build witness.
     pub witness_build_time: Duration,
-    /// Time to generate proof.
+    /// Total time spent in the proof pipeline.
+    ///
+    /// This remains the aggregate prove step for compatibility.
     pub proving_time: Duration,
+    /// Time to generate proof bytes before any local self-check.
+    pub proof_generation_time: Duration,
+    /// Time spent in the optional local post-prove verification step.
+    pub local_self_check_time: Duration,
+    /// Whether the optional local post-prove verification step ran.
+    pub local_self_check_performed: bool,
     /// Time to encrypt outputs.
     pub encryption_time: Duration,
     /// Total build time.
@@ -284,6 +292,9 @@ impl<'a> ShieldedTxBuilder<'a> {
         // Generate STARK proof
         let proof_result = self.prover.prove(&witness)?;
         stats.proving_time = proof_result.proving_time;
+        stats.proof_generation_time = proof_result.proof_generation_time;
+        stats.local_self_check_time = proof_result.local_self_check_time;
+        stats.local_self_check_performed = proof_result.local_self_check_performed;
         stats.proof_size = proof_result.proof_size();
 
         if proof_result.value_balance != 0 {
@@ -592,6 +603,9 @@ mod tests {
     fn test_proof_stats_default() {
         let stats = ProofStats::default();
         assert_eq!(stats.proof_size, 0);
+        assert_eq!(stats.proof_generation_time, Duration::ZERO);
+        assert_eq!(stats.local_self_check_time, Duration::ZERO);
+        assert!(!stats.local_self_check_performed);
         assert_eq!(stats.total_time, Duration::ZERO);
     }
 }

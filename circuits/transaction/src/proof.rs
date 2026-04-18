@@ -456,6 +456,15 @@ fn ensure_plonky3_backend(proof: &TransactionProof) -> Result<(), TransactionCir
     }
 }
 
+pub fn serialized_stark_inputs_from_witness(
+    witness: &TransactionWitness,
+) -> Result<SerializedStarkInputs, TransactionCircuitError> {
+    witness.validate()?;
+    let prover = TransactionProverP3::new();
+    let stark_pub_inputs = prover.public_inputs(witness)?;
+    Ok(serialize_p3_inputs(&stark_pub_inputs))
+}
+
 pub(crate) fn transaction_public_inputs_p3_from_parts(
     public_inputs: &TransactionPublicInputs,
     stark_inputs: &SerializedStarkInputs,

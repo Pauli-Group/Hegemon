@@ -27,7 +27,9 @@ pub use error::WalletError;
 pub use extrinsic::{ml_dsa_account_id_from_seed, ChainMetadata, Era, SlhDsaExtrinsicBuilder};
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
-pub use prover::{ProofResult, ProverStats, StarkProver, StarkProverConfig};
+pub use prover::{
+    LocalProofSelfCheckPolicy, ProofResult, ProverStats, StarkProver, StarkProverConfig,
+};
 pub use recipients::{parse_recipients, transfer_recipients_from_specs, RecipientSpec};
 pub use rpc::TransactionBundle;
 pub use scanner::{
