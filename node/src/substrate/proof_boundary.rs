@@ -1,4 +1,4 @@
-use consensus::proof::HeaderProofExt;
+use consensus::proof_interface::HeaderProofExt;
 
 pub(crate) fn pallet_receipt_from_consensus(
     receipt: consensus::types::TxValidityReceipt,

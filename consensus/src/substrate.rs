@@ -1,7 +1,7 @@
 use crate::bft::ConsensusUpdate;
 use crate::error::ConsensusError;
 use crate::pow::PowConsensus;
-use crate::proof::ProofVerifier;
+use crate::proof_interface::ProofVerifier;
 use crate::types::{
     ConsensusBlock, StarkCommitment, VersionCommitment, compute_proof_commitment,
     compute_version_commitment,

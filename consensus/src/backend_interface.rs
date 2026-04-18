@@ -1,7 +1,5 @@
 use crate::types::VerifierProfileDigest;
 
-pub use crate::proof::build_experimental_native_receipt_root_artifact;
-
 pub use block_circuit::{
     CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs,
     verify_block_commitment,

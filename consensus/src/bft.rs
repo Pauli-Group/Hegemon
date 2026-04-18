@@ -4,7 +4,7 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::{ConsensusError, SlashingEvidence};
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
-use crate::proof::{ProofVerifier, verify_commitments};
+use crate::proof_interface::{ProofVerifier, verify_commitments};
 use crate::types::{ConsensusBlock, ValidatorId, kernel_root_from_shielded_root};
 use crate::validator::ValidatorSet;
 use crate::version_policy::VersionSchedule;

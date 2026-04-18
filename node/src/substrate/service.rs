@@ -161,8 +161,9 @@ use consensus::backend_interface::{
     RecursiveBlockArtifactV2, SerializedStarkInputs, TransactionProof,
 };
 use consensus::proof::{
-    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof, HeaderProofExt,
+    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
 };
+use consensus::proof_interface::HeaderProofExt;
 use consensus::{ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal};
 use crypto::hashes::blake3_384;
 use futures::{FutureExt, StreamExt};

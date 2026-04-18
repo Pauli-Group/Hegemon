@@ -1,8 +1,9 @@
 use crate::substrate::proof_boundary::pallet_receipt_from_consensus;
 use consensus::backend_interface::{
-    build_experimental_native_receipt_root_artifact, native_receipt_root_build_cache_stats,
-    native_receipt_root_mini_root_size, NativeReceiptRootBuildCacheStats,
+    native_receipt_root_build_cache_stats, native_receipt_root_mini_root_size,
+    NativeReceiptRootBuildCacheStats,
 };
+use consensus::proof_interface::build_experimental_native_receipt_root_artifact;
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex as ParkingMutex;
 use rayon::ThreadPoolBuilder;

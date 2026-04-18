@@ -6,7 +6,7 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ConsensusError;
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
-use crate::proof::{ProofVerifier, verify_commitments};
+use crate::proof_interface::{ProofVerifier, verify_commitments};
 use crate::reward::{
     MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy, retarget_target,
     update_supply_digest,
