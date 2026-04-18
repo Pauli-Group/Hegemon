@@ -3169,31 +3169,28 @@ fn smallwood_compact_bridge_merkle_aggregate_rows_v1(
     public_values: &[u64],
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut values = Vec::with_capacity(MAX_INPUTS * MERKLE_TREE_DEPTH * 3);
-    for input in 0..MAX_INPUTS {
-        if let Some(note_input) = witness.inputs.get(input) {
-            if note_input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
-                return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "compact bridge input merkle path has length {}, expected {}",
-                    note_input.merkle_path.siblings.len(),
-                    MERKLE_TREE_DEPTH
-                )));
-            }
-            let mut current = note_input.note.commitment();
-            for level in 0..MERKLE_TREE_DEPTH {
-                let challenge = smallwood_bridge_merkle_challenge(public_values, input, level);
-                let sibling = note_input.merkle_path.siblings[level];
-                values.push(aggregate_hash(&current, challenge));
-                let (left, right) = if ((note_input.position >> level) & 1) == 0 {
-                    (current, sibling)
-                } else {
-                    (sibling, current)
-                };
-                values.push(aggregate_hash(&left, challenge));
-                values.push(aggregate_hash(&right, challenge));
-                current = merkle_node(left, right);
-            }
-        } else {
-            values.extend(std::iter::repeat_n(0, MERKLE_TREE_DEPTH * 3));
+    let (inputs, _input_flags) = padded_inputs(&witness.inputs);
+    for (input, note_input) in inputs.iter().enumerate() {
+        if note_input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "compact bridge input merkle path has length {}, expected {}",
+                note_input.merkle_path.siblings.len(),
+                MERKLE_TREE_DEPTH
+            )));
+        }
+        let mut current = note_input.note.commitment();
+        for level in 0..MERKLE_TREE_DEPTH {
+            let challenge = smallwood_bridge_merkle_challenge(public_values, input, level);
+            let sibling = note_input.merkle_path.siblings[level];
+            values.push(aggregate_hash(&current, challenge));
+            let (left, right) = if ((note_input.position >> level) & 1) == 0 {
+                (current, sibling)
+            } else {
+                (sibling, current)
+            };
+            values.push(aggregate_hash(&left, challenge));
+            values.push(aggregate_hash(&right, challenge));
+            current = merkle_node(left, right);
         }
     }
     Ok(values)
@@ -4182,6 +4179,36 @@ mod tests {
                 "inline-merkle auxiliary constraint mismatch at check {check} (input {input}, level {level}, kind {kind})"
             );
         }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_aux_constraints_support_padded_inputs() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .expect("inline-merkle auxiliary constraints must hold with padded dummy inputs");
     }
 
     #[test]
