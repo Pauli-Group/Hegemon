@@ -28,15 +28,21 @@ const NONCE_LEN: usize = 12;
 /// Default tree depth - must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
 const DEFAULT_TREE_DEPTH: u32 = 32;
 
-fn deserialize_exact<T>(bytes: &[u8]) -> Result<T, bincode::Error>
+fn deserialize_exact<T>(bytes: &[u8]) -> Result<T, WalletError>
 where
     T: serde::de::DeserializeOwned,
 {
-    use bincode::Options;
+    use std::io::Cursor;
 
-    bincode::DefaultOptions::new()
-        .reject_trailing_bytes()
-        .deserialize(bytes)
+    let mut cursor = Cursor::new(bytes);
+    let value: T = bincode::deserialize_from(&mut cursor)
+        .map_err(|err| WalletError::Serialization(err.to_string()))?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(WalletError::Serialization(
+            "trailing bytes after serialized payload".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 /// Wallet store - manages encrypted wallet state on disk.
@@ -1065,8 +1071,11 @@ impl WalletStore {
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
-    deserialize_exact::<WalletState>(bytes).map_err(|err| {
-        WalletError::Serialization(format!("failed to deserialize wallet state: {err}"))
+    deserialize_exact::<WalletState>(bytes).map_err(|err| match err {
+        WalletError::Serialization(message) => {
+            WalletError::Serialization(format!("failed to deserialize wallet state: {message}"))
+        }
+        other => other,
     })
 }
 

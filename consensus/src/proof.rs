@@ -1548,11 +1548,7 @@ impl ProofVerifier for ParallelProofVerifier {
             if let Some(derived_claims) = derived_claims_from_artifacts.as_ref() {
                 ensure_claims_match_verified_artifacts(&claims, derived_claims)?;
             }
-            Some(
-                derived_claims_from_artifacts
-                    .clone()
-                    .unwrap_or(claims),
-            )
+            Some(derived_claims_from_artifacts.clone().unwrap_or(claims))
         } else {
             None
         };
