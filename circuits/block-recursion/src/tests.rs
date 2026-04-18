@@ -18,7 +18,7 @@ use super::{
     segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
     serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
     step_recursive_witness_layout_v1, step_recursive_witness_words_v1, tree_proof_cap_report_v2,
-    tree_witness_geometry_report_v2,
+    tree_witness_geometry_report_v2, derive_tree_projection_point_v2,
     verify_block_recursive_v1, verify_block_recursive_v2,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
@@ -903,6 +903,46 @@ fn tree_v2_proof_cap_report_is_self_consistent() {
 }
 
 #[test]
+fn tree_v2_projection_matches_current_shipped_geometry() {
+    let report = tree_proof_cap_report_v2();
+    let projected =
+        derive_tree_projection_point_v2(TREE_RECURSIVE_CHUNK_SIZE_V2, report.max_supported_txs)
+            .expect("current shipped projection must derive");
+    assert_eq!(projected.max_chunk_count, report.max_chunk_count);
+    assert_eq!(projected.max_tree_level, report.max_tree_level);
+    assert_eq!(projected.p_chunk_a, report.p_chunk_a);
+    assert_eq!(projected.p_merge_a, report.p_merge_a);
+    assert_eq!(projected.p_merge_b, report.p_merge_b);
+    assert_eq!(projected.p_carry_a, report.p_carry_a);
+    assert_eq!(projected.p_carry_b, report.p_carry_b);
+    assert_eq!(projected.root_proof_cap, report.root_proof_cap);
+    assert_eq!(projected.artifact_bytes, recursive_block_artifact_bytes_v2());
+}
+
+#[test]
+#[ignore = "diagnostic chunk-schedule sweep for smaller v2 designs"]
+fn tree_v2_chunk_schedule_projection_sweep() {
+    let max_supported_txs = tree_proof_cap_report_v2().max_supported_txs;
+    for chunk_size in [128usize, 192, 256, 320, 384, 448, 512, 640, 768, 1000] {
+        let point =
+            derive_tree_projection_point_v2(chunk_size, max_supported_txs).expect("projection");
+        eprintln!(
+            "tree_v2 sweep: chunk_size={} max_chunk_count={} max_tree_level={} p_chunk_a={} p_merge_a={} p_merge_b={} p_carry_a={} p_carry_b={} root_proof_cap={} artifact_bytes={}",
+            point.chunk_size,
+            point.max_chunk_count,
+            point.max_tree_level,
+            point.p_chunk_a,
+            point.p_merge_a,
+            point.p_merge_b,
+            point.p_carry_a,
+            point.p_carry_b,
+            point.root_proof_cap,
+            point.artifact_bytes,
+        );
+    }
+}
+
+#[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_succeeds() {
     let (artifact, public) = prove_artifact_v2(5);
@@ -929,6 +969,11 @@ fn recursive_artifact_v2_constant_size_across_tx_counts() {
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
+    let report = tree_proof_cap_report_v2();
+    if TREE_RECURSIVE_CHUNK_SIZE_V2 + 1 > report.max_supported_txs {
+        assert_eq!(report.max_tree_level, 0);
+        return;
+    }
     for tx_count in [
         TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
         (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32,
@@ -942,6 +987,11 @@ fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
+    let report = tree_proof_cap_report_v2();
+    if TREE_RECURSIVE_CHUNK_SIZE_V2 + 1 > report.max_supported_txs {
+        assert_eq!(report.max_tree_level, 0);
+        return;
+    }
     let chunk_aligned = serialize_recursive_block_artifact_v2(
         &prove_artifact_v2(TREE_RECURSIVE_CHUNK_SIZE_V2 as u32).0,
     )
@@ -959,6 +1009,11 @@ fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_across_first_carry_boundary_succeeds() {
+    let report = tree_proof_cap_report_v2();
+    if (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1 > report.max_supported_txs {
+        assert!(report.max_tree_level < 2);
+        return;
+    }
     for tx_count in [
         (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32,
         ((TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1) as u32,
@@ -972,6 +1027,11 @@ fn prove_and_verify_recursive_artifact_v2_across_first_carry_boundary_succeeds()
 #[test]
 #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_across_first_carry_boundary() {
+    let report = tree_proof_cap_report_v2();
+    if (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1 > report.max_supported_txs {
+        assert!(report.max_tree_level < 2);
+        return;
+    }
     let merge_aligned = serialize_recursive_block_artifact_v2(
         &prove_artifact_v2((TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) as u32).0,
     )
@@ -997,6 +1057,15 @@ fn prove_and_verify_recursive_artifact_v2_at_deepest_supported_level_succeeds() 
     };
     assert!(deepest_level_boundary as usize <= report.max_supported_txs);
     let (artifact, public) = prove_artifact_v2(deepest_level_boundary);
+    let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
+    assert_eq!(verified, public);
+}
+
+#[test]
+#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
+fn prove_and_verify_recursive_artifact_v2_at_max_supported_txs_succeeds() {
+    let report = tree_proof_cap_report_v2();
+    let (artifact, public) = prove_artifact_v2(report.max_supported_txs as u32);
     let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
     assert_eq!(verified, public);
 }

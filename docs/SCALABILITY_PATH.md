@@ -59,7 +59,7 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 
 ### Assumptions
 
-- shipped on-chain block artifact: `recursive_block_v2 = 783,135 B`
+- shipped on-chain block artifact: `recursive_block_v2 = 522,159 B`
 - legacy `RecursiveBlockV1 = 699,404 B` is not used for the shipped planning model
 - proofless sidecar transfer public on-chain body: about `468 B/tx`
 - raw DA ciphertext ingress: about `4,294 B/tx`
@@ -68,7 +68,7 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 The current constants behind those assumptions are:
 
 - `RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE = 699_404`
-- `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 783_135`
+- `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 522_159`
 - `ENCRYPTED_NOTE_SIZE = 579`
 - `MAX_KEM_CIPHERTEXT_LEN = 1568`
 - `MAX_OUTPUTS = 2`
@@ -83,8 +83,8 @@ Let:
 Then the shipped lane projects to:
 
 ```text
-G_on(T, k) ~= 86400 * T * (468 + 783135 / k) bytes/day
-           ~= T * (0.0377 + 63.02 / k) GiB/day
+G_on(T, k) ~= 86400 * T * (468 + 522159 / k) bytes/day
+           ~= T * (0.0377 + 42.02 / k) GiB/day
 
 G_da(T)    ~= 86400 * T * 4294 bytes/day
            ~= 0.3455 * T GiB/day
@@ -92,7 +92,7 @@ G_da(T)    ~= 86400 * T * 4294 bytes/day
 
 Interpretation:
 
-- `63.02 / k` GiB/day is the recursive-block proof cost amortized over `k` tx per non-empty shielded block
+- `42.02 / k` GiB/day is the recursive-block proof cost amortized over `k` tx per non-empty shielded block
 - `0.0377 * T` GiB/day is the public on-chain tx body growth
 - `0.3455 * T` GiB/day is raw DA ciphertext ingress before erasure/sampling/replication overhead
 
@@ -104,13 +104,13 @@ All values below are projected `GiB/day` on the shipped `RecursiveBlockV2` lane.
 
 | tx/block | on-chain @1 TPS | on-chain @10 TPS | on-chain @100 TPS | raw DA @1 TPS | raw DA @10 TPS | raw DA @100 TPS | total @1 TPS | total @10 TPS | total @100 TPS |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 63.05 | 630.54 | 6305.36 | 0.35 | 3.46 | 34.55 | 63.40 | 633.99 | 6339.91 |
-| 2 | 31.55 | 315.46 | 3154.56 | 0.35 | 3.46 | 34.55 | 31.89 | 318.91 | 3189.12 |
-| 4 | 15.79 | 157.92 | 1579.16 | 0.35 | 3.46 | 34.55 | 16.14 | 161.37 | 1613.72 |
-| 8 | 7.91 | 79.15 | 791.47 | 0.35 | 3.46 | 34.55 | 8.26 | 82.60 | 826.02 |
-| 16 | 3.98 | 39.76 | 397.62 | 0.35 | 3.46 | 34.55 | 4.32 | 43.22 | 432.17 |
-| 32 | 2.01 | 20.07 | 200.69 | 0.35 | 3.46 | 34.55 | 2.35 | 23.52 | 235.24 |
-| 64 | 1.02 | 10.22 | 102.23 | 0.35 | 3.46 | 34.55 | 1.37 | 13.68 | 136.78 |
+| 1 | 42.05 | 420.54 | 4205.38 | 0.35 | 3.46 | 34.55 | 42.40 | 423.99 | 4239.94 |
+| 2 | 21.05 | 210.46 | 2104.58 | 0.35 | 3.46 | 34.55 | 21.39 | 213.91 | 2139.13 |
+| 4 | 10.54 | 105.42 | 1054.17 | 0.35 | 3.46 | 34.55 | 10.89 | 108.87 | 1088.72 |
+| 8 | 5.29 | 52.90 | 528.97 | 0.35 | 3.46 | 34.55 | 5.64 | 56.35 | 563.52 |
+| 16 | 2.66 | 26.64 | 266.37 | 0.35 | 3.46 | 34.55 | 3.01 | 30.09 | 300.92 |
+| 32 | 1.35 | 13.51 | 135.07 | 0.35 | 3.46 | 34.55 | 1.70 | 16.96 | 169.62 |
+| 64 | 0.69 | 6.94 | 69.42 | 0.35 | 3.46 | 34.55 | 1.04 | 10.40 | 103.97 |
 
 This is the main operator conclusion: chain growth is dominated by the fixed `recursive_block_v2` artifact until blocks are packed hard. Running at one shielded tx per non-empty block is storage-hostile. Packing `32-64` shielded tx per non-empty block is still the only sane way to amortize the constant-size recursive lane.
 
@@ -127,10 +127,10 @@ Those assumptions reflect the intended operational direction of the shipped lane
 
 | target block time | assumed tx/block | implied TPS | proof GiB/day | public tx body GiB/day | on-chain GiB/day | raw DA GiB/day | total GiB/day |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1s | 2 | 2.00 | 63.02 | 0.08 | 63.09 | 0.69 | 63.78 |
-| 5s | 8 | 1.60 | 12.60 | 0.06 | 12.66 | 0.55 | 13.22 |
-| 10s | 16 | 1.60 | 6.30 | 0.06 | 6.36 | 0.55 | 6.91 |
-| 30s | 64 | 2.13 | 2.10 | 0.08 | 2.18 | 0.74 | 2.92 |
+| 1s | 2 | 2.00 | 42.02 | 0.08 | 42.09 | 0.69 | 42.78 |
+| 5s | 8 | 1.60 | 8.40 | 0.06 | 8.46 | 0.55 | 9.02 |
+| 10s | 16 | 1.60 | 4.20 | 0.06 | 4.26 | 0.55 | 4.81 |
+| 30s | 64 | 2.13 | 1.40 | 0.08 | 1.48 | 0.74 | 2.22 |
 
 This interval view is useful for operators because it separates the two levers:
 

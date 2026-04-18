@@ -21,7 +21,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 256;
+pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 1000;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
 const TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2: usize = 64;
@@ -183,6 +183,10 @@ struct TreeRelationV2 {
     auxiliary_witness_words: Vec<u64>,
     auxiliary_witness_limb_count: usize,
     cached_mismatch: OnceLock<Result<u64, BlockRecursionError>>,
+}
+
+struct ProjectionRelationV2 {
+    auxiliary_witness_words: Vec<u64>,
 }
 
 impl TreeRelationV2 {
@@ -500,6 +504,82 @@ impl SmallwoodConstraintAdapter for TreeRelationV2 {
             .cached_mismatch()
             .map_err(block_recursion_to_tx_error_v2)?;
         out[0] = mismatch.saturating_mul(mismatch);
+        Ok(())
+    }
+}
+
+impl SmallwoodConstraintAdapter for ProjectionRelationV2 {
+    fn arithmetization(&self) -> SmallwoodArithmetization {
+        SmallwoodArithmetization::Bridge64V1
+    }
+
+    fn row_count(&self) -> usize {
+        TREE_RECURSIVE_WITNESS_ROW_COUNT_V2
+    }
+
+    fn packing_factor(&self) -> usize {
+        TREE_RECURSIVE_WITNESS_PACKING_FACTOR_V2
+    }
+
+    fn constraint_degree(&self) -> usize {
+        2
+    }
+
+    fn linear_constraint_count(&self) -> usize {
+        0
+    }
+
+    fn constraint_count(&self) -> usize {
+        1
+    }
+
+    fn linear_constraint_offsets(&self) -> &[u32] {
+        &EMPTY_LINEAR_OFFSETS_V2
+    }
+
+    fn linear_constraint_indices(&self) -> &[u32] {
+        &[]
+    }
+
+    fn linear_constraint_coefficients(&self) -> &[u64] {
+        &[]
+    }
+
+    fn linear_targets(&self) -> &[u64] {
+        &[]
+    }
+
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        &self.auxiliary_witness_words
+    }
+
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        Some(self.auxiliary_witness_words.len())
+    }
+
+    fn linear_constraint_form(&self) -> SmallwoodLinearConstraintForm {
+        SmallwoodLinearConstraintForm::Generic
+    }
+
+    fn nonlinear_eval_view<'a>(
+        &self,
+        eval_point: u64,
+        rows: &'a [u64],
+        auxiliary_words: &'a [u64],
+    ) -> SmallwoodNonlinearEvalView<'a> {
+        SmallwoodNonlinearEvalView::RowScalars {
+            eval_point,
+            rows,
+            auxiliary_words,
+        }
+    }
+
+    fn compute_constraints_u64(
+        &self,
+        _view: SmallwoodNonlinearEvalView<'_>,
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError> {
+        out[0] = 0;
         Ok(())
     }
 }
@@ -1650,6 +1730,103 @@ fn projected_tree_relation_proof_bytes_v2(
         })
 }
 
+fn projected_tree_relation_proof_bytes_for_aux_bytes_v2(
+    profile: SmallwoodRecursiveProfileTagV1,
+    auxiliary_witness_bytes: usize,
+) -> Result<usize, BlockRecursionError> {
+    let relation = ProjectionRelationV2 {
+        auxiliary_witness_words: vec![0u64; auxiliary_witness_bytes.div_ceil(8)],
+    };
+    projected_smallwood_recursive_proof_bytes_v1(&tree_recursive_profile_v2(profile), &relation)
+        .map_err(|err| {
+            BlockRecursionError::InvalidField(Box::leak(
+                format!("tree_v2 projected proof bytes from aux: {err}").into_boxed_str(),
+            ))
+        })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeProjectionSweepPointV2 {
+    pub chunk_size: usize,
+    pub max_supported_txs: usize,
+    pub max_chunk_count: usize,
+    pub max_tree_level: usize,
+    pub p_chunk_a: usize,
+    pub p_merge_a: usize,
+    pub p_merge_b: usize,
+    pub p_carry_a: usize,
+    pub p_carry_b: usize,
+    pub root_proof_cap: usize,
+    pub artifact_bytes: usize,
+}
+
+pub fn derive_tree_projection_point_v2(
+    chunk_size: usize,
+    max_supported_txs: usize,
+) -> Result<TreeProjectionSweepPointV2, BlockRecursionError> {
+    if chunk_size == 0 || max_supported_txs == 0 {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 projection chunk_size/max_supported_txs",
+        ));
+    }
+    let chunk_aux_bytes = chunk_size * CHUNK_SLOT_BYTES_V2;
+    let p_chunk_a = projected_tree_relation_proof_bytes_for_aux_bytes_v2(
+        SmallwoodRecursiveProfileTagV1::A,
+        chunk_aux_bytes,
+    )?;
+    let max_chunk_count = max_supported_txs.div_ceil(chunk_size);
+    let max_tree_level = tree_root_level_for_chunk_count_v2(max_chunk_count);
+    let mut p_merge_a = 0usize;
+    let mut p_merge_b = 0usize;
+    let mut p_carry_a = 0usize;
+    let mut p_carry_b = 0usize;
+    let mut level_caps = vec![p_chunk_a];
+    for tree_level in 1..=max_tree_level {
+        let child_cap = level_caps[tree_level - 1];
+        let merge_kind = tree_merge_kind_for_level_v2(tree_level);
+        let carry_kind = tree_carry_kind_for_level_v2(tree_level);
+        let merge_profile = profile_for_relation_kind_v2(merge_kind)?;
+        let carry_profile = profile_for_relation_kind_v2(carry_kind)?;
+        let merge_cap = projected_tree_relation_proof_bytes_for_aux_bytes_v2(
+            merge_profile,
+            (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2) + TREE_MERGE_SUMMARY_BYTES_V2 + (child_cap * 2),
+        )?;
+        let carry_cap = projected_tree_relation_proof_bytes_for_aux_bytes_v2(
+            carry_profile,
+            TREE_CHILD_WITNESS_HEADER_BYTES_V2 + child_cap,
+        )?;
+        match merge_kind {
+            SmallwoodRecursiveRelationKindV1::MergeA => p_merge_a = p_merge_a.max(merge_cap),
+            SmallwoodRecursiveRelationKindV1::MergeB => p_merge_b = p_merge_b.max(merge_cap),
+            _ => {}
+        }
+        match carry_kind {
+            SmallwoodRecursiveRelationKindV1::CarryA => p_carry_a = p_carry_a.max(carry_cap),
+            SmallwoodRecursiveRelationKindV1::CarryB => p_carry_b = p_carry_b.max(carry_cap),
+            _ => {}
+        }
+        level_caps.push(merge_cap.max(carry_cap));
+    }
+    let root_proof_cap = *level_caps.last().ok_or(BlockRecursionError::InvalidField(
+        "tree_v2 projection level_caps",
+    ))?;
+    Ok(TreeProjectionSweepPointV2 {
+        chunk_size,
+        max_supported_txs,
+        max_chunk_count,
+        max_tree_level,
+        p_chunk_a,
+        p_merge_a,
+        p_merge_b,
+        p_carry_a,
+        p_carry_b,
+        root_proof_cap,
+        artifact_bytes: RECURSIVE_BLOCK_HEADER_BYTES_V2
+            + RECURSIVE_BLOCK_PUBLIC_BYTES_V2
+            + root_proof_cap,
+    })
+}
+
 fn projected_chunk_proof_bytes_v2() -> Result<usize, BlockRecursionError> {
     let records = (0..TREE_RECURSIVE_CHUNK_SIZE_V2)
         .map(|idx| dummy_leaf_record_v2(idx as u32, 0x30u8.wrapping_add(idx as u8)))
@@ -2227,7 +2404,11 @@ mod diagnostic_tests {
     #[test]
     #[ignore = "diagnostic size-report for compact child object experiments"]
     fn tree_v2_child_object_candidate_size_report() {
-        let tx_count = TREE_RECURSIVE_CHUNK_SIZE_V2 as u32 + 1;
+        let tx_count = if TREE_RECURSIVE_CHUNK_SIZE_V2 >= TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 {
+            TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32
+        } else {
+            (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32
+        };
         let input = sample_input_v2(tx_count);
         let artifact = prove_block_recursive_v2(&input).unwrap();
         let expected_public = public_replay_v2(&input.records, &input.semantic).unwrap();

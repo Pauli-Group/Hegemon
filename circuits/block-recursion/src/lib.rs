@@ -68,7 +68,8 @@ pub use statement::{
 };
 pub use tree_v2::{
     compose_recursive_segment_statements_v2, deserialize_recursive_block_artifact_v2,
-    project_tree_proof_bytes_v2 as recursive_block_proof_bytes_v2, prove_block_recursive_v2,
+    derive_tree_projection_point_v2, project_tree_proof_bytes_v2 as recursive_block_proof_bytes_v2,
+    prove_block_recursive_v2,
     public_replay_v2, recursive_block_artifact_bytes_v2,
     recursive_block_artifact_verifier_profile_v2, recursive_block_proof_encoding_digest_v2,
     recursive_block_public_bytes_v2, recursive_block_tx_line_digest_v2,
@@ -79,7 +80,7 @@ pub use tree_v2::{
     BlockRecursiveProverInputV2,
     HeaderRecTreeV2, RecursiveBlockArtifactV2, RecursiveBlockInnerArtifactV2,
     RecursiveBlockPublicV2, RecursiveSegmentStatementV2, TreeProofCapReportV2,
-    TreeWitnessGeometryReportV2,
+    TreeProjectionSweepPointV2, TreeWitnessGeometryReportV2,
     RECURSIVE_BLOCK_ARTIFACT_VERSION_V2, TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 pub use verifier::verify_block_recursive_v1;

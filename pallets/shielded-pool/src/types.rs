@@ -40,12 +40,12 @@ pub const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE: usize = 699_404;
 /// Maximum size of a `recursive_block_v2` artifact payload.
 ///
 /// `v2` is the bounded-domain tree lane. The current cap is derived from:
-/// - `TREE_RECURSIVE_CHUNK_SIZE_V2 = 256`
+/// - `TREE_RECURSIVE_CHUNK_SIZE_V2 = 1000`
 /// - `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`
 /// - the level-capped recursive proof report in `block_recursion`
 ///
-/// The current full serialized `Pi_block_v2(B)` size is `783_135`.
-pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 783_135;
+/// The current full serialized `Pi_block_v2(B)` size is `522_159`.
+pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 522_159;
 
 /// Maximum size of any accepted recursive block artifact payload.
 ///
