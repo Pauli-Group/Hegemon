@@ -1,6 +1,10 @@
 //! Data-availability RPC endpoints.
 
 use crate::substrate::service::{DaChunkStore, PendingCiphertextStore, PendingProofStore};
+use consensus::backend_interface::{
+    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+    NativeTxLeafArtifact,
+};
 use crypto::hashes::blake3_384;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
@@ -11,10 +15,6 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use state_da::{DaChunkProof, DaParams, DaRoot};
 use std::sync::Arc;
-use superneo_hegemon::{
-    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
-    NativeTxLeafArtifact,
-};
 use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 
 const NATIVE_TX_CANONICAL_PADDING_ASSET_ID: u64 = 4_294_967_294;
@@ -561,7 +561,7 @@ fn parse_bytes(value: &str) -> Result<Vec<u8>, ErrorObjectOwned> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use superneo_hegemon::{
+    use consensus::backend_interface::{
         build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
     };
     use tempfile::TempDir;

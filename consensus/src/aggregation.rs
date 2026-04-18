@@ -1,6 +1,11 @@
 use crate::error::ProofError;
 mod v5;
-use block_circuit::CommitmentBlockProver;
+use crate::backend_interface::{
+    Challenge, CommitmentBlockProver, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash,
+    POSEIDON2_RATE, TransactionAirP3, TransactionProof, TransactionProofP3,
+    TransactionPublicInputsP3, Val, config_with_fri, default_build_tx_fri_profile,
+    felts_to_bytes48, stark_public_inputs_p3, verify_transaction_proof_p3,
+};
 use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
@@ -17,16 +22,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use transaction_circuit::proof::stark_public_inputs_p3;
-use transaction_circuit::{
-    TransactionAirP3, TransactionProof, TransactionPublicInputsP3,
-    hashing_pq::felts_to_bytes48,
-    p3_config::{
-        Challenge, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash, POSEIDON2_RATE,
-        TransactionProofP3, Val, config_with_fri, default_build_tx_fri_profile,
-    },
-    p3_verifier::verify_transaction_proof_p3,
-};
 use zstd::stream::{decode_all, encode_all};
 
 type InnerFri = FriProofTargets<

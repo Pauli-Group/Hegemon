@@ -101,14 +101,13 @@ use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL
 use crate::substrate::service::PeerGraphReport;
 use crate::substrate::service::{DaChunkStore, PeerConnectionSnapshot, PendingCiphertextStore};
 use crate::substrate::transaction_pool::prevalidate_native_shielded_extrinsic;
+use consensus::backend_interface::{
+    decode_native_tx_leaf_artifact_bytes, transaction_public_inputs_digest_from_serialized,
+    verify_native_tx_leaf_artifact_bytes, NativeTxLeafArtifact, SerializedStarkInputs,
+    TX_STATEMENT_HASH_DOMAIN,
+};
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
-use superneo_hegemon::{
-    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
-};
 use transaction_circuit::hashing_pq::{balance_commitment_bytes, ciphertext_hash_bytes};
-use transaction_circuit::proof::{
-    transaction_public_inputs_digest_from_serialized, TX_STATEMENT_HASH_DOMAIN,
-};
 use transaction_circuit::public_inputs::BalanceSlot;
 
 /// Default difficulty bits when runtime API query fails
@@ -448,7 +447,7 @@ fn canonical_balance_slots_from_public_args_host(
 }
 
 fn stablecoin_matches_artifact(
-    artifact: &transaction_circuit::proof::SerializedStarkInputs,
+    artifact: &SerializedStarkInputs,
     stablecoin: &Option<StablecoinPolicyBinding>,
 ) -> bool {
     match stablecoin {
@@ -525,7 +524,7 @@ fn decode_signed_magnitude_host(sign: u8, magnitude: u64, label: &str) -> Result
 }
 
 fn native_statement_hash_from_artifact_host(
-    artifact: &superneo_hegemon::NativeTxLeafArtifact,
+    artifact: &NativeTxLeafArtifact,
 ) -> Result<[u8; 48], String> {
     let mut message = Vec::new();
     message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);

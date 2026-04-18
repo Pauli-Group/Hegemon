@@ -1,4 +1,4 @@
-use block_circuit::CommitmentBlockProof;
+use crate::backend_interface::CommitmentBlockProof;
 use crypto::hashes::{blake3_384, sha256};
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};

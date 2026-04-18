@@ -394,12 +394,12 @@ impl TransactionPool for MockTransactionPool {
 
 use crate::substrate::client::{HegemonFullClient, HegemonTransactionPool};
 use codec::{Decode, Encode};
+use consensus::backend_interface::{
+    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+};
 use pallet_shielded_pool::family::ShieldedFamilyAction;
 use sc_client_api::HeaderBackend;
 use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
-use superneo_hegemon::{
-    decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
-};
 
 /// Wrapper around the real Substrate transaction pool (Task 11.5.2)
 ///
@@ -1007,7 +1007,7 @@ pub async fn spawn_pool_processor<P: TransactionPool + 'static>(
 mod tests {
     use super::*;
     use codec::Encode;
-    use superneo_hegemon::{
+    use consensus::backend_interface::{
         build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
         encode_native_tx_leaf_artifact_bytes,
     };

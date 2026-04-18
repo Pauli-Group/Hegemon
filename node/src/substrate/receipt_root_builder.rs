@@ -1,13 +1,13 @@
 use crate::substrate::proof_boundary::pallet_receipt_from_consensus;
+use consensus::backend_interface::{
+    build_experimental_native_receipt_root_artifact, native_receipt_root_build_cache_stats,
+    native_receipt_root_mini_root_size, NativeReceiptRootBuildCacheStats,
+};
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex as ParkingMutex;
 use rayon::ThreadPoolBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
-use superneo_hegemon::{
-    native_receipt_root_build_cache_stats, native_receipt_root_mini_root_size,
-    NativeReceiptRootBuildCacheStats,
-};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct MiniRootCacheKey([u8; 48]);
@@ -222,7 +222,7 @@ pub(crate) fn build_receipt_root_proof_from_materials(
     }) {
         return Err("receipt-root requires native tx-leaf artifacts for every tx".to_string());
     }
-    let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
+    let built = build_experimental_native_receipt_root_artifact(tx_artifacts)
         .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
     let receipts = tx_artifacts
         .iter()
@@ -247,10 +247,10 @@ pub(crate) fn build_receipt_root_proof_from_materials_with_plan(
     let workers = load_receipt_root_workers(default_workers);
     let before = native_receipt_root_build_cache_stats();
     let built = if workers <= 1 {
-        consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
+        build_experimental_native_receipt_root_artifact(tx_artifacts)
     } else {
         receipt_root_thread_pool(workers)?
-            .install(|| consensus::build_experimental_native_receipt_root_artifact(tx_artifacts))
+            .install(|| build_experimental_native_receipt_root_artifact(tx_artifacts))
     }
     .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
     let after = native_receipt_root_build_cache_stats();

@@ -148,14 +148,18 @@ use crate::substrate::rpc::{
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
-use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
-use block_recursion::{
-    prove_block_recursive_v1, prove_block_recursive_v2, BlockLeafRecordV1,
-    BlockRecursiveProverInputV1, BlockRecursiveProverInputV2, BlockSemanticInputsV1,
-    RecursiveBlockArtifactV1, RecursiveBlockArtifactV2,
-};
 use codec::Decode;
 use codec::Encode;
+#[cfg(test)]
+use consensus::backend_interface::native_receipt_root_mini_root_size;
+use consensus::backend_interface::{
+    decode_native_tx_leaf_artifact_bytes, native_tx_leaf_record_from_artifact,
+    prove_block_recursive_v1, prove_block_recursive_v2, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_artifact_v2, BlockLeafRecordV1, BlockRecursiveProverInputV1,
+    BlockRecursiveProverInputV2, BlockSemanticInputsV1, CommitmentBlockProof,
+    CommitmentBlockProver, CommitmentBlockPublicInputs, RecursiveBlockArtifactV1,
+    RecursiveBlockArtifactV2, SerializedStarkInputs, TransactionProof,
+};
 use consensus::proof::{
     tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof, HeaderProofExt,
 };
@@ -196,9 +200,6 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-#[cfg(test)]
-use superneo_hegemon::native_receipt_root_mini_root_size;
-use superneo_hegemon::{decode_native_tx_leaf_artifact_bytes, native_tx_leaf_record_from_artifact};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
@@ -211,7 +212,6 @@ use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, ciphertext_hash_bytes, Felt};
-use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{
     BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs,
 };
@@ -2729,7 +2729,7 @@ struct PreparedNativeReceiptRootBuild {
 fn recursive_block_payload_from_artifact_v1(
     artifact: RecursiveBlockArtifactV1,
 ) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
-    let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
+    let bytes = serialize_recursive_block_artifact_v1(&artifact)
         .map_err(|err| format!("serialize recursive_block_v1 artifact failed: {err}"))?;
     Ok(pallet_shielded_pool::types::RecursiveBlockProofPayload {
         proof: pallet_shielded_pool::types::StarkProof::from_bytes(bytes),
@@ -2739,7 +2739,7 @@ fn recursive_block_payload_from_artifact_v1(
 fn recursive_block_payload_from_artifact_v2(
     artifact: RecursiveBlockArtifactV2,
 ) -> Result<pallet_shielded_pool::types::RecursiveBlockProofPayload, String> {
-    let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+    let bytes = serialize_recursive_block_artifact_v2(&artifact)
         .map_err(|err| format!("serialize recursive_block_v2 artifact failed: {err}"))?;
     Ok(pallet_shielded_pool::types::RecursiveBlockProofPayload {
         proof: pallet_shielded_pool::types::StarkProof::from_bytes(bytes),
@@ -11470,17 +11470,16 @@ impl MiningConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use consensus::backend_interface::{build_native_tx_leaf_artifact_bytes, prove};
     use crypto::ml_kem::MlKemKeyPair;
     use crypto::traits::KemKeyPair;
     use sp_database::Database as _;
     use sp_database::MemDb;
     use std::sync::MutexGuard as StdMutexGuard;
-    use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-    use transaction_circuit::proof::prove;
     use transaction_circuit::witness::TransactionWitness;
 
     fn dummy_receipt(profile: consensus::VerifierProfileDigest) -> consensus::TxValidityReceipt {
@@ -12245,7 +12244,8 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
-        payload.verifier_profile = block_recursion::recursive_block_artifact_verifier_profile_v2();
+        payload.verifier_profile =
+            consensus::backend_interface::recursive_block_artifact_verifier_profile_digest_v2();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
         ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())

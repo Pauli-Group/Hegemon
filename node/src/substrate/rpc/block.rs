@@ -1,7 +1,7 @@
 //! Block-level RPC endpoints for commitment proofs.
 
 use crate::substrate::service::CommitmentBlockProofStore;
-use block_circuit::{CommitmentBlockProof, CommitmentBlockPublicInputs};
+use consensus::backend_interface::{CommitmentBlockProof, CommitmentBlockPublicInputs};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;

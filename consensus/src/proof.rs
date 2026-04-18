@@ -1,3 +1,29 @@
+use crate::backend_interface::{
+    BlockLeafRecordV1, BlockSemanticInputsV1, CanonicalTxValidityReceipt, CommitmentBlockProof,
+    CommitmentBlockProver, NativeTxLeafRecord, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+    RECURSIVE_BLOCK_ARTIFACT_VERSION_V2, SerializedStarkInputs, TransactionProof, TxLeafPublicTx,
+    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
+    build_tx_leaf_artifact_bytes, build_verified_tx_proof_receipt_root_artifact_bytes,
+    decode_native_tx_leaf_artifact_bytes, decode_transaction_proof_bytes_exact,
+    deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
+    experimental_native_receipt_root_params_fingerprint as backend_native_receipt_root_params_fingerprint,
+    experimental_native_receipt_root_verifier_profile_digest as backend_native_receipt_root_profile,
+    experimental_native_tx_leaf_verifier_profile_digest as backend_native_tx_leaf_profile,
+    experimental_receipt_root_verifier_profile_digest as backend_receipt_root_profile,
+    experimental_tx_leaf_verifier_profile_digest as backend_tx_leaf_profile,
+    max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
+    native_backend_params, native_tx_leaf_record_from_artifact, public_replay_v1, public_replay_v2,
+    recursive_block_artifact_verifier_profile_digest_v1 as backend_recursive_block_profile_v1,
+    recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
+    transaction_proof_digest, transaction_public_inputs_digest,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
+    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
+    verify_block_commitment, verify_block_recursive_v1, verify_block_recursive_v2,
+    verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
+    verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
+    verify_receipt_root_artifact_bytes, verify_transaction_proof, verify_tx_leaf_artifact_bytes,
+    verify_verified_tx_proof_receipt_root_artifact_bytes,
+};
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
@@ -7,13 +33,6 @@ use crate::types::{
     VerifierProfileDigest, VersionCommitment, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root, kernel_root_from_shielded_root,
 };
-use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
-use block_recursion::{
-    BlockLeafRecordV1, BlockSemanticInputsV1, deserialize_recursive_block_artifact_v1,
-    deserialize_recursive_block_artifact_v2, public_replay_v1, public_replay_v2,
-    recursive_block_artifact_verifier_profile_v1, recursive_block_artifact_verifier_profile_v2,
-    verify_block_recursive_v1, verify_block_recursive_v2,
-};
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
 use rayon::prelude::*;
@@ -22,30 +41,9 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
-use superneo_hegemon::{
-    CanonicalTxValidityReceipt, NativeTxLeafRecord, TxLeafPublicTx,
-    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
-    build_tx_leaf_artifact_bytes, build_verified_tx_proof_receipt_root_artifact_bytes,
-    decode_native_tx_leaf_artifact_bytes,
-    experimental_native_receipt_root_verifier_profile as native_receipt_root_profile,
-    experimental_native_tx_leaf_verifier_profile as native_tx_leaf_profile,
-    max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
-    native_tx_leaf_record_from_artifact, verify_native_tx_leaf_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_bytes,
-    verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
-    verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,
-    verify_verified_tx_proof_receipt_root_artifact_bytes,
-};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::proof::{
-    SerializedStarkInputs, TransactionProof, decode_transaction_proof_bytes_exact,
-    transaction_proof_digest, transaction_public_inputs_digest,
-    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
-    verify as verify_transaction_proof,
-};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExperimentalReceiptRootArtifact {
@@ -106,7 +104,7 @@ fn verify_recursive_block_artifact_against_verified_records(
     let start_verify = Instant::now();
     match envelope.kind {
         ProofArtifactKind::RecursiveBlockV1 => {
-            if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v1() {
+            if envelope.verifier_profile != backend_recursive_block_profile_v1() {
                 return Err(ProofError::AggregationProofInputsMismatch(
                     "recursive_block_v1 requires the v1 verifier profile".to_string(),
                 ));
@@ -150,7 +148,7 @@ fn verify_recursive_block_artifact_against_verified_records(
             })
         }
         ProofArtifactKind::RecursiveBlockV2 => {
-            if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v2() {
+            if envelope.verifier_profile != backend_recursive_block_profile_v2() {
                 return Err(ProofError::AggregationProofInputsMismatch(
                     "recursive_block_v2 requires the v2 verifier profile".to_string(),
                 ));
@@ -776,7 +774,7 @@ impl ArtifactVerifier for ReceiptRootVerifier {
 }
 
 pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
-    recursive_block_artifact_verifier_profile_v2()
+    backend_recursive_block_profile_v2()
 }
 
 struct RecursiveBlockVerifier {
@@ -791,10 +789,10 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
     fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool {
         match self.kind {
             ProofArtifactKind::RecursiveBlockV1 => {
-                verifier_profile == recursive_block_artifact_verifier_profile_v1()
+                verifier_profile == backend_recursive_block_profile_v1()
             }
             ProofArtifactKind::RecursiveBlockV2 => {
-                verifier_profile == recursive_block_artifact_verifier_profile_v2()
+                verifier_profile == backend_recursive_block_profile_v2()
             }
             _ => false,
         }
@@ -816,7 +814,7 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
         }
         match self.kind {
             ProofArtifactKind::RecursiveBlockV1 => {
-                if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v1() {
+                if envelope.verifier_profile != backend_recursive_block_profile_v1() {
                     return Err(ProofError::AggregationProofInputsMismatch(
                         "recursive_block_v1 requires the v1 verifier profile".to_string(),
                     ));
@@ -828,7 +826,7 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                         ))
                     })?;
                 if parsed.artifact.header.artifact_version_rec
-                    != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V1
+                    != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1
                 {
                     return Err(ProofError::AggregationProofInputsMismatch(format!(
                         "recursive_block_v1 header version mismatch: {}",
@@ -854,7 +852,7 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                 })?;
             }
             ProofArtifactKind::RecursiveBlockV2 => {
-                if envelope.verifier_profile != recursive_block_artifact_verifier_profile_v2() {
+                if envelope.verifier_profile != backend_recursive_block_profile_v2() {
                     return Err(ProofError::AggregationProofInputsMismatch(
                         "recursive_block_v2 requires the v2 verifier profile".to_string(),
                     ));
@@ -866,7 +864,7 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
                         ))
                     })?;
                 if parsed.artifact.header.artifact_version_rec
-                    != block_recursion::RECURSIVE_BLOCK_ARTIFACT_VERSION_V2
+                    != RECURSIVE_BLOCK_ARTIFACT_VERSION_V2
                 {
                     return Err(ProofError::AggregationProofInputsMismatch(format!(
                         "recursive_block_v2 header version mismatch: {}",
@@ -1160,23 +1158,23 @@ pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidi
 }
 
 pub fn experimental_receipt_root_verifier_profile() -> VerifierProfileDigest {
-    superneo_hegemon::experimental_receipt_root_verifier_profile()
+    backend_receipt_root_profile()
 }
 
 pub fn experimental_tx_leaf_verifier_profile() -> VerifierProfileDigest {
-    superneo_hegemon::experimental_tx_leaf_verifier_profile()
+    backend_tx_leaf_profile()
 }
 
 pub fn experimental_native_tx_leaf_verifier_profile() -> VerifierProfileDigest {
-    native_tx_leaf_profile()
+    backend_native_tx_leaf_profile()
 }
 
 pub fn experimental_native_receipt_root_verifier_profile() -> VerifierProfileDigest {
-    native_receipt_root_profile()
+    backend_native_receipt_root_profile()
 }
 
 pub fn experimental_native_receipt_root_params_fingerprint() -> [u8; 48] {
-    superneo_hegemon::native_backend_params().parameter_fingerprint()
+    backend_native_receipt_root_params_fingerprint()
 }
 
 pub fn build_experimental_receipt_root_artifact(
@@ -1350,7 +1348,7 @@ pub fn verify_experimental_native_receipt_root_artifact_from_records(
     artifact_bytes: &[u8],
 ) -> Result<ReceiptRootMetadata, ProofError> {
     let metadata = verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
-        &superneo_hegemon::native_backend_params(),
+        &native_backend_params(),
         records,
         artifact_bytes,
     )
@@ -1455,7 +1453,7 @@ fn statement_hash_from_tx_and_stark_inputs(
     )?;
 
     let mut message = Vec::new();
-    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
+    message.extend_from_slice(crate::backend_interface::TX_STATEMENT_HASH_DOMAIN);
     message.extend_from_slice(&stark_inputs.merkle_root);
     for nf in &tx.nullifiers {
         message.extend_from_slice(nf);
@@ -2455,9 +2453,9 @@ mod tests {
         );
     }
 
-    fn sample_recursive_records(tx_count: u32) -> Vec<block_recursion::BlockLeafRecordV1> {
+    fn sample_recursive_records(tx_count: u32) -> Vec<crate::backend_interface::BlockLeafRecordV1> {
         (0..tx_count)
-            .map(|tx_index| block_recursion::BlockLeafRecordV1 {
+            .map(|tx_index| crate::backend_interface::BlockLeafRecordV1 {
                 tx_index,
                 receipt_statement_hash: [0x10u8.wrapping_add(tx_index as u8); 48],
                 receipt_proof_digest: [0x20u8.wrapping_add(tx_index as u8); 48],
@@ -2474,8 +2472,8 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    fn sample_recursive_semantic() -> block_recursion::BlockSemanticInputsV1 {
-        block_recursion::BlockSemanticInputsV1 {
+    fn sample_recursive_semantic() -> crate::backend_interface::BlockSemanticInputsV1 {
+        crate::backend_interface::BlockSemanticInputsV1 {
             tx_statements_commitment: [0u8; 48],
             start_shielded_root: [3u8; 48],
             end_shielded_root: [4u8; 48],
@@ -2490,25 +2488,23 @@ mod tests {
 
     fn sample_recursive_block_artifact_v1(
         tx_count: u32,
-    ) -> block_recursion::RecursiveBlockArtifactV1 {
+    ) -> crate::backend_interface::RecursiveBlockArtifactV1 {
         let records = sample_recursive_records(tx_count);
         let semantic = sample_recursive_semantic();
-        block_recursion::prove_block_recursive_v1(&block_recursion::BlockRecursiveProverInputV1 {
-            records,
-            semantic,
-        })
+        crate::backend_interface::prove_block_recursive_v1(
+            &crate::backend_interface::BlockRecursiveProverInputV1 { records, semantic },
+        )
         .expect("prove recursive_block_v1 artifact")
     }
 
     fn sample_recursive_block_artifact_v2(
         tx_count: u32,
-    ) -> block_recursion::RecursiveBlockArtifactV2 {
+    ) -> crate::backend_interface::RecursiveBlockArtifactV2 {
         let records = sample_recursive_records(tx_count);
         let semantic = sample_recursive_semantic();
-        block_recursion::prove_block_recursive_v2(&block_recursion::BlockRecursiveProverInputV2 {
-            records,
-            semantic,
-        })
+        crate::backend_interface::prove_block_recursive_v2(
+            &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
+        )
         .expect("prove recursive_block_v2 artifact")
     }
 
@@ -2516,12 +2512,12 @@ mod tests {
     #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
     fn recursive_block_v2_verifier_is_registered_and_accepts_valid_artifact() {
         let registry = VerifierRegistry::default();
-        let verifier_profile = recursive_block_artifact_verifier_profile_v2();
+        let verifier_profile = backend_recursive_block_profile_v2();
         let verifier = registry
             .resolve(ProofArtifactKind::RecursiveBlockV2, verifier_profile)
             .expect("recursive_block_v2 verifier registered");
         let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
             .expect("serialize recursive_block_v2 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV2,
@@ -2537,12 +2533,12 @@ mod tests {
     #[test]
     fn recursive_block_v1_verifier_is_registered_and_accepts_valid_artifact() {
         let registry = VerifierRegistry::default();
-        let verifier_profile = recursive_block_artifact_verifier_profile_v1();
+        let verifier_profile = backend_recursive_block_profile_v1();
         let verifier = registry
             .resolve(ProofArtifactKind::RecursiveBlockV1, verifier_profile)
             .expect("recursive_block_v1 verifier registered");
         let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
+        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
             .expect("serialize recursive_block_v1 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
@@ -2561,11 +2557,11 @@ mod tests {
             kind: ProofArtifactKind::RecursiveBlockV1,
         };
         let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = block_recursion::serialize_recursive_block_artifact_v1(&artifact)
+        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
             .expect("serialize recursive artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
-            verifier_profile: recursive_block_artifact_verifier_profile_v1(),
+            verifier_profile: backend_recursive_block_profile_v1(),
             artifact_bytes: bytes,
         };
         let err = verifier
@@ -2581,11 +2577,11 @@ mod tests {
             kind: ProofArtifactKind::RecursiveBlockV2,
         };
         let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = block_recursion::serialize_recursive_block_artifact_v2(&artifact)
+        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
             .expect("serialize recursive_block_v2 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV2,
-            verifier_profile: recursive_block_artifact_verifier_profile_v2(),
+            verifier_profile: backend_recursive_block_profile_v2(),
             artifact_bytes: bytes,
         };
         let err = verifier

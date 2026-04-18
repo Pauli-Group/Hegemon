@@ -1,8 +1,8 @@
 use std::time::Instant;
 
+use consensus::backend_interface::TransactionProof;
 use consensus::types::{BalanceTag, Commitment, Nullifier, Transaction as ConsensusTransaction};
 use protocol_versioning::VersionBinding;
-use transaction_circuit::proof::TransactionProof;
 
 #[derive(Clone, Debug)]
 pub struct ValidatedTransaction {

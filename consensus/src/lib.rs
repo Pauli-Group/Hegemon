@@ -1,4 +1,5 @@
 mod aggregation;
+pub mod backend_interface;
 mod batch_proof;
 pub mod bft;
 pub mod commitment_tree;
