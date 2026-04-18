@@ -104,6 +104,8 @@ pub enum ProofError {
     MissingAggregationProofForSelfContainedMode,
     #[error("missing transaction proofs")]
     MissingTransactionProofs,
+    #[error("missing transaction validity claims")]
+    MissingTransactionValidityClaims,
     #[error("missing transaction statement bindings")]
     MissingTransactionStatementBindings,
     #[error("transaction proof count mismatch: expected {expected}, got {observed}")]

@@ -179,9 +179,8 @@ impl LegacyNode {
             transactions: Vec::new(),
             coinbase: None,
             proven_batch: None,
-            tx_validity_artifacts: None,
             block_artifact: None,
-            tx_statement_bindings: None,
+            tx_validity_claims: None,
             tx_statements_commitment: None,
             proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
         };

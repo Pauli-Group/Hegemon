@@ -2049,11 +2049,13 @@ fn statement_bindings_for_candidate_extrinsics(
                 .into_iter()
                 .collect::<Option<Vec<_>>>();
             if let Some(tx_artifacts) = tx_validity_artifacts.as_ref() {
-                return consensus::tx_statement_bindings_from_tx_artifacts(
+                let claims = consensus::tx_validity_claims_from_tx_artifacts(
                     &transactions,
                     tx_artifacts,
                 )
-                .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"));
+                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?;
+                return consensus::tx_statement_bindings_from_claims(&claims)
+                    .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"));
             }
             statement_bindings_from_extrinsics(extrinsics)
         }
@@ -2344,6 +2346,7 @@ struct CandidateBlockContext {
     decoded_extrinsics: Vec<runtime::UncheckedExtrinsic>,
     extracted_transactions: Vec<consensus::types::Transaction>,
     tx_validity_artifacts: Option<Vec<consensus::TxValidityArtifact>>,
+    tx_validity_claims: Option<Vec<consensus::TxValidityClaim>>,
     missing_proof_bindings: usize,
     statement_bindings: Vec<consensus::types::TxStatementBinding>,
     tx_statements_commitment: [u8; 48],
@@ -2392,9 +2395,17 @@ fn build_candidate_context(
     let tx_validity_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
-    let statement_bindings = if let Some(ref tx_artifacts) = tx_validity_artifacts {
-        consensus::tx_statement_bindings_from_tx_artifacts(&transactions, tx_artifacts)
-            .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"))?
+    let tx_validity_claims = if let Some(ref tx_artifacts) = tx_validity_artifacts {
+        Some(
+            consensus::tx_validity_claims_from_tx_artifacts(&transactions, tx_artifacts)
+                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?,
+        )
+    } else {
+        None
+    };
+    let statement_bindings = if let Some(ref claims) = tx_validity_claims {
+        consensus::tx_statement_bindings_from_claims(claims)
+            .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"))?
     } else {
         statement_bindings_from_extrinsics(&decoded)?
     };
@@ -2418,6 +2429,7 @@ fn build_candidate_context(
         decoded_extrinsics: decoded,
         extracted_transactions: transactions,
         tx_validity_artifacts,
+        tx_validity_claims,
         missing_proof_bindings,
         statement_bindings,
         tx_statements_commitment,
@@ -2697,6 +2709,27 @@ fn consensus_receipt_from_pallet(
         receipt.public_inputs_digest,
         receipt.verifier_profile,
     )
+}
+
+fn consensus_receipt_root_payload_from_pallet(
+    receipt_root: &pallet_shielded_pool::types::ReceiptRootProofPayload,
+) -> consensus::types::ReceiptRootProofPayload {
+    consensus::types::ReceiptRootProofPayload {
+        root_proof: receipt_root.root_proof.data.clone(),
+        metadata: consensus::types::ReceiptRootMetadata {
+            params_fingerprint: consensus::experimental_native_receipt_root_params_fingerprint(),
+            relation_id: receipt_root.metadata.relation_id,
+            shape_digest: receipt_root.metadata.shape_digest,
+            leaf_count: receipt_root.metadata.leaf_count,
+            fold_count: receipt_root.metadata.fold_count,
+        },
+        receipts: receipt_root
+            .receipts
+            .iter()
+            .cloned()
+            .map(consensus_receipt_from_pallet)
+            .collect(),
+    }
 }
 
 fn is_canonical_experimental_receipt_root_payload(
@@ -2996,14 +3029,10 @@ fn build_receipt_root_work_plan(
     })
 }
 
-fn experimental_receipt_root_payload_from_artifact(
-    tx_artifacts: &[consensus::TxValidityArtifact],
+fn pallet_receipt_root_payload_from_consensus_receipts(
+    receipts: &[consensus::types::TxValidityReceipt],
     built: consensus::ExperimentalReceiptRootArtifact,
 ) -> pallet_shielded_pool::types::ReceiptRootProofPayload {
-    let consensus_receipts = tx_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
     pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
         metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
@@ -3012,8 +3041,9 @@ fn experimental_receipt_root_payload_from_artifact(
             leaf_count: built.metadata.leaf_count,
             fold_count: built.metadata.fold_count,
         },
-        receipts: consensus_receipts
-            .into_iter()
+        receipts: receipts
+            .iter()
+            .cloned()
             .map(pallet_receipt_from_consensus)
             .collect(),
     }
@@ -3041,8 +3071,12 @@ fn build_receipt_root_proof_from_materials(
     }
     let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
         .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
-    Ok(experimental_receipt_root_payload_from_artifact(
-        tx_artifacts,
+    let receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
+    Ok(pallet_receipt_root_payload_from_consensus_receipts(
+        &receipts,
         built,
     ))
 }
@@ -3068,9 +3102,13 @@ fn build_receipt_root_proof_from_materials_with_plan(
     }
     .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
     let after = native_receipt_root_build_cache_stats();
+    let receipts = tx_artifacts
+        .iter()
+        .map(|artifact| artifact.receipt.clone())
+        .collect::<Vec<_>>();
 
     Ok((
-        experimental_receipt_root_payload_from_artifact(tx_artifacts, built),
+        pallet_receipt_root_payload_from_consensus_receipts(&receipts, built),
         NativeReceiptRootBuildReport {
             workers,
             leaf_count: work_plan.leaf_count,
@@ -3617,7 +3655,11 @@ fn prepare_block_proof_bundle(
     )?;
     tracing::info!(
         block_number,
-        tx_count = context.statement_bindings.len(),
+        tx_count = context
+            .tx_validity_claims
+            .as_ref()
+            .map(|claims| claims.len())
+            .unwrap_or(context.statement_bindings.len()),
         decoded_extrinsics = context.decoded_extrinsics.len(),
         extracted_transactions = context.extracted_transactions.len(),
         resolved_ciphertext_txs = context.resolved_ciphertexts.len(),
@@ -3628,11 +3670,18 @@ fn prepare_block_proof_bundle(
         "prepare_block_proof_bundle: built shared candidate context"
     );
 
-    let statement_hashes = context
-        .statement_bindings
-        .iter()
-        .map(|binding| binding.statement_hash)
-        .collect::<Vec<_>>();
+    let statement_hashes = if let Some(claims) = context.tx_validity_claims.as_ref() {
+        claims
+            .iter()
+            .map(|claim| claim.binding.statement_hash)
+            .collect::<Vec<_>>()
+    } else {
+        context
+            .statement_bindings
+            .iter()
+            .map(|binding| binding.statement_hash)
+            .collect::<Vec<_>>()
+    };
     let tx_statements_commitment = context.tx_statements_commitment;
     let tx_count = statement_hashes.len() as u32;
     if tx_count == 0 {
@@ -4628,9 +4677,17 @@ fn verify_proof_carrying_block(
     let extracted_tx_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
-    let tx_statement_bindings = if let Some(ref tx_artifacts) = extracted_tx_artifacts {
-        consensus::tx_statement_bindings_from_tx_artifacts(&transactions, tx_artifacts)
-            .map_err(|err| format!("tx statement bindings from tx artifacts failed: {err}"))?
+    let tx_validity_claims = if let Some(ref tx_artifacts) = extracted_tx_artifacts {
+        Some(
+            consensus::tx_validity_claims_from_tx_artifacts(&transactions, tx_artifacts)
+                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?,
+        )
+    } else {
+        None
+    };
+    let tx_statement_bindings = if let Some(ref claims) = tx_validity_claims {
+        consensus::tx_statement_bindings_from_claims(claims)
+            .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"))?
     } else {
         statement_bindings_from_extrinsics(extrinsics)?
     };
@@ -4767,23 +4824,7 @@ fn verify_proof_carrying_block(
                     verifier_profile: payload.verifier_profile,
                     artifact_bytes: receipt_root.root_proof.data.clone(),
                 }),
-                Some(consensus::types::ReceiptRootProofPayload {
-                    root_proof: receipt_root.root_proof.data.clone(),
-                    metadata: consensus::types::ReceiptRootMetadata {
-                        params_fingerprint:
-                            consensus::experimental_native_receipt_root_params_fingerprint(),
-                        relation_id: receipt_root.metadata.relation_id,
-                        shape_digest: receipt_root.metadata.shape_digest,
-                        leaf_count: receipt_root.metadata.leaf_count,
-                        fold_count: receipt_root.metadata.fold_count,
-                    },
-                    receipts: receipt_root
-                        .receipts
-                        .iter()
-                        .cloned()
-                        .map(consensus_receipt_from_pallet)
-                        .collect(),
-                }),
+                Some(consensus_receipt_root_payload_from_pallet(receipt_root)),
             )
         }
         consensus::ProvenBatchMode::RecursiveBlock => {
@@ -4841,16 +4882,17 @@ fn verify_proof_carrying_block(
             verifier_profile: payload.verifier_profile,
             receipt_root: receipt_root_payload,
         }),
-        tx_validity_artifacts,
         block_artifact,
-        tx_statement_bindings: Some(tx_statement_bindings.clone()),
+        tx_validity_claims,
         tx_statements_commitment: Some(tx_statements_commitment),
         proof_verification_mode: verification_mode,
     };
+    let backend_inputs = tx_validity_artifacts
+        .map(consensus::BlockBackendInputs::from_tx_validity_artifacts);
 
     let start_verify = Instant::now();
     verifier
-        .verify_block(&block, &parent_tree)
+        .verify_block_with_backend(&block, backend_inputs.as_ref(), &parent_tree)
         .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
     let verify_ms = start_verify.elapsed().as_millis();
     tracing::info!(

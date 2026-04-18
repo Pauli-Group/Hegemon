@@ -9,9 +9,9 @@ use consensus::types::{
     TxValidityArtifact, kernel_root_from_shielded_root,
 };
 use consensus::{
-    CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
-    experimental_native_receipt_root_verifier_profile,
+    BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
+    ProofVerifier, build_experimental_native_receipt_root_artifact,
+    commitment_nullifier_lists, experimental_native_receipt_root_verifier_profile,
     tx_validity_artifact_from_native_tx_leaf_bytes,
 };
 use crypto::hashes::blake3_384;
@@ -33,6 +33,7 @@ use transaction_circuit::{
 struct RawActiveFixture {
     base_tree: CommitmentTreeState,
     block: ConsensusBlock,
+    backend_inputs: BlockBackendInputs,
     updated_root: [u8; 48],
     witnesses: Vec<TransactionWitness>,
 }
@@ -406,15 +407,19 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         verifier_profile: experimental_native_receipt_root_verifier_profile(),
         receipt_root: Some(receipt_root),
     });
-    block.tx_statement_bindings = Some(statement_bindings);
+    block.tx_validity_claims = Some(
+        consensus::tx_validity_claims_from_tx_artifacts(&block.transactions, &tx_validity_artifacts)
+            .expect("tx validity claims"),
+    );
     block.tx_statements_commitment = Some(tx_statements_commitment);
-    block.tx_validity_artifacts = Some(tx_validity_artifacts);
     block.block_artifact = Some(envelope);
     block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let backend_inputs = BlockBackendInputs::from_tx_validity_artifacts(tx_validity_artifacts);
 
     RawActiveFixture {
         base_tree,
         block,
+        backend_inputs,
         updated_root: updated_tree.root(),
         witnesses: vec![witness_a, witness_b],
     }
@@ -469,8 +474,10 @@ fn build_receipt_root_block_artifacts(
 fn build_upgrade_transition_blocks() -> (
     CommitmentTreeState,
     ConsensusBlock,
+    BlockBackendInputs,
     CommitmentTreeState,
     ConsensusBlock,
+    BlockBackendInputs,
     [u8; 48],
 ) {
     let sk_spend_a = [42u8; 32];
@@ -652,11 +659,18 @@ fn build_upgrade_transition_blocks() -> (
         verifier_profile: experimental_native_receipt_root_verifier_profile(),
         receipt_root: Some(first_receipt_root),
     });
-    first_block.tx_statement_bindings = Some(first_statement_bindings);
+    first_block.tx_validity_claims = Some(
+        consensus::tx_validity_claims_from_tx_artifacts(
+            &first_block.transactions,
+            &first_tx_validity_artifacts,
+        )
+        .expect("first tx validity claims"),
+    );
     first_block.tx_statements_commitment = Some(first_tx_statements_commitment);
-    first_block.tx_validity_artifacts = Some(first_tx_validity_artifacts);
     first_block.block_artifact = Some(first_envelope);
     first_block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let first_backend_inputs =
+        BlockBackendInputs::from_tx_validity_artifacts(first_tx_validity_artifacts);
 
     let upgrade_leaves = vec![
         input_a0.commitment(),
@@ -753,17 +767,23 @@ fn build_upgrade_transition_blocks() -> (
         verifier_profile: experimental_native_receipt_root_verifier_profile(),
         receipt_root: Some(receipt_root),
     });
-    second_block.tx_statement_bindings = Some(second_statement_bindings);
+    second_block.tx_validity_claims = Some(
+        consensus::tx_validity_claims_from_tx_artifacts(&second_block.transactions, &tx_validity_artifacts)
+            .expect("second tx validity claims"),
+    );
     second_block.tx_statements_commitment = Some(second_tx_statements_commitment);
-    second_block.tx_validity_artifacts = Some(tx_validity_artifacts);
     second_block.block_artifact = Some(envelope);
     second_block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let second_backend_inputs =
+        BlockBackendInputs::from_tx_validity_artifacts(tx_validity_artifacts);
 
     (
         first_base_tree,
         first_block,
+        first_backend_inputs,
         first_updated_tree,
         second_block,
+        second_backend_inputs,
         second_updated_tree.root(),
     )
 }
@@ -772,8 +792,9 @@ fn build_upgrade_transition_blocks() -> (
 #[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_rejects_bad_tx_proof() {
     let fixture = raw_active_fixture();
-    let mut block = fixture.block.clone();
-    let artifact = block
+    let block = fixture.block.clone();
+    let mut backend_inputs = fixture.backend_inputs.clone();
+    let artifact = backend_inputs
         .tx_validity_artifacts
         .as_mut()
         .expect("tx artifacts present")
@@ -788,7 +809,7 @@ fn raw_active_rejects_bad_tx_proof() {
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&backend_inputs), &fixture.base_tree)
         .expect_err("tampered tx proof must be rejected");
     assert!(matches!(
         err,
@@ -807,7 +828,7 @@ fn raw_active_rejects_bad_ordering() {
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&fixture.backend_inputs), &fixture.base_tree)
         .expect_err("swapped tx ordering must be rejected");
     assert!(matches!(
         err,
@@ -825,7 +846,7 @@ fn raw_active_rejects_commitment_mismatch() {
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&fixture.backend_inputs), &fixture.base_tree)
         .expect_err("statement commitment mismatch must be rejected");
     assert!(matches!(err, ProofError::CommitmentProofInputsMismatch(_)));
 }
@@ -842,13 +863,17 @@ fn receipt_root_block_is_accepted() {
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
     proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(tx_validity_artifacts);
+    block.tx_validity_claims = Some(
+        consensus::tx_validity_claims_from_tx_artifacts(&block.transactions, &tx_validity_artifacts)
+            .expect("tx validity claims"),
+    );
     block.block_artifact = Some(envelope);
     block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let backend_inputs = BlockBackendInputs::from_tx_validity_artifacts(tx_validity_artifacts);
 
     let verifier = ParallelProofVerifier::new();
     let updated = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&backend_inputs), &fixture.base_tree)
         .expect("valid receipt-root block should verify");
     assert_eq!(updated.root(), fixture.updated_root);
 }
@@ -856,17 +881,25 @@ fn receipt_root_block_is_accepted() {
 #[test]
 #[ignore = "heavy integration: native history transition builds multiple receipt-root proofs; cover product path in native-path CI"]
 fn native_history_can_transition_to_native_receipt_root() {
-    let (first_base_tree, first_block, second_base_tree, second_block, final_root) =
+    let (
+        first_base_tree,
+        first_block,
+        first_backend_inputs,
+        second_base_tree,
+        second_block,
+        second_backend_inputs,
+        final_root,
+    ) =
         build_upgrade_transition_blocks();
     let verifier = ParallelProofVerifier::new();
 
     let first_updated = verifier
-        .verify_block(&first_block, &first_base_tree)
+        .verify_block_with_backend(&first_block, Some(&first_backend_inputs), &first_base_tree)
         .expect("historical native receipt_root block should verify");
     assert_eq!(first_updated.root(), second_base_tree.root());
 
     let second_updated = verifier
-        .verify_block(&second_block, &second_base_tree)
+        .verify_block_with_backend(&second_block, Some(&second_backend_inputs), &second_base_tree)
         .expect("native receipt_root block should verify after native history");
     assert_eq!(second_updated.root(), final_root);
 }
@@ -884,13 +917,13 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
     proven_batch.proof_kind = ProofArtifactKind::ReceiptRoot;
     proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
-    block.tx_validity_artifacts = Some(tx_validity_artifacts);
     block.block_artifact = Some(envelope);
     block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
+    let backend_inputs = BlockBackendInputs::from_tx_validity_artifacts(tx_validity_artifacts);
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&backend_inputs), &fixture.base_tree)
         .expect_err("receipt-root must reject mismatched statement receipts");
     assert!(matches!(
         err,
@@ -906,7 +939,11 @@ fn raw_active_block_is_accepted() {
     let fixture = raw_active_fixture();
     let verifier = ParallelProofVerifier::new();
     let updated = verifier
-        .verify_block(&fixture.block, &fixture.base_tree)
+        .verify_block_with_backend(
+            &fixture.block,
+            Some(&fixture.backend_inputs),
+            &fixture.base_tree,
+        )
         .expect("valid raw-active block should verify");
     assert_eq!(updated.root(), fixture.updated_root);
 }
@@ -916,17 +953,18 @@ fn raw_active_block_is_accepted() {
 fn raw_active_rejects_duplicate_nullifier_conflict() {
     let fixture = raw_active_fixture();
     let mut block = fixture.block.clone();
+    let mut backend_inputs = fixture.backend_inputs.clone();
     block.transactions[1] = block.transactions[0].clone();
-    if let Some(artifacts) = block.tx_validity_artifacts.as_mut() {
+    if let Some(artifacts) = backend_inputs.tx_validity_artifacts.as_mut() {
         artifacts[1] = artifacts[0].clone();
     }
-    if let Some(bindings) = block.tx_statement_bindings.as_mut() {
-        bindings[1] = bindings[0].clone();
+    if let Some(claims) = block.tx_validity_claims.as_mut() {
+        claims[1] = claims[0].clone();
     }
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &fixture.base_tree)
+        .verify_block_with_backend(&block, Some(&backend_inputs), &fixture.base_tree)
         .expect_err("duplicate-nullifier block must be rejected");
     assert!(matches!(err, ProofError::CommitmentProofInputsMismatch(_)));
 }

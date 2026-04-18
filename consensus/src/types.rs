@@ -353,6 +353,18 @@ pub struct TxValidityArtifact {
     pub proof: Option<ProofEnvelope>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxValidityClaim {
+    pub receipt: TxValidityReceipt,
+    pub binding: TxStatementBinding,
+}
+
+impl TxValidityClaim {
+    pub fn new(receipt: TxValidityReceipt, binding: TxStatementBinding) -> Self {
+        Self { receipt, binding }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProvenBatchMode {
     InlineTx,
@@ -439,11 +451,13 @@ pub struct Block<BH> {
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub proven_batch: Option<ProvenBatch>,
-    pub tx_validity_artifacts: Option<Vec<TxValidityArtifact>>,
+    /// Block-level aggregation artifact envelope in the canonical route
+    /// selected by `proven_batch`.
     pub block_artifact: Option<ProofEnvelope>,
-    /// Canonical per-transaction statement bindings in transaction order.
-    /// Each binding carries the transaction statement hash and the flat-batch public context.
-    pub tx_statement_bindings: Option<Vec<TxStatementBinding>>,
+    /// Canonical per-transaction claims in transaction order. Each claim pairs
+    /// the tx-validity receipt with the canonical statement binding that the
+    /// rest of the product stack uses to build `tx_statements_commitment`.
+    pub tx_validity_claims: Option<Vec<TxValidityClaim>>,
     /// Optional commitment to transaction statement hashes, derived by the caller in canonical
     /// transaction order (for example from binding-hash statements on Substrate imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
@@ -457,9 +471,8 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             proven_batch: self.proven_batch,
-            tx_validity_artifacts: self.tx_validity_artifacts,
             block_artifact: self.block_artifact,
-            tx_statement_bindings: self.tx_statement_bindings,
+            tx_validity_claims: self.tx_validity_claims,
             tx_statements_commitment: self.tx_statements_commitment,
             proof_verification_mode: self.proof_verification_mode,
         }

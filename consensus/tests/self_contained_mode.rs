@@ -6,12 +6,13 @@ use common::{
 };
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::types::{
-    ConsensusBlock, ProofVerificationMode, ProvenBatch, ProvenBatchMode, Transaction,
-    TxStatementBinding, kernel_root_from_shielded_root,
+    ConsensusBlock, ProofArtifactKind, ProofVerificationMode, ProvenBatch, ProvenBatchMode,
+    Transaction, TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
+    kernel_root_from_shielded_root,
 };
 use consensus::{
-    CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    commitment_nullifier_lists,
+    BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
+    ProofVerifier, commitment_nullifier_lists,
 };
 use crypto::hashes::blake3_384;
 
@@ -96,11 +97,37 @@ fn build_block_with_commitment_proof(
         ),
         receipt_root: None,
     });
-    block.tx_statement_bindings = Some(statement_bindings);
+    block.tx_validity_claims = Some(
+        statement_bindings
+            .into_iter()
+            .map(|binding| {
+                consensus::TxValidityClaim::new(
+                    consensus::TxValidityReceipt::new(
+                        binding.statement_hash,
+                        [0x11; 48],
+                        [0x22; 48],
+                        [0x33; 48],
+                    ),
+                    binding,
+                )
+            })
+            .collect(),
+    );
     block.tx_statements_commitment = Some(tx_statements_commitment);
     block.proof_verification_mode = mode;
 
     (block, base_tree)
+}
+
+fn dummy_tx_validity_artifact(statement_hash: [u8; 48]) -> TxValidityArtifact {
+    TxValidityArtifact {
+        receipt: TxValidityReceipt::new(statement_hash, [0x11; 48], [0x22; 48], [0x33; 48]),
+        proof: Some(consensus::ProofEnvelope {
+            kind: ProofArtifactKind::TxLeaf,
+            verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+            artifact_bytes: vec![1, 2, 3],
+        }),
+    }
 }
 
 #[test]
@@ -111,7 +138,7 @@ fn self_contained_mode_rejects_missing_aggregation_proof() {
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &base_tree)
+        .verify_block_with_backend(&block, None, &base_tree)
         .expect_err("missing aggregation proof must be rejected");
 
     assert!(matches!(
@@ -146,9 +173,55 @@ fn self_contained_mode_rejects_missing_tx_validity_artifacts_before_proven_batch
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &base_tree)
+        .verify_block_with_backend(&block, None, &base_tree)
         .expect_err("missing tx validity artifacts must be rejected first");
     assert!(matches!(err, ProofError::MissingTransactionProofs));
+}
+
+#[test]
+#[ignore = "commitment proof fixture no longer matches current prover constraints; replace with regenerated fixture"]
+fn self_contained_mode_rejects_missing_tx_validity_claims_before_proven_batch() {
+    let (mut block, base_tree) =
+        build_block_with_commitment_proof(ProofVerificationMode::SelfContainedAggregation);
+    let statement_hash = fallback_statement_hash(&block.transactions[0]);
+    block.tx_validity_claims = None;
+    let backend_inputs =
+        BlockBackendInputs::from_tx_validity_artifacts(vec![dummy_tx_validity_artifact(
+            statement_hash,
+        )]);
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block_with_backend(&block, Some(&backend_inputs), &base_tree)
+        .expect_err("missing tx validity claims must be rejected before aggregation");
+    assert!(matches!(err, ProofError::MissingTransactionValidityClaims));
+}
+
+#[test]
+#[ignore = "commitment proof fixture no longer matches current prover constraints; replace with regenerated fixture"]
+fn self_contained_mode_rejects_claim_statement_hash_tampering() {
+    let (mut block, base_tree) =
+        build_block_with_commitment_proof(ProofVerificationMode::SelfContainedAggregation);
+    let statement_hash = fallback_statement_hash(&block.transactions[0]);
+    block.tx_validity_claims = Some(vec![TxValidityClaim::new(
+        TxValidityReceipt::new([0xA5; 48], [0x11; 48], [0x22; 48], [0x33; 48]),
+        TxStatementBinding {
+            statement_hash,
+            anchor: base_tree.root(),
+            fee: 0,
+            circuit_version: 1,
+        },
+    )]);
+    let backend_inputs =
+        BlockBackendInputs::from_tx_validity_artifacts(vec![dummy_tx_validity_artifact(
+            statement_hash,
+        )]);
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block_with_backend(&block, Some(&backend_inputs), &base_tree)
+        .expect_err("tampered tx validity claim must be rejected");
+    assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
 }
 
 #[test]
@@ -159,7 +232,7 @@ fn inline_required_mode_rejects_missing_transaction_proofs() {
 
     let verifier = ParallelProofVerifier::new();
     let err = verifier
-        .verify_block(&block, &base_tree)
+        .verify_block_with_backend(&block, None, &base_tree)
         .expect_err("missing tx proofs must be rejected in inline mode");
 
     assert!(matches!(err, ProofError::MissingTransactionProofs));

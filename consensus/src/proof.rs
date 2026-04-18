@@ -3,9 +3,10 @@ use crate::error::ProofError;
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
     ProofVerificationMode, ProvenBatchMode, ReceiptRootMetadata, StarkCommitment, StateRoot,
-    TxStatementBinding, TxValidityArtifact, TxValidityReceipt, VerifierProfileDigest,
-    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment, da_root, kernel_root_from_shielded_root,
+    TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
+    VerifierProfileDigest, VersionCommitment, compute_fee_commitment,
+    compute_proof_commitment, compute_version_commitment, da_root,
+    kernel_root_from_shielded_root,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use block_recursion::{
@@ -1591,7 +1592,7 @@ fn verify_tx_validity_artifacts(
     registry: &VerifierRegistry,
     transactions: &[crate::types::Transaction],
     artifacts: &[TxValidityArtifact],
-) -> Result<Vec<TxStatementBinding>, ProofError> {
+) -> Result<Vec<TxValidityClaim>, ProofError> {
     if artifacts.len() != transactions.len() {
         return Err(ProofError::TransactionProofCountMismatch {
             expected: transactions.len(),
@@ -1611,35 +1612,98 @@ fn verify_tx_validity_artifacts(
             let verifier = registry.resolve(envelope.kind, envelope.verifier_profile)?;
             verifier
                 .verify_tx_artifact(tx, artifact)
+                .map(|binding| TxValidityClaim::new(artifact.receipt.clone(), binding))
                 .map_err(|err| reindex_tx_artifact_error(index, err))
         })
         .collect()
+}
+
+pub fn tx_validity_claims_from_tx_artifacts(
+    transactions: &[crate::types::Transaction],
+    artifacts: &[TxValidityArtifact],
+) -> Result<Vec<TxValidityClaim>, ProofError> {
+    verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
 }
 
 pub fn tx_statement_bindings_from_tx_artifacts(
     transactions: &[crate::types::Transaction],
     artifacts: &[TxValidityArtifact],
 ) -> Result<Vec<TxStatementBinding>, ProofError> {
-    verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
+    tx_statement_bindings_from_claims(&tx_validity_claims_from_tx_artifacts(
+        transactions,
+        artifacts,
+    )?)
+}
+
+pub fn tx_statement_bindings_from_claims(
+    claims: &[TxValidityClaim],
+) -> Result<Vec<TxStatementBinding>, ProofError> {
+    claims
+        .iter()
+        .map(validate_tx_validity_claim)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+pub fn tx_validity_receipts_from_claims(claims: &[TxValidityClaim]) -> Vec<TxValidityReceipt> {
+    claims.iter().map(|claim| claim.receipt.clone()).collect()
+}
+
+fn validate_tx_validity_claim(claim: &TxValidityClaim) -> Result<TxStatementBinding, ProofError> {
+    if claim.receipt.statement_hash != claim.binding.statement_hash {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "tx validity claim statement hash mismatch".to_string(),
+        ));
+    }
+    Ok(claim.binding.clone())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BlockBackendInputs {
+    pub tx_validity_artifacts: Option<Vec<TxValidityArtifact>>,
+}
+
+impl BlockBackendInputs {
+    pub fn from_tx_validity_artifacts(tx_validity_artifacts: Vec<TxValidityArtifact>) -> Self {
+        Self {
+            tx_validity_artifacts: Some(tx_validity_artifacts),
+        }
+    }
+
+    pub fn tx_validity_artifacts(&self) -> Option<&[TxValidityArtifact]> {
+        self.tx_validity_artifacts.as_deref()
+    }
 }
 
 pub trait ProofVerifier: Send + Sync {
+    fn verify_block_with_backend<BH>(
+        &self,
+        block: &Block<BH>,
+        backend_inputs: Option<&BlockBackendInputs>,
+        parent_commitment_tree: &CommitmentTreeState,
+    ) -> Result<CommitmentTreeState, ProofError>
+    where
+        BH: HeaderProofExt;
+
     fn verify_block<BH>(
         &self,
         block: &Block<BH>,
         parent_commitment_tree: &CommitmentTreeState,
     ) -> Result<CommitmentTreeState, ProofError>
     where
-        BH: HeaderProofExt;
+        BH: HeaderProofExt,
+    {
+        self.verify_block_with_backend(block, None, parent_commitment_tree)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct HashVerifier;
 
 impl ProofVerifier for HashVerifier {
-    fn verify_block<BH>(
+    fn verify_block_with_backend<BH>(
         &self,
         block: &Block<BH>,
+        _backend_inputs: Option<&BlockBackendInputs>,
         parent_commitment_tree: &CommitmentTreeState,
     ) -> Result<CommitmentTreeState, ProofError>
     where
@@ -1671,9 +1735,10 @@ impl Default for ParallelProofVerifier {
 }
 
 impl ProofVerifier for ParallelProofVerifier {
-    fn verify_block<BH>(
+    fn verify_block_with_backend<BH>(
         &self,
         block: &Block<BH>,
+        backend_inputs: Option<&BlockBackendInputs>,
         parent_commitment_tree: &CommitmentTreeState,
     ) -> Result<CommitmentTreeState, ProofError>
     where
@@ -1695,7 +1760,10 @@ impl ProofVerifier for ParallelProofVerifier {
 
         if block.transactions.is_empty() {
             if block.proven_batch.is_some()
-                || block.tx_validity_artifacts.is_some()
+                || backend_inputs
+                    .and_then(BlockBackendInputs::tx_validity_artifacts)
+                    .is_some()
+                || block.tx_validity_claims.is_some()
                 || block.block_artifact.is_some()
             {
                 return Err(ProofError::CommitmentProofEmptyBlock);
@@ -1704,7 +1772,7 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let verification_mode = block.proof_verification_mode;
-        let tx_validity_artifacts = block.tx_validity_artifacts.as_ref();
+        let tx_validity_artifacts = backend_inputs.and_then(BlockBackendInputs::tx_validity_artifacts);
         let tx_proof_bytes_total: usize = tx_validity_artifacts
             .map(|artifacts| {
                 artifacts
@@ -1726,6 +1794,18 @@ impl ProofVerifier for ParallelProofVerifier {
         if tx_validity_artifacts.is_none() {
             return Err(ProofError::MissingTransactionProofs);
         }
+        let resolved_claims = if let Some(claims) = block.tx_validity_claims.clone() {
+            if claims.len() != block.transactions.len() {
+                return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                    "transaction claim count mismatch (expected {}, got {})",
+                    block.transactions.len(),
+                    claims.len()
+                )));
+            }
+            Some(claims)
+        } else {
+            None
+        };
         if !matches!(
             verification_mode,
             ProofVerificationMode::SelfContainedAggregation
@@ -1755,28 +1835,21 @@ impl ProofVerifier for ParallelProofVerifier {
             0
         };
 
-        let resolved_statement_bindings =
-            if let Some(bindings) = block.tx_statement_bindings.clone() {
-                if bindings.len() != block.transactions.len() {
-                    return Err(ProofError::CommitmentProofInputsMismatch(format!(
-                        "transaction statement binding count mismatch (expected {}, got {})",
-                        block.transactions.len(),
-                        bindings.len()
-                    )));
-                }
-                Some(bindings)
-            } else {
-                None
-            };
-
         if matches!(
             verification_mode,
             ProofVerificationMode::SelfContainedAggregation
-        ) && resolved_statement_bindings.is_none()
+        ) && resolved_claims.is_none()
         {
-            return Err(ProofError::MissingTransactionStatementBindings);
+            return Err(ProofError::MissingTransactionValidityClaims);
         }
 
+        let resolved_statement_bindings = resolved_claims
+            .as_deref()
+            .map(tx_statement_bindings_from_claims)
+            .transpose()?;
+        let resolved_receipts = resolved_claims
+            .as_deref()
+            .map(tx_validity_receipts_from_claims);
         let derived_statement_commitment = resolved_statement_bindings
             .as_deref()
             .map(commitment_from_statement_bindings)
@@ -1786,7 +1859,7 @@ impl ProofVerifier for ParallelProofVerifier {
                 (Some(expected), Some(derived)) => {
                     if expected != derived {
                         return Err(ProofError::CommitmentProofInputsMismatch(
-                            "tx_statements_commitment does not match provided statement bindings"
+                            "tx_statements_commitment does not match provided transaction claims"
                                 .to_string(),
                         ));
                     }
@@ -1795,7 +1868,7 @@ impl ProofVerifier for ParallelProofVerifier {
                 (Some(expected), None) => expected,
                 (None, Some(derived)) => derived,
                 (None, None) => {
-                    return Err(ProofError::MissingTransactionStatementBindings);
+                    return Err(ProofError::MissingTransactionValidityClaims);
                 }
             };
         if matches!(proven_batch.mode, ProvenBatchMode::ReceiptRoot) {
@@ -1878,19 +1951,17 @@ impl ProofVerifier for ParallelProofVerifier {
                         tx_count
                     )));
                 }
-                let artifacts = tx_validity_artifacts
-                    .ok_or(ProofError::MissingTransactionProofs)?
-                    .as_slice();
-                let artifact_receipts = artifacts
-                    .iter()
-                    .map(|artifact| artifact.receipt.clone())
-                    .collect::<Vec<_>>();
-                if receipt_root.receipts != artifact_receipts {
+                let claim_receipts = resolved_receipts
+                    .as_ref()
+                    .ok_or(ProofError::MissingTransactionValidityClaims)?;
+                if receipt_root.receipts != *claim_receipts {
                     return Err(ProofError::ProvenBatchBindingMismatch(
-                        "receipt-root payload receipts do not match tx validity artifacts"
+                        "receipt-root payload receipts do not match tx validity claims"
                             .to_string(),
                     ));
                 }
+                let artifacts = tx_validity_artifacts
+                    .ok_or(ProofError::MissingTransactionProofs)?;
                 let receipt_root_verifier = self
                     .verifier_registry
                     .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
@@ -1911,8 +1982,7 @@ impl ProofVerifier for ParallelProofVerifier {
             }
             ProvenBatchMode::RecursiveBlock => {
                 let artifacts = tx_validity_artifacts
-                    .ok_or(ProofError::MissingTransactionProofs)?
-                    .as_slice();
+                    .ok_or(ProofError::MissingTransactionProofs)?;
                 let recursive_artifact = block_artifact
                     .as_ref()
                     .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
@@ -2088,6 +2158,11 @@ pub fn receipt_statement_commitment(
     receipts: &[TxValidityReceipt],
 ) -> Result<[u8; 48], ProofError> {
     commitment_from_receipts(receipts)
+}
+
+pub fn claim_statement_commitment(claims: &[TxValidityClaim]) -> Result<[u8; 48], ProofError> {
+    let bindings = tx_statement_bindings_from_claims(claims)?;
+    commitment_from_statement_bindings(&bindings)
 }
 
 fn total_batch_proof_payload_bytes(
