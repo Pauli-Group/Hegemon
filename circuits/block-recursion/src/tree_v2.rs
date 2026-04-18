@@ -2430,20 +2430,18 @@ mod diagnostic_tests {
         let expected_profile = expected_root_terminal_profile_v2(expected_public.tx_count).unwrap();
         let expected_level = tree_root_level_for_tx_count_v2(expected_public.tx_count).unwrap();
         let expected_statement = recursive_segment_statement_from_public_v2(&expected_public);
+        let (canonical_proof_bytes, _consumed_len) =
+            decode_canonical_tree_proof_prefix_v2(&artifact.artifact.proof_bytes).unwrap();
         let relation = rebuild_tree_relation_from_proof_v2(
             expected_profile,
             expected_kind,
             expected_level,
             expected_statement.clone(),
-            &artifact.artifact.proof_bytes,
+            &canonical_proof_bytes,
         )
         .unwrap();
-        let actual_proof_bytes = projected_smallwood_recursive_proof_bytes_v1(
-            &tree_recursive_profile_v2(expected_profile),
-            &relation,
-        )
-        .unwrap();
-        let proof_slice = &artifact.artifact.proof_bytes[..actual_proof_bytes];
+        let actual_proof_bytes = canonical_proof_bytes.len();
+        let proof_slice = canonical_proof_bytes.as_slice();
         let proof_trace = decode_smallwood_proof_trace_v1(proof_slice).unwrap();
         let descriptor =
             tree_recursive_descriptor_v2(expected_profile, expected_kind, expected_level);
