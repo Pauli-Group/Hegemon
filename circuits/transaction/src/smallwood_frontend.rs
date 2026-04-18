@@ -3155,6 +3155,15 @@ pub(crate) fn smallwood_compact_bridge_helper_rows_v1(
     semantic_secret_witness_rows_with_shape(&context.witness, &context.public_inputs_p3, shape)
 }
 
+pub(crate) fn smallwood_compact_bridge_helper_rows_with_shape_v1(
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    semantic_secret_witness_rows_with_shape(&context.witness, &context.public_inputs_p3, shape)
+}
+
 fn smallwood_compact_bridge_merkle_aggregate_rows_v1(
     witness: &TransactionWitness,
     public_values: &[u64],

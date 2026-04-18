@@ -1206,7 +1206,7 @@ fn smallwood_semantic_helper_aux_frontier_quantifies_auxiliary_escape_hatch() {
         "{}",
         serde_json::to_string_pretty(&reports).expect("serialize semantic helper-aux frontier")
     );
-    assert_eq!(reports.len(), 3);
+    assert_eq!(reports.len(), 9);
     assert_eq!(
         reports[0].shape,
         SmallwoodSemanticHelperAuxShape::packed_32x_v1()
@@ -1220,12 +1220,38 @@ fn smallwood_semantic_helper_aux_frontier_quantifies_auxiliary_escape_hatch() {
         SmallwoodSemanticHelperAuxShape::packed_128x_v1()
     );
     assert!(
-        reports[1].projected_total_bytes < 102_120,
-        "moving helper rows out of the opened row domain should beat the explicit helper-floor branch"
+        reports[3].shape
+            == SmallwoodSemanticHelperAuxShape::packed_32x_inline_merkle_skip_initial_mds_v1()
     );
     assert!(
-        reports[1].projected_total_bytes < reports[1].shipped_smallwood_candidate_bytes,
-        "if helper rows in auxiliary still lose to the shipped branch then auxiliary transport is not a live backend lever"
+        reports[4].shape
+            == SmallwoodSemanticHelperAuxShape::packed_64x_inline_merkle_skip_initial_mds_v1()
+    );
+    assert!(
+        reports[5].shape
+            == SmallwoodSemanticHelperAuxShape::packed_128x_inline_merkle_skip_initial_mds_v1()
+    );
+    assert!(
+        reports[6].shape == SmallwoodSemanticHelperAuxShape::packed_32x_semantic_adapter_floor_v1()
+    );
+    assert!(
+        reports[7].shape == SmallwoodSemanticHelperAuxShape::packed_64x_semantic_adapter_floor_v1()
+    );
+    assert!(
+        reports[8].shape
+            == SmallwoodSemanticHelperAuxShape::packed_128x_semantic_adapter_floor_v1()
+    );
+    assert!(
+        reports[4].projected_total_bytes < reports[1].projected_total_bytes,
+        "inline merkle + skip-initial-mds should beat the legacy 64x helper-aux branch"
+    );
+    assert!(
+        reports[7].projected_total_bytes < reports[4].projected_total_bytes,
+        "a semantic-adapter floor that derives lane-local helpers should beat the inline-merkle helper-aux branch"
+    );
+    assert!(
+        reports[7].projected_total_bytes > 88_500,
+        "the current semantic-adapter floor should still miss the Branch A keep gate on this backend"
     );
 }
 
@@ -1243,10 +1269,23 @@ fn smallwood_semantic_helper_aux_exact_report_matches_projection() {
         "{}",
         serde_json::to_string_pretty(&report).expect("serialize semantic helper-aux report")
     );
-    assert_eq!(report.exact_total_bytes, report.projected_total_bytes);
+    let output_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/crypto/tx_proof_smallwood_semantic_adapter_floor_report.json");
+    let serialized =
+        serde_json::to_string_pretty(&report).expect("serialize semantic adapter floor report");
+    fs::write(&output_path, format!("{serialized}\n"))
+        .expect("write semantic adapter floor report");
+    assert!(
+        report.exact_total_bytes <= report.projected_total_bytes,
+        "exact semantic-adapter floor should stay at or below its structural projection"
+    );
     assert!(
         report.exact_total_bytes < report.shipped_smallwood_candidate_bytes,
-        "if the exact helper-aux branch cannot beat the shipped proof there is no point wiring it into the real candidate path"
+        "the current semantic-adapter floor should still beat the shipped proof slightly once measured exactly"
+    );
+    assert!(
+        report.exact_total_bytes > 85_500,
+        "the exact semantic-adapter floor should still miss the Branch A material keep gate on this backend"
     );
 }
 

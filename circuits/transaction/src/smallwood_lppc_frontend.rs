@@ -29,6 +29,7 @@ use crate::{
     },
     smallwood_frontend::{
         smallwood_bridge_poseidon_subtrace_rows_v1, smallwood_compact_bridge_helper_rows_v1,
+        smallwood_compact_bridge_helper_rows_with_shape_v1, SmallwoodFrontendShape,
     },
     smallwood_semantics::packed_constraint_count_for_packing_factor,
     witness::TransactionWitness,
@@ -50,7 +51,7 @@ const SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_WORDS: usize =
     SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_PERMUTATIONS
         * SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_ROWS_PER_PERMUTATION
         * transaction_core::constants::POSEIDON2_WIDTH;
-const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 98_532;
+const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 87_086;
 const SMALLWOOD_SEMANTIC_HELPER_FLOOR_PROFILE_DOMAIN: &[u8] =
     b"hegemon.tx.smallwood-semantic-helper-floor.v1";
 const SMALLWOOD_SEMANTIC_HELPER_AUX_FLOOR_PROFILE_DOMAIN: &[u8] =
@@ -294,29 +295,117 @@ pub struct SmallwoodSemanticHelperFloorReport {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SmallwoodSemanticHelperAuxShape {
     pub packing_factor: usize,
+    pub inline_merkle_aggregates: bool,
+    pub skip_initial_mds_poseidon: bool,
+    pub derive_lane_local_helpers_from_semantic: bool,
 }
 
 impl SmallwoodSemanticHelperAuxShape {
     pub const fn packed_32x_v1() -> Self {
-        Self { packing_factor: 32 }
+        Self {
+            packing_factor: 32,
+            inline_merkle_aggregates: false,
+            skip_initial_mds_poseidon: false,
+            derive_lane_local_helpers_from_semantic: false,
+        }
     }
 
     pub const fn packed_64x_v1() -> Self {
-        Self { packing_factor: 64 }
+        Self {
+            packing_factor: 64,
+            inline_merkle_aggregates: false,
+            skip_initial_mds_poseidon: false,
+            derive_lane_local_helpers_from_semantic: false,
+        }
     }
 
     pub const fn packed_128x_v1() -> Self {
         Self {
             packing_factor: 128,
+            inline_merkle_aggregates: false,
+            skip_initial_mds_poseidon: false,
+            derive_lane_local_helpers_from_semantic: false,
+        }
+    }
+
+    pub const fn packed_32x_inline_merkle_skip_initial_mds_v1() -> Self {
+        Self {
+            packing_factor: 32,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: false,
+        }
+    }
+
+    pub const fn packed_64x_inline_merkle_skip_initial_mds_v1() -> Self {
+        Self {
+            packing_factor: 64,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: false,
+        }
+    }
+
+    pub const fn packed_128x_inline_merkle_skip_initial_mds_v1() -> Self {
+        Self {
+            packing_factor: 128,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: false,
+        }
+    }
+
+    pub const fn packed_32x_semantic_adapter_floor_v1() -> Self {
+        Self {
+            packing_factor: 32,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: true,
+        }
+    }
+
+    pub const fn packed_64x_semantic_adapter_floor_v1() -> Self {
+        Self {
+            packing_factor: 64,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: true,
+        }
+    }
+
+    pub const fn packed_128x_semantic_adapter_floor_v1() -> Self {
+        Self {
+            packing_factor: 128,
+            inline_merkle_aggregates: true,
+            skip_initial_mds_poseidon: true,
+            derive_lane_local_helpers_from_semantic: true,
         }
     }
 
     pub const fn recommended_v1() -> Self {
-        Self::packed_64x_v1()
+        Self::packed_64x_semantic_adapter_floor_v1()
     }
 
     pub const fn semantic_witness_rows(self) -> usize {
         NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS / self.packing_factor
+    }
+
+    pub const fn frontend_shape(self) -> SmallwoodFrontendShape {
+        if self.inline_merkle_aggregates && self.skip_initial_mds_poseidon {
+            SmallwoodFrontendShape::direct_packed_compact_bindings_inline_merkle_skip_initial_mds_v1(
+                self.packing_factor,
+            )
+        } else {
+            SmallwoodFrontendShape::direct_packed_compact_bindings_v1(self.packing_factor)
+        }
+    }
+
+    pub const fn poseidon_rows_per_permutation(self) -> usize {
+        if self.skip_initial_mds_poseidon {
+            POSEIDON2_STEPS
+        } else {
+            SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION
+        }
     }
 }
 
@@ -939,13 +1028,15 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
         witness.version,
         shape,
     ));
-    let auxiliary_helper_words =
-        smallwood_compact_bridge_helper_rows_v1(witness, shape.packing_factor)?;
+    let auxiliary_helper_words = if shape.derive_lane_local_helpers_from_semantic {
+        Vec::new()
+    } else {
+        smallwood_compact_bridge_helper_rows_with_shape_v1(witness, shape.frontend_shape())?
+    };
     let mut semantic_rows = native_tx_validity_witness_elements(witness)?;
     semantic_rows.resize(NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS, 0);
     let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
-    let poseidon_group_rows =
-        smallwood_bridge_poseidon_group_rows(poseidon_rows.len(), shape.packing_factor);
+    let poseidon_group_rows = smallwood_bridge_poseidon_group_rows_for_shape(shape, poseidon_rows.len());
 
     let mut packed_witness_matrix = Vec::with_capacity(
         (shape.semantic_witness_rows() + poseidon_group_rows) * shape.packing_factor,
@@ -953,10 +1044,10 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
     for chunk in semantic_rows.chunks_exact(shape.packing_factor) {
         packed_witness_matrix.extend_from_slice(chunk);
     }
-    append_grouped_poseidon_rows(
+    append_grouped_poseidon_rows_for_shape(
         &mut packed_witness_matrix,
         &poseidon_rows,
-        shape.packing_factor,
+        shape,
     );
 
     let total_secret_rows = shape.semantic_witness_rows();
@@ -967,8 +1058,7 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
         semantic_witness_rows: shape.semantic_witness_rows() as u32,
         total_secret_rows: total_secret_rows as u32,
         poseidon_permutation_count: poseidon_rows.len() as u32,
-        poseidon_state_row_count: (poseidon_rows.len()
-            * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+        poseidon_state_row_count: (poseidon_rows.len() * shape.poseidon_rows_per_permutation())
             as u32,
         witness_rows: (total_secret_rows + poseidon_group_rows) as u32,
         packing_factor: shape.packing_factor as u16,
@@ -1018,6 +1108,12 @@ pub fn analyze_smallwood_semantic_helper_aux_frontier_from_witness(
         SmallwoodSemanticHelperAuxShape::packed_32x_v1(),
         SmallwoodSemanticHelperAuxShape::packed_64x_v1(),
         SmallwoodSemanticHelperAuxShape::packed_128x_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_32x_inline_merkle_skip_initial_mds_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_64x_inline_merkle_skip_initial_mds_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_128x_inline_merkle_skip_initial_mds_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_32x_semantic_adapter_floor_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_64x_semantic_adapter_floor_v1(),
+        SmallwoodSemanticHelperAuxShape::packed_128x_semantic_adapter_floor_v1(),
     ]
     .into_iter()
     .map(|shape| analyze_smallwood_semantic_helper_aux_from_witness(witness, shape, profile))
@@ -1347,6 +1443,9 @@ fn smallwood_semantic_helper_aux_profile_material(
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
     material.extend_from_slice(&(shape.packing_factor as u64).to_le_bytes());
+    material.push(u8::from(shape.inline_merkle_aggregates));
+    material.push(u8::from(shape.skip_initial_mds_poseidon));
+    material.push(u8::from(shape.derive_lane_local_helpers_from_semantic));
     material.extend_from_slice(&(SMALLWOOD_SEMANTIC_LPPC_CONSTRAINT_DEGREE as u64).to_le_bytes());
     material
 }
@@ -1489,9 +1588,11 @@ fn mul_mod_u64(a: u64, b: u64) -> u64 {
 }
 
 fn smallwood_bridge_poseidon_group_rows(permutation_count: usize, packing_factor: usize) -> usize {
-    permutation_count.div_ceil(packing_factor)
-        * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION
-        * POSEIDON2_WIDTH
+    smallwood_bridge_poseidon_group_rows_for_steps(
+        permutation_count,
+        packing_factor,
+        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION,
+    )
 }
 
 fn append_grouped_poseidon_rows(
@@ -1499,10 +1600,60 @@ fn append_grouped_poseidon_rows(
     poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
     packing_factor: usize,
 ) {
+    append_grouped_poseidon_rows_for_steps(
+        out,
+        poseidon_rows,
+        packing_factor,
+        0,
+        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION,
+    );
+}
+
+fn smallwood_bridge_poseidon_group_rows_for_shape(
+    shape: SmallwoodSemanticHelperAuxShape,
+    permutation_count: usize,
+) -> usize {
+    smallwood_bridge_poseidon_group_rows_for_steps(
+        permutation_count,
+        shape.packing_factor,
+        shape.poseidon_rows_per_permutation(),
+    )
+}
+
+fn smallwood_bridge_poseidon_group_rows_for_steps(
+    permutation_count: usize,
+    packing_factor: usize,
+    rows_per_permutation: usize,
+) -> usize {
+    permutation_count.div_ceil(packing_factor) * rows_per_permutation * POSEIDON2_WIDTH
+}
+
+fn append_grouped_poseidon_rows_for_shape(
+    out: &mut Vec<u64>,
+    poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+    shape: SmallwoodSemanticHelperAuxShape,
+) {
+    let step_start = usize::from(shape.skip_initial_mds_poseidon);
+    append_grouped_poseidon_rows_for_steps(
+        out,
+        poseidon_rows,
+        shape.packing_factor,
+        step_start,
+        SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION,
+    );
+}
+
+fn append_grouped_poseidon_rows_for_steps(
+    out: &mut Vec<u64>,
+    poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+    packing_factor: usize,
+    step_start: usize,
+    step_end: usize,
+) {
     let dummy_rows = dummy_poseidon_rows();
     let poseidon_group_count = poseidon_rows.len().div_ceil(packing_factor);
     for group in 0..poseidon_group_count {
-        for step in 0..SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION {
+        for step in step_start..step_end {
             for limb in 0..POSEIDON2_WIDTH {
                 for lane in 0..packing_factor {
                     let value = poseidon_rows

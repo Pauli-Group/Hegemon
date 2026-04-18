@@ -20,20 +20,20 @@ The current shipped line is measured in:
 Current shipped numbers:
 
 - structural upper bound: `90830`
-- checked exact sampled proof bytes on the current benchmark witness: `87246 .. 87278`
-- remaining DECS multiproof headroom on the live opened set: at most `16` duplicate sibling nodes, or `512` raw digest bytes before multiproof flags / format overhead
+- current exact sampled proof bytes on the current benchmark witness: `87086 .. 87214`
+- remaining DECS multiproof headroom on the live opened set: at most `8` duplicate sibling nodes, or `256` raw digest bytes before multiproof flags / format overhead
 - wrapper: `12`
-- transcript: `9524`
-- sampled commitments / auth paths: `7616 .. 7680`
-- opened values: `24160`
-- opening payload: `46628`
+- transcript: `9488`
+- sampled commitments / auth paths: `7321 .. 7449`
+- opened values: `23944`
+- opening payload: `46321`
 
 Inside the current opening payload:
 
-- opened witness rows: `30196`
-- DECS high coefficients: `14528`
-- PCS recombination tails: `1208`
-- DECS masking evals: `776`
+- opened witness rows: `30157`
+- DECS high coefficients: `14500`
+- PCS recombination tails: `1108`
+- DECS masking evals: `556`
 
 So the current proof is no longer large because of wrapper fluff or public metadata. The dominant remaining cost is still the opening line, and inside that opening line the biggest two objects are:
 
@@ -198,7 +198,66 @@ The exact current-engine identity spike for the winning `64x` point also matches
 
 - `94728` bytes
 
-This was the first real current-backend branch that beat the old `98532`-byte shipped line. It no longer beats the current shipped inline-Merkle line, which now has a `90830`-byte structural upper bound and checked exact sampled proofs in the `87246 .. 87278` band.
+This was the first real current-backend branch that beat the old `98532`-byte shipped line. It no longer beats the current shipped inline-Merkle line, which now has a `90830`-byte structural upper bound and current exact sampled proofs in the `87086 .. 87214` band.
+
+## 2026-04-17 semantic-adapter floor rerun
+
+The next concrete semantic branch is now measured too.
+
+It keeps:
+
+- inline Merkle aggregate transport,
+- skip-initial-MDS grouped Poseidon rows,
+- and derives the remaining lane-local helper surface from the semantic witness instead of shipping it through the auxiliary vector.
+
+That frontier currently lands at:
+
+| shape | auxiliary helper words | projected bytes | exact bytes |
+|---|---:|---:|---:|
+| `32x` | `0` | `101698` | not run |
+| `64x` | `0` | `88994` | `86795 .. 86955` |
+| `128x` | `0` | `107218` | not run |
+
+This is the first semantic-adapter floor that beats the current shipped proof exactly on the current tree.
+
+But the win is only:
+
+- `87086 - 86955 = 131` bytes at the high end of the current exact band
+- `87086 - 86795 = 291` bytes at the low end of the current exact band
+
+So the branch is a useful floor, not a promotion candidate:
+
+- it proves the semantic route can beat the shipped line without restoring helper rows,
+- but it misses the low-`80s` target by a lot,
+- and it misses the low-`80s` ExecPlan material keep bar too.
+
+The important surprise is that the structural projection was conservative here:
+
+- projected: `88994`
+- exact: `86795 .. 86955`
+
+So the semantic branch should now be judged on exact proofs, not only structural projections.
+
+## 2026-04-17 opening branch rerun
+
+The opening-layer branch remains a measured negative result on the current tree.
+
+Revalidated on the current shipped line:
+
+- current tiled planner: `90830`
+- shared-row LVCS projection: `92326`
+- shared-row subset width drops from `128` to `64`
+- but the soundness floor also drops to `110.62` bits
+
+And the two-opening frontier is still empty:
+
+- `smallwood two-opening frontier active=90830 top=[]`
+
+So the current opening-layer redesign status is still:
+
+- shared-row LVCS rewrite: dead
+- two-opening profile: dead
+- no current backend-only opening branch has crossed the low-`80s` bar
 
 ## What the bridge-side work already proved
 
