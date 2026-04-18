@@ -8,17 +8,17 @@ use crate::relation::{
 };
 
 use super::{
-    compose_recursive_segment_statements_v1, deserialize_recursive_block_artifact_v1,
-    deserialize_recursive_block_artifact_v2, hosted_base_binding_bytes_v1,
-    hosted_recursive_descriptor_v1, hosted_recursive_proof_witness_layout_v1,
-    hosted_recursive_proof_witness_words_v1, hosted_step_binding_bytes_v1,
-    prefix_statement_for_records_v1, previous_proof_rows_for_limbs_v1, prove_block_recursive_v1,
-    prove_block_recursive_v2, public_replay_v1, public_replay_v2,
-    recursive_block_artifact_bytes_v2, recursive_block_artifact_verifier_profile_v2,
-    segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
-    serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
-    step_recursive_witness_layout_v1, step_recursive_witness_words_v1, tree_proof_cap_report_v2,
-    tree_witness_geometry_report_v2, derive_tree_projection_point_v2,
+    compose_recursive_segment_statements_v1, derive_tree_projection_point_v2,
+    deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
+    hosted_base_binding_bytes_v1, hosted_recursive_descriptor_v1,
+    hosted_recursive_proof_witness_layout_v1, hosted_recursive_proof_witness_words_v1,
+    hosted_step_binding_bytes_v1, prefix_statement_for_records_v1,
+    previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, prove_block_recursive_v2,
+    public_replay_v1, public_replay_v2, recursive_block_artifact_bytes_v2,
+    recursive_block_artifact_verifier_profile_v2, segment_statement_for_interval_v1,
+    serialize_recursive_block_artifact_v1, serialize_recursive_block_artifact_v2,
+    serialize_recursive_block_public_v1, step_recursive_witness_layout_v1,
+    step_recursive_witness_words_v1, tree_proof_cap_report_v2, tree_witness_geometry_report_v2,
     verify_block_recursive_v1, verify_block_recursive_v2,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
@@ -30,8 +30,7 @@ use super::{
     RecursiveBlockArtifactV1, RecursiveBlockArtifactV2, RecursiveBlockPublicV1,
     RecursiveBlockPublicV2, RecursivePrefixStatementV1, RecursiveSegmentStatementV1,
     StepARelationV1, StepBRelationV1, RECURSIVE_BLOCK_HEADER_BYTES_V1,
-    RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_PUBLIC_BYTES_V1,
-    TREE_RECURSIVE_CHUNK_SIZE_V2,
+    RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_PUBLIC_BYTES_V1, TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
@@ -916,7 +915,10 @@ fn tree_v2_projection_matches_current_shipped_geometry() {
     assert_eq!(projected.p_carry_a, report.p_carry_a);
     assert_eq!(projected.p_carry_b, report.p_carry_b);
     assert_eq!(projected.root_proof_cap, report.root_proof_cap);
-    assert_eq!(projected.artifact_bytes, recursive_block_artifact_bytes_v2());
+    assert_eq!(
+        projected.artifact_bytes,
+        recursive_block_artifact_bytes_v2()
+    );
 }
 
 #[test]

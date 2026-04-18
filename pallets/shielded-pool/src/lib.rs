@@ -2694,12 +2694,8 @@ pub mod pallet {
         pub(crate) fn validate_block_proof_bundle_mode(
             bundle: &types::BlockProofBundle,
         ) -> Result<(), Error<T>> {
-            if match bundle.proof_mode {
-                types::BlockProofMode::RecursiveBlock => {
-                    !types::is_recursive_block_artifact_kind(bundle.proof_kind)
-                }
-                _ => bundle.proof_kind != types::proof_artifact_kind_from_mode(bundle.proof_mode),
-            } {
+            let route = bundle.route();
+            if !route.is_compatible_with_mode() {
                 return Err(Error::<T>::InvalidProofFormat);
             }
             if bundle.verifier_profile == [0u8; 48] {
@@ -3789,7 +3785,7 @@ mod tests {
                 .data = vec![
                 0u8;
                 types::recursive_block_artifact_max_size(proof_kind)
-                .expect("canonical recursive size cap")
+                    .expect("canonical recursive size cap")
                     + 1
             ];
 

@@ -1093,10 +1093,7 @@ fn decode_merge_child_v2(
     bytes: &[u8],
     cursor: &mut usize,
     proof_len: usize,
-) -> Result<
-    Vec<u8>,
-    BlockRecursionError,
-> {
+) -> Result<Vec<u8>, BlockRecursionError> {
     let proof_slice =
         bytes
             .get(*cursor..*cursor + proof_len)
@@ -1155,11 +1152,15 @@ fn reconstruct_merge_child_statements_v2(
     let left_end_index = target_statement
         .start_index
         .checked_add(summary.left_segment_len)
-        .ok_or(BlockRecursionError::InvalidField("tree_v2 left end_index overflow"))?;
+        .ok_or(BlockRecursionError::InvalidField(
+            "tree_v2 left end_index overflow",
+        ))?;
     let right_segment_len = target_statement
         .segment_len
         .checked_sub(summary.left_segment_len)
-        .ok_or(BlockRecursionError::InvalidField("tree_v2 right segment_len underflow"))?;
+        .ok_or(BlockRecursionError::InvalidField(
+            "tree_v2 right segment_len underflow",
+        ))?;
     let left = RecursiveSegmentStatementV2 {
         start_index: target_statement.start_index,
         end_index: left_end_index,
@@ -1194,7 +1195,8 @@ fn chunk_relation_mismatch_v2(
     auxiliary_words: &[u64],
 ) -> Result<u64, BlockRecursionError> {
     let active_len = target_statement.segment_len as usize;
-    let records = decode_chunk_witness_v2(auxiliary_words, target_statement.start_index, active_len)?;
+    let records =
+        decode_chunk_witness_v2(auxiliary_words, target_statement.start_index, active_len)?;
     let active_len = active_len as u32;
     let mut mismatch = 0u64;
     if active_len != target_statement.segment_len {
@@ -1367,7 +1369,8 @@ fn merge_relation_mismatch_v2(
     let mut cursor = 0usize;
     let child_level = tree_level - 1;
     let child_proof_cap = tree_recursive_child_proof_bytes_v2(tree_level);
-    let left_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
+    let left_kind =
+        TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
     let left_proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
     if left_proof_len > child_proof_cap {
         return Err(BlockRecursionError::WidthMismatch {
@@ -1376,7 +1379,8 @@ fn merge_relation_mismatch_v2(
             actual: left_proof_len,
         });
     }
-    let right_kind = TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
+    let right_kind =
+        TreeWitnessKindV2::from_u32(read_exact_u32_v2(&bytes, &mut cursor)?)?.relation_kind();
     let right_proof_len = read_exact_u32_v2(&bytes, &mut cursor)? as usize;
     if right_proof_len > child_proof_cap {
         return Err(BlockRecursionError::WidthMismatch {
@@ -1789,7 +1793,9 @@ pub fn derive_tree_projection_point_v2(
         let carry_profile = profile_for_relation_kind_v2(carry_kind)?;
         let merge_cap = projected_tree_relation_proof_bytes_for_aux_bytes_v2(
             merge_profile,
-            (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2) + TREE_MERGE_SUMMARY_BYTES_V2 + (child_cap * 2),
+            (TREE_CHILD_WITNESS_HEADER_BYTES_V2 * 2)
+                + TREE_MERGE_SUMMARY_BYTES_V2
+                + (child_cap * 2),
         )?;
         let carry_cap = projected_tree_relation_proof_bytes_for_aux_bytes_v2(
             carry_profile,
@@ -2500,12 +2506,10 @@ mod diagnostic_tests {
             .expect("left chunk relation");
         let right_chunk = TreeRelationV2::new_chunk(right_statement.clone(), &input.records[1..2])
             .expect("right chunk relation");
-        let left_proof =
-            prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &left_chunk)
-                .expect("left chunk proof");
-        let right_proof =
-            prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &right_chunk)
-                .expect("right chunk proof");
+        let left_proof = prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &left_chunk)
+            .expect("left chunk proof");
+        let right_proof = prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &right_chunk)
+            .expect("right chunk proof");
         let left_node = TreeProofNodeV2 {
             level: 0,
             statement: left_statement,
@@ -2526,11 +2530,14 @@ mod diagnostic_tests {
         let target_statement =
             compose_recursive_segment_statements_v2(&left_node.statement, &right_node.statement)
                 .expect("merge target");
-        let merge_relation =
-            TreeRelationV2::new_merge(merge_kind, target_statement.clone(), &left_node, &right_node)
-                .expect("merge relation");
-        let merge_proof =
-            prove_tree_relation_v2(profile, &merge_relation).expect("merge proof");
+        let merge_relation = TreeRelationV2::new_merge(
+            merge_kind,
+            target_statement.clone(),
+            &left_node,
+            &right_node,
+        )
+        .expect("merge relation");
+        let merge_proof = prove_tree_relation_v2(profile, &merge_relation).expect("merge proof");
         verify_tree_child_v2(profile, merge_kind, 1, &target_statement, &merge_proof)
             .expect("merge verify");
     }
@@ -2541,8 +2548,8 @@ mod diagnostic_tests {
         let statement =
             recursive_segment_statement_for_interval_v2(&input.records, &input.semantic, 0, 1)
                 .expect("chunk statement");
-        let chunk_relation =
-            TreeRelationV2::new_chunk(statement.clone(), &input.records[..1]).expect("chunk relation");
+        let chunk_relation = TreeRelationV2::new_chunk(statement.clone(), &input.records[..1])
+            .expect("chunk relation");
         let chunk_proof =
             prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &chunk_relation)
                 .expect("chunk proof");
@@ -2556,11 +2563,9 @@ mod diagnostic_tests {
 
         let carry_kind = tree_carry_kind_for_level_v2(1);
         let profile = tree_profile_for_level_v2(1);
-        let carry_relation =
-            TreeRelationV2::new_carry(carry_kind, statement.clone(), &child_node)
-                .expect("carry relation");
-        let carry_proof =
-            prove_tree_relation_v2(profile, &carry_relation).expect("carry proof");
+        let carry_relation = TreeRelationV2::new_carry(carry_kind, statement.clone(), &child_node)
+            .expect("carry relation");
+        let carry_proof = prove_tree_relation_v2(profile, &carry_relation).expect("carry proof");
         verify_tree_child_v2(profile, carry_kind, 1, &statement, &carry_proof)
             .expect("carry verify");
     }

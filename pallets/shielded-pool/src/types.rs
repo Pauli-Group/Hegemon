@@ -273,6 +273,70 @@ impl ProofArtifactKind {
     }
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+)]
+pub struct BlockProofRoute {
+    pub mode: BlockProofMode,
+    pub kind: ProofArtifactKind,
+}
+
+impl BlockProofRoute {
+    pub const fn new(mode: BlockProofMode, kind: ProofArtifactKind) -> Self {
+        Self { mode, kind }
+    }
+
+    pub fn from_mode(mode: BlockProofMode) -> Self {
+        Self::new(mode, proof_artifact_kind_from_mode(mode))
+    }
+
+    pub const fn shipped_recursive_block_v2() -> Self {
+        Self::new(
+            BlockProofMode::RecursiveBlock,
+            ProofArtifactKind::RecursiveBlockV2,
+        )
+    }
+
+    pub const fn explicit_receipt_root() -> Self {
+        Self::new(BlockProofMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
+    }
+
+    pub fn is_compatible_with_mode(self) -> bool {
+        match self.mode {
+            BlockProofMode::InlineTx => self.kind == ProofArtifactKind::InlineTx,
+            BlockProofMode::ReceiptRoot => self.kind == ProofArtifactKind::ReceiptRoot,
+            BlockProofMode::RecursiveBlock => is_recursive_block_artifact_kind(self.kind),
+        }
+    }
+
+    pub fn is_canonical(self) -> bool {
+        match self.mode {
+            BlockProofMode::InlineTx => self.kind == ProofArtifactKind::InlineTx,
+            BlockProofMode::ReceiptRoot => self.kind == ProofArtifactKind::ReceiptRoot,
+            BlockProofMode::RecursiveBlock => self.kind == ProofArtifactKind::RecursiveBlockV2,
+        }
+    }
+
+    pub fn is_shipped(self) -> bool {
+        self.mode == BlockProofMode::RecursiveBlock
+            && self.kind == ProofArtifactKind::RecursiveBlockV2
+    }
+
+    pub fn is_experimental(self) -> bool {
+        self.mode == BlockProofMode::ReceiptRoot && self.kind == ProofArtifactKind::ReceiptRoot
+    }
+}
+
 pub const fn is_recursive_block_artifact_kind(kind: ProofArtifactKind) -> bool {
     matches!(
         kind,
@@ -282,6 +346,14 @@ pub const fn is_recursive_block_artifact_kind(kind: ProofArtifactKind) -> bool {
 
 pub const fn canonical_recursive_block_artifact_kind() -> ProofArtifactKind {
     ProofArtifactKind::RecursiveBlockV2
+}
+
+pub fn canonical_shipped_block_proof_route() -> BlockProofRoute {
+    BlockProofRoute::shipped_recursive_block_v2()
+}
+
+pub fn canonical_experimental_block_proof_route() -> BlockProofRoute {
+    BlockProofRoute::explicit_receipt_root()
 }
 
 pub const fn is_shipped_block_proof_mode(mode: BlockProofMode) -> bool {
@@ -363,6 +435,16 @@ pub struct CandidateArtifact {
     pub receipt_root: Option<ReceiptRootProofPayload>,
     /// Optional recursive block-proof artifact payload (required in RecursiveBlock mode).
     pub recursive_block: Option<RecursiveBlockProofPayload>,
+}
+
+impl CandidateArtifact {
+    pub fn route(&self) -> BlockProofRoute {
+        BlockProofRoute::new(self.proof_mode, self.proof_kind)
+    }
+
+    pub fn uses_route(&self, route: BlockProofRoute) -> bool {
+        self.proof_mode == route.mode && self.proof_kind == route.kind
+    }
 }
 
 #[allow(deprecated)]
@@ -754,6 +836,43 @@ pub struct BatchShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_routes_are_explicit() {
+        assert_eq!(
+            canonical_shipped_block_proof_route(),
+            BlockProofRoute::new(
+                BlockProofMode::RecursiveBlock,
+                ProofArtifactKind::RecursiveBlockV2
+            )
+        );
+        assert_eq!(
+            canonical_experimental_block_proof_route(),
+            BlockProofRoute::new(BlockProofMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
+        );
+    }
+
+    #[test]
+    fn route_classification_distinguishes_shipped_and_compatibility_paths() {
+        assert!(canonical_shipped_block_proof_route().is_shipped());
+        assert!(canonical_shipped_block_proof_route().is_canonical());
+        assert!(canonical_shipped_block_proof_route().is_compatible_with_mode());
+
+        let legacy_recursive = BlockProofRoute::new(
+            BlockProofMode::RecursiveBlock,
+            ProofArtifactKind::RecursiveBlockV1,
+        );
+        assert!(legacy_recursive.is_compatible_with_mode());
+        assert!(!legacy_recursive.is_canonical());
+        assert!(!legacy_recursive.is_shipped());
+
+        let invalid_route = BlockProofRoute::new(
+            BlockProofMode::ReceiptRoot,
+            ProofArtifactKind::RecursiveBlockV2,
+        );
+        assert!(!invalid_route.is_compatible_with_mode());
+        assert!(!invalid_route.is_canonical());
+    }
 
     #[test]
     fn recursive_block_v2_artifact_cap_matches_block_recursion_geometry() {

@@ -18,6 +18,22 @@ pub fn consensus_proven_batch_mode_from_pallet(
     }
 }
 
+pub fn pallet_block_proof_mode_from_consensus(
+    mode: consensus::ProvenBatchMode,
+) -> pallet_shielded_pool::types::BlockProofMode {
+    match mode {
+        consensus::ProvenBatchMode::InlineTx => {
+            pallet_shielded_pool::types::BlockProofMode::InlineTx
+        }
+        consensus::ProvenBatchMode::ReceiptRoot => {
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
+        }
+        consensus::ProvenBatchMode::RecursiveBlock => {
+            pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+        }
+    }
+}
+
 pub fn consensus_proof_artifact_kind_from_pallet(
     kind: pallet_shielded_pool::types::ProofArtifactKind,
 ) -> consensus::ProofArtifactKind {
@@ -43,31 +59,85 @@ pub fn consensus_proof_artifact_kind_from_pallet(
     }
 }
 
+pub fn pallet_proof_artifact_kind_from_consensus(
+    kind: consensus::ProofArtifactKind,
+) -> pallet_shielded_pool::types::ProofArtifactKind {
+    match kind {
+        consensus::ProofArtifactKind::InlineTx => {
+            pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+        }
+        consensus::ProofArtifactKind::TxLeaf => {
+            pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
+        }
+        consensus::ProofArtifactKind::ReceiptRoot => {
+            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        }
+        consensus::ProofArtifactKind::RecursiveBlockV1 => {
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        }
+        consensus::ProofArtifactKind::RecursiveBlockV2 => {
+            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+        }
+        consensus::ProofArtifactKind::Custom(bytes) => {
+            pallet_shielded_pool::types::ProofArtifactKind::Custom(bytes)
+        }
+    }
+}
+
+pub fn consensus_artifact_route_from_pallet(
+    route: pallet_shielded_pool::types::BlockProofRoute,
+) -> consensus::types::ArtifactRoute {
+    consensus::types::ArtifactRoute::new(
+        consensus_proven_batch_mode_from_pallet(route.mode),
+        consensus_proof_artifact_kind_from_pallet(route.kind),
+    )
+}
+
+pub fn pallet_block_proof_route_from_consensus(
+    route: consensus::types::ArtifactRoute,
+) -> pallet_shielded_pool::types::BlockProofRoute {
+    pallet_shielded_pool::types::BlockProofRoute::new(
+        pallet_block_proof_mode_from_consensus(route.mode),
+        pallet_proof_artifact_kind_from_consensus(route.kind),
+    )
+}
+
 pub fn compat_pallet_artifact_identity(
     mode: pallet_shielded_pool::types::BlockProofMode,
 ) -> (
     pallet_shielded_pool::types::ProofArtifactKind,
     pallet_shielded_pool::types::VerifierProfileDigest,
 ) {
-    let kind = pallet_shielded_pool::types::proof_artifact_kind_from_mode(mode);
+    let route = pallet_shielded_pool::types::BlockProofRoute::from_mode(mode);
     let verifier_profile = match mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             consensus::experimental_native_receipt_root_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
             debug_assert_eq!(
-                kind,
-                pallet_shielded_pool::types::canonical_recursive_block_artifact_kind()
+                route,
+                pallet_shielded_pool::types::canonical_shipped_block_proof_route()
             );
             consensus::recursive_block_artifact_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => {
             consensus::legacy_block_artifact_verifier_profile(
-                consensus_proof_artifact_kind_from_pallet(kind),
+                consensus_proof_artifact_kind_from_pallet(route.kind),
             )
         }
     };
-    (kind, verifier_profile)
+    (route.kind, verifier_profile)
+}
+
+pub fn compat_pallet_route_identity(
+    mode: pallet_shielded_pool::types::BlockProofMode,
+) -> (
+    pallet_shielded_pool::types::BlockProofRoute,
+    pallet_shielded_pool::types::VerifierProfileDigest,
+) {
+    let route = pallet_shielded_pool::types::BlockProofRoute::from_mode(mode);
+    let (_, verifier_profile) = compat_pallet_artifact_identity(mode);
+    (route, verifier_profile)
 }
 
 pub fn candidate_artifact_hash(
@@ -79,13 +149,13 @@ pub fn candidate_artifact_hash(
 pub fn artifact_announcement(
     artifact: &pallet_shielded_pool::types::CandidateArtifact,
 ) -> ArtifactAnnouncement {
-    let proof_mode = consensus_proven_batch_mode_from_pallet(artifact.proof_mode);
+    let route = consensus_artifact_route_from_pallet(artifact.route());
     ArtifactAnnouncement {
         artifact_hash: candidate_artifact_hash(artifact),
         tx_statements_commitment: artifact.tx_statements_commitment,
         tx_count: artifact.tx_count,
-        proof_mode,
-        proof_kind: consensus_proof_artifact_kind_from_pallet(artifact.proof_kind),
+        proof_mode: route.mode,
+        proof_kind: route.kind,
         verifier_profile: artifact.verifier_profile,
     }
 }
@@ -156,6 +226,13 @@ mod tests {
     #[test]
     fn recursive_block_mode_maps_to_canonical_recursive_block() {
         assert_eq!(
+            compat_pallet_route_identity(
+                pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
+            )
+            .0,
+            pallet_shielded_pool::types::canonical_shipped_block_proof_route()
+        );
+        assert_eq!(
             consensus_proven_batch_mode_from_pallet(
                 pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
             ),
@@ -166,6 +243,18 @@ mod tests {
                 pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
             ),
             consensus::ProofArtifactKind::RecursiveBlockV2
+        );
+        assert_eq!(
+            consensus_artifact_route_from_pallet(
+                pallet_shielded_pool::types::canonical_shipped_block_proof_route()
+            ),
+            consensus::types::canonical_shipped_artifact_route()
+        );
+        assert_eq!(
+            pallet_block_proof_route_from_consensus(
+                consensus::types::canonical_shipped_artifact_route()
+            ),
+            pallet_shielded_pool::types::canonical_shipped_block_proof_route()
         );
         let (kind, verifier_profile) = compat_pallet_artifact_identity(
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,

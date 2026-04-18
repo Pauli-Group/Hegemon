@@ -54,6 +54,7 @@ impl ProverRpc {
     fn map_artifact_announcement(
         announcement: consensus::ArtifactAnnouncement,
     ) -> ArtifactAnnouncementResponse {
+        let route = announcement.route();
         ArtifactAnnouncementResponse {
             artifact_hash: format!("0x{}", hex::encode(announcement.artifact_hash)),
             tx_statements_commitment: format!(
@@ -61,12 +62,12 @@ impl ProverRpc {
                 hex::encode(announcement.tx_statements_commitment)
             ),
             tx_count: announcement.tx_count,
-            proof_mode: match announcement.proof_mode {
+            proof_mode: match route.mode {
                 consensus::ProvenBatchMode::InlineTx => "inline_tx".to_string(),
                 consensus::ProvenBatchMode::ReceiptRoot => "receipt_root".to_string(),
                 consensus::ProvenBatchMode::RecursiveBlock => "recursive_block".to_string(),
             },
-            proof_kind: announcement.proof_kind.label().to_string(),
+            proof_kind: route.kind.label().to_string(),
             verifier_profile: format!("0x{}", hex::encode(announcement.verifier_profile)),
         }
     }

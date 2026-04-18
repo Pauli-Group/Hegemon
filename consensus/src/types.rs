@@ -245,6 +245,53 @@ impl ProofArtifactKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ArtifactRoute {
+    pub mode: ProvenBatchMode,
+    pub kind: ProofArtifactKind,
+}
+
+impl ArtifactRoute {
+    pub const fn new(mode: ProvenBatchMode, kind: ProofArtifactKind) -> Self {
+        Self { mode, kind }
+    }
+
+    pub fn from_mode(mode: ProvenBatchMode) -> Self {
+        Self::new(mode, proof_artifact_kind_from_mode(mode))
+    }
+
+    pub const fn shipped_recursive_block_v2() -> Self {
+        Self::new(
+            ProvenBatchMode::RecursiveBlock,
+            ProofArtifactKind::RecursiveBlockV2,
+        )
+    }
+
+    pub const fn explicit_receipt_root() -> Self {
+        Self::new(ProvenBatchMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
+    }
+
+    pub fn is_compatible_with_mode(self) -> bool {
+        match self.mode {
+            ProvenBatchMode::InlineTx => self.kind == ProofArtifactKind::InlineTx,
+            ProvenBatchMode::ReceiptRoot => self.kind == ProofArtifactKind::ReceiptRoot,
+            ProvenBatchMode::RecursiveBlock => matches!(
+                self.kind,
+                ProofArtifactKind::RecursiveBlockV1 | ProofArtifactKind::RecursiveBlockV2
+            ),
+        }
+    }
+
+    pub fn is_shipped(self) -> bool {
+        self.mode == ProvenBatchMode::RecursiveBlock
+            && self.kind == ProofArtifactKind::RecursiveBlockV2
+    }
+
+    pub fn is_experimental(self) -> bool {
+        self.mode == ProvenBatchMode::ReceiptRoot && self.kind == ProofArtifactKind::ReceiptRoot
+    }
+}
+
 pub fn proof_artifact_kind_from_mode(mode: ProvenBatchMode) -> ProofArtifactKind {
     match mode {
         ProvenBatchMode::InlineTx => ProofArtifactKind::InlineTx,
@@ -259,6 +306,14 @@ pub fn legacy_block_artifact_verifier_profile(kind: ProofArtifactKind) -> Verifi
     material.extend_from_slice(kind.label().as_bytes());
     material.extend_from_slice(&BLOCK_PROOF_FORMAT_ID_V5.to_le_bytes());
     blake3_384(&material)
+}
+
+pub fn canonical_shipped_artifact_route() -> ArtifactRoute {
+    ArtifactRoute::shipped_recursive_block_v2()
+}
+
+pub fn canonical_experimental_artifact_route() -> ArtifactRoute {
+    ArtifactRoute::explicit_receipt_root()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,13 +331,29 @@ pub struct TxValidityReceipt {
     pub verifier_profile: VerifierProfileDigest,
 }
 
+impl TxValidityReceipt {
+    pub const fn new(
+        statement_hash: [u8; 48],
+        proof_digest: [u8; 48],
+        public_inputs_digest: [u8; 48],
+        verifier_profile: VerifierProfileDigest,
+    ) -> Self {
+        Self {
+            statement_hash,
+            proof_digest,
+            public_inputs_digest,
+            verifier_profile,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxValidityArtifact {
     pub receipt: TxValidityReceipt,
     pub proof: Option<ProofEnvelope>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProvenBatchMode {
     InlineTx,
     ReceiptRoot,
@@ -319,6 +390,16 @@ pub struct ProvenBatch {
     pub receipt_root: Option<ReceiptRootProofPayload>,
 }
 
+impl ProvenBatch {
+    pub fn route(&self) -> ArtifactRoute {
+        ArtifactRoute::new(self.mode, self.proof_kind)
+    }
+
+    pub fn uses_route(&self, route: ArtifactRoute) -> bool {
+        self.mode == route.mode && self.proof_kind == route.kind
+    }
+}
+
 /// Parent-agnostic proof object over an exact ordered transaction set.
 ///
 /// The current fresh-testnet implementation reuses the existing self-contained
@@ -336,6 +417,12 @@ pub struct ArtifactAnnouncement {
     pub proof_mode: ProvenBatchMode,
     pub proof_kind: ProofArtifactKind,
     pub verifier_profile: VerifierProfileDigest,
+}
+
+impl ArtifactAnnouncement {
+    pub fn route(&self) -> ArtifactRoute {
+        ArtifactRoute::new(self.proof_mode, self.proof_kind)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -525,5 +612,39 @@ mod tests {
         assert_eq!(counts.get(&tx_v2.version), Some(&1));
         let commitment = compute_version_commitment(&[tx_v1, tx_v2]);
         assert_ne!(commitment, [0u8; 48]);
+    }
+
+    #[test]
+    fn canonical_artifact_routes_are_explicit() {
+        assert_eq!(
+            canonical_shipped_artifact_route(),
+            ArtifactRoute::new(
+                ProvenBatchMode::RecursiveBlock,
+                ProofArtifactKind::RecursiveBlockV2
+            )
+        );
+        assert_eq!(
+            canonical_experimental_artifact_route(),
+            ArtifactRoute::new(ProvenBatchMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
+        );
+        assert!(canonical_shipped_artifact_route().is_shipped());
+        assert!(canonical_experimental_artifact_route().is_experimental());
+    }
+
+    #[test]
+    fn artifact_route_classification_distinguishes_legacy_and_shipped_paths() {
+        let legacy_recursive = ArtifactRoute::new(
+            ProvenBatchMode::RecursiveBlock,
+            ProofArtifactKind::RecursiveBlockV1,
+        );
+        assert!(legacy_recursive.is_compatible_with_mode());
+        assert!(!legacy_recursive.is_shipped());
+        assert!(!legacy_recursive.is_experimental());
+
+        let invalid_route = ArtifactRoute::new(
+            ProvenBatchMode::ReceiptRoot,
+            ProofArtifactKind::RecursiveBlockV2,
+        );
+        assert!(!invalid_route.is_compatible_with_mode());
     }
 }

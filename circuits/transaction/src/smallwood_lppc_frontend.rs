@@ -1036,7 +1036,8 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
     let mut semantic_rows = native_tx_validity_witness_elements(witness)?;
     semantic_rows.resize(NATIVE_TX_VALIDITY_PADDED_WITNESS_ELEMENTS, 0);
     let poseidon_rows = smallwood_bridge_poseidon_subtrace_rows_v1(witness)?;
-    let poseidon_group_rows = smallwood_bridge_poseidon_group_rows_for_shape(shape, poseidon_rows.len());
+    let poseidon_group_rows =
+        smallwood_bridge_poseidon_group_rows_for_shape(shape, poseidon_rows.len());
 
     let mut packed_witness_matrix = Vec::with_capacity(
         (shape.semantic_witness_rows() + poseidon_group_rows) * shape.packing_factor,
@@ -1044,11 +1045,7 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
     for chunk in semantic_rows.chunks_exact(shape.packing_factor) {
         packed_witness_matrix.extend_from_slice(chunk);
     }
-    append_grouped_poseidon_rows_for_shape(
-        &mut packed_witness_matrix,
-        &poseidon_rows,
-        shape,
-    );
+    append_grouped_poseidon_rows_for_shape(&mut packed_witness_matrix, &poseidon_rows, shape);
 
     let total_secret_rows = shape.semantic_witness_rows();
     let statement = SmallwoodSemanticHelperAuxStatement {

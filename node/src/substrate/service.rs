@@ -2564,18 +2564,16 @@ fn build_recursive_block_semantic_inputs_from_materials(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct PreparedArtifactSelector {
-    compat_mode: pallet_shielded_pool::types::BlockProofMode,
-    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+    route: pallet_shielded_pool::types::BlockProofRoute,
     verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
 }
 
 impl PreparedArtifactSelector {
     fn from_mode(mode: pallet_shielded_pool::types::BlockProofMode) -> Self {
-        let (proof_kind, verifier_profile) =
-            crate::substrate::artifact_market::compat_pallet_artifact_identity(mode);
+        let (route, verifier_profile) =
+            crate::substrate::artifact_market::compat_pallet_route_identity(mode);
         Self {
-            compat_mode: mode,
-            proof_kind,
+            route,
             verifier_profile,
         }
     }
@@ -2643,7 +2641,7 @@ fn ensure_native_block_proof_selector(selector: PreparedArtifactSelector) -> Res
     if !native_block_proof_required_from_env() {
         return Ok(());
     }
-    match selector.compat_mode {
+    match selector.route.mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             tracing::info!("native-only explicit experimental receipt_root lane selected");
             Ok(())
@@ -2654,8 +2652,8 @@ fn ensure_native_block_proof_selector(selector: PreparedArtifactSelector) -> Res
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
             "HEGEMON_REQUIRE_NATIVE=1 requires a native block-proof lane; got compat_mode {:?}, proof_kind {:?}, verifier_profile {}",
-            selector.compat_mode,
-            selector.proof_kind,
+            selector.route.mode,
+            selector.route.kind,
             hex::encode(selector.verifier_profile),
         )),
     }
@@ -2679,11 +2677,32 @@ fn ensure_native_block_proof_outcome(outcome: &PreparedAggregationOutcome) -> Re
     Ok(())
 }
 
+fn pallet_receipt_from_consensus(
+    receipt: consensus::types::TxValidityReceipt,
+) -> pallet_shielded_pool::types::TxValidityReceipt {
+    pallet_shielded_pool::types::TxValidityReceipt {
+        statement_hash: receipt.statement_hash,
+        proof_digest: receipt.proof_digest,
+        public_inputs_digest: receipt.public_inputs_digest,
+        verifier_profile: receipt.verifier_profile,
+    }
+}
+
+fn consensus_receipt_from_pallet(
+    receipt: pallet_shielded_pool::types::TxValidityReceipt,
+) -> consensus::types::TxValidityReceipt {
+    consensus::types::TxValidityReceipt::new(
+        receipt.statement_hash,
+        receipt.proof_digest,
+        receipt.public_inputs_digest,
+        receipt.verifier_profile,
+    )
+}
+
 fn is_canonical_experimental_receipt_root_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> bool {
-    pallet_shielded_pool::types::is_experimental_block_proof_mode(payload.proof_mode)
-        && payload.proof_kind == pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+    payload.route().is_experimental()
         && payload.verifier_profile
             == consensus::experimental_native_receipt_root_verifier_profile()
         && payload.receipt_root.is_some()
@@ -2735,7 +2754,7 @@ fn ensure_native_block_proof_payload(
     if !native_block_proof_required_from_env() {
         return Ok(());
     }
-    match payload.proof_mode {
+    match payload.route().mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => ensure_experimental_receipt_root_payload(payload)
             .map_err(|_| {
                 format!(
@@ -2795,7 +2814,7 @@ fn receipt_root_lane_requires_embedded_proof_bytes(
 }
 
 fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> bool {
-    pallet_shielded_pool::types::is_experimental_block_proof_mode(selector.compat_mode)
+    selector.route.is_experimental()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -2995,12 +3014,7 @@ fn experimental_receipt_root_payload_from_artifact(
         },
         receipts: consensus_receipts
             .into_iter()
-            .map(|receipt| pallet_shielded_pool::types::TxValidityReceipt {
-                statement_hash: receipt.statement_hash,
-                proof_digest: receipt.proof_digest,
-                public_inputs_digest: receipt.public_inputs_digest,
-                verifier_profile: receipt.verifier_profile,
-            })
+            .map(pallet_receipt_from_consensus)
             .collect(),
     }
 }
@@ -3345,7 +3359,7 @@ fn should_store_prove_ahead_aggregation_outcome(
     selector: PreparedArtifactSelector,
     outcome: &PreparedAggregationOutcome,
 ) -> bool {
-    match selector.compat_mode {
+    match selector.route.mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             matches!(
                 outcome.artifacts,
@@ -3458,7 +3472,7 @@ fn prove_ahead_tx_artifact_set_digest(
     selector: PreparedArtifactSelector,
     tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
 ) -> Option<[u8; 48]> {
-    if selector.compat_mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
+    if selector.route.mode != pallet_shielded_pool::types::BlockProofMode::ReceiptRoot {
         return None;
     }
 
@@ -3540,29 +3554,14 @@ fn block_proof_payload_aggregation_uncompressed_bytes(
 }
 
 fn sync_payload_artifact_identity(payload: &mut pallet_shielded_pool::types::CandidateArtifact) {
-    if matches!(
-        payload.proof_mode,
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
-    ) {
-        payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
-        payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
-        return;
-    }
-    let (proof_kind, verifier_profile) =
-        crate::substrate::artifact_market::compat_pallet_artifact_identity(payload.proof_mode);
-    payload.proof_kind = proof_kind;
+    let (route, verifier_profile) =
+        crate::substrate::artifact_market::compat_pallet_route_identity(payload.proof_mode);
+    payload.proof_kind = route.kind;
     payload.verifier_profile = verifier_profile;
 }
 
-fn proof_kind_requires_prepared_bundle(
-    proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
-) -> bool {
-    matches!(
-        proof_kind,
-        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-            | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
-    )
+fn route_requires_prepared_bundle(route: pallet_shielded_pool::types::BlockProofRoute) -> bool {
+    route.is_shipped() || route.is_experimental()
 }
 
 const MIN_BLOCK_PROOF_BUNDLE_V2_SPEC_VERSION: u32 = 4;
@@ -3643,10 +3642,9 @@ fn prepare_block_proof_bundle(
     let tx_artifacts_for_batching = context.tx_validity_artifacts.clone();
     let selected_artifact = prepared_artifact_selector_from_env();
     ensure_native_block_proof_selector(selected_artifact)?;
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
-    {
+    if selected_artifact.route.is_experimental() {
         receipt_root_lane_requires_embedded_proof_bytes(
-            selected_artifact.proof_kind,
+            selected_artifact.route.kind,
             context.missing_proof_bindings,
         )?;
     }
@@ -3666,7 +3664,7 @@ fn prepare_block_proof_bundle(
         let commitment_bindings = context.statement_bindings.clone();
         let aggregation_transactions = context.extracted_transactions.clone();
         let aggregation_bindings = context.statement_bindings.clone();
-        let commitment_handle = if selected_artifact.compat_mode
+        let commitment_handle = if selected_artifact.route.mode
             == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
         {
             Some(scope.spawn(move || {
@@ -3697,14 +3695,14 @@ fn prepare_block_proof_bundle(
             tracing::info!(
                 block_number,
                 tx_count,
-                compat_mode = ?selected_artifact.compat_mode,
-                proof_kind = ?selected_artifact.proof_kind,
+                compat_mode = ?selected_artifact.route.mode,
+                proof_kind = ?selected_artifact.route.kind,
                 verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "prepare_block_proof_bundle: starting aggregation stage"
             );
             let stage_started = Instant::now();
             let mut cache_hit = false;
-            let mut receipt_root_work_plan = if selected_artifact.compat_mode
+            let mut receipt_root_work_plan = if selected_artifact.route.mode
                 == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
             {
                 require_native_tx_leaf_artifacts(aggregation_tx_artifacts.as_deref())
@@ -3720,7 +3718,7 @@ fn prepare_block_proof_bundle(
                 cache_hit = true;
                 Ok(cached)
             } else {
-                let built = match selected_artifact.compat_mode {
+                let built = match selected_artifact.route.mode {
                     pallet_shielded_pool::types::BlockProofMode::InlineTx => Ok(
                         PreparedAggregationOutcome::new(PreparedAggregationArtifacts::InlineTx),
                     ),
@@ -3754,7 +3752,7 @@ fn prepare_block_proof_bundle(
                                     aggregation_da_root,
                                 )?;
                                 build_recursive_block_proof_from_materials(
-                                    selected_artifact.proof_kind,
+                                    selected_artifact.route.kind,
                                     tx_artifacts,
                                     &semantic,
                                 )
@@ -3819,7 +3817,7 @@ fn prepare_block_proof_bundle(
             "prepare_block_proof_bundle: commitment stage complete"
         ),
         Ok(None)
-            if selected_artifact.compat_mode
+            if selected_artifact.route.mode
                 == pallet_shielded_pool::types::BlockProofMode::ReceiptRoot =>
         {
             tracing::warn!(
@@ -3927,8 +3925,7 @@ fn prepare_block_proof_bundle(
     }
     let commitment_proof = commitment_result?;
     let aggregation_outcome = aggregation_result?;
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
-    {
+    if selected_artifact.route.is_experimental() {
         ensure_experimental_receipt_root_outcome(&aggregation_outcome)?;
     }
     ensure_native_block_proof_outcome(&aggregation_outcome)?;
@@ -3971,8 +3968,7 @@ fn prepare_block_proof_bundle(
         }
     }
     sync_payload_artifact_identity(&mut payload);
-    if pallet_shielded_pool::types::is_experimental_block_proof_mode(selected_artifact.compat_mode)
-    {
+    if selected_artifact.route.is_experimental() {
         ensure_experimental_receipt_root_payload(&payload)?;
     }
     ensure_native_block_proof_payload(&payload)?;
@@ -3988,7 +3984,7 @@ fn prepare_block_proof_bundle(
         proof_mode = ?payload.proof_mode,
         aggregation_cache_hit,
         requested_native_lane = pallet_shielded_pool::types::is_experimental_block_proof_mode(
-            selected_artifact.compat_mode,
+            selected_artifact.route.mode,
         )
             && selector_requests_native_receipt_lane(selected_artifact),
         used_native_lane = native_selection_report
@@ -4010,8 +4006,7 @@ fn prepare_block_proof_bundle(
             parent_hash,
             tx_statements_commitment,
             tx_count,
-            proof_mode: payload.proof_mode,
-            proof_kind: payload.proof_kind,
+            route: payload.route(),
             verifier_profile: payload.verifier_profile,
             artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(&payload),
         },
@@ -4759,17 +4754,16 @@ fn verify_proof_carrying_block(
         Some(payload.da_root),
     )?;
     let tx_validity_artifacts = extracted_tx_artifacts.clone();
-    let (block_artifact, receipt_root_payload) = match payload.proof_mode {
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
+    let route =
+        crate::substrate::artifact_market::consensus_artifact_route_from_pallet(payload.route());
+    let (block_artifact, receipt_root_payload) = match route.mode {
+        consensus::ProvenBatchMode::ReceiptRoot => {
             let receipt_root = payload.receipt_root.as_ref().ok_or_else(|| {
                 "receipt_root payload missing from canonical native bundle".to_string()
             })?;
             (
                 Some(consensus::ProofEnvelope {
-                    kind:
-                        crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-                            payload.proof_kind,
-                        ),
+                    kind: route.kind,
                     verifier_profile: payload.verifier_profile,
                     artifact_bytes: receipt_root.root_proof.data.clone(),
                 }),
@@ -4787,33 +4781,25 @@ fn verify_proof_carrying_block(
                         .receipts
                         .iter()
                         .cloned()
-                        .map(|receipt| consensus::types::TxValidityReceipt {
-                            statement_hash: receipt.statement_hash,
-                            proof_digest: receipt.proof_digest,
-                            public_inputs_digest: receipt.public_inputs_digest,
-                            verifier_profile: receipt.verifier_profile,
-                        })
+                        .map(consensus_receipt_from_pallet)
                         .collect(),
                 }),
             )
         }
-        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
+        consensus::ProvenBatchMode::RecursiveBlock => {
             let recursive_block = payload.recursive_block.as_ref().ok_or_else(|| {
                 "recursive_block payload missing recursive artifact bytes".to_string()
             })?;
             (
                 Some(consensus::ProofEnvelope {
-                    kind:
-                        crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-                            payload.proof_kind,
-                        ),
+                    kind: route.kind,
                     verifier_profile: payload.verifier_profile,
                     artifact_bytes: recursive_block.proof.data.clone(),
                 }),
                 None,
             )
         }
-        pallet_shielded_pool::types::BlockProofMode::InlineTx => (None, None),
+        consensus::ProvenBatchMode::InlineTx => (None, None),
     };
 
     let proven_batch_bytes = payload.commitment_proof.data.len() + aggregation_payload_bytes;
@@ -4844,19 +4830,14 @@ fn verify_proof_carrying_block(
         transactions,
         coinbase: None,
         proven_batch: Some(consensus::types::ProvenBatch {
-            mode: crate::substrate::artifact_market::consensus_proven_batch_mode_from_pallet(
-                payload.proof_mode,
-            ),
             version: payload.version,
             tx_count: payload.tx_count,
             tx_statements_commitment: payload.tx_statements_commitment,
             da_root: payload.da_root,
             da_chunk_count: payload.da_chunk_count,
             commitment_proof: commitment_proof.clone(),
-            proof_kind:
-                crate::substrate::artifact_market::consensus_proof_artifact_kind_from_pallet(
-                    payload.proof_kind,
-                ),
+            mode: route.mode,
+            proof_kind: route.kind,
             verifier_profile: payload.verifier_profile,
             receipt_root: receipt_root_payload,
         }),
@@ -5105,8 +5086,7 @@ fn ready_proofless_binding_hashes_for_preview(
             parent_hash,
             tx_statements_commitment,
             shielded_tx_count,
-            selector.compat_mode,
-            selector.proof_kind,
+            selector.route,
             selector.verifier_profile,
         );
         if ready.is_none() && !lookup_wait.is_zero() {
@@ -5117,8 +5097,7 @@ fn ready_proofless_binding_hashes_for_preview(
                     parent_hash,
                     tx_statements_commitment,
                     shielded_tx_count,
-                    selector.compat_mode,
-                    selector.proof_kind,
+                    selector.route,
                     selector.verifier_profile,
                 );
             }
@@ -5176,7 +5155,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
         return Ok(None);
     }
 
-    let require_ready_bundle = proof_kind_requires_prepared_bundle(selector.proof_kind);
+    let require_ready_bundle = route_requires_prepared_bundle(selector.route);
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
@@ -5195,8 +5174,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
             parent_hash,
             tx_statements_commitment,
             shielded_tx_count,
-            selector.compat_mode,
-            selector.proof_kind,
+            selector.route,
             selector.verifier_profile,
         )
         .is_some()
@@ -5204,7 +5182,7 @@ fn mining_pause_reason_for_pending_shielded_batch(
         return Ok(None);
     }
 
-    let reason = match selector.proof_kind {
+    let reason = match selector.route.kind {
         pallet_shielded_pool::types::ProofArtifactKind::InlineTx => format!(
             "inline_tx shielded batch waiting for prepared bundle (tx_count={})",
             shielded_tx_count
@@ -5262,7 +5240,7 @@ fn ready_bundle_trace_for_candidate(
         return Ok(None);
     }
 
-    let require_ready_bundle = proof_kind_requires_prepared_bundle(selector.proof_kind);
+    let require_ready_bundle = route_requires_prepared_bundle(selector.route);
     let missing = missing_proof_binding_hashes(&decoded);
     if !require_ready_bundle && missing.is_empty() {
         return Ok(None);
@@ -5280,8 +5258,7 @@ fn ready_bundle_trace_for_candidate(
         parent_hash,
         tx_statements_commitment,
         shielded_tx_count,
-        selector.compat_mode,
-        selector.proof_kind,
+        selector.route,
         selector.verifier_profile,
     ) else {
         return Ok(None);
@@ -5854,8 +5831,7 @@ pub fn wire_block_builder_api(
         let proof_policy =
             fetch_proof_availability_policy(client_for_exec.as_ref(), parent_substrate_hash)?;
         let selected_artifact = prepared_artifact_selector_from_env();
-        let prepared_bundle_mode_enabled =
-            proof_kind_requires_prepared_bundle(selected_artifact.proof_kind);
+        let prepared_bundle_mode_enabled = route_requires_prepared_bundle(selected_artifact.route);
         let mut defer_proofless_until_ready_batch = false;
         let mut aggregation_mode_required_for_block = false;
         let mut ready_proofless_bindings: Option<BTreeSet<[u8; 64]>> = None;
@@ -6016,7 +5992,7 @@ pub fn wire_block_builder_api(
                     if !prepared_bundle_mode_enabled && is_proofless_sidecar {
                         tracing::warn!(
                             block_number,
-                            proof_kind = ?selected_artifact.proof_kind,
+                            proof_kind = ?selected_artifact.route.kind,
                             "Skipping proofless shielded transfer: raw inline_tx mode requires canonical inline tx proofs"
                         );
                         continue;
@@ -6183,8 +6159,7 @@ pub fn wire_block_builder_api(
                 parent_substrate_hash,
                 tx_statements_commitment,
                 shielded_tx_count,
-                selected_artifact.compat_mode,
-                selected_artifact.proof_kind,
+                selected_artifact.route,
                 selected_artifact.verifier_profile,
             );
 
@@ -11096,43 +11071,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             if !announced.insert(announcement.artifact_hash) {
                                 continue;
                             }
+                            let route = crate::substrate::artifact_market::
+                                pallet_block_proof_route_from_consensus(announcement.route());
                             let msg = ArtifactProtocolMessage::Announcement {
                                 artifact_hash: announcement.artifact_hash,
                                 tx_statements_commitment: announcement.tx_statements_commitment,
                                 tx_count: announcement.tx_count,
-                                proof_mode: match announcement.proof_mode {
-                                    consensus::ProvenBatchMode::InlineTx => {
-                                        pallet_shielded_pool::types::BlockProofMode::InlineTx
-                                    }
-                                    consensus::ProvenBatchMode::ReceiptRoot => {
-                                        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot
-                                    }
-                                    consensus::ProvenBatchMode::RecursiveBlock => {
-                                        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
-                                    }
-                                },
-                                proof_kind: match announcement.proof_kind {
-                                    consensus::ProofArtifactKind::InlineTx => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::InlineTx
-                                    }
-                                    consensus::ProofArtifactKind::TxLeaf => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
-                                    }
-                                    consensus::ProofArtifactKind::ReceiptRoot => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
-                                    }
-                                    consensus::ProofArtifactKind::RecursiveBlockV1 => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-                                    }
-                                    consensus::ProofArtifactKind::RecursiveBlockV2 => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
-                                    }
-                                    consensus::ProofArtifactKind::Custom(bytes) => {
-                                        pallet_shielded_pool::types::ProofArtifactKind::Custom(
-                                            bytes,
-                                        )
-                                    }
-                                },
+                                proof_mode: route.mode,
+                                proof_kind: route.kind,
                                 verifier_profile: announcement.verifier_profile,
                             };
                             let _ = handle
@@ -11155,7 +11101,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let hold_mining_while_proving = load_hold_mining_while_proving();
         let selected_artifact = prepared_artifact_selector_from_env();
         let prepared_bundle_required_while_proving =
-            proof_kind_requires_prepared_bundle(selected_artifact.proof_kind);
+            route_requires_prepared_bundle(selected_artifact.route);
         if prepared_bundle_required_while_proving && hold_mining_while_proving {
             let client_for_mining_pause = client.clone();
             let coordinator_for_mining_pause = Arc::clone(&prover_coordinator);
@@ -11235,13 +11181,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             });
             tracing::info!(
                 min_ready_proven_batch_txs = min_ready_batch_txs,
-                proof_kind = ?selected_artifact.proof_kind,
+                proof_kind = ?selected_artifact.route.kind,
                 verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "Mining will pause while shielded batches wait for a ready prepared bundle"
             );
         } else if prepared_bundle_required_while_proving {
             tracing::warn!(
-                proof_kind = ?selected_artifact.proof_kind,
+                proof_kind = ?selected_artifact.route.kind,
                 verifier_profile = %hex::encode(selected_artifact.verifier_profile),
                 "Mining hold while proving is disabled; parent-bound prepared bundles may churn on stale parents"
             );
@@ -12347,11 +12293,11 @@ mod tests {
         let _guard = set_block_proof_mode("");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
-            selector.compat_mode,
+            selector.route.mode,
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert_eq!(
-            selector.proof_kind,
+            selector.route.kind,
             pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
@@ -12361,7 +12307,7 @@ mod tests {
         let _guard = set_block_proof_mode("receipt_root");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
-            selector.proof_kind,
+            selector.route.kind,
             pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
         );
         assert_eq!(
@@ -12375,34 +12321,46 @@ mod tests {
         let _guard = set_block_proof_mode("recursive_block");
         let selector = prepared_artifact_selector_from_env();
         assert_eq!(
-            selector.compat_mode,
+            selector.route.mode,
             pallet_shielded_pool::types::BlockProofMode::RecursiveBlock
         );
         assert_eq!(
-            selector.proof_kind,
+            selector.route.kind,
             pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
 
     #[test]
     fn prepared_bundle_requirement_matches_shipped_and_experimental_lanes() {
-        assert!(proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot
+        assert!(route_requires_prepared_bundle(
+            pallet_shielded_pool::types::BlockProofRoute::explicit_receipt_root()
         ));
-        assert!(proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+        assert!(route_requires_prepared_bundle(
+            pallet_shielded_pool::types::BlockProofRoute::new(
+                pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
+                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
+            )
         ));
-        assert!(proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
+        assert!(route_requires_prepared_bundle(
+            pallet_shielded_pool::types::canonical_shipped_block_proof_route()
         ));
-        assert!(!proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+        assert!(!route_requires_prepared_bundle(
+            pallet_shielded_pool::types::BlockProofRoute::new(
+                pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                pallet_shielded_pool::types::ProofArtifactKind::InlineTx
+            )
         ));
-        assert!(!proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
+        assert!(!route_requires_prepared_bundle(
+            pallet_shielded_pool::types::BlockProofRoute::new(
+                pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                pallet_shielded_pool::types::ProofArtifactKind::TxLeaf
+            )
         ));
-        assert!(!proof_kind_requires_prepared_bundle(
-            pallet_shielded_pool::types::ProofArtifactKind::Custom([7u8; 16])
+        assert!(!route_requires_prepared_bundle(
+            pallet_shielded_pool::types::BlockProofRoute::new(
+                pallet_shielded_pool::types::BlockProofMode::InlineTx,
+                pallet_shielded_pool::types::ProofArtifactKind::Custom([7u8; 16])
+            )
         ));
     }
 
@@ -12413,7 +12371,7 @@ mod tests {
         ensure_native_block_proof_selector(selector)
             .expect("legacy env modes should be forced onto canonical recursive_block");
         assert_eq!(
-            selector.proof_kind,
+            selector.route.kind,
             pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
         );
     }
@@ -12525,17 +12483,13 @@ mod tests {
 
     #[test]
     fn recursive_block_outcomes_are_not_cacheable() {
-        let selector = PreparedArtifactSelector {
-            compat_mode: pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
-            proof_kind: pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2,
-            verifier_profile: consensus::recursive_block_artifact_verifier_profile(),
-        };
         let outcome = PreparedAggregationOutcome::native(
             PreparedAggregationArtifacts::ReceiptRoot(dummy_receipt_root_payload()),
             NativeArtifactSelectionReport::native_lane_selected(),
         );
         assert!(!should_store_prove_ahead_aggregation_outcome(
-            selector, &outcome
+            PreparedArtifactSelector::shipped_recursive_block(),
+            &outcome
         ));
     }
 

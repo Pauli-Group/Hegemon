@@ -11,8 +11,7 @@ pub struct BundleMatchKey {
     pub parent_hash: H256,
     pub tx_statements_commitment: [u8; 48],
     pub tx_count: u32,
-    pub proof_mode: pallet_shielded_pool::types::BlockProofMode,
-    pub proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+    pub route: pallet_shielded_pool::types::BlockProofRoute,
     pub verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     pub artifact_hash: [u8; 32],
 }
@@ -343,18 +342,14 @@ impl ProverCoordinator {
     fn prepared_bundle_identity_from_mode(
         mode: pallet_shielded_pool::types::BlockProofMode,
     ) -> (
-        pallet_shielded_pool::types::BlockProofMode,
-        pallet_shielded_pool::types::ProofArtifactKind,
+        pallet_shielded_pool::types::BlockProofRoute,
         pallet_shielded_pool::types::VerifierProfileDigest,
     ) {
-        let (proof_kind, verifier_profile) =
-            crate::substrate::artifact_market::compat_pallet_artifact_identity(mode);
-        (mode, proof_kind, verifier_profile)
+        crate::substrate::artifact_market::compat_pallet_route_identity(mode)
     }
 
     fn active_prepared_bundle_identity_from_env() -> (
-        pallet_shielded_pool::types::BlockProofMode,
-        pallet_shielded_pool::types::ProofArtifactKind,
+        pallet_shielded_pool::types::BlockProofRoute,
         pallet_shielded_pool::types::VerifierProfileDigest,
     ) {
         Self::prepared_bundle_identity_from_mode(Self::prepared_proof_mode_from_env())
@@ -402,15 +397,11 @@ impl ProverCoordinator {
 
     pub fn pending_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
         let state = self.state.lock();
-        let (proof_mode, proof_kind, verifier_profile) =
-            Self::active_prepared_bundle_identity_from_env();
-        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
-            if let Some(prepared) = Self::best_prepared_candidate_locked(
-                &state,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            ) {
+        let (route, verifier_profile) = Self::active_prepared_bundle_identity_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(route.mode) {
+            if let Some(prepared) =
+                Self::best_prepared_candidate_locked(&state, route, verifier_profile)
+            {
                 prepared
             } else {
                 Self::selected_or_pending_candidate_locked(&state)
@@ -424,10 +415,9 @@ impl ProverCoordinator {
 
     pub fn authoring_transactions(&self, max_txs: usize) -> Vec<Vec<u8>> {
         let state = self.state.lock();
-        let (proof_mode, proof_kind, verifier_profile) =
-            Self::active_prepared_bundle_identity_from_env();
-        let mut txs = if Self::proof_mode_requires_prepared_bundles(proof_mode) {
-            Self::best_prepared_candidate_locked(&state, proof_mode, proof_kind, verifier_profile)
+        let (route, verifier_profile) = Self::active_prepared_bundle_identity_from_env();
+        let mut txs = if Self::proof_mode_requires_prepared_bundles(route.mode) {
+            Self::best_prepared_candidate_locked(&state, route, verifier_profile)
                 .unwrap_or_default()
         } else {
             Self::selected_or_pending_candidate_locked(&state)
@@ -441,8 +431,7 @@ impl ProverCoordinator {
         parent_hash: H256,
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
-        proof_mode: pallet_shielded_pool::types::BlockProofMode,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        route: pallet_shielded_pool::types::BlockProofRoute,
         verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     ) -> Option<PreparedBundle> {
         let state = self.state.lock();
@@ -453,8 +442,7 @@ impl ProverCoordinator {
                 bundle.key.parent_hash == parent_hash
                     && bundle.key.tx_statements_commitment == tx_statements_commitment
                     && bundle.key.tx_count == tx_count
-                    && bundle.key.proof_mode == proof_mode
-                    && bundle.key.proof_kind == proof_kind
+                    && bundle.key.route == route
                     && bundle.key.verifier_profile == verifier_profile
             })
             .max_by(|left, right| compare_prepared_bundles(left, right))
@@ -465,8 +453,7 @@ impl ProverCoordinator {
         &self,
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
-        proof_mode: pallet_shielded_pool::types::BlockProofMode,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        route: pallet_shielded_pool::types::BlockProofRoute,
         verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     ) -> Option<PreparedBundle> {
         let state = self.state.lock();
@@ -474,8 +461,7 @@ impl ProverCoordinator {
             &state,
             tx_statements_commitment,
             tx_count,
-            proof_mode,
-            proof_kind,
+            route,
             verifier_profile,
         )
         .cloned()
@@ -485,15 +471,13 @@ impl ProverCoordinator {
         &self,
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
-        proof_mode: pallet_shielded_pool::types::BlockProofMode,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        route: pallet_shielded_pool::types::BlockProofRoute,
         verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     ) -> Option<pallet_shielded_pool::types::CandidateArtifact> {
         self.lookup_prepared_bundle_any_parent(
             tx_statements_commitment,
             tx_count,
-            proof_mode,
-            proof_kind,
+            route,
             verifier_profile,
         )
         .map(|bundle| bundle.payload)
@@ -568,14 +552,12 @@ impl ProverCoordinator {
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
     ) -> Option<PreparedBundle> {
-        let (proof_mode, proof_kind, verifier_profile) =
-            Self::active_prepared_bundle_identity_from_env();
+        let (route, verifier_profile) = Self::active_prepared_bundle_identity_from_env();
         self.lookup_prepared_bundle(
             parent_hash,
             tx_statements_commitment,
             tx_count,
-            proof_mode,
-            proof_kind,
+            route,
             verifier_profile,
         )
     }
@@ -860,11 +842,8 @@ impl ProverCoordinator {
         if candidate.is_empty() || existing_best < self.config.target_txs {
             return;
         }
-        let (proof_mode, proof_kind, verifier_profile) =
-            Self::active_prepared_bundle_identity_from_env();
-        if Self::best_prepared_candidate_locked(state, proof_mode, proof_kind, verifier_profile)
-            .is_some()
-        {
+        let (route, verifier_profile) = Self::active_prepared_bundle_identity_from_env();
+        if Self::best_prepared_candidate_locked(state, route, verifier_profile).is_some() {
             return;
         }
         if state.adaptive_liveness_fired_generation == Some(state.generation) {
@@ -1192,16 +1171,14 @@ impl ProverCoordinator {
 
     fn best_prepared_candidate_locked(
         state: &CoordinatorState,
-        proof_mode: pallet_shielded_pool::types::BlockProofMode,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        route: pallet_shielded_pool::types::BlockProofRoute,
         verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     ) -> Option<Vec<Vec<u8>>> {
         let current_parent = state.current_parent;
         let mut best_current_parent: Option<&PreparedBundle> = None;
         for bundle in state.prepared.values() {
             if Some(bundle.key.parent_hash) == current_parent
-                && bundle.key.proof_mode == proof_mode
-                && bundle.key.proof_kind == proof_kind
+                && bundle.key.route == route
                 && bundle.key.verifier_profile == verifier_profile
                 && best_current_parent
                     .is_none_or(|current| bundle.candidate_txs.len() > current.candidate_txs.len())
@@ -1217,8 +1194,7 @@ impl ProverCoordinator {
         state: &CoordinatorState,
         tx_statements_commitment: [u8; 48],
         tx_count: u32,
-        proof_mode: pallet_shielded_pool::types::BlockProofMode,
-        proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
+        route: pallet_shielded_pool::types::BlockProofRoute,
         verifier_profile: pallet_shielded_pool::types::VerifierProfileDigest,
     ) -> Option<&PreparedBundle> {
         state
@@ -1227,8 +1203,7 @@ impl ProverCoordinator {
             .filter(|bundle| {
                 bundle.key.tx_statements_commitment == tx_statements_commitment
                     && bundle.key.tx_count == tx_count
-                    && bundle.key.proof_mode == proof_mode
-                    && bundle.key.proof_kind == proof_kind
+                    && bundle.key.route == route
                     && bundle.key.verifier_profile == verifier_profile
             })
             .max_by(|left, right| compare_prepared_bundles(left, right))
@@ -1324,8 +1299,7 @@ fn candidate_bundle_key(
         parent_hash,
         tx_statements_commitment: payload.tx_statements_commitment,
         tx_count: payload.tx_count,
-        proof_mode: payload.proof_mode,
-        proof_kind: payload.proof_kind,
+        route: payload.route(),
         verifier_profile: payload.verifier_profile,
         artifact_hash: crate::substrate::artifact_market::candidate_artifact_hash(payload),
     }
@@ -1336,7 +1310,7 @@ fn compare_prepared_bundles(left: &PreparedBundle, right: &PreparedBundle) -> st
         .tx_count
         .cmp(&right.key.tx_count)
         .then_with(|| {
-            proof_mode_rank(left.payload.proof_mode).cmp(&proof_mode_rank(right.payload.proof_mode))
+            proof_mode_rank(left.key.route.mode).cmp(&proof_mode_rank(right.key.route.mode))
         })
         .then_with(|| {
             crate::substrate::artifact_market::candidate_artifact_hash(&right.payload).cmp(
@@ -1455,10 +1429,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ready_batch_lookup_uses_parent_commitment_and_tx_count() {
         let _mode = set_block_proof_mode("receipt_root");
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
         let parent_hash = H256::repeat_byte(11);
         let mut config = test_config();
         config.target_txs = 2;
@@ -1483,14 +1456,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(120)).await;
 
         let commitment = [2u8; 48];
-        let looked_up = coordinator.lookup_prepared_bundle(
-            parent_hash,
-            commitment,
-            2,
-            proof_mode,
-            proof_kind,
-            verifier_profile,
-        );
+        let looked_up =
+            coordinator.lookup_prepared_bundle(parent_hash, commitment, 2, route, verifier_profile);
         assert!(looked_up.is_some());
         assert_eq!(coordinator.pending_transactions(8).len(), 2);
     }
@@ -1521,24 +1488,17 @@ mod tests {
             vec![vec![3u8], vec![4u8]],
         );
 
-        let (receipt_mode, receipt_kind, receipt_profile) =
+        let (receipt_route, receipt_profile) =
             ProverCoordinator::prepared_bundle_identity_from_mode(
                 pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
             );
-        let (recursive_mode, recursive_kind, recursive_profile) =
+        let (recursive_route, recursive_profile) =
             ProverCoordinator::prepared_bundle_identity_from_mode(
                 pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
             );
 
         let receipt_bundle = coordinator
-            .lookup_prepared_bundle(
-                parent_hash,
-                commitment,
-                2,
-                receipt_mode,
-                receipt_kind,
-                receipt_profile,
-            )
+            .lookup_prepared_bundle(parent_hash, commitment, 2, receipt_route, receipt_profile)
             .expect("receipt-root bundle should be found");
         assert_eq!(
             receipt_bundle.payload.proof_kind,
@@ -1550,8 +1510,7 @@ mod tests {
                 parent_hash,
                 commitment,
                 2,
-                recursive_mode,
-                recursive_kind,
+                recursive_route,
                 recursive_profile,
             )
             .expect("recursive bundle should be found");
@@ -1673,10 +1632,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stale_parent_results_are_preserved_for_reuse() {
         let _mode = set_block_proof_mode("receipt_root");
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
         let first_parent = H256::repeat_byte(21);
         let second_parent = H256::repeat_byte(22);
         let best_state = Arc::new(Mutex::new((first_parent, 12u64)));
@@ -1713,22 +1671,11 @@ mod tests {
         }
         tokio::time::sleep(Duration::from_millis(260)).await;
 
-        let stale_lookup = coordinator.lookup_prepared_bundle(
-            first_parent,
-            [1u8; 48],
-            1,
-            proof_mode,
-            proof_kind,
-            verifier_profile,
-        );
+        let stale_lookup =
+            coordinator.lookup_prepared_bundle(first_parent, [1u8; 48], 1, route, verifier_profile);
         assert!(stale_lookup.is_some());
-        let any_parent_lookup = coordinator.lookup_prepared_bundle_any_parent(
-            [1u8; 48],
-            1,
-            proof_mode,
-            proof_kind,
-            verifier_profile,
-        );
+        let any_parent_lookup =
+            coordinator.lookup_prepared_bundle_any_parent([1u8; 48], 1, route, verifier_profile);
         assert!(any_parent_lookup.is_some());
         assert!(coordinator.stale_count() > 0);
     }
@@ -1736,10 +1683,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pending_transactions_do_not_fallback_to_stale_prepared_parent() {
         let _mode = set_block_proof_mode("receipt_root");
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
         let first_parent = H256::repeat_byte(91);
         let second_parent = H256::repeat_byte(92);
         let best_state = Arc::new(Mutex::new((first_parent, 30u64)));
@@ -1789,23 +1735,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(260)).await;
 
         assert!(coordinator
-            .lookup_prepared_bundle(
-                first_parent,
-                [1u8; 48],
-                1,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle(first_parent, [1u8; 48], 1, route, verifier_profile,)
             .is_some());
         assert!(coordinator
-            .lookup_prepared_bundle_any_parent(
-                [1u8; 48],
-                1,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle_any_parent([1u8; 48], 1, route, verifier_profile,)
             .is_some());
         assert!(coordinator.pending_transactions(8).is_empty());
     }
@@ -1813,10 +1746,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn parent_rollover_still_schedules_new_work_package() {
         let _mode = set_block_proof_mode("receipt_root");
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
         let first_parent = H256::repeat_byte(23);
         let second_parent = H256::repeat_byte(24);
         let best_state = Arc::new(Mutex::new((first_parent, 20u64)));
@@ -1848,14 +1780,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(coordinator
-            .lookup_prepared_bundle(
-                first_parent,
-                [1u8; 48],
-                1,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle(first_parent, [1u8; 48], 1, route, verifier_profile,)
             .is_some());
 
         {
@@ -1866,14 +1791,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(coordinator
-            .lookup_prepared_bundle(
-                second_parent,
-                [1u8; 48],
-                1,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle(second_parent, [1u8; 48], 1, route, verifier_profile,)
             .is_some());
     }
 
@@ -1910,10 +1828,9 @@ mod tests {
                 })
             },
         );
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
 
         let coordinator = ProverCoordinator::new(config, best, pending, build);
         coordinator.start();
@@ -1929,27 +1846,13 @@ mod tests {
 
         assert!(
             coordinator
-                .lookup_prepared_bundle(
-                    parents[0],
-                    [1u8; 48],
-                    1,
-                    proof_mode,
-                    proof_kind,
-                    verifier_profile,
-                )
+                .lookup_prepared_bundle(parents[0], [1u8; 48], 1, route, verifier_profile,)
                 .is_none(),
             "parents outside the retention window must be pruned from prepared cache"
         );
         assert!(
             coordinator
-                .lookup_prepared_bundle(
-                    parents[4],
-                    [1u8; 48],
-                    1,
-                    proof_mode,
-                    proof_kind,
-                    verifier_profile,
-                )
+                .lookup_prepared_bundle(parents[4], [1u8; 48], 1, route, verifier_profile,)
                 .is_some(),
             "current parent must remain cached"
         );
@@ -1993,10 +1896,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn throughput_mode_defers_until_target_batch_is_available() {
         let _mode = set_block_proof_mode("receipt_root");
-        let (proof_mode, proof_kind, verifier_profile) =
-            ProverCoordinator::prepared_bundle_identity_from_mode(
-                pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
-            );
+        let (route, verifier_profile) = ProverCoordinator::prepared_bundle_identity_from_mode(
+            pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
+        );
         let parent_hash = H256::repeat_byte(74);
         let mut config = test_config();
         config.target_txs = 4;
@@ -2034,14 +1936,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(80)).await;
 
         assert!(coordinator
-            .lookup_prepared_bundle(
-                parent_hash,
-                [1u8; 48],
-                1,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle(parent_hash, [1u8; 48], 1, route, verifier_profile,)
             .is_none());
         assert_eq!(coordinator.pending_transactions(8).len(), 0);
 
@@ -2050,14 +1945,7 @@ mod tests {
 
         assert_eq!(coordinator.pending_transactions(8).len(), 4);
         assert!(coordinator
-            .lookup_prepared_bundle(
-                parent_hash,
-                [4u8; 48],
-                4,
-                proof_mode,
-                proof_kind,
-                verifier_profile,
-            )
+            .lookup_prepared_bundle(parent_hash, [4u8; 48], 4, route, verifier_profile,)
             .is_some());
     }
 
