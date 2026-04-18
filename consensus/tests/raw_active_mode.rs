@@ -950,6 +950,24 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
 
 #[test]
 #[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
+fn raw_active_rejects_tampered_claim_receipt_fields() {
+    let fixture = raw_active_fixture();
+    let mut block = fixture.block.clone();
+    let claims = block
+        .tx_validity_claims
+        .as_mut()
+        .expect("tx validity claims");
+    claims[0].receipt.proof_digest[0] ^= 0x5a;
+
+    let verifier = ParallelProofVerifier::new();
+    let err = verifier
+        .verify_block_with_backend(&block, Some(&fixture.backend_inputs), &fixture.base_tree)
+        .expect_err("tampered tx validity claim receipt fields must be rejected");
+    assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+}
+
+#[test]
+#[ignore = "heavy integration: raw-active native path is covered in native-path CI"]
 fn raw_active_block_is_accepted() {
     let fixture = raw_active_fixture();
     let verifier = ParallelProofVerifier::new();

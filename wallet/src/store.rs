@@ -28,6 +28,17 @@ const NONCE_LEN: usize = 12;
 /// Default tree depth - must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
 const DEFAULT_TREE_DEPTH: u32 = 32;
 
+fn deserialize_exact<T>(bytes: &[u8]) -> Result<T, bincode::Error>
+where
+    T: serde::de::DeserializeOwned,
+{
+    use bincode::Options;
+
+    bincode::DefaultOptions::new()
+        .reject_trailing_bytes()
+        .deserialize(bytes)
+}
+
 /// Wallet store - manages encrypted wallet state on disk.
 /// The encryption key is zeroized on drop to prevent key material from persisting in memory.
 #[derive(Debug)]
@@ -134,7 +145,7 @@ impl WalletStore {
 
     pub fn open<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
         let bytes = fs::read(path.as_ref())?;
-        let file: WalletFile = bincode::deserialize(&bytes)?;
+        let file: WalletFile = deserialize_exact(&bytes)?;
         let key = derive_key(passphrase, &file.salt)?;
         let cipher = ChaCha20Poly1305::new(&key.into());
         let plaintext = cipher
@@ -1054,7 +1065,7 @@ impl WalletStore {
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
-    bincode::deserialize::<WalletState>(bytes).map_err(|err| {
+    deserialize_exact::<WalletState>(bytes).map_err(|err| {
         WalletError::Serialization(format!("failed to deserialize wallet state: {err}"))
     })
 }
@@ -1469,6 +1480,51 @@ mod tests {
         let reopened = WalletStore::open(&path, "passphrase").unwrap();
         let addr2 = reopened.next_address().unwrap();
         assert_ne!(addr1.pk_recipient, addr2.pk_recipient);
+    }
+
+    #[test]
+    fn wallet_file_rejects_trailing_bytes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        drop(store);
+
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        fs::write(&path, bytes).unwrap();
+
+        let err = WalletStore::open(&path, "passphrase")
+            .expect_err("wallet file with trailing bytes must fail closed");
+        assert!(matches!(err, WalletError::Serialization(_)));
+    }
+
+    #[test]
+    fn wallet_state_rejects_trailing_bytes() {
+        let state = WalletState {
+            mode: WalletMode::WatchOnly,
+            tree_depth: DEFAULT_TREE_DEPTH,
+            root_secret: None,
+            derived: None,
+            incoming: IncomingViewingKey::from_keys(&RootSecret::from_bytes([7u8; 32]).derive()),
+            full_viewing_key: None,
+            outgoing: None,
+            next_address_index: 0,
+            notes: Vec::new(),
+            pending: Vec::new(),
+            recent: Vec::new(),
+            commitments: Vec::new(),
+            next_commitment_index: 0,
+            next_ciphertext_index: 0,
+            last_synced_height: 0,
+            last_synced_block_hash: None,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: None,
+        };
+        let mut bytes = bincode::serialize(&state).unwrap();
+        bytes.push(0xff);
+        let err = deserialize_wallet_state(&bytes)
+            .expect_err("wallet state with trailing bytes must fail closed");
+        assert!(matches!(err, WalletError::Serialization(_)));
     }
 
     #[test]

@@ -1412,6 +1412,18 @@ pub fn tx_validity_claims_from_tx_artifacts(
     verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
 }
 
+fn ensure_claims_match_verified_artifacts(
+    provided_claims: &[TxValidityClaim],
+    verified_claims: &[TxValidityClaim],
+) -> Result<(), ProofError> {
+    if provided_claims != verified_claims {
+        return Err(ProofError::AggregationProofInputsMismatch(
+            "provided tx validity claims do not match verified backend artifacts".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn tx_statement_bindings_from_tx_artifacts(
     transactions: &[crate::types::Transaction],
     artifacts: &[TxValidityArtifact],
@@ -1521,6 +1533,10 @@ impl ProofVerifier for ParallelProofVerifier {
         if tx_validity_artifacts.is_none() {
             return Err(ProofError::MissingTransactionProofs);
         }
+        let derived_claims_from_artifacts = tx_validity_artifacts
+            .map(|artifacts| tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts))
+            .transpose()?;
+
         let resolved_claims = if let Some(claims) = block.tx_validity_claims.clone() {
             if claims.len() != block.transactions.len() {
                 return Err(ProofError::CommitmentProofInputsMismatch(format!(
@@ -1529,7 +1545,14 @@ impl ProofVerifier for ParallelProofVerifier {
                     claims.len()
                 )));
             }
-            Some(claims)
+            if let Some(derived_claims) = derived_claims_from_artifacts.as_ref() {
+                ensure_claims_match_verified_artifacts(&claims, derived_claims)?;
+            }
+            Some(
+                derived_claims_from_artifacts
+                    .clone()
+                    .unwrap_or(claims),
+            )
         } else {
             None
         };
@@ -2072,6 +2095,41 @@ mod tests {
         )
         .expect("valid transition");
         assert_eq!(updated.root(), expected.root());
+    }
+
+    #[test]
+    fn provided_claims_must_match_verified_artifacts_exactly() {
+        let provided = vec![TxValidityClaim::new(
+            TxValidityReceipt::new([1u8; 48], [2u8; 48], [3u8; 48], [4u8; 48]),
+            TxStatementBinding {
+                statement_hash: [1u8; 48],
+                anchor: [5u8; 48],
+                fee: 7,
+                circuit_version: 9,
+            },
+        )];
+        let mut verified = provided.clone();
+        verified[0].receipt.proof_digest[0] ^= 0x5a;
+
+        let err = ensure_claims_match_verified_artifacts(&provided, &verified)
+            .expect_err("tampered receipt fields must fail closed");
+        assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+    }
+
+    #[test]
+    fn exact_claim_match_is_accepted() {
+        let provided = vec![TxValidityClaim::new(
+            TxValidityReceipt::new([1u8; 48], [2u8; 48], [3u8; 48], [4u8; 48]),
+            TxStatementBinding {
+                statement_hash: [1u8; 48],
+                anchor: [5u8; 48],
+                fee: 7,
+                circuit_version: 9,
+            },
+        )];
+
+        ensure_claims_match_verified_artifacts(&provided, &provided)
+            .expect("identical verified claims must be accepted");
     }
 
     #[test]
