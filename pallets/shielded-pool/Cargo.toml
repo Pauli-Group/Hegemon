@@ -34,6 +34,7 @@ protocol-versioning = { path = "../../protocol/versioning", package = "protocol-
 sp-io = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 transaction-circuit = { path = "../../circuits/transaction" }
+block-recursion = { path = "../../circuits/block-recursion" }
 superneo-hegemon = { path = "../../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../../crypto" }
 

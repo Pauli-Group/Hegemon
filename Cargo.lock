@@ -7103,6 +7103,7 @@ dependencies = [
  "async-trait",
  "batch-circuit",
  "blake3",
+ "block-recursion",
  "frame-benchmarking",
  "frame-support",
  "frame-system",

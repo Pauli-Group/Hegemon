@@ -2033,11 +2033,25 @@ pub fn recursive_block_tx_line_digest_v2() -> Digest32 {
 }
 
 pub fn recursive_block_proof_encoding_digest_v2() -> Digest32 {
+    recursive_block_proof_encoding_digest_parts_v2(
+        TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+        TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32,
+        project_tree_proof_bytes_v2() as u32,
+    )
+}
+
+fn recursive_block_proof_encoding_digest_parts_v2(
+    chunk_size: u32,
+    max_supported_txs: u32,
+    proof_bytes: u32,
+) -> Digest32 {
     fold_digest32(
         b"hegemon.block-recursion.proof-encoding-digest.v2",
         &[
             b"smallwood-recursive-proof-v1",
-            &(project_tree_proof_bytes_v2() as u32).to_le_bytes(),
+            &chunk_size.to_le_bytes(),
+            &max_supported_txs.to_le_bytes(),
+            &proof_bytes.to_le_bytes(),
         ],
     )
 }
@@ -2455,5 +2469,101 @@ mod diagnostic_tests {
             envelope_bytes,
             relation.auxiliary_witness_words.len()
         );
+    }
+
+    #[test]
+    fn tree_v2_proof_encoding_digest_binds_chunk_geometry() {
+        let current = recursive_block_proof_encoding_digest_v2();
+        let same_width_old_chunk = recursive_block_proof_encoding_digest_parts_v2(
+            256,
+            TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32,
+            project_tree_proof_bytes_v2() as u32,
+        );
+        let same_chunk_old_width = recursive_block_proof_encoding_digest_parts_v2(
+            TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+            TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32,
+            783_135u32,
+        );
+        assert_ne!(current, same_width_old_chunk);
+        assert_ne!(current, same_chunk_old_width);
+    }
+
+    #[test]
+    fn tree_v2_merge_relation_executes_under_synthetic_two_chunk_shape() {
+        let input = sample_input_v2(2);
+        let left_statement =
+            recursive_segment_statement_for_interval_v2(&input.records, &input.semantic, 0, 1)
+                .expect("left statement");
+        let right_statement =
+            recursive_segment_statement_for_interval_v2(&input.records, &input.semantic, 1, 2)
+                .expect("right statement");
+
+        let left_chunk = TreeRelationV2::new_chunk(left_statement.clone(), &input.records[..1])
+            .expect("left chunk relation");
+        let right_chunk = TreeRelationV2::new_chunk(right_statement.clone(), &input.records[1..2])
+            .expect("right chunk relation");
+        let left_proof =
+            prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &left_chunk)
+                .expect("left chunk proof");
+        let right_proof =
+            prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &right_chunk)
+                .expect("right chunk proof");
+        let left_node = TreeProofNodeV2 {
+            level: 0,
+            statement: left_statement,
+            profile: SmallwoodRecursiveProfileTagV1::A,
+            relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
+            proof_bytes: left_proof,
+        };
+        let right_node = TreeProofNodeV2 {
+            level: 0,
+            statement: right_statement,
+            profile: SmallwoodRecursiveProfileTagV1::A,
+            relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
+            proof_bytes: right_proof,
+        };
+
+        let merge_kind = tree_merge_kind_for_level_v2(1);
+        let profile = tree_profile_for_level_v2(1);
+        let target_statement =
+            compose_recursive_segment_statements_v2(&left_node.statement, &right_node.statement)
+                .expect("merge target");
+        let merge_relation =
+            TreeRelationV2::new_merge(merge_kind, target_statement.clone(), &left_node, &right_node)
+                .expect("merge relation");
+        let merge_proof =
+            prove_tree_relation_v2(profile, &merge_relation).expect("merge proof");
+        verify_tree_child_v2(profile, merge_kind, 1, &target_statement, &merge_proof)
+            .expect("merge verify");
+    }
+
+    #[test]
+    fn tree_v2_carry_relation_executes_under_synthetic_odd_chunk_shape() {
+        let input = sample_input_v2(1);
+        let statement =
+            recursive_segment_statement_for_interval_v2(&input.records, &input.semantic, 0, 1)
+                .expect("chunk statement");
+        let chunk_relation =
+            TreeRelationV2::new_chunk(statement.clone(), &input.records[..1]).expect("chunk relation");
+        let chunk_proof =
+            prove_tree_relation_v2(SmallwoodRecursiveProfileTagV1::A, &chunk_relation)
+                .expect("chunk proof");
+        let child_node = TreeProofNodeV2 {
+            level: 0,
+            statement: statement.clone(),
+            profile: SmallwoodRecursiveProfileTagV1::A,
+            relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
+            proof_bytes: chunk_proof,
+        };
+
+        let carry_kind = tree_carry_kind_for_level_v2(1);
+        let profile = tree_profile_for_level_v2(1);
+        let carry_relation =
+            TreeRelationV2::new_carry(carry_kind, statement.clone(), &child_node)
+                .expect("carry relation");
+        let carry_proof =
+            prove_tree_relation_v2(profile, &carry_relation).expect("carry proof");
+        verify_tree_child_v2(profile, carry_kind, 1, &statement, &carry_proof)
+            .expect("carry verify");
     }
 }

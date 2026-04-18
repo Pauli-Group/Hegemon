@@ -26,6 +26,14 @@ Two non-inline block-proof lanes remain in-tree, but only one is now shipped:
 - **`RecursiveBlockV2`** is the shipped constant-size recursive lane. It has a real bounded-domain invariant and explicit verification plumbing, and it is now the default shipped path.
 - **`ReceiptRoot`** is the explicit native comparison lane. It still carries a parent-bound commitment proof plus a native receipt-root artifact. It is useful for comparison, diagnostics, and research, but it is not the default shipped path.
 
+The current shipped `RecursiveBlockV2` domain is a single bounded chunk:
+
+- `TREE_RECURSIVE_CHUNK_SIZE_V2 = 1000`
+- `TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 = 1000`
+- `max_tree_level = 0`
+
+So the current shipped invariant is “one bounded chunk artifact under the `v2` verification contract,” not “a live multi-level merge tree.” Merge/carry relation code remains in-tree and covered by synthetic relation tests, but it is not exercised by the current product geometry.
+
 The old `InlineTx` label remains only as historical compatibility vocabulary and fail-closed handling. It is not a shipped non-empty shielded block mode.
 
 ## Immediate topology
@@ -60,6 +68,7 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 ### Assumptions
 
 - shipped on-chain block artifact: `recursive_block_v2 = 522,159 B`
+- current shipped `RecursiveBlockV2` domain is one chunk (`max_supported_txs = chunk_size = 1000`, `max_tree_level = 0`)
 - legacy `RecursiveBlockV1 = 699,404 B` is not used for the shipped planning model
 - proofless sidecar transfer public on-chain body: about `468 B/tx`
 - raw DA ciphertext ingress: about `4,294 B/tx`

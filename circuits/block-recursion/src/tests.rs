@@ -943,7 +943,6 @@ fn tree_v2_chunk_schedule_projection_sweep() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_succeeds() {
     let (artifact, public) = prove_artifact_v2(5);
     let verified = verify_block_recursive_v2(&artifact, &public).unwrap();
@@ -955,7 +954,6 @@ fn prove_and_verify_recursive_artifact_v2_succeeds() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_across_tx_counts() {
     let short = serialize_recursive_block_artifact_v2(&prove_artifact_v2(1).0)
         .unwrap()
@@ -967,7 +965,6 @@ fn recursive_artifact_v2_constant_size_across_tx_counts() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
     let report = tree_proof_cap_report_v2();
     if TREE_RECURSIVE_CHUNK_SIZE_V2 + 1 > report.max_supported_txs {
@@ -985,7 +982,6 @@ fn prove_and_verify_recursive_artifact_v2_at_first_merge_boundary_succeeds() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
     let report = tree_proof_cap_report_v2();
     if TREE_RECURSIVE_CHUNK_SIZE_V2 + 1 > report.max_supported_txs {
@@ -1007,7 +1003,6 @@ fn recursive_artifact_v2_constant_size_across_first_merge_boundary() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_across_first_carry_boundary_succeeds() {
     let report = tree_proof_cap_report_v2();
     if (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1 > report.max_supported_txs {
@@ -1025,7 +1020,6 @@ fn prove_and_verify_recursive_artifact_v2_across_first_carry_boundary_succeeds()
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_across_first_carry_boundary() {
     let report = tree_proof_cap_report_v2();
     if (TREE_RECURSIVE_CHUNK_SIZE_V2 * 2) + 1 > report.max_supported_txs {
@@ -1047,7 +1041,6 @@ fn recursive_artifact_v2_constant_size_across_first_carry_boundary() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_at_deepest_supported_level_succeeds() {
     let report = tree_proof_cap_report_v2();
     let deepest_level_boundary = if report.max_tree_level == 0 {
@@ -1062,7 +1055,6 @@ fn prove_and_verify_recursive_artifact_v2_at_deepest_supported_level_succeeds() 
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn prove_and_verify_recursive_artifact_v2_at_max_supported_txs_succeeds() {
     let report = tree_proof_cap_report_v2();
     let (artifact, public) = prove_artifact_v2(report.max_supported_txs as u32);
@@ -1071,7 +1063,6 @@ fn prove_and_verify_recursive_artifact_v2_at_max_supported_txs_succeeds() {
 }
 
 #[test]
-#[ignore = "tree_v2 is experimental and not on the shipped product lane"]
 fn recursive_artifact_v2_constant_size_at_deepest_supported_level() {
     let report = tree_proof_cap_report_v2();
     let deepest_level_boundary = if report.max_tree_level == 0 {

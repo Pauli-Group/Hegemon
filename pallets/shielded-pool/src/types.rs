@@ -756,6 +756,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recursive_block_v2_artifact_cap_matches_block_recursion_geometry() {
+        assert_eq!(
+            RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+            block_recursion::recursive_block_artifact_bytes_v2(),
+            "runtime recursive_block_v2 cap drifted away from block-recursion geometry"
+        );
+    }
+
+    #[test]
     fn native_tx_leaf_artifact_cap_stays_aligned_with_live_backend() {
         assert_eq!(
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
