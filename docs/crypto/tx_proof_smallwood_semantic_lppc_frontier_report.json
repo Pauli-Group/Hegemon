@@ -5,7 +5,7 @@
     "note": "Generated from the new semantic LPPC frontend seam on the current tree. These are structural SmallWood projections over the exact NativeTxValidityRelation witness order, not full prove/verify roundtrips."
   },
   "baseline": {
-    "current_smallwood_candidate_bytes": 93156,
+    "current_smallwood_candidate_bytes": 87086,
     "profile": {
       "rho": 2,
       "nb_opened_evals": 3,
@@ -24,7 +24,7 @@
       "packing_factor": 4,
       "padded_witness_elements": 4096,
       "constraint_count_estimate": 1270,
-      "projected_total_bytes": 54240,
+      "projected_total_bytes": 52874,
       "security_floor_bits": 127.9999999993282,
       "meets_128_bit_floor": true
     },
@@ -34,7 +34,7 @@
       "packing_factor": 8,
       "padded_witness_elements": 4096,
       "constraint_count_estimate": 712,
-      "projected_total_bytes": 37776,
+      "projected_total_bytes": 36346,
       "security_floor_bits": 127.9999999993282,
       "meets_128_bit_floor": true
     },
@@ -44,7 +44,7 @@
       "packing_factor": 16,
       "padded_witness_elements": 4096,
       "constraint_count_estimate": 433,
-      "projected_total_bytes": 32712,
+      "projected_total_bytes": 31154,
       "security_floor_bits": 127.9999999993282,
       "meets_128_bit_floor": true
     }

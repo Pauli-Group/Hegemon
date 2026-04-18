@@ -1065,9 +1065,7 @@ mod tests {
 
     use super::*;
 
-    fn seeded_sender_and_recipient(
-        seed: u64,
-    ) -> (WalletStore, WalletStore, rand::rngs::StdRng) {
+    fn seeded_sender_and_recipient(seed: u64) -> (WalletStore, WalletStore, rand::rngs::StdRng) {
         let dir = tempdir().unwrap();
         let sender_path = dir.path().join("sender.wallet");
         let recipient_path = dir.path().join("recipient.wallet");
@@ -1257,5 +1255,4 @@ mod tests {
         );
         assert_eq!(built.bundle.nullifiers.len(), built.nullifiers.len());
     }
-
 }

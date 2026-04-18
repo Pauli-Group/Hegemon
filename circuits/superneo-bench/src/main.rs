@@ -10,7 +10,9 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use blake3::Hasher;
 use clap::{Parser, ValueEnum};
-use consensus::{clear_verified_native_tx_leaf_store, native_receipt_root_verify_mode_label};
+use consensus::proof::{
+    clear_verified_native_tx_leaf_store, native_receipt_root_verify_mode_label,
+};
 use native_backend_ref::{
     verify_case as reference_verify_case, ReviewVectorCase as RefReviewVectorCase,
 };

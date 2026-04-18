@@ -3858,6 +3858,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn packed_smallwood_frontend_packed128_compact_bindings_inline_merkle_skip_initial_mds_matches_expected_shape(
     ) {
         let mut witness = sample_witness();

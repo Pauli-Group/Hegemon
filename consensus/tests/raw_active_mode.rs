@@ -736,7 +736,7 @@ fn build_upgrade_transition_blocks() -> (
     };
     let (mut second_block, _second_updated_nullifiers, second_updated_tree) =
         assemble_pow_block(second_params).expect("assemble second native block");
-    let second_statement_bindings = vec![statement_binding_from_proof(&proof_c)];
+    let second_statement_bindings = [statement_binding_from_proof(&proof_c)];
     let second_statement_hashes = second_statement_bindings
         .iter()
         .map(|binding| binding.statement_hash)

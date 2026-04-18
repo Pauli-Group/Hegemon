@@ -5,8 +5,8 @@
     "semantic_witness_rows": 128,
     "total_secret_rows": 392,
     "witness_rows": 2312,
-    "projected_total_bytes": 115176,
-    "shipped_smallwood_candidate_bytes": 93156
+    "projected_total_bytes": 113362,
+    "shipped_smallwood_candidate_bytes": 87086
   },
   {
     "packing_factor": 64,
@@ -14,9 +14,9 @@
     "semantic_witness_rows": 64,
     "total_secret_rows": 328,
     "witness_rows": 1480,
-    "projected_total_bytes": 102120,
-    "exact_total_bytes": 102120,
-    "shipped_smallwood_candidate_bytes": 93156
+    "projected_total_bytes": 99794,
+    "exact_total_bytes": 99794,
+    "shipped_smallwood_candidate_bytes": 87086
   },
   {
     "packing_factor": 128,
@@ -24,7 +24,7 @@
     "semantic_witness_rows": 32,
     "total_secret_rows": 296,
     "witness_rows": 1064,
-    "projected_total_bytes": 120936,
-    "shipped_smallwood_candidate_bytes": 93156
+    "projected_total_bytes": 117586,
+    "shipped_smallwood_candidate_bytes": 87086
   }
 ]

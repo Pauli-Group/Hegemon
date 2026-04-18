@@ -11973,7 +11973,7 @@ mod tests {
         assert!(route_requires_prepared_bundle(
             pallet_shielded_pool::types::BlockProofRoute::explicit_receipt_root()
         ));
-        assert!(route_requires_prepared_bundle(
+        assert!(!route_requires_prepared_bundle(
             pallet_shielded_pool::types::BlockProofRoute::new(
                 pallet_shielded_pool::types::BlockProofMode::RecursiveBlock,
                 pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1

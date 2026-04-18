@@ -660,6 +660,7 @@ fn row_output_asset(statement: &PackedStatement<'_>, output: usize) -> usize {
     row_output_base(statement, output) + 1
 }
 
+#[allow(dead_code)]
 #[inline]
 fn bridge_prf_permutation() -> usize {
     0
@@ -675,11 +676,13 @@ fn bridge_input_merkle_permutation(input: usize, level: usize, chunk: usize) -> 
     1 + input * (3 + MERKLE_DEPTH * 2 + 1) + 3 + level * 2 + chunk
 }
 
+#[allow(dead_code)]
 #[inline]
 fn bridge_input_nullifier_permutation(input: usize) -> usize {
     1 + input * (3 + MERKLE_DEPTH * 2 + 1) + (3 + MERKLE_DEPTH * 2 + 1) - 1
 }
 
+#[allow(dead_code)]
 #[inline]
 fn bridge_output_commitment_permutation(output: usize, chunk: usize) -> usize {
     1 + MAX_INPUTS * (3 + MERKLE_DEPTH * 2 + 1) + output * 3 + chunk

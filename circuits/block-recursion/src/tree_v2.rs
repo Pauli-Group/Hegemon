@@ -1391,7 +1391,7 @@ fn merge_relation_mismatch_v2(
     }
     let summary = decode_merge_child_summary_v2(
         bytes
-            .get(*&cursor..cursor + TREE_MERGE_SUMMARY_BYTES_V2)
+            .get(cursor..cursor + TREE_MERGE_SUMMARY_BYTES_V2)
             .ok_or(BlockRecursionError::InvalidLength {
                 what: "tree_v2 merge child summary bytes",
                 expected: TREE_MERGE_SUMMARY_BYTES_V2,

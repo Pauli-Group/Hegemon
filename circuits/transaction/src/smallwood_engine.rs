@@ -2058,10 +2058,12 @@ pub fn report_smallwood_backend_opening_surface_with_profile_v1(
         .len()
         .saturating_mul(cfg.nb_lvcs_rows.saturating_sub(cfg.nb_lvcs_opened_combi))
         .saturating_mul(std::mem::size_of::<u64>());
-    let subset_eval_shape_matches_beta_packing_identity =
-        trace.proof.pcs.subset_evals.first().map_or(true, |row| {
-            row.len() == cfg.beta().saturating_mul(cfg.packing_factor)
-        });
+    let subset_eval_shape_matches_beta_packing_identity = trace
+        .proof
+        .pcs
+        .subset_evals
+        .first()
+        .is_none_or(|row| row.len() == cfg.beta().saturating_mul(cfg.packing_factor));
     Ok(SmallwoodBackendOpeningSurfaceReportV1 {
         total_inner_proof_bytes: size.total_bytes,
         transcript_bytes: size.transcript_bytes,
@@ -4770,21 +4772,34 @@ fn merkle_build_levels(
     let mut level_idx = 0usize;
     while levels[level_idx].len() > 1 {
         let current = &levels[level_idx];
-        let parents = if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
-            current
-                .par_chunks(2)
-                .map(|pair| hash_merkle_children(&pair[0], &pair[1], transcript_backend))
-                .collect()
-        } else {
-            current
-                .par_chunks(2)
-                .map(|pair| hash_merkle_children(&pair[0], &pair[1], transcript_backend))
-                .collect()
-        };
+        let parents = current
+            .par_chunks(2)
+            .map(|children| hash_merkle_chunk(children, transcript_backend))
+            .collect();
         levels.push(parents);
         level_idx += 1;
     }
     levels[level_idx][0]
+}
+
+fn hash_merkle_chunk(
+    children: &[[u8; DIGEST_BYTES]],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> [u8; DIGEST_BYTES] {
+    debug_assert!(!children.is_empty());
+    debug_assert!(children.len() <= 2);
+    if children.len() == 2 {
+        return hash_merkle_children(&children[0], &children[1], transcript_backend);
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
+        let mut hasher = Hasher::new();
+        hasher.update(SMALLWOOD_XOF_DOMAIN);
+        hasher.update(&(DIGEST_WORDS as u64).to_le_bytes());
+        hasher.update(&children[0]);
+        return read_blake3_xof_digest(hasher.finalize_xof());
+    }
+    let input = digest_to_words(&children[0]);
+    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
 }
 
 fn hash_merkle_children(
