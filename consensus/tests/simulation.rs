@@ -4,7 +4,8 @@ use common::{
     BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_coinbase,
     dummy_transaction, make_validators, validator_set,
 };
-use consensus::{BftConsensus, CommitmentTreeState, HashVerifier, NullifierSet, PowConsensus};
+use consensus::proof::HashVerifier;
+use consensus::{BftConsensus, CommitmentTreeState, NullifierSet, PowConsensus};
 use network::{GossipMessage, GossipRouter, PeerIdentity, establish_secure_channel};
 use tokio::time::{Duration, timeout};
 

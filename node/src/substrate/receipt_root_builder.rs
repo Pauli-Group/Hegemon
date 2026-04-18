@@ -3,7 +3,12 @@ use consensus::backend_interface::{
     native_receipt_root_build_cache_stats, native_receipt_root_mini_root_size,
     NativeReceiptRootBuildCacheStats,
 };
-use consensus::proof_interface::build_experimental_native_receipt_root_artifact;
+#[cfg(test)]
+use consensus::proof_interface::experimental_native_tx_leaf_verifier_profile;
+use consensus::proof_interface::{
+    build_experimental_native_receipt_root_artifact,
+    experimental_native_receipt_root_params_fingerprint, ExperimentalReceiptRootArtifact,
+};
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex as ParkingMutex;
 use rayon::ThreadPoolBuilder;
@@ -127,7 +132,7 @@ fn receipt_root_upper_tree_level_widths(mini_root_count: usize) -> Vec<usize> {
 fn make_receipt_root_mini_root_cache_key(child_hashes: &[[u8; 48]]) -> MiniRootCacheKey {
     let mut material = Vec::with_capacity(64 + (child_hashes.len() * 48));
     material.extend_from_slice(b"hegemon.native-receipt-root.chunk.v1");
-    material.extend_from_slice(&consensus::experimental_native_receipt_root_params_fingerprint());
+    material.extend_from_slice(&experimental_native_receipt_root_params_fingerprint());
     material.extend_from_slice(&(child_hashes.len() as u32).to_le_bytes());
     for child_hash in child_hashes {
         material.extend_from_slice(child_hash);
@@ -185,7 +190,7 @@ pub(crate) fn build_receipt_root_work_plan(
 
 pub(crate) fn pallet_receipt_root_payload_from_consensus_receipts(
     receipts: &[consensus::types::TxValidityReceipt],
-    built: consensus::ExperimentalReceiptRootArtifact,
+    built: ExperimentalReceiptRootArtifact,
 ) -> pallet_shielded_pool::types::ReceiptRootProofPayload {
     pallet_shielded_pool::types::ReceiptRootProofPayload {
         root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
@@ -216,8 +221,7 @@ pub(crate) fn build_receipt_root_proof_from_materials(
             .as_ref()
             .map(|proof| {
                 proof.kind != consensus::ProofArtifactKind::TxLeaf
-                    || proof.verifier_profile
-                        != consensus::experimental_native_tx_leaf_verifier_profile()
+                    || proof.verifier_profile != experimental_native_tx_leaf_verifier_profile()
             })
             .unwrap_or(true)
     }) {

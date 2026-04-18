@@ -40,31 +40,6 @@ pub use mining::{
 };
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
-pub use proof::{
-    ArtifactVerifier, BlockArtifactVerifyReport, CommitmentNullifierLists, HashVerifier,
-    ParallelProofVerifier, VerifierRegistry, clear_verified_native_tx_leaf_store,
-    commitment_nullifier_lists, native_receipt_root_verify_mode_label,
-    prewarm_verified_native_tx_leaf_store, receipt_statement_commitment,
-    recursive_block_artifact_verifier_profile, tx_statement_bindings_from_tx_artifacts,
-    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
-    tx_validity_artifact_from_receipt, tx_validity_artifact_from_tx_leaf_proof,
-    tx_validity_claims_from_tx_artifacts, tx_validity_receipt_from_proof,
-    verify_commitment_proof_payload,
-};
-pub use proof_interface::{
-    BlockBackendInputs, ExperimentalReceiptRootArtifact, HeaderProofExt, ProofVerifier,
-    build_experimental_native_receipt_root_artifact, build_experimental_receipt_root_artifact,
-    build_experimental_receipt_root_artifact_from_proofs,
-    experimental_native_receipt_root_params_fingerprint,
-    experimental_native_receipt_root_verifier_profile,
-    experimental_native_tx_leaf_verifier_profile, experimental_receipt_root_verifier_profile,
-    experimental_tx_leaf_verifier_profile, tx_statement_bindings_from_claims,
-    tx_validity_receipts_from_claims, verify_commitments,
-    verify_experimental_native_receipt_root_artifact,
-    verify_experimental_native_receipt_root_artifact_from_records,
-    verify_experimental_receipt_root_artifact,
-    verify_experimental_receipt_root_artifact_from_proofs,
-};
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
     CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,

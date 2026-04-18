@@ -1,4 +1,6 @@
 use codec::Encode;
+use consensus::proof::recursive_block_artifact_verifier_profile;
+use consensus::proof_interface::experimental_native_receipt_root_verifier_profile;
 use consensus::ArtifactAnnouncement;
 use sp_core::hashing::blake2_256;
 
@@ -111,14 +113,14 @@ pub fn compat_pallet_artifact_identity(
     let route = pallet_shielded_pool::types::BlockProofRoute::from_mode(mode);
     let verifier_profile = match mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
-            consensus::experimental_native_receipt_root_verifier_profile()
+            experimental_native_receipt_root_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
             debug_assert_eq!(
                 route,
                 pallet_shielded_pool::types::canonical_shipped_block_proof_route()
             );
-            consensus::recursive_block_artifact_verifier_profile()
+            recursive_block_artifact_verifier_profile()
         }
         pallet_shielded_pool::types::BlockProofMode::InlineTx => {
             consensus::legacy_block_artifact_verifier_profile(
@@ -204,7 +206,7 @@ mod tests {
         );
         assert_eq!(
             announcement.verifier_profile,
-            consensus::experimental_native_receipt_root_verifier_profile()
+            experimental_native_receipt_root_verifier_profile()
         );
     }
 
@@ -219,7 +221,7 @@ mod tests {
         );
         assert_eq!(
             verifier_profile,
-            consensus::experimental_native_receipt_root_verifier_profile()
+            experimental_native_receipt_root_verifier_profile()
         );
     }
 
@@ -265,7 +267,7 @@ mod tests {
         );
         assert_eq!(
             verifier_profile,
-            consensus::recursive_block_artifact_verifier_profile()
+            recursive_block_artifact_verifier_profile()
         );
     }
 }

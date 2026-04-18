@@ -160,11 +160,21 @@ use consensus::backend_interface::{
     CommitmentBlockProver, CommitmentBlockPublicInputs, RecursiveBlockArtifactV1,
     RecursiveBlockArtifactV2, SerializedStarkInputs, TransactionProof,
 };
+#[cfg(test)]
+use consensus::proof::recursive_block_artifact_verifier_profile;
+#[cfg(test)]
+use consensus::proof::tx_statement_bindings_from_tx_artifacts;
 use consensus::proof::{
-    tx_validity_artifact_from_native_tx_leaf_bytes, tx_validity_artifact_from_proof,
+    commitment_nullifier_lists, tx_validity_artifact_from_native_tx_leaf_bytes,
+    tx_validity_artifact_from_proof, ParallelProofVerifier,
 };
-use consensus::proof_interface::HeaderProofExt;
-use consensus::{ParallelProofVerifier, Sha256dAlgorithm, Sha256dSeal};
+#[cfg(test)]
+use consensus::proof_interface::experimental_tx_leaf_verifier_profile;
+use consensus::proof_interface::{
+    experimental_native_receipt_root_verifier_profile,
+    experimental_native_tx_leaf_verifier_profile, HeaderProofExt,
+};
+use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use crypto::hashes::blake3_384;
 use futures::{FutureExt, StreamExt};
 use hyper::http::{header, Method};
@@ -2861,7 +2871,7 @@ impl NativeArtifactSelectionReport {
 fn require_native_tx_leaf_artifacts(
     tx_artifacts: Option<&[consensus::TxValidityArtifact]>,
 ) -> Result<&[consensus::TxValidityArtifact], NativeArtifactSelectionReport> {
-    let expected_profile = consensus::experimental_native_tx_leaf_verifier_profile();
+    let expected_profile = experimental_native_tx_leaf_verifier_profile();
     let Some(tx_artifacts) = tx_artifacts else {
         return Err(NativeArtifactSelectionReport::fallback(
             NativeArtifactFallbackReason::ArtifactsUnavailable,
@@ -3596,7 +3606,7 @@ fn prepare_block_proof_bundle(
         ),
         proof_mode: pallet_shielded_pool::types::BlockProofMode::ReceiptRoot,
         proof_kind: pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
-        verifier_profile: consensus::experimental_native_receipt_root_verifier_profile(),
+        verifier_profile: experimental_native_receipt_root_verifier_profile(),
         receipt_root: None,
         recursive_block: None,
     };
@@ -4148,7 +4158,7 @@ fn derive_commitment_block_proof_from_bytes(
     da_params: DaParams,
     da_root_override: Option<DaRoot>,
 ) -> Result<CommitmentBlockProof, String> {
-    let lists = consensus::commitment_nullifier_lists(transactions)
+    let lists = commitment_nullifier_lists(transactions)
         .map_err(|err| format!("commitment proof nullifier lists: {err}"))?;
     let da_root = match da_root_override {
         Some(root) => root,
@@ -11494,10 +11504,10 @@ mod tests {
 
     fn dummy_native_tx_validity_artifact() -> consensus::TxValidityArtifact {
         consensus::TxValidityArtifact {
-            receipt: dummy_receipt(consensus::experimental_native_tx_leaf_verifier_profile()),
+            receipt: dummy_receipt(experimental_native_tx_leaf_verifier_profile()),
             proof: Some(consensus::ProofEnvelope {
                 kind: consensus::ProofArtifactKind::TxLeaf,
-                verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+                verifier_profile: experimental_native_tx_leaf_verifier_profile(),
                 artifact_bytes: vec![42u8; 16],
             }),
         }
@@ -11823,7 +11833,7 @@ mod tests {
                 statement_hash: [1u8; 48],
                 proof_digest: [2u8; 48],
                 public_inputs_digest: [3u8; 48],
-                verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+                verifier_profile: experimental_native_tx_leaf_verifier_profile(),
             }],
         }
     }
@@ -11940,7 +11950,7 @@ mod tests {
         );
         assert_eq!(
             selector.verifier_profile,
-            consensus::experimental_native_receipt_root_verifier_profile()
+            experimental_native_receipt_root_verifier_profile()
         );
     }
 
@@ -12184,10 +12194,10 @@ mod tests {
     #[test]
     fn receipt_root_errors_on_verifier_profile_mismatch() {
         let artifacts = vec![consensus::TxValidityArtifact {
-            receipt: dummy_receipt(consensus::experimental_tx_leaf_verifier_profile()),
+            receipt: dummy_receipt(experimental_tx_leaf_verifier_profile()),
             proof: Some(consensus::ProofEnvelope {
                 kind: consensus::ProofArtifactKind::TxLeaf,
-                verifier_profile: consensus::experimental_tx_leaf_verifier_profile(),
+                verifier_profile: experimental_tx_leaf_verifier_profile(),
                 artifact_bytes: vec![9u8; 8],
             }),
         }];
@@ -12232,7 +12242,7 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
-        payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
+        payload.verifier_profile = recursive_block_artifact_verifier_profile();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
         ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
@@ -12259,7 +12269,7 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::RecursiveBlock;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
-        payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
+        payload.verifier_profile = recursive_block_artifact_verifier_profile();
         payload.recursive_block = Some(dummy_recursive_block_payload());
         let err =
             ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
@@ -12273,7 +12283,7 @@ mod tests {
         let mut payload = dummy_block_proof_bundle();
         payload.proof_mode = pallet_shielded_pool::types::BlockProofMode::ReceiptRoot;
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
-        payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
+        payload.verifier_profile = experimental_native_receipt_root_verifier_profile();
         payload.receipt_root = Some(dummy_receipt_root_payload());
         ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
             .expect("native-only mode must accept explicit receipt_root payloads");
@@ -12336,7 +12346,7 @@ mod tests {
         assert_eq!(proof.kind, consensus::ProofArtifactKind::TxLeaf);
         assert_eq!(
             proof.verifier_profile,
-            consensus::experimental_native_tx_leaf_verifier_profile()
+            experimental_native_tx_leaf_verifier_profile()
         );
     }
 
@@ -12377,9 +12387,8 @@ mod tests {
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .expect("native tx artifacts");
-        let expected =
-            consensus::tx_statement_bindings_from_tx_artifacts(&transactions, &tx_artifacts)
-                .expect("artifact-derived bindings");
+        let expected = tx_statement_bindings_from_tx_artifacts(&transactions, &tx_artifacts)
+            .expect("artifact-derived bindings");
 
         assert_eq!(preferred, expected);
         assert_ne!(

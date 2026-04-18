@@ -1,9 +1,9 @@
 mod common;
 
 use common::{BftBlockParams, assemble_bft_block, make_validators, validator_set};
+use consensus::proof::HashVerifier;
 use consensus::{
-    BftConsensus, CommitmentTreeState, DEFAULT_VERSION_BINDING, HashVerifier, NullifierSet,
-    Transaction,
+    BftConsensus, CommitmentTreeState, DEFAULT_VERSION_BINDING, NullifierSet, Transaction,
 };
 use proptest::{prelude::*, test_runner::Config as ProptestConfig};
 

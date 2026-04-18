@@ -5,9 +5,10 @@ use common::{
     validator_set,
 };
 use consensus::nullifier::NullifierSet;
+use consensus::proof::HashVerifier;
 use consensus::{
-    BftConsensus, CommitmentTreeState, ConsensusError, DEFAULT_VERSION_BINDING, HashVerifier,
-    VersionProposal, VersionSchedule,
+    BftConsensus, CommitmentTreeState, ConsensusError, DEFAULT_VERSION_BINDING, VersionProposal,
+    VersionSchedule,
 };
 use protocol_versioning::VersionBinding;
 

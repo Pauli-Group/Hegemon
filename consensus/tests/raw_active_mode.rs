@@ -3,17 +3,20 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::proof::{
+    ParallelProofVerifier, commitment_nullifier_lists,
+    tx_validity_artifact_from_native_tx_leaf_bytes,
+};
+use consensus::proof_interface::{
+    BlockBackendInputs, ProofVerifier, build_experimental_native_receipt_root_artifact,
+    experimental_native_receipt_root_verifier_profile,
+};
 use consensus::types::{
     ConsensusBlock, ProofArtifactKind, ProofEnvelope, ProofVerificationMode, ProvenBatch,
     ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, Transaction, TxStatementBinding,
     TxValidityArtifact, kernel_root_from_shielded_root,
 };
-use consensus::{
-    BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
-    ProofVerifier, build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
-    experimental_native_receipt_root_verifier_profile,
-    tx_validity_artifact_from_native_tx_leaf_bytes,
-};
+use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
 use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
@@ -408,7 +411,7 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         receipt_root: Some(receipt_root),
     });
     block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
             &block.transactions,
             &tx_validity_artifacts,
         )
@@ -663,7 +666,7 @@ fn build_upgrade_transition_blocks() -> (
         receipt_root: Some(first_receipt_root),
     });
     first_block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
             &first_block.transactions,
             &first_tx_validity_artifacts,
         )
@@ -771,7 +774,7 @@ fn build_upgrade_transition_blocks() -> (
         receipt_root: Some(receipt_root),
     });
     second_block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
             &second_block.transactions,
             &tx_validity_artifacts,
         )
@@ -870,7 +873,7 @@ fn receipt_root_block_is_accepted() {
     proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
     block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
             &block.transactions,
             &tx_validity_artifacts,
         )

@@ -3,11 +3,10 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::proof::{ParallelProofVerifier, commitment_nullifier_lists};
+use consensus::proof_interface::{BlockBackendInputs, ProofVerifier};
 use consensus::types::{ProvenBatch, ProvenBatchMode, kernel_root_from_shielded_root};
-use consensus::{
-    BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
-    ProofVerifier, commitment_nullifier_lists,
-};
+use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
@@ -243,7 +242,7 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         consensus::proof::tx_validity_artifact_from_proof(&tx_proof).expect("tx validity artifact"),
     ]);
     block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
             &block.transactions,
             backend_inputs
                 .tx_validity_artifacts()

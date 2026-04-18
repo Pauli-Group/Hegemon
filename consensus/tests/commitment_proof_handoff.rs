@@ -5,9 +5,9 @@ use common::{
     PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
 };
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::proof::{commitment_nullifier_lists, verify_commitment_proof_payload};
 use consensus::{
-    CommitmentTreeState, NullifierSet, ProofError, commitment_nullifier_lists,
-    types::kernel_root_from_shielded_root, verify_commitment_proof_payload,
+    CommitmentTreeState, NullifierSet, ProofError, types::kernel_root_from_shielded_root,
 };
 use crypto::hashes::blake3_384;
 

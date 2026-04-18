@@ -1,4 +1,8 @@
-use consensus::proof_interface::HeaderProofExt;
+use consensus::proof::tx_validity_claims_from_tx_artifacts;
+use consensus::proof_interface::{
+    experimental_native_receipt_root_params_fingerprint, tx_statement_bindings_from_claims,
+    BlockBackendInputs, HeaderProofExt, ProofVerifier,
+};
 
 pub(crate) fn pallet_receipt_from_consensus(
     receipt: consensus::types::TxValidityReceipt,
@@ -28,7 +32,7 @@ pub(crate) fn consensus_receipt_root_payload_from_pallet(
     consensus::types::ReceiptRootProofPayload {
         root_proof: receipt_root.root_proof.data.clone(),
         metadata: consensus::types::ReceiptRootMetadata {
-            params_fingerprint: consensus::experimental_native_receipt_root_params_fingerprint(),
+            params_fingerprint: experimental_native_receipt_root_params_fingerprint(),
             relation_id: receipt_root.metadata.relation_id,
             shape_digest: receipt_root.metadata.shape_digest,
             leaf_count: receipt_root.metadata.leaf_count,
@@ -53,17 +57,17 @@ pub(crate) fn claims_and_bindings_from_tx_artifacts(
     ),
     String,
 > {
-    let claims = consensus::tx_validity_claims_from_tx_artifacts(transactions, tx_artifacts)
+    let claims = tx_validity_claims_from_tx_artifacts(transactions, tx_artifacts)
         .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?;
-    let bindings = consensus::tx_statement_bindings_from_claims(&claims)
+    let bindings = tx_statement_bindings_from_claims(&claims)
         .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"))?;
     Ok((claims, bindings))
 }
 
 pub(crate) fn block_backend_inputs_from_tx_artifacts(
     tx_validity_artifacts: Option<Vec<consensus::TxValidityArtifact>>,
-) -> Option<consensus::BlockBackendInputs> {
-    tx_validity_artifacts.map(consensus::BlockBackendInputs::from_tx_validity_artifacts)
+) -> Option<BlockBackendInputs> {
+    tx_validity_artifacts.map(BlockBackendInputs::from_tx_validity_artifacts)
 }
 
 pub(crate) fn verify_block_with_optional_tx_artifacts<V, BH>(
@@ -73,7 +77,7 @@ pub(crate) fn verify_block_with_optional_tx_artifacts<V, BH>(
     parent_commitment_tree: &consensus::CommitmentTreeState,
 ) -> Result<consensus::CommitmentTreeState, consensus::ProofError>
 where
-    V: consensus::ProofVerifier,
+    V: ProofVerifier,
     BH: HeaderProofExt,
 {
     let backend_inputs = block_backend_inputs_from_tx_artifacts(tx_validity_artifacts);

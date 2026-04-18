@@ -1,9 +1,10 @@
+use consensus::proof_interface::experimental_native_receipt_root_verifier_profile;
+
 pub(crate) fn is_canonical_experimental_receipt_root_payload(
     payload: &pallet_shielded_pool::types::BlockProofBundle,
 ) -> bool {
     payload.route().is_experimental()
-        && payload.verifier_profile
-            == consensus::experimental_native_receipt_root_verifier_profile()
+        && payload.verifier_profile == experimental_native_receipt_root_verifier_profile()
         && payload.receipt_root.is_some()
 }
 

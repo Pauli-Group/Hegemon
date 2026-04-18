@@ -5,15 +5,14 @@ use common::{
     PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
 };
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::proof::{ParallelProofVerifier, commitment_nullifier_lists};
+use consensus::proof_interface::{BlockBackendInputs, ProofVerifier};
 use consensus::types::{
     ConsensusBlock, ProofArtifactKind, ProofVerificationMode, ProvenBatch, ProvenBatchMode,
     Transaction, TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
     kernel_root_from_shielded_root,
 };
-use consensus::{
-    BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
-    ProofVerifier, commitment_nullifier_lists,
-};
+use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
 
 fn fallback_statement_hash(tx: &Transaction) -> [u8; 48] {
@@ -124,7 +123,8 @@ fn dummy_tx_validity_artifact(statement_hash: [u8; 48]) -> TxValidityArtifact {
         receipt: TxValidityReceipt::new(statement_hash, [0x11; 48], [0x22; 48], [0x33; 48]),
         proof: Some(consensus::ProofEnvelope {
             kind: ProofArtifactKind::TxLeaf,
-            verifier_profile: consensus::experimental_native_tx_leaf_verifier_profile(),
+            verifier_profile:
+                consensus::proof_interface::experimental_native_tx_leaf_verifier_profile(),
             artifact_bytes: vec![1, 2, 3],
         }),
     }
