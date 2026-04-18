@@ -4,9 +4,8 @@ use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, ProofArtifactKind, ProofEnvelope,
     ProofVerificationMode, ProvenBatchMode, ReceiptRootMetadata, StarkCommitment, StateRoot,
     TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
-    VerifierProfileDigest, VersionCommitment, compute_fee_commitment,
-    compute_proof_commitment, compute_version_commitment, da_root,
-    kernel_root_from_shielded_root,
+    VerifierProfileDigest, VersionCommitment, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment, da_root, kernel_root_from_shielded_root,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 use block_recursion::{
@@ -1772,7 +1771,8 @@ impl ProofVerifier for ParallelProofVerifier {
         }
 
         let verification_mode = block.proof_verification_mode;
-        let tx_validity_artifacts = backend_inputs.and_then(BlockBackendInputs::tx_validity_artifacts);
+        let tx_validity_artifacts =
+            backend_inputs.and_then(BlockBackendInputs::tx_validity_artifacts);
         let tx_proof_bytes_total: usize = tx_validity_artifacts
             .map(|artifacts| {
                 artifacts
@@ -1956,12 +1956,11 @@ impl ProofVerifier for ParallelProofVerifier {
                     .ok_or(ProofError::MissingTransactionValidityClaims)?;
                 if receipt_root.receipts != *claim_receipts {
                     return Err(ProofError::ProvenBatchBindingMismatch(
-                        "receipt-root payload receipts do not match tx validity claims"
-                            .to_string(),
+                        "receipt-root payload receipts do not match tx validity claims".to_string(),
                     ));
                 }
-                let artifacts = tx_validity_artifacts
-                    .ok_or(ProofError::MissingTransactionProofs)?;
+                let artifacts =
+                    tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
                 let receipt_root_verifier = self
                     .verifier_registry
                     .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
@@ -1981,8 +1980,8 @@ impl ProofVerifier for ParallelProofVerifier {
                 )
             }
             ProvenBatchMode::RecursiveBlock => {
-                let artifacts = tx_validity_artifacts
-                    .ok_or(ProofError::MissingTransactionProofs)?;
+                let artifacts =
+                    tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
                 let recursive_artifact = block_artifact
                     .as_ref()
                     .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;

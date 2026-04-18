@@ -123,8 +123,22 @@ use crate::substrate::mining_worker::{
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
+use crate::substrate::proof_boundary::{
+    claims_and_bindings_from_tx_artifacts, consensus_receipt_root_payload_from_pallet,
+    verify_block_with_optional_tx_artifacts,
+};
 use crate::substrate::prover_coordinator::{
     BundleMatchKey, PreparedBundle, ProverCoordinator, ProverCoordinatorConfig,
+};
+#[cfg(test)]
+use crate::substrate::receipt_root_builder::build_receipt_root_proof_from_materials;
+use crate::substrate::receipt_root_builder::{
+    build_receipt_root_proof_from_materials_with_plan, build_receipt_root_work_plan,
+    load_receipt_root_workers, NativeReceiptRootBuildReport, ReceiptRootWorkPlan,
+};
+use crate::substrate::receipt_root_compat::{
+    ensure_experimental_receipt_root_payload, ensure_native_block_proof_payload,
+    receipt_root_lane_requires_embedded_proof_bytes,
 };
 use crate::substrate::rpc::{
     BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
@@ -164,7 +178,6 @@ use pallet_shielded_pool::family::{
 use pallet_shielded_pool::family::{ShieldedTransferSidecarArgs, ACTION_SHIELDED_TRANSFER_SIDECAR};
 use pallet_shielded_pool::types::{BlockFeeBuckets, DIVERSIFIED_ADDRESS_SIZE};
 use rand::{rngs::OsRng, RngCore};
-use rayon::ThreadPoolBuilder;
 use sc_client_api::{Backend as ClientBackend, BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
@@ -183,11 +196,9 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use superneo_hegemon::{
-    decode_native_tx_leaf_artifact_bytes, native_receipt_root_build_cache_stats,
-    native_receipt_root_mini_root_size, native_tx_leaf_record_from_artifact,
-    NativeReceiptRootBuildCacheStats,
-};
+#[cfg(test)]
+use superneo_hegemon::native_receipt_root_mini_root_size;
+use superneo_hegemon::{decode_native_tx_leaf_artifact_bytes, native_tx_leaf_record_from_artifact};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
@@ -2049,13 +2060,9 @@ fn statement_bindings_for_candidate_extrinsics(
                 .into_iter()
                 .collect::<Option<Vec<_>>>();
             if let Some(tx_artifacts) = tx_validity_artifacts.as_ref() {
-                let claims = consensus::tx_validity_claims_from_tx_artifacts(
-                    &transactions,
-                    tx_artifacts,
-                )
-                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?;
-                return consensus::tx_statement_bindings_from_claims(&claims)
-                    .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"));
+                let (_claims, bindings) =
+                    claims_and_bindings_from_tx_artifacts(&transactions, tx_artifacts)?;
+                return Ok(bindings);
             }
             statement_bindings_from_extrinsics(extrinsics)
         }
@@ -2395,20 +2402,14 @@ fn build_candidate_context(
     let tx_validity_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
-    let tx_validity_claims = if let Some(ref tx_artifacts) = tx_validity_artifacts {
-        Some(
-            consensus::tx_validity_claims_from_tx_artifacts(&transactions, tx_artifacts)
-                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?,
-        )
-    } else {
-        None
-    };
-    let statement_bindings = if let Some(ref claims) = tx_validity_claims {
-        consensus::tx_statement_bindings_from_claims(claims)
-            .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"))?
-    } else {
-        statement_bindings_from_extrinsics(&decoded)?
-    };
+    let (tx_validity_claims, statement_bindings) =
+        if let Some(ref tx_artifacts) = tx_validity_artifacts {
+            let (claims, bindings) =
+                claims_and_bindings_from_tx_artifacts(&transactions, tx_artifacts)?;
+            (Some(claims), bindings)
+        } else {
+            (None, statement_bindings_from_extrinsics(&decoded)?)
+        };
     if statement_bindings.len() != transactions.len() {
         return Err(format!(
             "tx statement binding count mismatch (expected {}, got {})",
@@ -2689,72 +2690,6 @@ fn ensure_native_block_proof_outcome(outcome: &PreparedAggregationOutcome) -> Re
     Ok(())
 }
 
-fn pallet_receipt_from_consensus(
-    receipt: consensus::types::TxValidityReceipt,
-) -> pallet_shielded_pool::types::TxValidityReceipt {
-    pallet_shielded_pool::types::TxValidityReceipt {
-        statement_hash: receipt.statement_hash,
-        proof_digest: receipt.proof_digest,
-        public_inputs_digest: receipt.public_inputs_digest,
-        verifier_profile: receipt.verifier_profile,
-    }
-}
-
-fn consensus_receipt_from_pallet(
-    receipt: pallet_shielded_pool::types::TxValidityReceipt,
-) -> consensus::types::TxValidityReceipt {
-    consensus::types::TxValidityReceipt::new(
-        receipt.statement_hash,
-        receipt.proof_digest,
-        receipt.public_inputs_digest,
-        receipt.verifier_profile,
-    )
-}
-
-fn consensus_receipt_root_payload_from_pallet(
-    receipt_root: &pallet_shielded_pool::types::ReceiptRootProofPayload,
-) -> consensus::types::ReceiptRootProofPayload {
-    consensus::types::ReceiptRootProofPayload {
-        root_proof: receipt_root.root_proof.data.clone(),
-        metadata: consensus::types::ReceiptRootMetadata {
-            params_fingerprint: consensus::experimental_native_receipt_root_params_fingerprint(),
-            relation_id: receipt_root.metadata.relation_id,
-            shape_digest: receipt_root.metadata.shape_digest,
-            leaf_count: receipt_root.metadata.leaf_count,
-            fold_count: receipt_root.metadata.fold_count,
-        },
-        receipts: receipt_root
-            .receipts
-            .iter()
-            .cloned()
-            .map(consensus_receipt_from_pallet)
-            .collect(),
-    }
-}
-
-fn is_canonical_experimental_receipt_root_payload(
-    payload: &pallet_shielded_pool::types::BlockProofBundle,
-) -> bool {
-    payload.route().is_experimental()
-        && payload.verifier_profile
-            == consensus::experimental_native_receipt_root_verifier_profile()
-        && payload.receipt_root.is_some()
-}
-
-fn ensure_experimental_receipt_root_payload(
-    payload: &pallet_shielded_pool::types::BlockProofBundle,
-) -> Result<(), String> {
-    if !is_canonical_experimental_receipt_root_payload(payload) {
-        return Err(format!(
-            "explicit experimental receipt_root lane requires canonical native receipt_root artifacts; got proof_mode {:?}, proof_kind {:?}, verifier_profile {}",
-            payload.proof_mode,
-            payload.proof_kind,
-            hex::encode(payload.verifier_profile),
-        ));
-    }
-    Ok(())
-}
-
 fn ensure_experimental_receipt_root_outcome(
     outcome: &PreparedAggregationOutcome,
 ) -> Result<(), String> {
@@ -2781,345 +2716,14 @@ fn ensure_experimental_receipt_root_outcome(
     Ok(())
 }
 
-fn ensure_native_block_proof_payload(
-    payload: &pallet_shielded_pool::types::BlockProofBundle,
-) -> Result<(), String> {
-    if !native_block_proof_required_from_env() {
-        return Ok(());
-    }
-    match payload.route().mode {
-        pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => ensure_experimental_receipt_root_payload(payload)
-            .map_err(|_| {
-                format!(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; canonical explicit receipt_root or recursive_block is required",
-                    payload.proof_mode,
-                    payload.proof_kind,
-                    hex::encode(payload.verifier_profile),
-                )
-            }),
-        pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-            if !matches!(
-                payload.proof_kind,
-                pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
-                    | pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2
-            ) {
-                return Err(format!(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payload kind {:?}; recursive_block_v1 or recursive_block_v2 is required",
-                    payload.proof_kind,
-                ));
-            }
-            if payload.recursive_block.is_none() {
-                return Err(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads without recursive artifact bytes".to_string(),
-                );
-            }
-            if payload.receipt_root.is_some() {
-                return Err(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads that also carry receipt_root bytes".to_string(),
-                );
-            }
-            if !payload.commitment_proof.data.is_empty() {
-                return Err(
-                    "HEGEMON_REQUIRE_NATIVE=1 rejects recursive_block payloads that carry commitment proof bytes".to_string(),
-                );
-            }
-            Ok(())
-        }
-        pallet_shielded_pool::types::BlockProofMode::InlineTx => Err(format!(
-            "HEGEMON_REQUIRE_NATIVE=1 rejects block proof mode {:?}, proof_kind {:?}, verifier_profile {}; a native block-proof lane is required",
-            payload.proof_mode,
-            payload.proof_kind,
-            hex::encode(payload.verifier_profile),
-        )),
-    }
-}
-
-fn receipt_root_lane_requires_embedded_proof_bytes(
-    _proof_kind: pallet_shielded_pool::types::ProofArtifactKind,
-    missing_proof_bindings: usize,
-) -> Result<(), String> {
-    if missing_proof_bindings == 0 {
-        return Ok(());
-    }
-    Err(format!(
-        "receipt_root requires embedded proof bytes for every shielded transfer; candidate has {missing_proof_bindings} transfers whose proof bytes are available only via local sidecar state"
-    ))
-}
-
 fn selector_requests_native_receipt_lane(selector: PreparedArtifactSelector) -> bool {
     selector.route.is_experimental()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct MiniRootCacheKey([u8; 48]);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ReceiptRootMiniRootPlan {
-    leaf_start: u32,
-    leaf_count: u32,
-    cache_key: MiniRootCacheKey,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ReceiptRootWorkPlan {
-    leaf_count: usize,
-    mini_root_size: usize,
-    mini_root_count: usize,
-    chunk_internal_fold_nodes: usize,
-    upper_tree_fold_nodes: usize,
-    upper_tree_level_widths: Vec<usize>,
-    mini_roots: Vec<ReceiptRootMiniRootPlan>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct NativeReceiptRootBuildCacheDelta {
-    leaf_cache_hits: u64,
-    leaf_cache_misses: u64,
-    chunk_cache_hits: u64,
-    chunk_cache_misses: u64,
-}
-
-impl NativeReceiptRootBuildCacheDelta {
-    fn between(
-        before: NativeReceiptRootBuildCacheStats,
-        after: NativeReceiptRootBuildCacheStats,
-    ) -> Self {
-        Self {
-            leaf_cache_hits: after.leaf_cache_hits.saturating_sub(before.leaf_cache_hits),
-            leaf_cache_misses: after
-                .leaf_cache_misses
-                .saturating_sub(before.leaf_cache_misses),
-            chunk_cache_hits: after
-                .chunk_cache_hits
-                .saturating_sub(before.chunk_cache_hits),
-            chunk_cache_misses: after
-                .chunk_cache_misses
-                .saturating_sub(before.chunk_cache_misses),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NativeReceiptRootBuildReport {
-    workers: usize,
-    leaf_count: usize,
-    mini_root_size: usize,
-    mini_root_count: usize,
-    chunk_internal_fold_nodes: usize,
-    upper_tree_fold_nodes: usize,
-    upper_tree_level_widths: Vec<usize>,
-    cache_delta: NativeReceiptRootBuildCacheDelta,
 }
 
 struct PreparedNativeReceiptRootBuild {
     outcome: PreparedAggregationOutcome,
     work_plan: ReceiptRootWorkPlan,
     build_report: NativeReceiptRootBuildReport,
-}
-
-static RECEIPT_ROOT_THREAD_POOLS: once_cell::sync::Lazy<
-    ParkingMutex<HashMap<usize, Arc<rayon::ThreadPool>>>,
-> = once_cell::sync::Lazy::new(|| ParkingMutex::new(HashMap::new()));
-
-fn load_receipt_root_workers(default_workers: usize) -> usize {
-    std::env::var("HEGEMON_RECEIPT_ROOT_WORKERS")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .or_else(|| {
-            std::env::var("HEGEMON_AGG_STAGE_LOCAL_PARALLELISM")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-        })
-        .or_else(|| {
-            std::env::var("HEGEMON_PROVER_WORKERS")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-        })
-        .unwrap_or(default_workers.max(1))
-        .clamp(1, 256)
-}
-
-fn receipt_root_thread_pool(workers: usize) -> Result<Arc<rayon::ThreadPool>, String> {
-    let workers = workers.max(1);
-    let mut guard = RECEIPT_ROOT_THREAD_POOLS.lock();
-    if let Some(pool) = guard.get(&workers) {
-        return Ok(Arc::clone(pool));
-    }
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(workers)
-        .thread_name(move |index| format!("hegemon-receipt-root-{workers}-{index}"))
-        .build()
-        .map_err(|error| {
-            format!("failed to build receipt-root worker pool ({workers} threads): {error}")
-        })?;
-    let pool = Arc::new(pool);
-    guard.insert(workers, Arc::clone(&pool));
-    Ok(pool)
-}
-
-fn receipt_root_upper_tree_level_widths(mini_root_count: usize) -> Vec<usize> {
-    let mut widths = Vec::new();
-    let mut current = mini_root_count.max(1);
-    loop {
-        widths.push(current);
-        if current == 1 {
-            break;
-        }
-        current = current.div_ceil(2);
-    }
-    widths
-}
-
-fn make_receipt_root_mini_root_cache_key(child_hashes: &[[u8; 48]]) -> MiniRootCacheKey {
-    let mut material = Vec::with_capacity(64 + (child_hashes.len() * 48));
-    material.extend_from_slice(b"hegemon.native-receipt-root.chunk.v1");
-    material.extend_from_slice(&consensus::experimental_native_receipt_root_params_fingerprint());
-    material.extend_from_slice(&(child_hashes.len() as u32).to_le_bytes());
-    for child_hash in child_hashes {
-        material.extend_from_slice(child_hash);
-    }
-    MiniRootCacheKey(blake3_384(&material))
-}
-
-fn build_receipt_root_work_plan(
-    tx_artifacts: &[consensus::TxValidityArtifact],
-) -> Result<ReceiptRootWorkPlan, String> {
-    if tx_artifacts.is_empty() {
-        return Err("candidate tx set has no receipt-root proof material".to_string());
-    }
-
-    let mini_root_size = native_receipt_root_mini_root_size();
-    let artifact_hashes = tx_artifacts
-        .iter()
-        .map(|artifact| {
-            artifact
-                .proof
-                .as_ref()
-                .map(|proof| blake3_384(&proof.artifact_bytes))
-                .ok_or_else(|| {
-                    "native receipt_root requires proof envelopes for all txs".to_string()
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mini_roots = artifact_hashes
-        .chunks(mini_root_size)
-        .enumerate()
-        .map(|(index, chunk)| ReceiptRootMiniRootPlan {
-            leaf_start: (index * mini_root_size) as u32,
-            leaf_count: chunk.len() as u32,
-            cache_key: make_receipt_root_mini_root_cache_key(chunk),
-        })
-        .collect::<Vec<_>>();
-
-    let chunk_internal_fold_nodes = tx_artifacts
-        .chunks(mini_root_size)
-        .map(|chunk| chunk.len().saturating_sub(1))
-        .sum();
-    let mini_root_count = mini_roots.len().max(1);
-
-    Ok(ReceiptRootWorkPlan {
-        leaf_count: tx_artifacts.len(),
-        mini_root_size,
-        mini_root_count: mini_roots.len(),
-        chunk_internal_fold_nodes,
-        upper_tree_fold_nodes: mini_root_count.saturating_sub(1),
-        upper_tree_level_widths: receipt_root_upper_tree_level_widths(mini_root_count),
-        mini_roots,
-    })
-}
-
-fn pallet_receipt_root_payload_from_consensus_receipts(
-    receipts: &[consensus::types::TxValidityReceipt],
-    built: consensus::ExperimentalReceiptRootArtifact,
-) -> pallet_shielded_pool::types::ReceiptRootProofPayload {
-    pallet_shielded_pool::types::ReceiptRootProofPayload {
-        root_proof: pallet_shielded_pool::types::StarkProof::from_bytes(built.artifact_bytes),
-        metadata: pallet_shielded_pool::types::ReceiptRootMetadata {
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-        receipts: receipts
-            .iter()
-            .cloned()
-            .map(pallet_receipt_from_consensus)
-            .collect(),
-    }
-}
-
-#[cfg(test)]
-fn build_receipt_root_proof_from_materials(
-    tx_artifacts: &[consensus::TxValidityArtifact],
-) -> Result<pallet_shielded_pool::types::ReceiptRootProofPayload, String> {
-    if tx_artifacts.is_empty() {
-        return Err("candidate tx set has no receipt-root proof material".to_string());
-    }
-    if tx_artifacts.iter().any(|artifact| {
-        artifact
-            .proof
-            .as_ref()
-            .map(|proof| {
-                proof.kind != consensus::ProofArtifactKind::TxLeaf
-                    || proof.verifier_profile
-                        != consensus::experimental_native_tx_leaf_verifier_profile()
-            })
-            .unwrap_or(true)
-    }) {
-        return Err("receipt-root requires native tx-leaf artifacts for every tx".to_string());
-    }
-    let built = consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
-        .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
-    let receipts = tx_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-    Ok(pallet_receipt_root_payload_from_consensus_receipts(
-        &receipts,
-        built,
-    ))
-}
-
-fn build_receipt_root_proof_from_materials_with_plan(
-    tx_artifacts: &[consensus::TxValidityArtifact],
-    work_plan: &ReceiptRootWorkPlan,
-    default_workers: usize,
-) -> Result<
-    (
-        pallet_shielded_pool::types::ReceiptRootProofPayload,
-        NativeReceiptRootBuildReport,
-    ),
-    String,
-> {
-    let workers = load_receipt_root_workers(default_workers);
-    let before = native_receipt_root_build_cache_stats();
-    let built = if workers <= 1 {
-        consensus::build_experimental_native_receipt_root_artifact(tx_artifacts)
-    } else {
-        receipt_root_thread_pool(workers)?
-            .install(|| consensus::build_experimental_native_receipt_root_artifact(tx_artifacts))
-    }
-    .map_err(|err| format!("native receipt-root artifact generation failed: {err}"))?;
-    let after = native_receipt_root_build_cache_stats();
-    let receipts = tx_artifacts
-        .iter()
-        .map(|artifact| artifact.receipt.clone())
-        .collect::<Vec<_>>();
-
-    Ok((
-        pallet_receipt_root_payload_from_consensus_receipts(&receipts, built),
-        NativeReceiptRootBuildReport {
-            workers,
-            leaf_count: work_plan.leaf_count,
-            mini_root_size: work_plan.mini_root_size,
-            mini_root_count: work_plan.mini_root_count,
-            chunk_internal_fold_nodes: work_plan.chunk_internal_fold_nodes,
-            upper_tree_fold_nodes: work_plan.upper_tree_fold_nodes,
-            upper_tree_level_widths: work_plan.upper_tree_level_widths.clone(),
-            cache_delta: NativeReceiptRootBuildCacheDelta::between(before, after),
-        },
-    ))
 }
 
 fn recursive_block_payload_from_artifact_v1(
@@ -3692,10 +3296,7 @@ fn prepare_block_proof_bundle(
     let selected_artifact = prepared_artifact_selector_from_env();
     ensure_native_block_proof_selector(selected_artifact)?;
     if selected_artifact.route.is_experimental() {
-        receipt_root_lane_requires_embedded_proof_bytes(
-            selected_artifact.route.kind,
-            context.missing_proof_bindings,
-        )?;
+        receipt_root_lane_requires_embedded_proof_bytes(context.missing_proof_bindings)?;
     }
     let aggregation_cache_key = make_prove_ahead_aggregation_cache_key(
         selected_artifact,
@@ -4020,7 +3621,7 @@ fn prepare_block_proof_bundle(
     if selected_artifact.route.is_experimental() {
         ensure_experimental_receipt_root_payload(&payload)?;
     }
-    ensure_native_block_proof_payload(&payload)?;
+    ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())?;
 
     tracing::info!(
         block_number,
@@ -4630,8 +4231,6 @@ fn verify_proof_carrying_block(
     resolved_ciphertexts: Option<&[Vec<Vec<u8>>]>,
     pending_proofs: Option<&PendingProofStore>,
 ) -> Result<Option<CommitmentBlockProof>, String> {
-    use consensus::ProofVerifier;
-
     let proven_batch_payload = extract_proven_batch_payload(extrinsics)?;
     ensure_shielded_transfer_ordering(extrinsics)?;
     ensure_forced_inclusions(client, parent_hash, block_number, extrinsics)?;
@@ -4677,20 +4276,14 @@ fn verify_proof_carrying_block(
     let extracted_tx_artifacts = extracted_tx_artifacts
         .into_iter()
         .collect::<Option<Vec<_>>>();
-    let tx_validity_claims = if let Some(ref tx_artifacts) = extracted_tx_artifacts {
-        Some(
-            consensus::tx_validity_claims_from_tx_artifacts(&transactions, tx_artifacts)
-                .map_err(|err| format!("tx validity claims from tx artifacts failed: {err}"))?,
-        )
-    } else {
-        None
-    };
-    let tx_statement_bindings = if let Some(ref claims) = tx_validity_claims {
-        consensus::tx_statement_bindings_from_claims(claims)
-            .map_err(|err| format!("tx statement bindings from tx claims failed: {err}"))?
-    } else {
-        statement_bindings_from_extrinsics(extrinsics)?
-    };
+    let (tx_validity_claims, tx_statement_bindings) =
+        if let Some(ref tx_artifacts) = extracted_tx_artifacts {
+            let (claims, bindings) =
+                claims_and_bindings_from_tx_artifacts(&transactions, tx_artifacts)?;
+            (Some(claims), bindings)
+        } else {
+            (None, statement_bindings_from_extrinsics(extrinsics)?)
+        };
     if tx_statement_bindings.len() != transactions.len() {
         return Err(format!(
             "tx statement binding count mismatch (expected {}, got {})",
@@ -4720,14 +4313,11 @@ fn verify_proof_carrying_block(
     match payload.proof_mode {
         pallet_shielded_pool::types::BlockProofMode::ReceiptRoot => {
             ensure_experimental_receipt_root_payload(&payload)?;
-            ensure_native_block_proof_payload(&payload)?;
-            receipt_root_lane_requires_embedded_proof_bytes(
-                payload.proof_kind,
-                missing_proof_bindings.len(),
-            )?;
+            ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())?;
+            receipt_root_lane_requires_embedded_proof_bytes(missing_proof_bindings.len())?;
         }
         pallet_shielded_pool::types::BlockProofMode::RecursiveBlock => {
-            ensure_native_block_proof_payload(&payload)?;
+            ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())?;
             if !matches!(
                 payload.proof_kind,
                 pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV1
@@ -4887,12 +4477,8 @@ fn verify_proof_carrying_block(
         tx_statements_commitment: Some(tx_statements_commitment),
         proof_verification_mode: verification_mode,
     };
-    let backend_inputs = tx_validity_artifacts
-        .map(consensus::BlockBackendInputs::from_tx_validity_artifacts);
-
     let start_verify = Instant::now();
-    verifier
-        .verify_block_with_backend(&block, backend_inputs.as_ref(), &parent_tree)
+    verify_block_with_optional_tx_artifacts(verifier, &block, tx_validity_artifacts, &parent_tree)
         .map_err(|err| format!("proof verification failed ({err:?}): {err}"))?;
     let verify_ms = start_verify.elapsed().as_millis();
     tracing::info!(
@@ -12434,22 +12020,16 @@ mod tests {
 
     #[test]
     fn receipt_root_lane_rejects_local_only_sidecar_proof_material() {
-        let err = receipt_root_lane_requires_embedded_proof_bytes(
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
-            2,
-        )
-        .expect_err("receipt_root must reject proofless sidecar-only material");
+        let err = receipt_root_lane_requires_embedded_proof_bytes(2)
+            .expect_err("receipt_root must reject proofless sidecar-only material");
         assert!(err.contains("receipt_root requires embedded proof bytes"));
         assert!(err.contains("2 transfers"));
     }
 
     #[test]
     fn receipt_root_lane_accepts_embedded_proof_bytes() {
-        receipt_root_lane_requires_embedded_proof_bytes(
-            pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot,
-            0,
-        )
-        .expect("embedded proof bytes should satisfy receipt_root");
+        receipt_root_lane_requires_embedded_proof_bytes(0)
+            .expect("embedded proof bytes should satisfy receipt_root");
     }
 
     #[test]
@@ -12640,8 +12220,9 @@ mod tests {
     fn require_native_block_proof_rejects_inline_payload() {
         let _guard = set_block_proof_mode_with_require_native("receipt_root", "1");
         let payload = dummy_block_proof_bundle();
-        let err = ensure_native_block_proof_payload(&payload)
-            .expect_err("native-only mode must reject inline payloads on import");
+        let err =
+            ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
+                .expect_err("native-only mode must reject inline payloads on import");
         assert!(err.contains("native block-proof lane is required"));
     }
 
@@ -12654,7 +12235,7 @@ mod tests {
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        ensure_native_block_proof_payload(&payload)
+        ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
             .expect("native-only mode must accept recursive_block payloads");
     }
 
@@ -12667,7 +12248,7 @@ mod tests {
         payload.verifier_profile = block_recursion::recursive_block_artifact_verifier_profile_v2();
         payload.commitment_proof = pallet_shielded_pool::types::StarkProof::from_bytes(Vec::new());
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        ensure_native_block_proof_payload(&payload)
+        ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
             .expect("native-only mode must accept recursive_block_v2 payloads");
     }
 
@@ -12679,8 +12260,9 @@ mod tests {
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::RecursiveBlockV2;
         payload.verifier_profile = consensus::recursive_block_artifact_verifier_profile();
         payload.recursive_block = Some(dummy_recursive_block_payload());
-        let err = ensure_native_block_proof_payload(&payload)
-            .expect_err("recursive_block payload must reject commitment proof bytes");
+        let err =
+            ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
+                .expect_err("recursive_block payload must reject commitment proof bytes");
         assert!(err.contains("commitment proof bytes"));
     }
 
@@ -12692,7 +12274,7 @@ mod tests {
         payload.proof_kind = pallet_shielded_pool::types::ProofArtifactKind::ReceiptRoot;
         payload.verifier_profile = consensus::experimental_native_receipt_root_verifier_profile();
         payload.receipt_root = Some(dummy_receipt_root_payload());
-        ensure_native_block_proof_payload(&payload)
+        ensure_native_block_proof_payload(&payload, native_block_proof_required_from_env())
             .expect("native-only mode must accept explicit receipt_root payloads");
     }
 

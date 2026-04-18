@@ -10,8 +10,8 @@ use consensus::types::{
 };
 use consensus::{
     BlockBackendInputs, CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError,
-    ProofVerifier, build_experimental_native_receipt_root_artifact,
-    commitment_nullifier_lists, experimental_native_receipt_root_verifier_profile,
+    ProofVerifier, build_experimental_native_receipt_root_artifact, commitment_nullifier_lists,
+    experimental_native_receipt_root_verifier_profile,
     tx_validity_artifact_from_native_tx_leaf_bytes,
 };
 use crypto::hashes::blake3_384;
@@ -408,8 +408,11 @@ fn build_raw_active_fixture() -> RawActiveFixture {
         receipt_root: Some(receipt_root),
     });
     block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(&block.transactions, &tx_validity_artifacts)
-            .expect("tx validity claims"),
+        consensus::tx_validity_claims_from_tx_artifacts(
+            &block.transactions,
+            &tx_validity_artifacts,
+        )
+        .expect("tx validity claims"),
     );
     block.tx_statements_commitment = Some(tx_statements_commitment);
     block.block_artifact = Some(envelope);
@@ -768,8 +771,11 @@ fn build_upgrade_transition_blocks() -> (
         receipt_root: Some(receipt_root),
     });
     second_block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(&second_block.transactions, &tx_validity_artifacts)
-            .expect("second tx validity claims"),
+        consensus::tx_validity_claims_from_tx_artifacts(
+            &second_block.transactions,
+            &tx_validity_artifacts,
+        )
+        .expect("second tx validity claims"),
     );
     second_block.tx_statements_commitment = Some(second_tx_statements_commitment);
     second_block.block_artifact = Some(envelope);
@@ -864,8 +870,11 @@ fn receipt_root_block_is_accepted() {
     proven_batch.verifier_profile = experimental_native_receipt_root_verifier_profile();
     proven_batch.receipt_root = Some(receipt_root);
     block.tx_validity_claims = Some(
-        consensus::tx_validity_claims_from_tx_artifacts(&block.transactions, &tx_validity_artifacts)
-            .expect("tx validity claims"),
+        consensus::tx_validity_claims_from_tx_artifacts(
+            &block.transactions,
+            &tx_validity_artifacts,
+        )
+        .expect("tx validity claims"),
     );
     block.block_artifact = Some(envelope);
     block.proof_verification_mode = ProofVerificationMode::SelfContainedAggregation;
@@ -889,8 +898,7 @@ fn native_history_can_transition_to_native_receipt_root() {
         second_block,
         second_backend_inputs,
         final_root,
-    ) =
-        build_upgrade_transition_blocks();
+    ) = build_upgrade_transition_blocks();
     let verifier = ParallelProofVerifier::new();
 
     let first_updated = verifier
@@ -899,7 +907,11 @@ fn native_history_can_transition_to_native_receipt_root() {
     assert_eq!(first_updated.root(), second_base_tree.root());
 
     let second_updated = verifier
-        .verify_block_with_backend(&second_block, Some(&second_backend_inputs), &second_base_tree)
+        .verify_block_with_backend(
+            &second_block,
+            Some(&second_backend_inputs),
+            &second_base_tree,
+        )
         .expect("native receipt_root block should verify after native history");
     assert_eq!(second_updated.root(), final_root);
 }
