@@ -1465,10 +1465,7 @@ where
                 }
             };
 
-            let header_number = HeaderT::number(&decoded)
-                .clone()
-                .try_into()
-                .unwrap_or(u64::MAX);
+            let header_number = (*HeaderT::number(&decoded)).try_into().unwrap_or(u64::MAX);
             let header_parent = *HeaderT::parent_hash(&decoded);
             let mut header_parent_bytes = [0u8; 32];
             header_parent_bytes.copy_from_slice(header_parent.as_ref());

@@ -805,20 +805,20 @@ impl PqNetworkBackend {
                                                 }
 
                                                 // Clean up on disconnect
-                                                if peers_for_task.write().await.remove(&peer_id).is_some() {
-                                                    if let Err(reason) = try_send_lifecycle_event(
+                                                if peers_for_task.write().await.remove(&peer_id).is_some()
+                                                    && let Err(reason) = try_send_lifecycle_event(
                                                         &lifecycle_event_tx_for_task,
                                                         PqNetworkEvent::PeerDisconnected {
                                                             peer_id,
                                                             reason: "Connection closed".to_string(),
                                                         },
-                                                    ) {
-                                                        tracing::warn!(
-                                                            peer_id = %hex::encode(peer_id),
-                                                            error = reason,
-                                                            "Dropped peer-disconnect lifecycle event"
-                                                        );
-                                                    }
+                                                    )
+                                                {
+                                                    tracing::warn!(
+                                                        peer_id = %hex::encode(peer_id),
+                                                        error = reason,
+                                                        "Dropped peer-disconnect lifecycle event"
+                                                    );
                                                 }
                                             });
                                         }
@@ -1215,20 +1215,20 @@ impl PqNetworkBackend {
             }
 
             // Clean up on disconnect
-            if peers_for_task.write().await.remove(&peer_id).is_some() {
-                if let Err(reason) = try_send_lifecycle_event(
+            if peers_for_task.write().await.remove(&peer_id).is_some()
+                && let Err(reason) = try_send_lifecycle_event(
                     &lifecycle_event_tx_for_task,
                     PqNetworkEvent::PeerDisconnected {
                         peer_id,
                         reason: "Connection closed".to_string(),
                     },
-                ) {
-                    tracing::warn!(
-                        peer_id = %hex::encode(peer_id),
-                        error = reason,
-                        "Dropped peer-disconnect lifecycle event"
-                    );
-                }
+                )
+            {
+                tracing::warn!(
+                    peer_id = %hex::encode(peer_id),
+                    error = reason,
+                    "Dropped peer-disconnect lifecycle event"
+                );
             }
         });
 

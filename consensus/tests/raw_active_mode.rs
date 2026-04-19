@@ -945,6 +945,7 @@ fn receipt_root_rejects_receipts_for_the_wrong_statement_set() {
         ProofError::ProvenBatchBindingMismatch(_)
             | ProofError::AggregationProofInputsMismatch(_)
             | ProofError::TransactionProofInputsMismatch { .. }
+            | ProofError::TransactionProofVerification { .. }
     ));
 }
 

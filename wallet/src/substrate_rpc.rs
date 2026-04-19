@@ -704,7 +704,7 @@ impl SubstrateRpcClient {
 
             let batch_end = start
                 .checked_add(batch_len_u64)
-                .ok_or_else(|| WalletError::InvalidState("nullifier pagination overflow"))?;
+                .ok_or(WalletError::InvalidState("nullifier pagination overflow"))?;
             if batch_end > response.total {
                 return Err(WalletError::Rpc(format!(
                     "node returned inconsistent nullifier page: end {} exceeds total {}",
