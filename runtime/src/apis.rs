@@ -156,6 +156,11 @@ decl_runtime_apis! {
         /// Used by wallets to detect which of their notes have been spent.
         fn list_nullifiers() -> Vec<[u8; 48]>;
 
+        /// List a page of spent nullifiers.
+        ///
+        /// Used by wallets to avoid materializing the whole spent set in a single RPC call.
+        fn list_nullifiers_paged(start: u64, limit: u32) -> Vec<[u8; 48]>;
+
         /// Get the DA availability policy (full fetch vs sampling).
         fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy;
 

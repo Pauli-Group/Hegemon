@@ -24,6 +24,7 @@
 //! # }
 //! ```
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,6 +108,15 @@ fn env_u64(name: &str) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
+const NULLIFIER_PAGE_LIMIT: u64 = 1024;
+const DEFAULT_MAX_NULLIFIERS: u64 = 1_000_000;
+
+fn max_nullifier_fetch() -> u64 {
+    env_u64("HEGEMON_WALLET_MAX_NULLIFIERS")
+        .map(|value| value.max(1))
+        .unwrap_or(DEFAULT_MAX_NULLIFIERS)
+}
+
 /// Note status response from the node
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoteStatus {
@@ -186,7 +196,9 @@ pub struct NullifierResponse {
     /// List of nullifiers (hex encoded)
     pub nullifiers: Vec<String>,
     /// Total count
-    pub count: u64,
+    pub total: u64,
+    /// Whether there are more entries
+    pub has_more: bool,
 }
 
 /// Latest block information
@@ -651,23 +663,57 @@ impl SubstrateRpcClient {
         decode_ciphertext_entries(response.entries)
     }
 
-    /// Get all spent nullifiers
-    ///
-    /// Returns the list of spent nullifiers from the node.
-    pub async fn nullifiers(&self) -> Result<Vec<[u8; 48]>, WalletError> {
+    /// Get the spent nullifier set from the node, paged to avoid whole-state materialization.
+    pub async fn nullifiers(&self) -> Result<HashSet<[u8; 48]>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
+        let mut start = 0u64;
+        let mut pages = 0u64;
+        let mut nullifiers = HashSet::new();
+        let max_nullifiers = max_nullifier_fetch();
+        let max_pages =
+            max_nullifiers.saturating_add(NULLIFIER_PAGE_LIMIT - 1) / NULLIFIER_PAGE_LIMIT;
 
-        let response: NullifierResponse = client
-            .request("hegemon_walletNullifiers", rpc_params![])
-            .await
-            .map_err(|e| WalletError::Rpc(format!("hegemon_walletNullifiers failed: {}", e)))?;
+        loop {
+            let response: NullifierResponse = client
+                .request(
+                    "hegemon_walletNullifiers",
+                    rpc_params![PaginationParams {
+                        start,
+                        limit: NULLIFIER_PAGE_LIMIT,
+                    }],
+                )
+                .await
+                .map_err(|e| WalletError::Rpc(format!("hegemon_walletNullifiers failed: {}", e)))?;
 
-        response
-            .nullifiers
-            .iter()
-            .map(|hex| {
-                let bytes = hex::decode(hex).map_err(|e| {
+            let batch_len = response.nullifiers.len();
+            let batch_len_u64 = batch_len as u64;
+
+            if response.total > max_nullifiers {
+                return Err(WalletError::Rpc(format!(
+                    "node reports {} nullifiers which exceeds local safety cap {} (set HEGEMON_WALLET_MAX_NULLIFIERS to override)",
+                    response.total, max_nullifiers
+                )));
+            }
+            if batch_len_u64 > NULLIFIER_PAGE_LIMIT {
+                return Err(WalletError::Rpc(format!(
+                    "node returned {} nullifiers in one page (limit {})",
+                    batch_len_u64, NULLIFIER_PAGE_LIMIT
+                )));
+            }
+
+            let batch_end = start
+                .checked_add(batch_len_u64)
+                .ok_or_else(|| WalletError::InvalidState("nullifier pagination overflow"))?;
+            if batch_end > response.total {
+                return Err(WalletError::Rpc(format!(
+                    "node returned inconsistent nullifier page: end {} exceeds total {}",
+                    batch_end, response.total
+                )));
+            }
+
+            for hex in response.nullifiers {
+                let bytes = hex::decode(&hex).map_err(|e| {
                     WalletError::Serialization(format!("Invalid hex nullifier: {}", e))
                 })?;
                 if bytes.len() != 48 {
@@ -677,9 +723,42 @@ impl SubstrateRpcClient {
                 }
                 let mut out = [0u8; 48];
                 out.copy_from_slice(&bytes);
-                Ok(out)
-            })
-            .collect()
+                nullifiers.insert(out);
+            }
+
+            if !response.has_more {
+                if batch_end < response.total {
+                    return Err(WalletError::Rpc(format!(
+                        "node ended nullifier pagination early at {} of {}",
+                        batch_end, response.total
+                    )));
+                }
+                break;
+            }
+            if batch_len == 0 {
+                return Err(WalletError::Rpc(
+                    "node reported more nullifier pages but returned an empty page".to_string(),
+                ));
+            }
+            if batch_end >= response.total {
+                return Err(WalletError::Rpc(format!(
+                    "node reported more nullifier pages past declared total {}",
+                    response.total
+                )));
+            }
+
+            pages = pages.saturating_add(1);
+            if pages > max_pages {
+                return Err(WalletError::Rpc(format!(
+                    "nullifier pagination exceeded safety page cap {} (set HEGEMON_WALLET_MAX_NULLIFIERS to override)",
+                    max_pages
+                )));
+            }
+
+            start = batch_end;
+        }
+
+        Ok(nullifiers)
     }
 
     /// Get latest block information
@@ -1865,7 +1944,7 @@ impl BlockingSubstrateRpcClient {
     }
 
     /// Get nullifiers
-    pub fn nullifiers(&self) -> Result<Vec<[u8; 48]>, WalletError> {
+    pub fn nullifiers(&self) -> Result<HashSet<[u8; 48]>, WalletError> {
         self.runtime.block_on(self.inner.nullifiers())
     }
 

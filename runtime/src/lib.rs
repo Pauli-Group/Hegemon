@@ -1228,6 +1228,22 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
 
+        fn list_nullifiers_paged(start: u64, limit: u32) -> Vec<[u8; 48]> {
+            let start = match usize::try_from(start) {
+                Ok(value) => value,
+                Err(_) => return Vec::new(),
+            };
+            let limit = limit as usize;
+            if limit == 0 {
+                return Vec::new();
+            }
+
+            pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys()
+                .skip(start)
+                .take(limit)
+                .collect()
+        }
+
         fn da_policy() -> pallet_shielded_pool::types::DaAvailabilityPolicy {
             pallet_shielded_pool::DaPolicyStorage::<Runtime>::get()
         }

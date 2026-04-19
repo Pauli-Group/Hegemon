@@ -9,7 +9,11 @@ use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-const SESSION_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
+/// Upper bound for any single encrypted PQ frame.
+///
+/// Keep this comfortably above legitimate sync/artifact payloads while staying
+/// small enough that queue-based backpressure remains effective.
+pub const SESSION_MAX_FRAME_LEN: usize = 8 * 1024 * 1024;
 
 fn session_bincode() -> impl Options {
     bincode::DefaultOptions::new().with_limit(SESSION_MAX_FRAME_LEN as u64)

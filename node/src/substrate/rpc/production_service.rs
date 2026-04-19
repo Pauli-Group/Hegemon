@@ -107,6 +107,8 @@ use consensus::backend_interface::{
     TX_STATEMENT_HASH_DOMAIN,
 };
 use pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE;
+use sc_client_api::StorageProvider;
+use sp_core::{storage::StorageKey, twox_128};
 use transaction_circuit::hashing_pq::{balance_commitment_bytes, ciphertext_hash_bytes};
 use transaction_circuit::public_inputs::BalanceSlot;
 
@@ -114,6 +116,8 @@ use transaction_circuit::public_inputs::BalanceSlot;
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
 const MAX_RPC_MERKLE_WITNESS_NOTES: u64 = 65_536;
 const NATIVE_TX_CANONICAL_PADDING_ASSET_ID: u64 = 4_294_967_294;
+const BLAKE2_128_CONCAT_HASH_LEN: usize = 16;
+const NULLIFIER_STORAGE_KEY_LEN: usize = 48;
 
 /// Production implementation of all RPC service traits.
 ///
@@ -152,6 +156,8 @@ where
     mined_blocks: Arc<ParkingMutex<Vec<MinedBlockRecord>>>,
     /// Cached mined-by-address history (full chain scan)
     mined_history: Arc<ParkingMutex<MinedHistoryCache>>,
+    /// Cached nullifier index for the current best block to avoid O(N) work per page.
+    nullifier_cache: Arc<ParkingMutex<Option<NullifierIndexCache>>>,
     /// Miner recipient address bytes (if configured)
     miner_recipient: Option<[u8; DIVERSIFIED_ADDRESS_SIZE]>,
     /// PQ network handle for immediate tx relay to connected peers.
@@ -164,6 +170,12 @@ where
 pub struct MinedHistoryCache {
     last_scanned: Option<u64>,
     timestamps: Vec<BlockTimestamp>,
+}
+
+#[derive(Clone)]
+struct NullifierIndexCache {
+    block_hash: sp_core::H256,
+    nullifiers: Arc<Vec<[u8; 48]>>,
 }
 
 impl<C, Block> ProductionRpcService<C, Block>
@@ -205,6 +217,7 @@ where
             start_time: Instant::now(),
             mined_blocks,
             mined_history,
+            nullifier_cache: Arc::new(ParkingMutex::new(None)),
             miner_recipient,
             pq_network_handle,
             _phantom: PhantomData,
@@ -280,6 +293,27 @@ where
         (ready, future)
     }
 
+    fn existing_local_submission(
+        &self,
+        extrinsic_bytes: &[u8],
+        submission_kind: &str,
+    ) -> Option<(sp_core::H256, bool, bool)> {
+        let tx_hash = local_extrinsic_hash(extrinsic_bytes);
+        let (tracked_ready, tracked_future) = self.submitted_tx_tracking_state(&tx_hash);
+        if !tracked_ready && !tracked_future {
+            return None;
+        }
+
+        tracing::warn!(
+            tx_hash = %hex::encode(tx_hash.as_ref()),
+            tracked_ready,
+            tracked_future,
+            submission_kind,
+            "Recovered duplicate local submission before prevalidation"
+        );
+        Some((tx_hash, tracked_ready, tracked_future))
+    }
+
     fn recover_idempotent_local_submission(
         &self,
         extrinsic_bytes: &[u8],
@@ -317,6 +351,19 @@ where
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
+        if let Some((tx_hash, tracked_ready, tracked_future)) =
+            self.existing_local_submission(&extrinsic_bytes, "kernel action")
+        {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(tx_hash.as_ref());
+            if !tracked_ready && !tracked_future {
+                return Err(format!(
+                    "kernel action disappeared before prevalidation (tx_hash=0x{})",
+                    hex::encode(tx_hash.as_ref())
+                ));
+            }
+            return Ok(out);
+        }
         prevalidate_native_shielded_extrinsic(&extrinsic)
             .map_err(|err| format!("kernel action prevalidation failed: {err}"))?;
         let at: sp_core::H256 = self.best_hash().into();
@@ -842,6 +889,80 @@ fn log_shielded_kernel_action_diagnostics<C, Block>(
     );
 }
 
+impl<C, Block> ProductionRpcService<C, Block>
+where
+    Block: BlockT,
+    Block::Hash: Into<sp_core::H256>,
+    C: HeaderBackend<Block> + StorageProvider<Block, sc_service::TFullBackend<Block>>,
+{
+    fn nullifier_storage_prefix() -> StorageKey {
+        let mut key = Vec::with_capacity(32);
+        key.extend_from_slice(&twox_128(b"ShieldedPool"));
+        key.extend_from_slice(&twox_128(b"Nullifiers"));
+        StorageKey(key)
+    }
+
+    fn decode_nullifier_storage_key(key: &[u8], prefix_len: usize) -> Option<[u8; 48]> {
+        let expected_len = prefix_len + BLAKE2_128_CONCAT_HASH_LEN + NULLIFIER_STORAGE_KEY_LEN;
+        if key.len() != expected_len {
+            return None;
+        }
+
+        let raw_key_offset = prefix_len + BLAKE2_128_CONCAT_HASH_LEN;
+        key.get(raw_key_offset..raw_key_offset + NULLIFIER_STORAGE_KEY_LEN)
+            .and_then(|bytes| bytes.try_into().ok())
+    }
+
+    fn build_nullifier_index(&self, best_hash: Block::Hash) -> Result<Arc<Vec<[u8; 48]>>, String> {
+        let prefix = Self::nullifier_storage_prefix();
+        let prefix_len = prefix.0.len();
+        let keys = self
+            .client
+            .storage_keys(best_hash, Some(&prefix), None)
+            .map_err(|e| format!("Storage iteration error: {e:?}"))?;
+
+        Ok(Arc::new(
+            keys.filter_map(|key| Self::decode_nullifier_storage_key(&key.0, prefix_len))
+                .collect(),
+        ))
+    }
+
+    fn cached_nullifier_index(&self) -> Result<Arc<Vec<[u8; 48]>>, String> {
+        let best_hash = self.best_hash();
+        let best_hash_h256: sp_core::H256 = best_hash.into();
+        let mut cache = self.nullifier_cache.lock();
+        if let Some(cache_entry) = cache.as_ref() {
+            if cache_entry.block_hash == best_hash_h256 {
+                return Ok(cache_entry.nullifiers.clone());
+            }
+        }
+
+        // Serialize cold rebuilds so public RPC traffic can trigger at most one
+        // full storage scan per best block.
+        let nullifiers = self.build_nullifier_index(best_hash)?;
+        *cache = Some(NullifierIndexCache {
+            block_hash: best_hash_h256,
+            nullifiers: nullifiers.clone(),
+        });
+        Ok(nullifiers)
+    }
+
+    fn nullifier_slice_from_storage(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<[u8; 48]>, String> {
+        let nullifiers = self.cached_nullifier_index()?;
+        let start = usize::try_from(start).unwrap_or(usize::MAX);
+        Ok(nullifiers.iter().skip(start).take(limit).copied().collect())
+    }
+
+    fn nullifier_count_from_storage(&self) -> Result<u64, String> {
+        let nullifiers = self.cached_nullifier_index()?;
+        u64::try_from(nullifiers.len()).map_err(|_| "Nullifier count overflow".to_string())
+    }
+}
+
 // =============================================================================
 // HegemonService Implementation
 // =============================================================================
@@ -1166,7 +1287,13 @@ fn try_decode_coinbase_recipient<Block: BlockT>(
 impl<C, Block> WalletService for ProductionRpcService<C, Block>
 where
     Block: BlockT,
-    C: ProvideRuntimeApi<Block> + HeaderBackend<Block> + Send + Sync + 'static,
+    Block::Hash: Into<sp_core::H256>,
+    C: ProvideRuntimeApi<Block>
+        + HeaderBackend<Block>
+        + StorageProvider<Block, sc_service::TFullBackend<Block>>
+        + Send
+        + Sync
+        + 'static,
     C::Api: ConsensusApi<Block> + ShieldedPoolApi<Block>,
 {
     fn note_status(&self) -> NoteStatus {
@@ -1211,14 +1338,8 @@ where
             .map_err(|e| format!("DA store error: {e:?}"))
     }
 
-    fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String> {
-        let api = self.client.runtime_api();
-        let best_hash = self.best_hash();
-
-        match api.list_nullifiers(best_hash) {
-            Ok(nullifiers) => Ok(nullifiers),
-            Err(e) => Err(format!("Runtime API error: {:?}", e)),
-        }
+    fn nullifier_slice(&self, start: u64, limit: usize) -> Result<Vec<[u8; 48]>, String> {
+        self.nullifier_slice_from_storage(start, limit)
     }
 
     fn latest_meta(&self) -> LatestBlock {
@@ -1275,6 +1396,10 @@ where
 
     fn ciphertext_count(&self) -> u64 {
         self.da_chunk_store.lock().ciphertext_count().unwrap_or(0)
+    }
+
+    fn nullifier_count(&self) -> u64 {
+        self.nullifier_count_from_storage().unwrap_or(0)
     }
 }
 
@@ -1385,6 +1510,19 @@ where
         let call = runtime::RuntimeCall::Kernel(pallet_kernel::Call::submit_action { envelope });
         let extrinsic = runtime::UncheckedExtrinsic::new_unsigned(call);
         let extrinsic_bytes = extrinsic.encode();
+        if let Some((tx_hash, tracked_ready, tracked_future)) =
+            self.existing_local_submission(&extrinsic_bytes, "unsigned shielded transfer")
+        {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(tx_hash.as_ref());
+            if !tracked_ready && !tracked_future {
+                return Err(format!(
+                    "unsigned shielded transfer disappeared before prevalidation (tx_hash=0x{})",
+                    hex::encode(tx_hash.as_ref())
+                ));
+            }
+            return Ok(out);
+        }
         prevalidate_native_shielded_extrinsic(&extrinsic)
             .map_err(|err| format!("unsigned shielded transfer prevalidation failed: {err}"))?;
         let at: sp_core::H256 = self.best_hash().into();

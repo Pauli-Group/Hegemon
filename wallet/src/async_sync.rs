@@ -27,7 +27,6 @@
 //! # }
 //! ```
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 // StreamExt is required for Subscription::next()
@@ -375,8 +374,7 @@ impl AsyncWalletSyncEngine {
             }
 
             // Sync nullifiers
-            let nullifiers = self.client.nullifiers().await?;
-            let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
+            let nullifier_set = self.client.nullifiers().await?;
             outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
 
             // Update pending transactions

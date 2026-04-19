@@ -98,7 +98,9 @@ pub struct NullifierResponse {
     /// List of nullifiers (hex encoded)
     pub nullifiers: Vec<String>,
     /// Total count
-    pub count: u64,
+    pub total: u64,
+    /// Whether there are more entries
+    pub has_more: bool,
 }
 
 /// Latest block info
@@ -224,9 +226,12 @@ pub trait WalletApi {
 
     /// Get wallet nullifiers
     ///
-    /// Returns the list of spent nullifiers.
+    /// Returns a paginated list of spent nullifiers.
     #[method(name = "walletNullifiers")]
-    async fn wallet_nullifiers(&self) -> RpcResult<NullifierResponse>;
+    async fn wallet_nullifiers(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<NullifierResponse>;
 
     /// Generate a ZK transaction proof
     ///
@@ -267,8 +272,8 @@ pub trait WalletService: Send + Sync {
     /// Get ciphertext entries
     fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String>;
 
-    /// Get all nullifiers
-    fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String>;
+    /// Get paginated nullifiers
+    fn nullifier_slice(&self, start: u64, limit: usize) -> Result<Vec<[u8; 48]>, String>;
 
     /// Get latest block metadata
     fn latest_meta(&self) -> LatestBlock;
@@ -292,6 +297,9 @@ pub trait WalletService: Send + Sync {
 
     /// Get total ciphertext count
     fn ciphertext_count(&self) -> u64;
+
+    /// Get total nullifier count
+    fn nullifier_count(&self) -> u64;
 }
 
 /// Wallet RPC implementation
@@ -381,13 +389,26 @@ where
         })
     }
 
-    async fn wallet_nullifiers(&self) -> RpcResult<NullifierResponse> {
-        let nullifiers = self.service.nullifier_list().map_err(|e| {
-            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
-        })?;
+    async fn wallet_nullifiers(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<NullifierResponse> {
+        let params = params.unwrap_or_default();
+        let limit = params.limit.min(2048) as usize;
+
+        let nullifiers = self
+            .service
+            .nullifier_slice(params.start, limit)
+            .map_err(|e| {
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+            })?;
+
+        let total = self.service.nullifier_count();
+        let has_more = (params.start + nullifiers.len() as u64) < total;
 
         Ok(NullifierResponse {
-            count: nullifiers.len() as u64,
+            total,
+            has_more,
             nullifiers: nullifiers.into_iter().map(hex::encode).collect(),
         })
     }
@@ -539,8 +560,13 @@ mod tests {
             Ok(entries)
         }
 
-        fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String> {
-            Ok(vec![[0u8; 48], [1u8; 48], [2u8; 48]])
+        fn nullifier_slice(&self, start: u64, limit: usize) -> Result<Vec<[u8; 48]>, String> {
+            let entries: Vec<_> = [[0u8; 48], [1u8; 48], [2u8; 48]]
+                .into_iter()
+                .skip(start as usize)
+                .take(limit)
+                .collect();
+            Ok(entries)
         }
 
         fn latest_meta(&self) -> LatestBlock {
@@ -577,6 +603,10 @@ mod tests {
         fn ciphertext_count(&self) -> u64 {
             1000
         }
+
+        fn nullifier_count(&self) -> u64 {
+            3
+        }
     }
 
     #[tokio::test]
@@ -610,9 +640,13 @@ mod tests {
         let service = Arc::new(MockWalletService);
         let rpc = WalletRpc::new(service);
 
-        let response = rpc.wallet_nullifiers().await.unwrap();
-        assert_eq!(response.count, 3);
-        assert_eq!(response.nullifiers.len(), 3);
+        let response = rpc
+            .wallet_nullifiers(Some(PaginationParams { start: 1, limit: 1 }))
+            .await
+            .unwrap();
+        assert_eq!(response.total, 3);
+        assert!(response.has_more);
+        assert_eq!(response.nullifiers.len(), 1);
     }
 
     #[tokio::test]

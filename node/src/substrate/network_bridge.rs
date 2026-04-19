@@ -36,6 +36,9 @@ use state_da::DaChunkProof;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
+const MAX_PENDING_ANNOUNCES: usize = 64;
+const MAX_PENDING_ANNOUNCE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Protocol identifiers for block-related messages (re-exported for convenience)
 pub const BLOCK_ANNOUNCE_PROTOCOL: &str = BLOCK_ANNOUNCES_PQ;
 pub const TRANSACTIONS_PROTOCOL: &str = TRANSACTIONS_PQ;
@@ -44,6 +47,8 @@ pub const SYNC_PROTOCOL: &str = SYNC_PQ;
 pub const SYNC_PROTOCOL_VERSION: u32 = 1;
 /// Data-availability chunk request/response protocol (PQ version).
 pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
+/// Maximum number of distinct DA chunk indices served in one request.
+pub const MAX_DA_CHUNK_REQUEST_INDICES: usize = 256;
 /// Candidate artifact announcement/fetch protocol (PQ version).
 pub const ARTIFACTS_PROTOCOL: &str = "/hegemon/artifacts/pq/1";
 
@@ -189,6 +194,8 @@ pub struct SyncRequestEnvelope {
 pub enum SyncRequest {
     /// Request compatibility metadata before considering the peer as a sync source.
     CompatibilityProbe {
+        /// Local chain/network identifier from the loaded chain spec.
+        network_id: String,
         /// Local chain genesis hash for strict chain identity checks.
         local_genesis_hash: [u8; 32],
         /// Local sync protocol compatibility version.
@@ -235,6 +242,8 @@ pub enum SyncResponse {
         request_id: u64,
         /// Whether the responding peer considers the requester compatible.
         accepted: bool,
+        /// Responding peer chain/network identifier.
+        network_id: String,
         /// Responding peer chain genesis hash.
         local_genesis_hash: [u8; 32],
         /// Responding peer sync protocol compatibility version.
@@ -334,6 +343,8 @@ pub enum IncomingMessage {
 pub struct NetworkBridgeStats {
     /// Total block announcements received
     pub block_announces_received: u64,
+    /// Block announcements dropped due to bridge queue pressure.
+    pub block_announces_dropped: u64,
     /// Total transactions received
     pub transactions_received: u64,
     /// Total sync requests received
@@ -356,7 +367,9 @@ pub struct NetworkBridgeStats {
 /// to the appropriate handlers (block import, transaction pool, sync).
 pub struct NetworkBridge {
     /// Queue of pending block announcements
-    pending_announces: VecDeque<(PeerId, BlockAnnounce)>,
+    pending_announces: VecDeque<(PeerId, BlockAnnounce, usize)>,
+    /// Total bytes retained in `pending_announces`.
+    pending_announce_bytes: usize,
     /// Queue of pending transactions
     pending_transactions: VecDeque<(PeerId, Vec<u8>)>,
     /// Channel to send decoded messages to consumers
@@ -372,6 +385,7 @@ impl NetworkBridge {
     pub fn new() -> Self {
         Self {
             pending_announces: VecDeque::new(),
+            pending_announce_bytes: 0,
             pending_transactions: VecDeque::new(),
             message_tx: None,
             stats: NetworkBridgeStats::default(),
@@ -383,6 +397,7 @@ impl NetworkBridge {
     pub fn with_channel(message_tx: mpsc::Sender<IncomingMessage>) -> Self {
         Self {
             pending_announces: VecDeque::new(),
+            pending_announce_bytes: 0,
             pending_transactions: VecDeque::new(),
             message_tx: Some(message_tx),
             stats: NetworkBridgeStats::default(),
@@ -404,14 +419,14 @@ impl NetworkBridge {
     /// Handle incoming network event
     ///
     /// This is the main entry point called from the PQ network event loop.
-    pub async fn handle_event(&mut self, event: PqNetworkEvent) {
+    pub async fn handle_event(&mut self, event: &PqNetworkEvent) {
         match event {
             PqNetworkEvent::MessageReceived {
                 peer_id,
                 protocol,
                 data,
             } => {
-                self.handle_message(&peer_id, &protocol, &data).await;
+                self.handle_message(peer_id, protocol, data).await;
             }
             PqNetworkEvent::PeerConnected {
                 peer_id,
@@ -422,7 +437,7 @@ impl NetworkBridge {
                     tracing::debug!(
                         peer_id = %hex::encode(peer_id),
                         addr = %addr,
-                        direction = if is_outbound { "outbound" } else { "inbound" },
+                        direction = if *is_outbound { "outbound" } else { "inbound" },
                         "NetworkBridge: peer connected"
                     );
                 }
@@ -486,9 +501,7 @@ impl NetworkBridge {
                     "Received block announcement"
                 );
 
-                // Queue for processing
-                self.pending_announces
-                    .push_back((*peer_id, announce.clone()));
+                self.enqueue_block_announce(*peer_id, announce.clone());
 
                 // Send to channel if configured
                 if let Some(ref tx) = self.message_tx {
@@ -686,7 +699,13 @@ impl NetworkBridge {
     ///
     /// Returns all queued announcements and clears the queue.
     pub fn drain_announces(&mut self) -> Vec<(PeerId, BlockAnnounce)> {
-        self.pending_announces.drain(..).collect()
+        let drained: Vec<_> = self
+            .pending_announces
+            .drain(..)
+            .map(|(peer_id, announce, _)| (peer_id, announce))
+            .collect();
+        self.pending_announce_bytes = 0;
+        drained
     }
 
     /// Drain pending transactions for pool submission
@@ -704,6 +723,50 @@ impl NetworkBridge {
     /// Get number of pending transactions
     pub fn pending_transaction_count(&self) -> usize {
         self.pending_transactions.len()
+    }
+
+    fn enqueue_block_announce(&mut self, peer_id: PeerId, announce: BlockAnnounce) {
+        let announce_bytes = announce.encoded_size();
+        if announce_bytes > MAX_PENDING_ANNOUNCE_BYTES {
+            self.stats.block_announces_dropped += 1;
+            tracing::warn!(
+                peer_id = %hex::encode(peer_id),
+                block_number = announce.number,
+                announce_bytes,
+                cap = MAX_PENDING_ANNOUNCE_BYTES,
+                "Dropping oversized block announcement from bridge queue"
+            );
+            return;
+        }
+
+        while self.pending_announces.len() >= MAX_PENDING_ANNOUNCES
+            || match self.pending_announce_bytes.checked_add(announce_bytes) {
+                Some(total) => total > MAX_PENDING_ANNOUNCE_BYTES,
+                None => true,
+            }
+        {
+            let Some((dropped_peer_id, dropped_announce, dropped_bytes)) =
+                self.pending_announces.pop_front()
+            else {
+                self.pending_announce_bytes = 0;
+                break;
+            };
+            self.pending_announce_bytes = self.pending_announce_bytes.saturating_sub(dropped_bytes);
+            self.stats.block_announces_dropped += 1;
+            tracing::warn!(
+                peer_id = %hex::encode(dropped_peer_id),
+                block_number = dropped_announce.number,
+                dropped_bytes,
+                pending_bytes = self.pending_announce_bytes,
+                cap = MAX_PENDING_ANNOUNCE_BYTES,
+                max_count = MAX_PENDING_ANNOUNCES,
+                "Evicting stale block announcement to preserve bounded bridge memory"
+            );
+        }
+
+        self.pending_announce_bytes = self.pending_announce_bytes.saturating_add(announce_bytes);
+        self.pending_announces
+            .push_back((peer_id, announce, announce_bytes));
     }
 }
 
@@ -876,6 +939,7 @@ mod tests {
     #[test]
     fn test_sync_compatibility_probe_encoding() {
         let request = SyncRequest::CompatibilityProbe {
+            network_id: "hegemon-devnet-010".into(),
             local_genesis_hash: [9u8; 32],
             sync_protocol_version: SYNC_PROTOCOL_VERSION,
             aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
@@ -884,10 +948,12 @@ mod tests {
         let decoded = SyncRequest::decode(&mut &encoded[..]).unwrap();
         match decoded {
             SyncRequest::CompatibilityProbe {
+                network_id,
                 local_genesis_hash,
                 sync_protocol_version,
                 aggregation_proof_format,
             } => {
+                assert_eq!(network_id, "hegemon-devnet-010");
                 assert_eq!(local_genesis_hash, [9u8; 32]);
                 assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
                 assert_eq!(
@@ -904,6 +970,7 @@ mod tests {
         let response = SyncResponse::Compatibility {
             request_id: 7,
             accepted: true,
+            network_id: "hegemon-devnet-010".into(),
             local_genesis_hash: [5u8; 32],
             sync_protocol_version: SYNC_PROTOCOL_VERSION,
             aggregation_proof_format: consensus::BLOCK_PROOF_FORMAT_ID_V5,
@@ -914,12 +981,14 @@ mod tests {
             SyncResponse::Compatibility {
                 request_id,
                 accepted,
+                network_id,
                 local_genesis_hash,
                 sync_protocol_version,
                 aggregation_proof_format,
             } => {
                 assert_eq!(request_id, 7);
                 assert!(accepted);
+                assert_eq!(network_id, "hegemon-devnet-010");
                 assert_eq!(local_genesis_hash, [5u8; 32]);
                 assert_eq!(sync_protocol_version, SYNC_PROTOCOL_VERSION);
                 assert_eq!(

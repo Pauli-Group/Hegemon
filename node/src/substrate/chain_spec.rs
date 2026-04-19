@@ -12,11 +12,11 @@ const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 /// Specialized `ChainSpec` for the Hegemon runtime.
 pub type ChainSpec = sc_service::GenericChainSpec;
 
-/// The ONE chain configuration.
-///
-/// GENESIS_DIFFICULTY = 500,000 for 5-second blocks at ~100 kH/s
-/// Retargeting adjusts automatically based on actual hashrate.
-pub fn chain_spec() -> Result<ChainSpec, String> {
+fn chain_spec_with_identity(
+    name: &str,
+    id: &str,
+    chain_type: ChainType,
+) -> Result<ChainSpec, String> {
     let wasm_binary = WASM_BINARY.ok_or("WASM binary not available")?;
     let protocol_manifest = manifest::protocol_manifest();
 
@@ -51,12 +51,35 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
     });
 
     Ok(ChainSpec::builder(wasm_binary, None)
-        .with_name("Hegemon")
-        .with_id("hegemon")
-        .with_chain_type(ChainType::Live)
+        .with_name(name)
+        .with_id(id)
+        .with_chain_type(chain_type)
         .with_properties(properties)
         .with_genesis_config(genesis_config)
         .build())
+}
+
+/// The default live chain configuration.
+///
+/// GENESIS_DIFFICULTY = 500,000 for 5-second blocks at ~100 kH/s
+/// Retargeting adjusts automatically based on actual hashrate.
+pub fn chain_spec() -> Result<ChainSpec, String> {
+    chain_spec_with_identity("Hegemon", "hegemon", ChainType::Live)
+}
+
+/// Built-in named chain profiles use distinct ids so operators do not silently
+/// bridge different environments together when they reuse the same genesis.
+pub fn named_chain_spec(alias: &str) -> Result<ChainSpec, String> {
+    match alias {
+        "" | "dev" => {
+            chain_spec_with_identity("Hegemon Dev", "hegemon-dev", ChainType::Development)
+        }
+        "local" => chain_spec_with_identity("Hegemon Local", "hegemon-local", ChainType::Local),
+        "testnet" => {
+            chain_spec_with_identity("Hegemon Testnet", "hegemon-testnet", ChainType::Live)
+        }
+        other => Err(format!("unknown built-in chain spec alias: {other}")),
+    }
 }
 
 #[cfg(test)]

@@ -178,6 +178,7 @@ use consensus::{Sha256dAlgorithm, Sha256dSeal};
 use crypto::hashes::blake3_384;
 use futures::{FutureExt, StreamExt};
 use hyper::http::{header, Method};
+use jsonrpsee::server::http::response as jsonrpsee_http_response;
 use network::{
     BootstrapNode, PeerId, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent,
     PqNetworkHandle, PqPeerIdentity, PqTransportConfig, SubstratePqTransport,
@@ -201,7 +202,7 @@ use sp_api::{ApiExt, Core as CoreRuntimeApi, ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_database::Transaction as DbTransaction;
 use sp_inherents::{InherentData, InherentDataProvider};
-use sp_runtime::traits::Header as HeaderT;
+use sp_runtime::traits::{Hash as HashT, HashingFor, Header as HeaderT};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
@@ -213,6 +214,7 @@ use std::sync::{
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::validate_request::ValidateRequestHeaderLayer;
 use url::Url;
 use wallet::address::ShieldedAddress;
 
@@ -238,7 +240,7 @@ fn miner_recipient_from_env() -> Option<[u8; DIVERSIFIED_ADDRESS_SIZE]> {
 }
 
 // Import jsonrpsee for RPC server
-use jsonrpsee::server::ServerBuilder;
+use jsonrpsee::server::{ws, ServerBuilder};
 
 // Import sync service
 use crate::substrate::sync::{ChainSyncService, DownloadedBlock};
@@ -574,6 +576,27 @@ impl DaChunkStore {
         Ok(())
     }
 
+    fn has_encoding_for_block(
+        &self,
+        kind: DaRootKind,
+        block_number: u64,
+        block_hash: [u8; 32],
+    ) -> Result<bool, sled::Error> {
+        self.blocks
+            .get(da_block_key_with_kind(kind, block_number, &block_hash))
+            .map(|entry| entry.is_some())
+    }
+
+    fn has_ciphertexts_for_block(
+        &self,
+        block_number: u64,
+        block_hash: [u8; 32],
+    ) -> Result<bool, sled::Error> {
+        self.ciphertext_ranges
+            .get(da_block_key(block_number, &block_hash))
+            .map(|entry| entry.is_some())
+    }
+
     pub fn ciphertext_slice(
         &self,
         start: u64,
@@ -793,6 +816,10 @@ impl CommitmentBlockProofStore {
 
     pub fn get(&self, hash: &H256) -> Option<&CommitmentBlockProof> {
         self.entries.get(hash)
+    }
+
+    pub fn contains(&self, hash: &H256) -> bool {
+        self.entries.contains_key(hash)
     }
 }
 
@@ -2325,6 +2352,57 @@ async fn sample_da_for_root(
     for proof in &proofs {
         state_da::verify_da_chunk(da_root, proof)
             .map_err(|err| format!("invalid DA chunk proof: {err}"))?;
+    }
+
+    Ok(())
+}
+
+fn decode_committed_block_body(
+    body: &[Vec<u8>],
+    expected_extrinsics_root: H256,
+    state_version: sp_runtime::StateVersion,
+) -> Result<Vec<runtime::UncheckedExtrinsic>, String> {
+    let computed_root =
+        HashingFor::<runtime::Block>::ordered_trie_root(body.to_vec(), state_version);
+    if computed_root != expected_extrinsics_root {
+        return Err(format!(
+            "extrinsics root mismatch: computed={} expected={}",
+            hex::encode(computed_root.as_bytes()),
+            hex::encode(expected_extrinsics_root.as_bytes())
+        ));
+    }
+
+    let mut extrinsics = Vec::with_capacity(body.len());
+    for (idx, ext_bytes) in body.iter().enumerate() {
+        let ext = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|err| format!("failed to decode extrinsic #{idx}: {err}"))?;
+        extrinsics.push(ext);
+    }
+    Ok(extrinsics)
+}
+
+fn prevalidate_block_timestamp(extrinsics: &[runtime::UncheckedExtrinsic]) -> Result<(), String> {
+    let mut timestamp = None;
+    for ext in extrinsics {
+        if let runtime::RuntimeCall::Timestamp(pallet_timestamp::Call::set { now }) = &ext.function
+        {
+            if timestamp.replace(*now).is_some() {
+                return Err("duplicate timestamp inherent".to_string());
+            }
+        }
+    }
+
+    let timestamp = timestamp.ok_or_else(|| "missing timestamp inherent".to_string())?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("failed to read system clock: {err}"))?
+        .as_millis();
+    let now_ms = u64::try_from(now_ms).unwrap_or(u64::MAX);
+    let max_timestamp = now_ms.saturating_add(runtime::PowFutureDrift::get());
+    if timestamp > max_timestamp {
+        return Err(format!(
+            "future timestamp: {timestamp} > max {max_timestamp}"
+        ));
     }
 
     Ok(())
@@ -6382,25 +6460,48 @@ fn wire_pow_block_import(
                     let da_root = build.encoding.root();
                     let da_chunks = build.encoding.chunks().len();
                     let ciphertexts = flatten_ciphertexts(&build.transactions);
-                    if let Err(err) = store.insert(
+                    match store.has_encoding_for_block(
                         DaRootKind::Ciphertexts,
                         template.number,
                         block_hash_bytes,
-                        build.encoding,
                     ) {
-                        tracing::warn!(
-                            block_number = template.number,
-                            da_root = %hex::encode(da_root),
-                            error = %err,
-                            "Failed to persist DA encoding for known block"
-                        );
-                    } else {
-                        tracing::info!(
-                            block_number = template.number,
-                            da_root = %hex::encode(da_root),
-                            da_chunks,
-                            "DA encoding stored for known block"
-                        );
+                        Ok(true) => {
+                            tracing::debug!(
+                                block_number = template.number,
+                                da_root = %hex::encode(da_root),
+                                "Skipping DA encoding backfill for known block; encoding already stored"
+                            );
+                        }
+                        Ok(false) => {
+                            if let Err(err) = store.insert(
+                                DaRootKind::Ciphertexts,
+                                template.number,
+                                block_hash_bytes,
+                                build.encoding,
+                            ) {
+                                tracing::warn!(
+                                    block_number = template.number,
+                                    da_root = %hex::encode(da_root),
+                                    error = %err,
+                                    "Failed to persist DA encoding for known block"
+                                );
+                            } else {
+                                tracing::info!(
+                                    block_number = template.number,
+                                    da_root = %hex::encode(da_root),
+                                    da_chunks,
+                                    "DA encoding stored for known block"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                block_number = template.number,
+                                da_root = %hex::encode(da_root),
+                                error = %err,
+                                "Failed to check DA encoding state for known block"
+                            );
+                        }
                     }
                     if let Some(mut pending_ciphertexts) = pending_ciphertext_store.try_lock() {
                         pending_ciphertexts.remove_many(&build.used_ciphertext_hashes);
@@ -6417,20 +6518,40 @@ fn wire_pow_block_import(
                 };
                 ciphertexts.extend(coinbase_ciphertexts_from_extrinsics(block.extrinsics()));
                 let ciphertext_count = ciphertexts.len();
-                if let Err(err) =
-                    store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
-                {
-                    tracing::warn!(
-                        block_number = template.number,
-                        error = %err,
-                        "Failed to persist ciphertexts for known block"
-                    );
-                } else if ciphertext_count > 0 {
-                    tracing::info!(
-                        block_number = template.number,
-                        ciphertext_count,
-                        "Ciphertexts stored for known block"
-                    );
+                match store.has_ciphertexts_for_block(template.number, block_hash_bytes) {
+                    Ok(true) => {
+                        if ciphertext_count > 0 {
+                            tracing::debug!(
+                                block_number = template.number,
+                                ciphertext_count,
+                                "Skipping ciphertext backfill for known block; ciphertexts already stored"
+                            );
+                        }
+                    }
+                    Ok(false) => {
+                        if let Err(err) =
+                            store.append_ciphertexts(template.number, block_hash_bytes, &ciphertexts)
+                        {
+                            tracing::warn!(
+                                block_number = template.number,
+                                error = %err,
+                                "Failed to persist ciphertexts for known block"
+                            );
+                        } else if ciphertext_count > 0 {
+                            tracing::info!(
+                                block_number = template.number,
+                                ciphertext_count,
+                                "Ciphertexts stored for known block"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            block_number = template.number,
+                            error = %err,
+                            "Failed to check ciphertext state for known block"
+                        );
+                    }
                 }
                 {
                     let binding_hashes = binding_hashes_from_extrinsics(block.extrinsics());
@@ -6449,16 +6570,23 @@ fn wire_pow_block_import(
                 if let Some(proof) = commitment_block_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
-                    commitment_block_proof_store
-                        .lock()
-                        .insert(block_hash, proof);
-                    tracing::info!(
-                        block_number = template.number,
-                        block_hash = %hex::encode(block_hash.as_bytes()),
-                        proof_size,
-                        proof_hash = %hex::encode(proof_hash),
-                        "Commitment block proof stored for known block"
-                    );
+                    let mut proof_store = commitment_block_proof_store.lock();
+                    if proof_store.contains(&block_hash) {
+                        tracing::debug!(
+                            block_number = template.number,
+                            block_hash = %hex::encode(block_hash.as_bytes()),
+                            "Skipping commitment proof backfill for known block; proof already stored"
+                        );
+                    } else {
+                        proof_store.insert(block_hash, proof);
+                        tracing::info!(
+                            block_number = template.number,
+                            block_hash = %hex::encode(block_hash.as_bytes()),
+                            proof_size,
+                            proof_hash = %hex::encode(proof_hash),
+                            "Commitment block proof stored for known block"
+                        );
+                    }
                 }
                 tracing::warn!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
@@ -6528,21 +6656,91 @@ pub struct PeerGraphReport {
     pub peers: Vec<crate::substrate::discovery::PeerGraphEntry>,
 }
 
-async fn refresh_peer_connection_counters(
-    pq_backend: &Arc<PqNetworkBackend>,
-    peer_details: &Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
-) {
-    let infos = pq_backend.peer_info().await;
-    if infos.is_empty() {
-        return;
+#[derive(Clone, Copy, Debug)]
+struct UnknownPeerAdmissionCandidate {
+    peer_id: PeerId,
+    is_outbound: bool,
+    best_height: u64,
+    last_seen: Instant,
+}
+
+fn default_max_unknown_peers(max_peers: usize) -> usize {
+    max_peers.saturating_sub(2).clamp(1, 8)
+}
+
+fn select_unknown_peer_to_disconnect(
+    candidates: &[UnknownPeerAdmissionCandidate],
+    max_unknown_peers: usize,
+) -> Option<PeerId> {
+    if candidates.len() <= max_unknown_peers {
+        return None;
     }
+
+    candidates
+        .iter()
+        .min_by_key(|candidate| {
+            (
+                candidate.is_outbound,
+                candidate.best_height,
+                candidate.last_seen,
+                candidate.peer_id,
+            )
+        })
+        .map(|candidate| candidate.peer_id)
+}
+
+async fn refresh_peer_connection_counters<Block, Client>(
+    pq_backend: &Arc<PqNetworkBackend>,
+    sync_service: &Arc<Mutex<ChainSyncService<Block, Client>>>,
+    peer_count_for_rpc: &Arc<AtomicUsize>,
+    connected_peers: &mut HashMap<PeerId, (std::net::SocketAddr, bool)>,
+    peer_store: &mut network::PeerStore,
+    peer_details: &Arc<parking_lot::RwLock<HashMap<PeerId, PeerConnectionSnapshot>>>,
+    peer_graph_reports: &Arc<parking_lot::RwLock<HashMap<PeerId, PeerGraphReport>>>,
+) where
+    Block: sp_runtime::traits::Block,
+    Client: HeaderBackend<Block> + BlockBackend<Block> + 'static,
+{
+    let infos = pq_backend.peer_info().await;
+    let live_peer_ids: std::collections::HashSet<_> =
+        infos.iter().map(|info| info.peer_id).collect();
+    let stale_peer_ids: Vec<_> = connected_peers
+        .keys()
+        .copied()
+        .filter(|peer_id| !live_peer_ids.contains(peer_id))
+        .collect();
+
+    if !stale_peer_ids.is_empty() {
+        {
+            let mut sync = sync_service.lock().await;
+            for peer_id in &stale_peer_ids {
+                sync.on_peer_disconnected(peer_id);
+            }
+            peer_count_for_rpc.store(sync.peer_count(), Ordering::Relaxed);
+        }
+
+        for peer_id in stale_peer_ids {
+            if let Some((addr, is_outbound)) = connected_peers.remove(&peer_id) {
+                if is_outbound && crate::substrate::discovery::is_dialable_addr(&addr) {
+                    let _ = peer_store.record_disconnected(addr);
+                }
+            }
+        }
+    }
+
     let mut details = peer_details.write();
+    details.retain(|peer_id, _| live_peer_ids.contains(peer_id));
     for info in infos {
         if let Some(entry) = details.get_mut(&info.peer_id) {
             entry.bytes_sent = info.bytes_sent;
             entry.bytes_received = info.bytes_received;
         }
     }
+    drop(details);
+
+    peer_graph_reports
+        .write()
+        .retain(|peer_id, _| live_peer_ids.contains(peer_id));
 }
 
 impl Default for PqServiceConfig {
@@ -7943,14 +8141,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         client.clone(),
         pool_config.capacity,
     ));
-    let pool_bridge = Arc::new(TransactionPoolBridge::with_max_pending(
+    let pool_bridge = Arc::new(TransactionPoolBridge::with_limits(
         real_pool_wrapper.clone(),
         pool_config.max_pending,
+        pool_config.max_pending_bytes,
     ));
 
     tracing::info!(
         pool_capacity = pool_config.capacity,
         max_pending = pool_config.max_pending,
+        max_pending_bytes = pool_config.max_pending_bytes,
         pool_type = "SubstrateTransactionPoolWrapper (real pool)",
         "Transaction pool bridge wired to Substrate pool"
     );
@@ -8127,7 +8327,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // - Responding to sync requests from peers
                 // - Managing the sync state machine
                 // - Downloading blocks from peers when behind
-                let sync_service = Arc::new(Mutex::new(ChainSyncService::new(client.clone())));
+                let sync_service = Arc::new(Mutex::new(ChainSyncService::new(
+                    client.clone(),
+                    config.chain_spec.id().to_string(),
+                )));
                 let sync_service_clone = Arc::clone(&sync_service);
                 let _sync_service_for_handler = Arc::clone(&sync_service);
                 let sync_status_for_events = Arc::clone(&sync_status);
@@ -8213,12 +8416,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                            .and_then(|s| s.parse::<u64>().ok())
 	                            .unwrap_or(30)
 	                            .max(5);
+	                        let max_unknown_peers = std::env::var("HEGEMON_PQ_MAX_UNKNOWN_PEERS")
+	                            .ok()
+	                            .and_then(|s| s.parse::<usize>().ok())
+	                            .map(|limit| limit.clamp(1, discovery_max_peers.max(1)))
+	                            .unwrap_or_else(|| {
+	                                default_max_unknown_peers(discovery_max_peers.max(1))
+	                            });
 	                        let mut peer_graph_tick =
 	                            tokio::time::interval(Duration::from_secs(peer_graph_tick_secs));
 	                        peer_graph_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 	                        tracing::info!(
 	                            min_peers = discovery_min_peers,
 	                            tick_secs = discovery_tick_secs,
+	                            max_unknown_peers,
 	                            strict_compatibility,
 	                            "PQ discovery enabled (address exchange)"
 	                        );
@@ -8231,20 +8442,47 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    let Some(event) = maybe_event else {
 	                                        break;
 	                                    };
-	                            {
-	                                let mut bridge = bridge_clone.lock().await;
-	                                bridge.handle_event(event.clone()).await;
+                            let pending_txs = {
+                                let mut bridge = bridge_clone.lock().await;
+                                bridge.handle_event(&event).await;
+                                bridge.drain_transactions()
+                            };
+                            if !pending_txs.is_empty() {
+                                let compatible_txs = if strict_compatibility {
+                                    let sync = sync_service_clone.lock().await;
+                                    let mut dropped = 0usize;
+                                    let filtered: Vec<_> = pending_txs
+                                        .into_iter()
+                                        .filter(|(peer_id, _)| {
+                                            let accepted = matches!(
+                                                sync.peer_compatibility(peer_id),
+                                                PeerCompatibility::Compatible
+                                            );
+                                            if !accepted {
+                                                dropped = dropped.saturating_add(1);
+                                            }
+                                            accepted
+                                        })
+                                        .collect();
+                                    if dropped > 0 {
+                                        tracing::debug!(
+                                            dropped,
+                                            "Dropped transaction gossip from peers that have not passed compatibility checks"
+                                        );
+                                    }
+                                    filtered
+                                } else {
+                                    pending_txs
+                                };
 
-	                                // Process transactions
-                                let pending_txs = bridge.drain_transactions();
-                                if !pending_txs.is_empty() {
-                                    pool_bridge_clone.queue_from_bridge(pending_txs).await;
+                                if !compatible_txs.is_empty() {
+                                    pool_bridge_clone.queue_from_bridge(compatible_txs).await;
                                 }
-
-                                // Note: Block announcements are NOT drained here.
-                                // They are drained by the block-import-handler task
-                                // which handles both sync state updates and block import.
                             }
+
+                            // Note: Block announcements are NOT drained here.
+                            // They are drained by the block-import-handler task
+                            // which handles both sync state updates and block import.
 
                             // Debug: log all events received by the handler
                             tracing::info!(
@@ -8283,132 +8521,203 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             bytes_received: 0,
                                         },
                                     );
-                                    // Record dialed addresses so we can share them with others.
-                                    if is_outbound && is_dialable_addr(&addr) {
-                                        if let Err(err) = peer_store.record_connected(addr) {
-                                            tracing::warn!(
-                                                peer = %hex::encode(peer_id),
-                                                addr = %addr,
-                                                error = %err,
-                                                "Failed to persist connected peer address"
-                                            );
-                                        }
-                                    }
-
-                                    if !strict_compatibility {
-                                        let msg = DiscoveryMessage::GetPeerGraph {
-                                            limit: DEFAULT_PEER_GRAPH_LIMIT,
-                                        };
-                                        if let Ok(encoded) = bincode::serialize(&msg) {
-                                            let _ = pq_handle_for_status
-                                                .send_message(
-                                                    peer_id,
-                                                    DISCOVERY_PROTOCOL.to_string(),
-                                                    encoded,
-                                                )
-                                                .await;
-                                        }
-
-                                        // Send discovery hello + request addresses.
-                                        let hello = DiscoveryMessage::Hello { listen_port };
-                                        if let Ok(encoded) = bincode::serialize(&hello) {
-                                            let _ = pq_handle_for_status
-                                                .send_message(
-                                                    peer_id,
-                                                    DISCOVERY_PROTOCOL.to_string(),
-                                                    encoded,
-                                                )
-                                                .await;
-                                        }
-
-                                        let get_addrs = DiscoveryMessage::GetAddrs {
-                                            limit: DEFAULT_ADDR_LIMIT,
-                                        };
-                                        if let Ok(encoded) = bincode::serialize(&get_addrs) {
-                                            let _ = pq_handle_for_status
-                                                .send_message(
-                                                    peer_id,
-                                                    DISCOVERY_PROTOCOL.to_string(),
-                                                    encoded,
-                                                )
-                                                .await;
-                                        }
+                                    let shed_unknown_peer = if strict_compatibility {
+                                        let sync = sync_service_clone.lock().await;
+                                        let peer_details = peer_details_for_events.read();
+                                        let candidates: Vec<_> = connected_peers
+                                            .iter()
+                                            .filter_map(|(connected_peer_id, (_, connected_outbound))| {
+                                                if !matches!(
+                                                    sync.peer_compatibility(connected_peer_id),
+                                                    PeerCompatibility::Unknown
+                                                ) {
+                                                    return None;
+                                                }
+                                                let snapshot = peer_details.get(connected_peer_id);
+                                                Some(UnknownPeerAdmissionCandidate {
+                                                    peer_id: *connected_peer_id,
+                                                    is_outbound: *connected_outbound,
+                                                    best_height: snapshot
+                                                        .map(|entry| entry.best_height)
+                                                        .unwrap_or(0),
+                                                    last_seen: snapshot
+                                                        .map(|entry| entry.last_seen)
+                                                        .unwrap_or_else(Instant::now),
+                                                })
+                                            })
+                                            .collect();
+                                        select_unknown_peer_to_disconnect(
+                                            &candidates,
+                                            max_unknown_peers,
+                                        )
+                                        .map(|peer_to_disconnect| {
+                                            (peer_to_disconnect, candidates.len())
+                                        })
                                     } else {
-                                        tracing::debug!(
-                                            peer = %hex::encode(peer_id),
-                                            "Strict compatibility enabled; delaying discovery exchange until peer is verified"
+                                        None
+                                    };
+
+                                    let mut keep_connected_peer = true;
+                                    if let Some((peer_to_disconnect, unknown_peer_count)) =
+                                        shed_unknown_peer
+                                    {
+                                        tracing::warn!(
+                                            peer = %hex::encode(peer_to_disconnect),
+                                            new_peer = %hex::encode(peer_id),
+                                            new_peer_direction = if is_outbound { "outbound" } else { "inbound" },
+                                            unknown_peer_count,
+                                            max_unknown_peers,
+                                            "Disconnecting peer to preserve slots for compatibility-verified connections"
                                         );
+                                        pq_handle_for_status
+                                            .disconnect(
+                                                peer_to_disconnect,
+                                                "exceeded unverified peer limit",
+                                            )
+                                            .await;
+                                        keep_connected_peer = peer_to_disconnect != peer_id;
                                     }
 
-                                    // Send our best block to the new peer so they know our chain tip
-                                    // This enables the peer to initiate sync if they're behind us
-                                    {
-                                        use crate::substrate::network_bridge::{BlockAnnounce, BlockState, BLOCK_ANNOUNCE_PROTOCOL};
+                                    if keep_connected_peer {
+                                        // Record dialed addresses so we can share them with others.
+                                        if is_outbound && is_dialable_addr(&addr) {
+                                            if let Err(err) = peer_store.record_connected(addr) {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    addr = %addr,
+                                                    error = %err,
+                                                    "Failed to persist connected peer address"
+                                                );
+                                            }
+                                        }
 
-                                        let info = client_for_network.chain_info();
-                                        let best_number: u64 = info.best_number.try_into().unwrap_or(0);
-                                        let mut hash_bytes = [0u8; 32];
-                                        hash_bytes.copy_from_slice(info.best_hash.as_ref());
+                                        let pq_handle_for_status_task = pq_handle_for_status.clone();
+                                        let client_for_network_task = client_for_network.clone();
+                                        tokio::spawn(async move {
+                                            if !strict_compatibility {
+                                                let msg = DiscoveryMessage::GetPeerGraph {
+                                                    limit: DEFAULT_PEER_GRAPH_LIMIT,
+                                                };
+                                                if let Ok(encoded) = bincode::serialize(&msg) {
+                                                    let _ = pq_handle_for_status_task
+                                                        .send_message(
+                                                            peer_id,
+                                                            DISCOVERY_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        )
+                                                        .await;
+                                                }
 
-                                        tracing::info!(
-                                            peer = %hex::encode(peer_id),
-                                            best_number = best_number,
-                                            "Attempting to send best block to new peer"
-                                        );
+                                                // Send discovery hello + request addresses.
+                                                let hello = DiscoveryMessage::Hello { listen_port };
+                                                if let Ok(encoded) = bincode::serialize(&hello) {
+                                                    let _ = pq_handle_for_status_task
+                                                        .send_message(
+                                                            peer_id,
+                                                            DISCOVERY_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        )
+                                                        .await;
+                                                }
 
-                                        // Get the best block header
-                                        match client_for_network.header(info.best_hash) {
-                                            Ok(Some(header)) => {
-                                                let header_bytes = header.encode();
-                                                let announce = BlockAnnounce::new(
-                                                    header_bytes,
-                                                    best_number,
-                                                    hash_bytes,
-                                                    BlockState::Best,
+                                                let get_addrs = DiscoveryMessage::GetAddrs {
+                                                    limit: DEFAULT_ADDR_LIMIT,
+                                                };
+                                                if let Ok(encoded) = bincode::serialize(&get_addrs)
+                                                {
+                                                    let _ = pq_handle_for_status_task
+                                                        .send_message(
+                                                            peer_id,
+                                                            DISCOVERY_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        )
+                                                        .await;
+                                                }
+                                            } else {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(peer_id),
+                                                    "Strict compatibility enabled; delaying discovery exchange until peer is verified"
+                                                );
+                                            }
+
+                                            // Send our best block to the new peer so they know our chain tip.
+                                            // This enables the peer to initiate sync if they're behind us.
+                                            {
+                                                use crate::substrate::network_bridge::{
+                                                    BlockAnnounce, BlockState,
+                                                    BLOCK_ANNOUNCE_PROTOCOL,
+                                                };
+
+                                                let info = client_for_network_task.chain_info();
+                                                let best_number: u64 =
+                                                    info.best_number.try_into().unwrap_or(0);
+                                                let mut hash_bytes = [0u8; 32];
+                                                hash_bytes.copy_from_slice(info.best_hash.as_ref());
+
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    best_number = best_number,
+                                                    "Attempting to send best block to new peer"
                                                 );
 
-                                                let encoded = announce.encode();
-                                                if let Err(e) = pq_handle_for_status.send_message(
-                                                    peer_id,
-                                                    BLOCK_ANNOUNCE_PROTOCOL.to_string(),
-                                                    encoded,
-                                                ).await {
-                                                    tracing::warn!(
-                                                        peer = %hex::encode(peer_id),
-                                                        error = %e,
-                                                        "Failed to send best block to new peer"
-                                                    );
-                                                } else {
-                                                    tracing::info!(
-                                                        peer = %hex::encode(peer_id),
-                                                        best_number = best_number,
-                                                        "Sent our best block to new peer for sync"
-                                                    );
+                                                match client_for_network_task.header(info.best_hash)
+                                                {
+                                                    Ok(Some(header)) => {
+                                                        let header_bytes = header.encode();
+                                                        let announce = BlockAnnounce::new(
+                                                            header_bytes,
+                                                            best_number,
+                                                            hash_bytes,
+                                                            BlockState::Best,
+                                                        );
+
+                                                        let encoded = announce.encode();
+                                                        if let Err(e) = pq_handle_for_status_task
+                                                            .send_message(
+                                                                peer_id,
+                                                                BLOCK_ANNOUNCE_PROTOCOL.to_string(),
+                                                                encoded,
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(peer_id),
+                                                                error = %e,
+                                                                "Failed to send best block to new peer"
+                                                            );
+                                                        } else {
+                                                            tracing::info!(
+                                                                peer = %hex::encode(peer_id),
+                                                                best_number = best_number,
+                                                                "Sent our best block to new peer for sync"
+                                                            );
+                                                        }
+                                                    }
+                                                    Ok(None) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(peer_id),
+                                                            best_hash = ?info.best_hash,
+                                                            "Header not found for best block"
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(peer_id),
+                                                            error = ?e,
+                                                            "Error getting header for best block"
+                                                        );
+                                                    }
                                                 }
                                             }
-                                            Ok(None) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(peer_id),
-                                                    best_hash = ?info.best_hash,
-                                                    "Header not found for best block"
-                                                );
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    peer = %hex::encode(peer_id),
-                                                    error = ?e,
-                                                    "Error getting header for best block"
-                                                );
-                                            }
-                                        }
-                                    }
+                                        });
 
-                                    tracing::info!(
-                                        peer_id = %hex::encode(peer_id),
-                                        addr = %addr,
-                                        direction = if is_outbound { "outbound" } else { "inbound" },
-                                        "PQ peer connected"
-                                    );
+                                        tracing::info!(
+                                            peer_id = %hex::encode(peer_id),
+                                            addr = %addr,
+                                            direction = if is_outbound { "outbound" } else { "inbound" },
+                                            "PQ peer connected"
+                                        );
+                                    }
                                 }
 	                                PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
                                     // Update sync service
@@ -8605,12 +8914,36 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                         request = ?envelope.request,
                                                         "Received sync request v2 from peer"
                                                     );
-                                                    let mut sync = sync_service_clone.lock().await;
-                                                    if let Some(response) = sync.handle_sync_request(
-                                                        peer_id,
-                                                        Some(envelope.request_id),
-                                                        envelope.request,
-                                                    ) {
+                                                    let response = {
+                                                        let mut sync = sync_service_clone.lock().await;
+                                                        let compatibility =
+                                                            sync.peer_compatibility(&peer_id);
+                                                        let allow_request = !strict_compatibility
+                                                            || matches!(
+                                                                envelope.request,
+                                                                crate::substrate::network_bridge::SyncRequest::CompatibilityProbe { .. }
+                                                            )
+                                                            || matches!(
+                                                                compatibility,
+                                                                PeerCompatibility::Compatible
+                                                            );
+                                                        if allow_request {
+                                                            sync.handle_sync_request(
+                                                                peer_id,
+                                                                Some(envelope.request_id),
+                                                                envelope.request,
+                                                            )
+                                                        } else {
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(peer_id),
+                                                                request_id = envelope.request_id,
+                                                                compatibility = ?compatibility,
+                                                                "Rejecting inbound sync request from non-compatible peer"
+                                                            );
+                                                            None
+                                                        }
+                                                    };
+                                                    if let Some(response) = response {
                                                         let msg = SyncMessage::Response(response);
                                                         let encoded = msg.encode();
                                                         tracing::info!(
@@ -8657,15 +8990,37 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                     // Handle DA chunk request/response
                                     else if protocol == DA_CHUNKS_PROTOCOL {
+                                        use crate::substrate::network_bridge::MAX_DA_CHUNK_REQUEST_INDICES;
                                         match DaChunkProtocolMessage::decode(&mut &data[..]) {
                                             Ok(DaChunkProtocolMessage::Request { root, indices }) => {
+                                                let requested = indices.len();
+                                                let mut seen = HashSet::with_capacity(
+                                                    requested.min(MAX_DA_CHUNK_REQUEST_INDICES),
+                                                );
+                                                let bounded_indices: Vec<u32> = indices
+                                                    .into_iter()
+                                                    .filter(|index| seen.insert(*index))
+                                                    .take(MAX_DA_CHUNK_REQUEST_INDICES)
+                                                    .collect();
+
+                                                if bounded_indices.len() < requested {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(peer_id),
+                                                        root = %hex::encode(root),
+                                                        requested,
+                                                        served = bounded_indices.len(),
+                                                        cap = MAX_DA_CHUNK_REQUEST_INDICES,
+                                                        "Truncated oversized or duplicate DA chunk request"
+                                                    );
+                                                }
+
                                                 let (proofs, missing) = {
                                                     let mut store = da_chunk_store_for_handler.lock();
                                                     match store.get(&root) {
                                                         Some(encoding) => {
                                                             let mut proofs = Vec::new();
                                                             let mut missing = Vec::new();
-                                                            for index in indices.iter().copied() {
+                                                            for index in bounded_indices.iter().copied() {
                                                                 match encoding.proof(index) {
                                                                     Ok(proof) => proofs.push(proof),
                                                                     Err(_) => missing.push(index),
@@ -8673,7 +9028,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                             }
                                                             (proofs, missing)
                                                         }
-                                                        None => (Vec::new(), indices.clone()),
+                                                        None => (Vec::new(), bounded_indices.clone()),
                                                     }
                                                 };
 
@@ -8843,14 +9198,24 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                 refresh_peer_connection_counters(
                                     &pq_backend,
+                                    &sync_service_clone,
+                                    &peer_count_for_rpc,
+                                    &mut connected_peers,
+                                    &mut peer_store,
                                     &peer_details_for_events,
+                                    &peer_graph_reports_for_events,
                                 )
                                 .await;
 	                                }
 	                                _ = discovery_tick.tick() => {
                                         refresh_peer_connection_counters(
                                             &pq_backend,
+                                            &sync_service_clone,
+                                            &peer_count_for_rpc,
+                                            &mut connected_peers,
+                                            &mut peer_store,
                                             &peer_details_for_events,
+                                            &peer_graph_reports_for_events,
                                         )
                                         .await;
 
@@ -8946,7 +9311,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                _ = peer_graph_tick.tick() => {
                                         refresh_peer_connection_counters(
                                             &pq_backend,
+                                            &sync_service_clone,
+                                            &peer_count_for_rpc,
+                                            &mut connected_peers,
+                                            &mut peer_store,
                                             &peer_details_for_events,
+                                            &peer_graph_reports_for_events,
                                         )
                                         .await;
 
@@ -9268,17 +9638,44 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
+                                let parent_hash = *header.parent_hash();
+                                let extrinsics_root_state_version = match block_import_client
+                                    .runtime_api()
+                                    .version(parent_hash)
+                                {
+                                    Ok(version) => version.extrinsics_root_state_version(),
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number = downloaded.number,
+                                            parent_hash = %hex::encode(parent_hash.as_bytes()),
+                                            error = ?err,
+                                            "Rejecting synced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
 
-                                // Decode extrinsics
-                                let extrinsics: Vec<runtime::UncheckedExtrinsic> = downloaded.body
-                                    .iter()
-                                    .filter_map(|ext_bytes| {
-                                        runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
-                                    })
-                                    .collect();
+                                let extrinsics = match decode_committed_block_body(
+                                    &downloaded.body,
+                                    *header.extrinsics_root(),
+                                    extrinsics_root_state_version,
+                                ) {
+                                    Ok(extrinsics) => extrinsics,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number = downloaded.number,
+                                            error = %err,
+                                            "Rejecting synced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
 
                                 let block_number = *header.number();
-                                let parent_hash = *header.parent_hash();
 
                                 match block_import_client.header(parent_hash) {
                                     Ok(Some(_)) => {}
@@ -9307,6 +9704,121 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                         continue;
                                     }
+                                }
+
+                                let post_hash = header.hash();
+                                let mut block_hash = [0u8; 32];
+                                block_hash.copy_from_slice(post_hash.as_bytes());
+                                let block_has_ciphertexts = has_sidecar_transfers(&extrinsics)
+                                    || !transfer_ciphertexts_from_extrinsics(&extrinsics).is_empty()
+                                    || !coinbase_ciphertexts_from_extrinsics(&extrinsics).is_empty();
+                                let known_block_has_all_artifacts =
+                                    match block_import_client.header(post_hash) {
+                                        Ok(Some(_)) => {
+                                            if !block_has_ciphertexts {
+                                                true
+                                            } else {
+                                                let store = da_chunk_store_for_import.lock();
+                                                match store.has_ciphertexts_for_block(
+                                                    block_number as u64,
+                                                    block_hash,
+                                                ) {
+                                                    Ok(present) => present,
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&downloaded.from_peer),
+                                                            block_number,
+                                                            block_hash = %hex::encode(block_hash),
+                                                            error = %err,
+                                                            "Failed to check stored ciphertexts for known synced block"
+                                                        );
+                                                        false
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Ok(None) => false,
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&downloaded.from_peer),
+                                                block_number,
+                                                block_hash = %hex::encode(block_hash),
+                                                error = %err,
+                                                "Failed to check whether synced block is already imported"
+                                            );
+                                            false
+                                        }
+                                    };
+                                if known_block_has_all_artifacts {
+                                    {
+                                        let mut sync = sync_service_for_import.lock().await;
+                                        sync.on_block_imported(block_number as u64, block_hash);
+                                    }
+                                    tracing::debug!(
+                                        peer = %hex::encode(&downloaded.from_peer),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash),
+                                        "Skipping replayed synced block; block and artifacts already exist"
+                                    );
+                                    continue;
+                                }
+
+                                let extracted_seal = match crate::substrate::block_import::extract_seal_from_header::<runtime::Block>(&header) {
+                                    Ok(extracted) => extracted,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            block_hash = %hex::encode(block_hash),
+                                            error = %err,
+                                            "Rejecting synced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                if let Err(err) = prevalidate_block_timestamp(&extrinsics) {
+                                    tracing::warn!(
+                                        peer = %hex::encode(&downloaded.from_peer),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash),
+                                        error = %err,
+                                        "Rejecting synced block before DA/proof work"
+                                    );
+                                    blocks_failed += 1;
+                                    continue;
+                                }
+                                let expected_difficulty = match block_import_client
+                                    .runtime_api()
+                                    .difficulty_bits(parent_hash)
+                                {
+                                    Ok(bits) => bits,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            block_hash = %hex::encode(block_hash),
+                                            error = ?err,
+                                            "Rejecting synced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                if let Err(err) = crate::substrate::block_import::verify_pow_seal(
+                                    &extracted_seal,
+                                    expected_difficulty,
+                                    10,
+                                ) {
+                                    tracing::warn!(
+                                        peer = %hex::encode(&downloaded.from_peer),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash),
+                                        error = %err,
+                                        "Rejecting synced block before DA/proof work"
+                                    );
+                                    blocks_failed += 1;
+                                    continue;
                                 }
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
@@ -9372,7 +9884,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     downloaded.from_peer,
                                                     payload.da_root,
                                                     payload.da_chunk_count,
-                                                    downloaded.hash,
+                                                    block_hash,
                                                     da_sampling_secret_for_import,
                                                     da_params_for_import,
                                                     &pq_handle_for_da_import,
@@ -9424,7 +9936,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         pallet_shielded_pool::types::DaAvailabilityPolicy::Sampling => {
                                             match sample_da_for_block(
                                                 downloaded.from_peer,
-                                                downloaded.hash,
+                                                block_hash,
                                                 da_sampling_secret_for_import,
                                                 &extrinsics,
                                                 da_params_for_import,
@@ -9542,28 +10054,24 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     };
                                 }
 
-                                use sp_runtime::traits::Header as HeaderT;
-                                let post_hash = header.hash(); // final block hash (includes seal)
-                                let mut block_hash = [0u8; 32];
-                                block_hash.copy_from_slice(post_hash.as_bytes());
-
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
                                 // The seal should be the last digest item with engine ID "pow_"
-                                let seal = header.digest_mut().pop();
+                                let seal = crate::substrate::block_import::pop_canonical_seal_from_header::<runtime::Block>(&mut header);
 
                                 let seal_item = match seal {
-                                    Some(item) => {
+                                    Ok(item) => {
                                         tracing::debug!(
                                             block_number,
                                             "Extracted seal from header for block import"
                                         );
                                         item
                                     }
-                                    None => {
+                                    Err(err) => {
                                         tracing::warn!(
                                             block_number,
-                                            "No seal found in header digest, skipping block"
+                                            error = %err,
+                                            "Rejecting synced block before import: canonical PoW seal missing"
                                         );
                                         blocks_failed += 1;
                                         continue;
@@ -9698,25 +10206,48 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             let da_root = build.encoding.root();
                                             let da_chunks = build.encoding.chunks().len();
                                             let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            if let Err(err) = store.insert(
+                                            match store.has_encoding_for_block(
                                                 DaRootKind::Ciphertexts,
                                                 block_number as u64,
                                                 block_hash,
-                                                build.encoding,
                                             ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for known synced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for known synced block"
-                                                );
+                                                Ok(true) => {
+                                                    tracing::debug!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        "Skipping DA encoding backfill for known synced block; encoding already stored"
+                                                    );
+                                                }
+                                                Ok(false) => {
+                                                    if let Err(err) = store.insert(
+                                                        DaRootKind::Ciphertexts,
+                                                        block_number as u64,
+                                                        block_hash,
+                                                        build.encoding,
+                                                    ) {
+                                                        tracing::warn!(
+                                                            block_number,
+                                                            da_root = %hex::encode(da_root),
+                                                            error = %err,
+                                                            "Failed to persist DA encoding for known synced block"
+                                                        );
+                                                    } else {
+                                                        tracing::info!(
+                                                            block_number,
+                                                            da_root = %hex::encode(da_root),
+                                                            da_chunks,
+                                                            "DA encoding stored for known synced block"
+                                                        );
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to check DA encoding state for known synced block"
+                                                    );
+                                                }
                                             }
                                             ciphertexts
                                         } else {
@@ -9726,37 +10257,69 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             &extrinsics_for_ciphertexts,
                                         ));
                                         let ciphertext_count = ciphertexts.len();
-                                        if let Err(err) = store.append_ciphertexts(
+                                        match store.has_ciphertexts_for_block(
                                             block_number as u64,
                                             block_hash,
-                                            &ciphertexts,
                                         ) {
-                                            tracing::warn!(
-                                                block_number,
-                                                error = %err,
-                                                "Failed to persist ciphertexts for known synced block"
-                                            );
-                                        } else if ciphertext_count > 0 {
-                                            tracing::info!(
-                                                block_number,
-                                                ciphertext_count,
-                                                "Ciphertexts stored for known synced block"
-                                            );
+                                            Ok(true) => {
+                                                if ciphertext_count > 0 {
+                                                    tracing::debug!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Skipping ciphertext backfill for known synced block; ciphertexts already stored"
+                                                    );
+                                                }
+                                            }
+                                            Ok(false) => {
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for known synced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for known synced block"
+                                                    );
+                                                }
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    error = %err,
+                                                    "Failed to check ciphertext state for known synced block"
+                                                );
+                                            }
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
                                             let proof_hash = proof.proof_hash;
-                                            commitment_block_proof_store_for_import
-                                                .lock()
-                                                .insert(post_hash, proof);
-                                            tracing::info!(
-                                                peer = %hex::encode(&downloaded.from_peer),
-                                                block_number,
-                                                block_hash = %hex::encode(post_hash.as_bytes()),
-                                                proof_size,
-                                                proof_hash = %hex::encode(proof_hash),
-                                                "Commitment block proof stored for known block"
-                                            );
+                                            let mut proof_store =
+                                                commitment_block_proof_store_for_import.lock();
+                                            if proof_store.contains(&post_hash) {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    block_hash = %hex::encode(post_hash.as_bytes()),
+                                                    "Skipping commitment proof backfill for known synced block; proof already stored"
+                                                );
+                                            } else {
+                                                proof_store.insert(post_hash, proof);
+                                                tracing::info!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    block_hash = %hex::encode(post_hash.as_bytes()),
+                                                    proof_size,
+                                                    proof_hash = %hex::encode(proof_hash),
+                                                    "Commitment block proof stored for known block"
+                                                );
+                                            }
                                         }
                                         tracing::trace!(
                                             block_number,
@@ -9916,10 +10479,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                            for (peer_id, announce) in pending_announces {
                                 // Update sync service with block announcement to track peer's best height
                                 // This is critical for triggering historical sync when we're behind
-	                                {
+	                                let compatibility = {
 	                                    let mut sync = sync_service_for_import.lock().await;
 	                                    sync.on_block_announce(peer_id, &announce);
-	                                }
+                                            sync.peer_compatibility(&peer_id)
+	                                };
 	                                if let Some(entry) = peer_details_for_import.write().get_mut(&peer_id) {
 	                                    if announce.number > entry.best_height {
 	                                        entry.best_height = announce.number;
@@ -9950,6 +10514,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                        continue;
 	                                    }
 	                                };
+
+                                        if strict_compatibility
+                                            && !matches!(
+                                                compatibility,
+                                                crate::substrate::sync::PeerCompatibility::Compatible
+                                            )
+                                        {
+                                            tracing::debug!(
+                                                peer = %hex::encode(&peer_id),
+                                                block_number = announce_number,
+                                                compatibility = ?compatibility,
+                                                "Ignoring full block body from peer until strict compatibility succeeds"
+                                            );
+                                            continue;
+                                        }
 
 	                                // Decode the header
 	                                let header =
@@ -9992,19 +10571,149 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 	                                    }
 	                                }
 
-	                                // Decode extrinsics
-	                                let extrinsics: Vec<runtime::UncheckedExtrinsic> = body
-	                                    .iter()
-	                                    .filter_map(|ext_bytes| {
-	                                        runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
-                                    })
-                                    .collect();
+	                                let extrinsics = match decode_committed_block_body(
+	                                    &body,
+	                                    *header.extrinsics_root(),
+	                                    match block_import_client.runtime_api().version(parent_hash) {
+	                                        Ok(version) => version.extrinsics_root_state_version(),
+	                                        Err(err) => {
+	                                            tracing::warn!(
+	                                                peer = %hex::encode(&peer_id),
+	                                                block_number,
+	                                                parent_hash = %hex::encode(parent_hash.as_bytes()),
+	                                                error = ?err,
+	                                                "Rejecting announced block before DA/proof work"
+	                                            );
+	                                            blocks_failed += 1;
+	                                            continue;
+	                                        }
+	                                    },
+	                                ) {
+	                                    Ok(extrinsics) => extrinsics,
+	                                    Err(err) => {
+	                                        tracing::warn!(
+	                                            peer = %hex::encode(&peer_id),
+	                                            block_number,
+	                                            error = %err,
+	                                            "Rejecting announced block before DA/proof work"
+	                                        );
+	                                        blocks_failed += 1;
+	                                        continue;
+	                                    }
+	                                };
 
 	                                // Create the block
 	                                let block = runtime::Block::new(header.clone(), extrinsics.clone());
 	                                let block_hash = block.hash();
 	                                let mut block_hash_bytes = [0u8; 32];
 	                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
+                                let block_has_ciphertexts = has_sidecar_transfers(&extrinsics)
+                                    || !transfer_ciphertexts_from_extrinsics(&extrinsics).is_empty()
+                                    || !coinbase_ciphertexts_from_extrinsics(&extrinsics).is_empty();
+                                let known_block_has_all_artifacts =
+                                    match block_import_client.header(block_hash) {
+                                        Ok(Some(_)) => {
+                                            if !block_has_ciphertexts {
+                                                true
+                                            } else {
+                                                let store = da_chunk_store_for_import.lock();
+                                                match store.has_ciphertexts_for_block(
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                ) {
+                                                    Ok(present) => present,
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(&peer_id),
+                                                            block_number,
+                                                            block_hash = %hex::encode(block_hash_bytes),
+                                                            error = %err,
+                                                            "Failed to check stored ciphertexts for known announced block"
+                                                        );
+                                                        false
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Ok(None) => false,
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&peer_id),
+                                                block_number,
+                                                block_hash = %hex::encode(block_hash_bytes),
+                                                error = %err,
+                                                "Failed to check whether announced block is already imported"
+                                            );
+                                            false
+                                        }
+                                    };
+                                if known_block_has_all_artifacts {
+                                    tracing::debug!(
+                                        peer = %hex::encode(&peer_id),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash_bytes),
+                                        "Skipping replayed announced block; block and artifacts already exist"
+                                    );
+                                    continue;
+                                }
+
+                                let extracted_seal = match crate::substrate::block_import::extract_seal_from_header::<runtime::Block>(&header) {
+                                    Ok(extracted) => extracted,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&peer_id),
+                                            block_number,
+                                            block_hash = %hex::encode(block_hash_bytes),
+                                            error = %err,
+                                            "Rejecting announced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                if let Err(err) = prevalidate_block_timestamp(&extrinsics) {
+                                    tracing::warn!(
+                                        peer = %hex::encode(&peer_id),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash_bytes),
+                                        error = %err,
+                                        "Rejecting announced block before DA/proof work"
+                                    );
+                                    blocks_failed += 1;
+                                    continue;
+                                }
+                                let expected_difficulty = match block_import_client
+                                    .runtime_api()
+                                    .difficulty_bits(parent_hash)
+                                {
+                                    Ok(bits) => bits,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&peer_id),
+                                            block_number,
+                                            block_hash = %hex::encode(block_hash_bytes),
+                                            error = ?err,
+                                            "Rejecting announced block before DA/proof work"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                if let Err(err) = crate::substrate::block_import::verify_pow_seal(
+                                    &extracted_seal,
+                                    expected_difficulty,
+                                    10,
+                                ) {
+                                    tracing::warn!(
+                                        peer = %hex::encode(&peer_id),
+                                        block_number,
+                                        block_hash = %hex::encode(block_hash_bytes),
+                                        error = %err,
+                                        "Rejecting announced block before DA/proof work"
+                                    );
+                                    blocks_failed += 1;
+                                    continue;
+                                }
 
                                 let requires_sidecar = has_sidecar_transfers(&extrinsics);
                                 let missing_statement_hashes =
@@ -10225,14 +10934,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 use sp_runtime::traits::Header as HeaderT;
                                 let mut header_mut = header.clone();
                                 let post_hash = header_mut.hash(); // Hash before removing seal (this is the final block hash)
-                                let seal = header_mut.digest_mut().pop();
+                                let seal = crate::substrate::block_import::pop_canonical_seal_from_header::<runtime::Block>(&mut header_mut);
 
                                 let seal_item = match seal {
-                                    Some(item) => item,
-                                    None => {
+                                    Ok(item) => item,
+                                    Err(err) => {
                                         tracing::warn!(
                                             block_number,
-                                            "No seal found in announced block header, skipping"
+                                            error = %err,
+                                            "Rejecting announced block before import: canonical PoW seal missing"
                                         );
                                         blocks_failed += 1;
                                         continue;
@@ -10330,25 +11040,48 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             let da_root = build.encoding.root();
                                             let da_chunks = build.encoding.chunks().len();
                                             let ciphertexts = flatten_ciphertexts(&build.transactions);
-                                            if let Err(err) = store.insert(
+                                            match store.has_encoding_for_block(
                                                 DaRootKind::Ciphertexts,
                                                 block_number as u64,
                                                 block_hash_bytes,
-                                                build.encoding,
                                             ) {
-                                                tracing::warn!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    error = %err,
-                                                    "Failed to persist DA encoding for known announced block"
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    block_number,
-                                                    da_root = %hex::encode(da_root),
-                                                    da_chunks,
-                                                    "DA encoding stored for known announced block"
-                                                );
+                                                Ok(true) => {
+                                                    tracing::debug!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        "Skipping DA encoding backfill for known announced block; encoding already stored"
+                                                    );
+                                                }
+                                                Ok(false) => {
+                                                    if let Err(err) = store.insert(
+                                                        DaRootKind::Ciphertexts,
+                                                        block_number as u64,
+                                                        block_hash_bytes,
+                                                        build.encoding,
+                                                    ) {
+                                                        tracing::warn!(
+                                                            block_number,
+                                                            da_root = %hex::encode(da_root),
+                                                            error = %err,
+                                                            "Failed to persist DA encoding for known announced block"
+                                                        );
+                                                    } else {
+                                                        tracing::info!(
+                                                            block_number,
+                                                            da_root = %hex::encode(da_root),
+                                                            da_chunks,
+                                                            "DA encoding stored for known announced block"
+                                                        );
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        da_root = %hex::encode(da_root),
+                                                        error = %err,
+                                                        "Failed to check DA encoding state for known announced block"
+                                                    );
+                                                }
                                             }
                                             ciphertexts
                                         } else {
@@ -10358,37 +11091,69 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             &extrinsics_for_ciphertexts,
                                         ));
                                         let ciphertext_count = ciphertexts.len();
-                                        if let Err(err) = store.append_ciphertexts(
+                                        match store.has_ciphertexts_for_block(
                                             block_number as u64,
                                             block_hash_bytes,
-                                            &ciphertexts,
                                         ) {
-                                            tracing::warn!(
-                                                block_number,
-                                                error = %err,
-                                                "Failed to persist ciphertexts for known announced block"
-                                            );
-                                        } else if ciphertext_count > 0 {
-                                            tracing::info!(
-                                                block_number,
-                                                ciphertext_count,
-                                                "Ciphertexts stored for known announced block"
-                                            );
+                                            Ok(true) => {
+                                                if ciphertext_count > 0 {
+                                                    tracing::debug!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Skipping ciphertext backfill for known announced block; ciphertexts already stored"
+                                                    );
+                                                }
+                                            }
+                                            Ok(false) => {
+                                                if let Err(err) = store.append_ciphertexts(
+                                                    block_number as u64,
+                                                    block_hash_bytes,
+                                                    &ciphertexts,
+                                                ) {
+                                                    tracing::warn!(
+                                                        block_number,
+                                                        error = %err,
+                                                        "Failed to persist ciphertexts for known announced block"
+                                                    );
+                                                } else if ciphertext_count > 0 {
+                                                    tracing::info!(
+                                                        block_number,
+                                                        ciphertext_count,
+                                                        "Ciphertexts stored for known announced block"
+                                                    );
+                                                }
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    block_number,
+                                                    error = %err,
+                                                    "Failed to check ciphertext state for known announced block"
+                                                );
+                                            }
                                         }
                                         if let Some(proof) = commitment_block_proof.take() {
                                             let proof_size = proof.proof_bytes.len();
                                             let proof_hash = proof.proof_hash;
-                                            commitment_block_proof_store_for_import
-                                                .lock()
-                                                .insert(block_hash, proof);
-                                            tracing::info!(
-                                                peer = %hex::encode(&peer_id),
-                                                block_number,
-                                                block_hash = %hex::encode(block_hash.as_bytes()),
-                                                proof_size,
-                                                proof_hash = %hex::encode(proof_hash),
-                                                "Commitment block proof stored for known block"
-                                            );
+                                            let mut proof_store =
+                                                commitment_block_proof_store_for_import.lock();
+                                            if proof_store.contains(&block_hash) {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(&peer_id),
+                                                    block_number,
+                                                    block_hash = %hex::encode(block_hash.as_bytes()),
+                                                    "Skipping commitment proof backfill for known announced block; proof already stored"
+                                                );
+                                            } else {
+                                                proof_store.insert(block_hash, proof);
+                                                tracing::info!(
+                                                    peer = %hex::encode(&peer_id),
+                                                    block_number,
+                                                    block_hash = %hex::encode(block_hash.as_bytes()),
+                                                    proof_size,
+                                                    proof_hash = %hex::encode(proof_hash),
+                                                    "Commitment block proof stored for known block"
+                                                );
+                                            }
                                         }
                                         tracing::trace!(
                                             block_number,
@@ -11311,7 +12076,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Spawn RPC server task
     fn build_rpc_cors_layer(cors: &Option<Vec<String>>) -> CorsLayer {
         match cors {
-            None => CorsLayer::permissive(),
+            None => CorsLayer::new().allow_origin(AllowOrigin::predicate(|_, _| false)),
             Some(origins) if origins.is_empty() => {
                 CorsLayer::new().allow_origin(AllowOrigin::predicate(|_, _| false))
             }
@@ -11365,6 +12130,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         pattern_url.port_or_known_default() == origin_url.port_or_known_default()
     }
 
+    fn websocket_origin_allowed(origin: &str, cors: &Option<Vec<String>>) -> bool {
+        match cors {
+            Some(origins) if !origins.is_empty() => origins
+                .iter()
+                .any(|pattern| origin_matches(origin, pattern)),
+            _ => false,
+        }
+    }
+
     let rpc_cors = config.rpc.cors.clone();
     let rpc_handle = task_manager.spawn_handle();
     rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
@@ -11372,7 +12146,31 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         // Create HTTP middleware
         // Note: DenyUnsafe is injected via extension middleware below
-        let http_middleware = tower::ServiceBuilder::new().layer(build_rpc_cors_layer(&rpc_cors));
+        let ws_origin_cors = rpc_cors.clone();
+        let http_middleware = tower::ServiceBuilder::new()
+            .layer(ValidateRequestHeaderLayer::custom(
+                move |request: &mut jsonrpsee::server::HttpRequest<_>| {
+                    if !ws::is_upgrade_request(request) {
+                        return Ok(());
+                    }
+
+                    let Some(origin) = request.headers().get(header::ORIGIN) else {
+                        return Ok(());
+                    };
+
+                    let origin = match origin.to_str() {
+                        Ok(origin) => origin,
+                        Err(_) => return Err(jsonrpsee_http_response::denied()),
+                    };
+
+                    if websocket_origin_allowed(origin, &ws_origin_cors) {
+                        Ok(())
+                    } else {
+                        Err(jsonrpsee_http_response::denied())
+                    }
+                },
+            ))
+            .layer(build_rpc_cors_layer(&rpc_cors));
 
         let deny_unsafe = rpc_deny_unsafe;
 
@@ -13475,5 +14273,83 @@ mod import_tests {
         let deferred = collect_deferred_downloaded_tail(current, remaining);
         let numbers: Vec<u64> = deferred.into_iter().map(|block| block.number).collect();
         assert_eq!(numbers, vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn test_default_max_unknown_peers_reserves_verified_capacity() {
+        assert_eq!(default_max_unknown_peers(50), 8);
+        assert_eq!(default_max_unknown_peers(8), 6);
+        assert_eq!(default_max_unknown_peers(2), 1);
+        assert_eq!(default_max_unknown_peers(1), 1);
+    }
+
+    #[test]
+    fn test_select_unknown_peer_to_disconnect_prefers_stale_inbound_low_height() {
+        let now = Instant::now();
+        let candidates = vec![
+            UnknownPeerAdmissionCandidate {
+                peer_id: [0x01; 32],
+                is_outbound: false,
+                best_height: 42,
+                last_seen: now - Duration::from_secs(5),
+            },
+            UnknownPeerAdmissionCandidate {
+                peer_id: [0x02; 32],
+                is_outbound: false,
+                best_height: 7,
+                last_seen: now - Duration::from_secs(30),
+            },
+            UnknownPeerAdmissionCandidate {
+                peer_id: [0x03; 32],
+                is_outbound: false,
+                best_height: 7,
+                last_seen: now - Duration::from_secs(1),
+            },
+            UnknownPeerAdmissionCandidate {
+                peer_id: [0x04; 32],
+                is_outbound: true,
+                best_height: 0,
+                last_seen: now - Duration::from_secs(60),
+            },
+        ];
+
+        let selected = select_unknown_peer_to_disconnect(&candidates, 2);
+        assert_eq!(selected, Some([0x02; 32]));
+    }
+
+    #[test]
+    fn test_select_unknown_peer_to_disconnect_returns_none_within_limit() {
+        let now = Instant::now();
+        let candidates = vec![UnknownPeerAdmissionCandidate {
+            peer_id: [0x0a; 32],
+            is_outbound: false,
+            best_height: 0,
+            last_seen: now,
+        }];
+
+        assert_eq!(select_unknown_peer_to_disconnect(&candidates, 1), None);
+    }
+
+    #[test]
+    fn test_decode_committed_block_body_uses_runtime_ordered_trie_root() {
+        let body =
+            vec![
+                runtime::UncheckedExtrinsic::new_unsigned(runtime::RuntimeCall::Timestamp(
+                    pallet_timestamp::Call::set { now: 42 },
+                ))
+                .encode(),
+            ];
+        let state_version = sp_runtime::StateVersion::V1;
+        let expected_root =
+            HashingFor::<runtime::Block>::ordered_trie_root(body.clone(), state_version);
+
+        let decoded =
+            decode_committed_block_body(&body, expected_root, state_version).expect("body");
+
+        assert_eq!(decoded.len(), 1);
+        assert_ne!(
+            crate::substrate::compute_extrinsics_root(&body),
+            expected_root
+        );
     }
 }

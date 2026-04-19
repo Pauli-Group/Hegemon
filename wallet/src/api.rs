@@ -32,8 +32,13 @@ pub async fn serve_wallet_api(
     addr: SocketAddr,
     store: Arc<WalletStore>,
     client: Arc<WalletRpcClient>,
+    auth_token: String,
 ) -> anyhow::Result<()> {
-    let state = ApiState::new(store, client, None);
+    if auth_token.trim().is_empty() {
+        anyhow::bail!("wallet http api requires a non-empty auth token");
+    }
+
+    let state = ApiState::new(store, client, Some(auth_token));
     let app = wallet_router(state);
     let listener = TcpListener::bind(addr).await?;
     println!("wallet http api listening on http://{addr}");
@@ -434,4 +439,24 @@ pub fn transfer_recipients_from_specs(specs: &[RecipientSpec]) -> Vec<TransferRe
             memo: spec.memo.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{header::AUTHORIZATION, HeaderValue};
+
+    #[test]
+    fn require_auth_rejects_missing_token() {
+        let headers = HeaderMap::new();
+        let err = require_auth(&headers, &Some("secret".into())).expect_err("missing auth");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn require_auth_accepts_bearer_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
+        require_auth(&headers, &Some("secret".into())).expect("auth accepted");
+    }
 }

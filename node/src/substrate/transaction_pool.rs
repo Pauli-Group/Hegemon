@@ -50,7 +50,7 @@
 use network::PeerId;
 use parking_lot::Mutex as ParkingMutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -679,30 +679,36 @@ pub struct TransactionPoolBridge<P: TransactionPool> {
     pool: Arc<P>,
     /// Pending transactions queue (for batch processing)
     pending: Arc<Mutex<VecDeque<PendingTransaction>>>,
+    /// Approximate bytes currently held in the pending queue.
+    pending_bytes: Arc<AtomicUsize>,
     /// Statistics
     stats: Arc<PoolBridgeStats>,
     /// Maximum pending queue size
     max_pending: usize,
+    /// Maximum pending queue bytes
+    max_pending_bytes: usize,
 }
 
 impl<P: TransactionPool> TransactionPoolBridge<P> {
     /// Create a new pool bridge
     pub fn new(pool: Arc<P>) -> Self {
-        Self {
-            pool,
-            pending: Arc::new(Mutex::new(VecDeque::new())),
-            stats: Arc::new(PoolBridgeStats::new()),
-            max_pending: 1000,
-        }
+        Self::with_limits(pool, 1000, 64 * 1024 * 1024)
     }
 
     /// Create with custom pending queue size
     pub fn with_max_pending(pool: Arc<P>, max_pending: usize) -> Self {
+        Self::with_limits(pool, max_pending, 64 * 1024 * 1024)
+    }
+
+    /// Create with explicit queue count and byte limits.
+    pub fn with_limits(pool: Arc<P>, max_pending: usize, max_pending_bytes: usize) -> Self {
         Self {
             pool,
             pending: Arc::new(Mutex::new(VecDeque::new())),
+            pending_bytes: Arc::new(AtomicUsize::new(0)),
             stats: Arc::new(PoolBridgeStats::new()),
             max_pending,
+            max_pending_bytes,
         }
     }
 
@@ -717,11 +723,40 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
             .transactions_received
             .fetch_add(1, Ordering::Relaxed);
 
+        let tx_len = data.len();
+        if tx_len > self.max_pending_bytes {
+            self.stats
+                .transactions_rejected
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                tx_len,
+                max_pending_bytes = self.max_pending_bytes,
+                "Dropping pending transaction larger than queue byte budget"
+            );
+            return;
+        }
+
         let mut pending = self.pending.lock().await;
+
+        while self.pending_bytes.load(Ordering::Relaxed) + tx_len > self.max_pending_bytes {
+            let Some(evicted) = pending.pop_front() else {
+                break;
+            };
+            self.pending_bytes
+                .fetch_sub(evicted.data.len(), Ordering::Relaxed);
+            tracing::warn!(
+                evicted_bytes = evicted.data.len(),
+                max_pending_bytes = self.max_pending_bytes,
+                "Pending transaction queue byte budget exceeded, dropping oldest"
+            );
+        }
 
         // Drop oldest if queue is full
         if pending.len() >= self.max_pending {
-            pending.pop_front();
+            if let Some(evicted) = pending.pop_front() {
+                self.pending_bytes
+                    .fetch_sub(evicted.data.len(), Ordering::Relaxed);
+            }
             tracing::warn!("Pending transaction queue full, dropping oldest");
         }
 
@@ -731,6 +766,7 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
             received_at: std::time::Instant::now(),
             source: TransactionSource::External,
         });
+        self.pending_bytes.fetch_add(tx_len, Ordering::Relaxed);
     }
 
     /// Queue transactions from network bridge
@@ -781,13 +817,25 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
     ///
     /// Returns the number of successfully submitted transactions
     pub async fn process_pending(&self) -> usize {
-        let mut pending = self.pending.lock().await;
         let mut submitted = 0;
 
-        while let Some(tx) = pending.pop_front() {
+        loop {
+            let tx = {
+                let mut pending = self.pending.lock().await;
+                let Some(tx) = pending.pop_front() else {
+                    break;
+                };
+                self.pending_bytes
+                    .fetch_sub(tx.data.len(), Ordering::Relaxed);
+                tx
+            };
+
             match self.pool.submit(&tx.data, tx.source).await {
                 Ok(result) if result.accepted => {
                     submitted += 1;
+                    self.stats
+                        .transactions_submitted
+                        .fetch_add(1, Ordering::Relaxed);
                     tracing::info!(
                         tx_hash = %hex::encode(result.hash),
                         peer = tx
@@ -838,6 +886,11 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
     /// Get current pending count
     pub async fn pending_count(&self) -> usize {
         self.pending.lock().await.len()
+    }
+
+    /// Get current pending byte size
+    pub fn pending_bytes(&self) -> usize {
+        self.pending_bytes.load(Ordering::Relaxed)
     }
 
     /// Get pool size
@@ -900,6 +953,8 @@ pub struct TransactionPoolConfig {
     pub capacity: usize,
     /// Maximum pending queue size
     pub max_pending: usize,
+    /// Maximum pending queue bytes
+    pub max_pending_bytes: usize,
     /// Processing interval in milliseconds
     pub process_interval_ms: u64,
     /// Enable verbose logging
@@ -911,6 +966,7 @@ impl Default for TransactionPoolConfig {
         Self {
             capacity: 4096,
             max_pending: 1000,
+            max_pending_bytes: 64 * 1024 * 1024,
             process_interval_ms: 100,
             verbose: false,
         }
@@ -930,6 +986,11 @@ impl TransactionPoolConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1000);
 
+        let max_pending_bytes = std::env::var("HEGEMON_POOL_MAX_PENDING_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64 * 1024 * 1024);
+
         let process_interval_ms = std::env::var("HEGEMON_POOL_INTERVAL_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -942,6 +1003,7 @@ impl TransactionPoolConfig {
         Self {
             capacity,
             max_pending,
+            max_pending_bytes,
             process_interval_ms,
             verbose,
         }
@@ -965,6 +1027,7 @@ pub async fn spawn_pool_processor<P: TransactionPool + 'static>(
     tracing::info!(
         capacity = config.capacity,
         max_pending = config.max_pending,
+        max_pending_bytes = config.max_pending_bytes,
         interval_ms = config.process_interval_ms,
         "Transaction pool processor started"
     );
@@ -1125,8 +1188,21 @@ mod tests {
         let config = TransactionPoolConfig::default();
         assert_eq!(config.capacity, 4096);
         assert_eq!(config.max_pending, 1000);
+        assert_eq!(config.max_pending_bytes, 64 * 1024 * 1024);
         assert_eq!(config.process_interval_ms, 100);
         assert!(!config.verbose);
+    }
+
+    #[tokio::test]
+    async fn test_pool_bridge_enforces_pending_byte_budget() {
+        let pool = Arc::new(MockTransactionPool::new(100));
+        let bridge = TransactionPoolBridge::with_limits(pool, 10, 5);
+
+        bridge.queue_transaction(vec![1, 2, 3], None).await;
+        bridge.queue_transaction(vec![4, 5, 6], None).await;
+
+        assert_eq!(bridge.pending_count().await, 1);
+        assert_eq!(bridge.pending_bytes(), 3);
     }
 
     // Task 11.3: Transaction pool wiring tests

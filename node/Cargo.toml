@@ -99,7 +99,7 @@ pallet-coinbase = { path = "../pallets/coinbase", features = ["std"], optional =
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 tower = { version = "0.4", optional = true }
 hyper = { version = "1.5", optional = true }
-tower-http = { version = "0.5", features = ["cors"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "validate-request"], optional = true }
 
 # Runtime dependency (for WASM binary and APIs)
 runtime = { path = "../runtime", optional = true }

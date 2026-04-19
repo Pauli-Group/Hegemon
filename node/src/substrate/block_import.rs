@@ -56,7 +56,7 @@
 use codec::Decode;
 use consensus::{compact_to_target, compute_work, seal_meets_target, Sha256dSeal};
 use sp_core::{H256, U256};
-use sp_runtime::traits::Block as BlockT;
+use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -204,31 +204,52 @@ pub struct ExtractedSeal {
     pub header_hash: H256,
 }
 
+fn is_pow_seal_item(item: &sp_runtime::DigestItem) -> Option<&[u8]> {
+    match item {
+        sp_runtime::DigestItem::Seal(engine_id, data)
+            if engine_id == b"pow_" || engine_id == b"pow0" || engine_id == b"bpow" =>
+        {
+            Some(data.as_slice())
+        }
+        _ => None,
+    }
+}
+
+fn canonical_pow_seal_bytes<Block: BlockT<Hash = H256>>(
+    header: &Block::Header,
+) -> ImportResult<&[u8]> {
+    let logs = header.digest().logs();
+    let Some(last_item) = logs.last() else {
+        return Err(ImportError::SealDecode(
+            "No PoW seal found in header".to_string(),
+        ));
+    };
+
+    let Some(seal_bytes) = is_pow_seal_item(last_item) else {
+        return Err(ImportError::SealDecode(
+            "Last digest item is not a canonical PoW seal".to_string(),
+        ));
+    };
+
+    if logs[..logs.len().saturating_sub(1)]
+        .iter()
+        .any(|item| is_pow_seal_item(item).is_some())
+    {
+        return Err(ImportError::SealDecode(
+            "Multiple PoW seals found in header".to_string(),
+        ));
+    }
+
+    Ok(seal_bytes)
+}
+
 /// Extract and decode a seal from block header digest
 ///
 /// The seal is expected to be in the last digest item with the consensus engine ID "pow0"
 pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
     header: &Block::Header,
 ) -> ImportResult<ExtractedSeal> {
-    use sp_runtime::traits::Header;
-    use sp_runtime::DigestItem;
-
-    // Find the seal in the digest
-    let (seal_index, seal_item) = header
-        .digest()
-        .logs()
-        .iter()
-        .enumerate()
-        .find_map(|(idx, item)| {
-            if let DigestItem::Seal(engine_id, data) = item {
-                // Our engine ID for SHA-256d PoW
-                if engine_id == b"pow_" || engine_id == b"pow0" || engine_id == b"bpow" {
-                    return Some((idx, data.clone()));
-                }
-            }
-            None
-        })
-        .ok_or_else(|| ImportError::SealDecode("No PoW seal found in header".into()))?;
+    let seal_item = canonical_pow_seal_bytes::<Block>(header)?;
 
     // Decode the seal
     let seal = Sha256dSeal::decode(&mut &seal_item[..])
@@ -239,7 +260,11 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
 
     // For pre-hash, remove the seal and hash the remaining header
     let mut header_without_seal = header.clone();
-    header_without_seal.digest_mut().logs.remove(seal_index);
+    header_without_seal
+        .digest_mut()
+        .logs
+        .pop()
+        .ok_or_else(|| ImportError::SealDecode("No PoW seal found in header".into()))?;
     let pre_hash = header_without_seal.hash();
 
     Ok(ExtractedSeal {
@@ -247,6 +272,17 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
         pre_hash,
         header_hash,
     })
+}
+
+pub fn pop_canonical_seal_from_header<Block: BlockT<Hash = H256>>(
+    header: &mut Block::Header,
+) -> ImportResult<sp_runtime::DigestItem> {
+    canonical_pow_seal_bytes::<Block>(header)?;
+    header
+        .digest_mut()
+        .logs
+        .pop()
+        .ok_or_else(|| ImportError::SealDecode("No PoW seal found in header".into()))
 }
 
 /// Verify a PoW seal against the claimed difficulty
@@ -803,6 +839,97 @@ mod tests {
 
         assert_eq!(extracted.pre_hash, header_without_seal.hash());
         assert_eq!(extracted.header_hash, header_with_seal.hash());
+    }
+
+    #[test]
+    fn test_extract_seal_rejects_trailing_non_pow_digest() {
+        use codec::Encode;
+        use sp_runtime::{Digest, DigestItem};
+
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(5),
+            difficulty: 0x2100ffff,
+            work: H256::repeat_byte(0xaa),
+        };
+        let header = runtime::Header::new(
+            7,
+            H256::repeat_byte(0x33),
+            H256::repeat_byte(0x22),
+            H256::repeat_byte(0x11),
+            Digest {
+                logs: vec![
+                    DigestItem::Seal(*b"pow_", seal.encode()),
+                    DigestItem::Other(vec![1, 2, 3]),
+                ],
+            },
+        );
+
+        let err = extract_seal_from_header::<runtime::Block>(&header).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("Last digest item is not a canonical PoW seal"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_extract_seal_rejects_multiple_pow_seals() {
+        use codec::Encode;
+        use sp_runtime::{Digest, DigestItem};
+
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(5),
+            difficulty: 0x2100ffff,
+            work: H256::repeat_byte(0xaa),
+        };
+        let header = runtime::Header::new(
+            7,
+            H256::repeat_byte(0x33),
+            H256::repeat_byte(0x22),
+            H256::repeat_byte(0x11),
+            Digest {
+                logs: vec![
+                    DigestItem::Seal(*b"pow_", seal.encode()),
+                    DigestItem::Seal(*b"pow_", seal.encode()),
+                ],
+            },
+        );
+
+        let err = extract_seal_from_header::<runtime::Block>(&header).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("Multiple PoW seals found in header"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_pop_canonical_seal_rejects_non_canonical_layout() {
+        use codec::Encode;
+        use sp_runtime::{Digest, DigestItem};
+
+        let seal = Sha256dSeal {
+            nonce: consensus::counter_to_nonce(5),
+            difficulty: 0x2100ffff,
+            work: H256::repeat_byte(0xaa),
+        };
+        let mut header = runtime::Header::new(
+            7,
+            H256::repeat_byte(0x33),
+            H256::repeat_byte(0x22),
+            H256::repeat_byte(0x11),
+            Digest {
+                logs: vec![
+                    DigestItem::Seal(*b"pow_", seal.encode()),
+                    DigestItem::Other(vec![4, 5, 6]),
+                ],
+            },
+        );
+
+        let err = pop_canonical_seal_from_header::<runtime::Block>(&mut header).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("Last digest item is not a canonical PoW seal"),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(header.digest().logs().len(), 2, "header mutated on failure");
     }
 
     #[test]

@@ -75,6 +75,12 @@ pub const MAX_BODIES_PER_RESPONSE: usize = 64;
 /// Maximum number of blocks to request at once (PoW style, smaller batches)
 pub const MAX_BLOCKS_PER_REQUEST: u32 = 16;
 
+/// Hard cap on any encoded sync response payload.
+///
+/// Keep this comfortably below the PQ transport frame limit so sync traffic
+/// cannot monopolize ingress/egress buffers with a single response.
+pub const MAX_SYNC_RESPONSE_BYTES: usize = 6 * 1024 * 1024;
+
 /// Maximum number of blocks to buffer during import
 pub const MAX_IMPORT_BUFFER: usize = 256;
 
@@ -83,6 +89,9 @@ pub const HEADER_BATCH: u32 = 64;
 
 /// Timeout for sync requests (seconds)
 pub const SYNC_REQUEST_TIMEOUT: u64 = 30;
+/// Compatibility probes are tiny metadata exchanges; fail fast so foreign
+/// networks do not retain scarce unverified slots for long.
+pub const COMPATIBILITY_PROBE_TIMEOUT_SECS: u64 = 5;
 
 /// How long to wait before retrying sync after a failure (seconds)
 pub const SYNC_RETRY_DELAY: u64 = 5;
@@ -91,6 +100,12 @@ pub const SYNC_RETRY_DELAY: u64 = 5;
 pub const MAX_PEER_FAILURES: u32 = 3;
 /// How often to poll a compatible peer for tip updates when announces are sparse.
 pub const TIP_POLL_INTERVAL_SECS: u64 = 5;
+
+fn fits_sync_response_budget(current_bytes: usize, additional_bytes: usize) -> bool {
+    current_bytes
+        .checked_add(additional_bytes)
+        .is_some_and(|next| next <= MAX_SYNC_RESPONSE_BYTES)
+}
 
 /// A peer's compatibility status relative to our local chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +246,8 @@ where
 {
     /// The Substrate client
     client: Arc<Client>,
+    /// Explicit network identifier from the loaded chain spec.
+    local_network_id: String,
     /// Current sync state
     state: SyncState,
     /// Known peers and their sync status
@@ -380,6 +397,10 @@ where
         SYNC_PROTOCOL_VERSION
     }
 
+    fn local_network_id(&self) -> &str {
+        &self.local_network_id
+    }
+
     fn local_aggregation_proof_format(&self) -> u8 {
         BLOCK_PROOF_FORMAT_ID_V5
     }
@@ -412,9 +433,10 @@ where
     }
 
     /// Create a new sync service
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(client: Arc<Client>, local_network_id: impl Into<String>) -> Self {
         Self {
             client,
+            local_network_id: local_network_id.into(),
             state: SyncState::Idle,
             peers: HashMap::new(),
             request_id_counter: 0,
@@ -689,11 +711,13 @@ where
 
         match request {
             SyncRequest::CompatibilityProbe {
+                network_id,
                 local_genesis_hash,
                 sync_protocol_version,
                 aggregation_proof_format,
             } => self.handle_compatibility_probe_request(
                 peer_id,
+                network_id,
                 local_genesis_hash,
                 sync_protocol_version,
                 aggregation_proof_format,
@@ -722,21 +746,26 @@ where
     fn handle_compatibility_probe_request(
         &mut self,
         peer_id: PeerId,
+        remote_network_id: String,
         remote_genesis_hash: [u8; 32],
         remote_sync_protocol_version: u32,
         remote_aggregation_proof_format: u8,
         request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         let local_genesis_hash = self.genesis_hash_bytes()?;
+        let local_network_id = self.local_network_id().to_string();
         let local_sync_protocol_version = self.local_sync_protocol_version();
         let local_aggregation_proof_format = self.local_aggregation_proof_format();
-        let accepted = remote_genesis_hash == local_genesis_hash
+        let accepted = remote_network_id == local_network_id
+            && remote_genesis_hash == local_genesis_hash
             && remote_sync_protocol_version == local_sync_protocol_version
             && remote_aggregation_proof_format == local_aggregation_proof_format;
 
         tracing::debug!(
             peer = %hex::encode(peer_id),
             accepted,
+            remote_network_id = %remote_network_id,
+            local_network_id = %local_network_id,
             remote_genesis = %hex::encode(remote_genesis_hash),
             local_genesis = %hex::encode(local_genesis_hash),
             remote_sync_protocol_version,
@@ -750,6 +779,7 @@ where
         Some(SyncResponse::Compatibility {
             request_id: self.response_request_id(request_id),
             accepted,
+            network_id: local_network_id,
             local_genesis_hash,
             sync_protocol_version: local_sync_protocol_version,
             aggregation_proof_format: local_aggregation_proof_format,
@@ -769,7 +799,20 @@ where
         use crate::substrate::network_bridge::SyncBlock;
 
         let max_blocks = max_blocks.min(MAX_BLOCKS_PER_REQUEST);
+        let response_request_id = self.response_request_id(request_id);
         let our_best = self.best_number();
+
+        if max_blocks == 0 {
+            tracing::debug!(
+                peer = %hex::encode(peer_id),
+                start_height,
+                "GetBlocks request with max_blocks=0; returning empty response"
+            );
+            return Some(SyncResponse::Blocks {
+                request_id: response_request_id,
+                blocks: vec![],
+            });
+        }
 
         tracing::info!(
             peer = %hex::encode(peer_id),
@@ -781,19 +824,24 @@ where
 
         // Can't provide blocks we don't have
         if start_height > our_best {
-            tracing::warn!(
+            tracing::debug!(
                 peer = %hex::encode(peer_id),
                 requested = start_height,
                 our_best = our_best,
-                "🔄 SYNC SERVER: GetBlocks requested height beyond our chain"
+                "GetBlocks request is ahead of our current tip; returning empty response"
             );
             return Some(SyncResponse::Blocks {
-                request_id: self.response_request_id(request_id),
+                request_id: response_request_id,
                 blocks: vec![],
             });
         }
 
         let mut blocks = Vec::new();
+        let mut response_bytes = SyncResponse::Blocks {
+            request_id: response_request_id,
+            blocks: Vec::new(),
+        }
+        .encoded_size();
 
         for height in start_height..=(start_height + max_blocks as u64 - 1).min(our_best) {
             // Get block hash at height
@@ -832,12 +880,28 @@ where
             let mut hash_bytes = [0u8; 32];
             hash_bytes.copy_from_slice(block_hash.as_ref());
 
-            blocks.push(SyncBlock {
+            let block = SyncBlock {
                 number: height,
                 hash: hash_bytes,
                 header,
                 body,
-            });
+            };
+            let block_bytes = block.encoded_size();
+            if !fits_sync_response_budget(response_bytes, block_bytes) {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    start_height,
+                    block_height = height,
+                    block_bytes,
+                    accumulated_bytes = response_bytes,
+                    cap = MAX_SYNC_RESPONSE_BYTES,
+                    "Truncating GetBlocks response at sync payload byte cap"
+                );
+                break;
+            }
+
+            response_bytes += block_bytes;
+            blocks.push(block);
         }
 
         tracing::info!(
@@ -852,7 +916,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::Blocks {
-            request_id: self.response_request_id(request_id),
+            request_id: response_request_id,
             blocks,
         })
     }
@@ -867,7 +931,13 @@ where
         request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         let max_headers = max_headers.min(MAX_HEADERS_PER_RESPONSE);
+        let response_request_id = self.response_request_id(request_id);
         let mut headers = Vec::new();
+        let mut response_bytes = SyncResponse::BlockHeaders {
+            request_id: response_request_id,
+            headers: Vec::new(),
+        }
+        .encoded_size();
 
         // Convert start_hash to Block::Hash
         let start = Block::Hash::decode(&mut &start_hash[..]).ok()?;
@@ -882,7 +952,7 @@ where
                     "Headers request: start block not found"
                 );
                 return Some(SyncResponse::BlockHeaders {
-                    request_id: self.response_request_id(request_id),
+                    request_id: response_request_id,
                     headers: vec![],
                 });
             }
@@ -897,7 +967,21 @@ where
         };
 
         // Add the start header
-        headers.push(start_header.encode());
+        let start_header = start_header.encode();
+        let start_header_bytes = start_header.encoded_size();
+        if !fits_sync_response_budget(response_bytes, start_header_bytes) {
+            tracing::warn!(
+                peer = %hex::encode(peer_id),
+                cap = MAX_SYNC_RESPONSE_BYTES,
+                "Header response exceeded sync payload byte cap before first header"
+            );
+            return Some(SyncResponse::BlockHeaders {
+                request_id: response_request_id,
+                headers: vec![],
+            });
+        }
+        response_bytes += start_header_bytes;
+        headers.push(start_header);
 
         // Get subsequent headers
         let mut current = start;
@@ -926,7 +1010,19 @@ where
             match self.client.header(next) {
                 Ok(Some(h)) => {
                     current = next;
-                    headers.push(h.encode());
+                    let encoded = h.encode();
+                    let encoded_bytes = encoded.encoded_size();
+                    if !fits_sync_response_budget(response_bytes, encoded_bytes) {
+                        tracing::warn!(
+                            peer = %hex::encode(peer_id),
+                            count = headers.len(),
+                            cap = MAX_SYNC_RESPONSE_BYTES,
+                            "Truncating header response at sync payload byte cap"
+                        );
+                        break;
+                    }
+                    response_bytes += encoded_bytes;
+                    headers.push(encoded);
                 }
                 _ => break,
             }
@@ -942,7 +1038,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::BlockHeaders {
-            request_id: self.response_request_id(request_id),
+            request_id: response_request_id,
             headers,
         })
     }
@@ -955,13 +1051,31 @@ where
         request_id: Option<u64>,
     ) -> Option<SyncResponse> {
         let hashes: Vec<_> = hashes.into_iter().take(MAX_BODIES_PER_RESPONSE).collect();
+        let response_request_id = self.response_request_id(request_id);
         let mut bodies = Vec::new();
+        let mut response_bytes = SyncResponse::BlockBodies {
+            request_id: response_request_id,
+            bodies: Vec::new(),
+        }
+        .encoded_size();
 
         for hash_bytes in &hashes {
             let hash = match Block::Hash::decode(&mut &hash_bytes[..]) {
                 Ok(h) => h,
                 Err(_) => {
-                    bodies.push(None);
+                    let body_entry = None;
+                    let body_bytes = body_entry.encoded_size();
+                    if !fits_sync_response_budget(response_bytes, body_bytes) {
+                        tracing::warn!(
+                            peer = %hex::encode(peer_id),
+                            count = bodies.len(),
+                            cap = MAX_SYNC_RESPONSE_BYTES,
+                            "Truncating BlockBodies response at sync payload byte cap"
+                        );
+                        break;
+                    }
+                    response_bytes += body_bytes;
+                    bodies.push(body_entry);
                     continue;
                 }
             };
@@ -969,16 +1083,56 @@ where
             match self.client.block_body(hash) {
                 Ok(Some(extrinsics)) => {
                     let encoded: Vec<Vec<u8>> = extrinsics.iter().map(|e| e.encode()).collect();
-                    bodies.push(Some(encoded));
+                    let body_entry = Some(encoded);
+                    let body_bytes = body_entry.encoded_size();
+                    if !fits_sync_response_budget(response_bytes, body_bytes) {
+                        tracing::warn!(
+                            peer = %hex::encode(peer_id),
+                            hash = %hex::encode(hash_bytes),
+                            body_bytes,
+                            accumulated_bytes = response_bytes,
+                            cap = MAX_SYNC_RESPONSE_BYTES,
+                            "Truncating BlockBodies response at sync payload byte cap"
+                        );
+                        break;
+                    }
+                    response_bytes += body_bytes;
+                    bodies.push(body_entry);
                 }
-                Ok(None) => bodies.push(None),
+                Ok(None) => {
+                    let body_entry = None;
+                    let body_bytes = body_entry.encoded_size();
+                    if !fits_sync_response_budget(response_bytes, body_bytes) {
+                        tracing::warn!(
+                            peer = %hex::encode(peer_id),
+                            count = bodies.len(),
+                            cap = MAX_SYNC_RESPONSE_BYTES,
+                            "Truncating BlockBodies response at sync payload byte cap"
+                        );
+                        break;
+                    }
+                    response_bytes += body_bytes;
+                    bodies.push(body_entry);
+                }
                 Err(e) => {
                     tracing::debug!(
                         hash = %hex::encode(hash_bytes),
                         error = %e,
                         "Error fetching block body"
                     );
-                    bodies.push(None);
+                    let body_entry = None;
+                    let body_bytes = body_entry.encoded_size();
+                    if !fits_sync_response_budget(response_bytes, body_bytes) {
+                        tracing::warn!(
+                            peer = %hex::encode(peer_id),
+                            count = bodies.len(),
+                            cap = MAX_SYNC_RESPONSE_BYTES,
+                            "Truncating BlockBodies response at sync payload byte cap"
+                        );
+                        break;
+                    }
+                    response_bytes += body_bytes;
+                    bodies.push(body_entry);
                 }
             }
         }
@@ -993,7 +1147,7 @@ where
         self.stats.responses_sent += 1;
 
         Some(SyncResponse::BlockBodies {
-            request_id: self.response_request_id(request_id),
+            request_id: response_request_id,
             bodies,
         })
     }
@@ -1030,6 +1184,7 @@ where
             SyncResponse::Compatibility {
                 request_id,
                 accepted,
+                network_id,
                 local_genesis_hash,
                 sync_protocol_version,
                 aggregation_proof_format,
@@ -1038,6 +1193,7 @@ where
                     peer_id,
                     request_id,
                     accepted,
+                    network_id,
                     local_genesis_hash,
                     sync_protocol_version,
                     aggregation_proof_format,
@@ -1287,15 +1443,71 @@ where
             block_count
         );
 
-        // Queue each block for import
+        let mut expected_parent = current_hash_snapshot;
+        let mut expected_number = current_height_snapshot.saturating_add(1);
+
+        // Queue each block for import after binding the wire payload to the decoded header.
         for sync_block in blocks {
+            let decoded = match <Block::Header as Decode>::decode(&mut &sync_block.header[..]) {
+                Ok(h) => h,
+                Err(err) => {
+                    tracing::warn!(
+                        peer = %hex::encode(peer_id),
+                        block_number = sync_block.number,
+                        error = %err,
+                        "Dropping sync response with undecodable block header"
+                    );
+                    if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                        peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+                    }
+                    self.stats.failed_requests += 1;
+                    return;
+                }
+            };
+
+            let header_number = HeaderT::number(&decoded)
+                .clone()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            let header_parent = *HeaderT::parent_hash(&decoded);
+            let mut header_parent_bytes = [0u8; 32];
+            header_parent_bytes.copy_from_slice(header_parent.as_ref());
+            let header_hash = HeaderT::hash(&decoded);
+            let mut header_hash_bytes = [0u8; 32];
+            header_hash_bytes.copy_from_slice(header_hash.as_ref());
+
+            if header_number != sync_block.number
+                || header_number != expected_number
+                || header_parent_bytes != expected_parent
+                || header_hash_bytes != sync_block.hash
+            {
+                tracing::warn!(
+                    peer = %hex::encode(peer_id),
+                    claimed_number = sync_block.number,
+                    decoded_number = header_number,
+                    expected_number,
+                    claimed_hash = %hex::encode(sync_block.hash),
+                    decoded_hash = %hex::encode(header_hash_bytes),
+                    expected_parent = %hex::encode(expected_parent),
+                    decoded_parent = %hex::encode(header_parent_bytes),
+                    "Dropping sync response with mismatched block identity"
+                );
+                if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+                    peer_state.failed_requests = peer_state.failed_requests.saturating_add(1);
+                }
+                self.stats.failed_requests += 1;
+                return;
+            }
+
             self.queue_downloaded_block(
                 peer_id,
-                sync_block.number,
-                sync_block.hash,
+                header_number,
+                header_hash_bytes,
                 sync_block.header,
                 sync_block.body,
             );
+            expected_parent = header_hash_bytes;
+            expected_number = expected_number.saturating_add(1);
         }
 
         tracing::info!(
@@ -1310,6 +1522,7 @@ where
         peer_id: PeerId,
         request_id: u64,
         accepted: bool,
+        peer_network_id: String,
         peer_genesis_hash: [u8; 32],
         peer_sync_protocol_version: u32,
         peer_aggregation_proof_format: u8,
@@ -1358,10 +1571,12 @@ where
             return;
         };
 
+        let local_network_id = self.local_network_id().to_string();
         let local_sync_protocol_version = self.local_sync_protocol_version();
         let local_aggregation_proof_format = self.local_aggregation_proof_format();
 
         let compatible = accepted
+            && peer_network_id == local_network_id
             && peer_genesis_hash == local_genesis_hash
             && peer_sync_protocol_version == local_sync_protocol_version
             && peer_aggregation_proof_format == local_aggregation_proof_format;
@@ -1371,6 +1586,8 @@ where
             tracing::warn!(
                 peer = %hex::encode(peer_id),
                 accepted,
+                peer_network_id = %peer_network_id,
+                local_network_id = %local_network_id,
                 peer_genesis = %hex::encode(peer_genesis_hash),
                 local_genesis = %hex::encode(local_genesis_hash),
                 peer_sync_protocol_version,
@@ -1873,7 +2090,8 @@ where
 
                 if request_pending {
                     if let Some(last_time) = last_request_time {
-                        if now.duration_since(last_time) > Duration::from_secs(SYNC_REQUEST_TIMEOUT)
+                        if now.duration_since(last_time)
+                            > Duration::from_secs(COMPATIBILITY_PROBE_TIMEOUT_SECS)
                         {
                             tracing::warn!(
                                 peer = %hex::encode(peer),
@@ -2122,6 +2340,7 @@ where
         let local_genesis_hash = self.genesis_hash_bytes()?;
         let request_id = self.next_request_id();
         let request = SyncRequest::CompatibilityProbe {
+            network_id: self.local_network_id().to_string(),
             local_genesis_hash,
             sync_protocol_version: self.local_sync_protocol_version(),
             aggregation_proof_format: self.local_aggregation_proof_format(),
@@ -2148,6 +2367,7 @@ where
         tracing::debug!(
             peer = %hex::encode(peer_id),
             request_id,
+            network_id = %self.local_network_id(),
             local_genesis = %hex::encode(local_genesis_hash),
             sync_protocol_version = self.local_sync_protocol_version(),
             aggregation_proof_format = self.local_aggregation_proof_format(),
@@ -2444,7 +2664,7 @@ mod tests {
             local_1199_hash,
             1199u64,
         ));
-        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
         let peer_id = [0x77u8; 32];
         sync.on_peer_connected(peer_id);
         {
@@ -2509,6 +2729,67 @@ mod tests {
     }
 
     #[test]
+    fn test_blocks_response_drops_mismatched_wire_hash() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1 = header_with_marker(1u64, genesis_hash, 0x20);
+        let header_1_hash = header_1.hash();
+
+        let client = Arc::new(MockClient::new(genesis_hash, vec![], genesis_hash, 0u64));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
+        let peer_id = [0x66u8; 32];
+        sync.on_peer_connected(peer_id);
+        {
+            let peer = sync.peers.get_mut(&peer_id).expect("peer connected");
+            peer.compatibility = PeerCompatibility::Compatible;
+            peer.best_height = 1;
+            peer.best_hash = hash_bytes(header_1_hash);
+        }
+
+        sync.state = SyncState::Downloading {
+            target_height: 1,
+            peer: peer_id,
+            current_height: 0,
+            current_hash: hash_bytes(genesis_hash),
+            requested_height: 1,
+            request_pending: true,
+            last_request_time: Some(Instant::now()),
+        };
+        sync.pending_requests.insert(
+            7,
+            PendingRequest {
+                request_type: PendingRequestType::GetBlocks { from_height: 1 },
+                peer: peer_id,
+                sent_at: Instant::now(),
+                request_id: 7,
+            },
+        );
+
+        sync.handle_blocks_response(
+            peer_id,
+            7,
+            vec![crate::substrate::network_bridge::SyncBlock {
+                number: 1,
+                hash: [0x55u8; 32],
+                header: header_1.encode(),
+                body: Vec::new(),
+            }],
+        );
+
+        assert!(
+            sync.downloaded_blocks.is_empty(),
+            "mismatched block must not queue"
+        );
+        assert_eq!(sync.stats.failed_requests, 1);
+        assert_eq!(
+            sync.peers
+                .get(&peer_id)
+                .expect("peer still tracked")
+                .failed_requests,
+            1
+        );
+    }
+
+    #[test]
     fn test_on_local_revert_resets_downloading_cursor_to_local_best() {
         let genesis_hash = H256::repeat_byte(0x01);
         let header_1198 = header_with_marker(1198u64, H256::repeat_byte(0x10), 0x20);
@@ -2522,7 +2803,7 @@ mod tests {
             hash_1198,
             1198u64,
         ));
-        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
         let peer_id = [0x55u8; 32];
 
         sync.state = SyncState::Downloading {
@@ -2568,7 +2849,7 @@ mod tests {
             local_1199_hash,
             1199u64,
         ));
-        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
         let peer_id = [0x44u8; 32];
 
         sync.state = SyncState::Downloading {
@@ -2613,7 +2894,7 @@ mod tests {
             hash_1198,
             1198u64,
         ));
-        let mut sync = ChainSyncService::<runtime::Block, _>::new(client);
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
         let peer_id = [0x99u8; 32];
         sync.on_peer_connected(peer_id);
         {
@@ -2647,6 +2928,80 @@ mod tests {
         match next.2 {
             SyncRequest::GetBlocks { start_height, .. } => assert_eq!(start_height, 1199),
             other => panic!("expected GetBlocks request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_get_blocks_zero_returns_empty_response() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let genesis_header = header_with_marker(0u64, H256::repeat_byte(0x00), 0x01);
+        let genesis_header_hash = genesis_header.hash();
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![genesis_header],
+            genesis_header_hash,
+            0u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
+
+        let response = sync
+            .handle_sync_request(
+                [0x12; 32],
+                Some(7),
+                SyncRequest::GetBlocks {
+                    start_height: 0,
+                    max_blocks: 0,
+                },
+            )
+            .expect("response");
+
+        match response {
+            SyncResponse::Blocks { request_id, blocks } => {
+                assert_eq!(request_id, 7);
+                assert!(blocks.is_empty());
+            }
+            other => panic!("expected empty Blocks response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_compatibility_probe_rejects_network_id_mismatch() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let genesis_header = header_with_marker(0u64, H256::repeat_byte(0x00), 0x01);
+        let genesis_header_hash = genesis_header.hash();
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![genesis_header],
+            genesis_header_hash,
+            0u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "local-network");
+
+        let response = sync
+            .handle_sync_request(
+                [0x34; 32],
+                Some(11),
+                SyncRequest::CompatibilityProbe {
+                    network_id: "other-network".into(),
+                    local_genesis_hash: hash_bytes(genesis_header_hash),
+                    sync_protocol_version: SYNC_PROTOCOL_VERSION,
+                    aggregation_proof_format: BLOCK_PROOF_FORMAT_ID_V5,
+                },
+            )
+            .expect("response");
+
+        match response {
+            SyncResponse::Compatibility {
+                request_id,
+                accepted,
+                network_id,
+                ..
+            } => {
+                assert_eq!(request_id, 11);
+                assert!(!accepted);
+                assert_eq!(network_id, "local-network");
+            }
+            other => panic!("expected compatibility response, got {other:?}"),
         }
     }
 }
