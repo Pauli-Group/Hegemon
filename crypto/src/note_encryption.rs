@@ -15,10 +15,13 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit,
 };
+use zeroize::Zeroizing;
 
 use crate::{
     deterministic::expand_to_length,
-    ml_kem::{MlKemCiphertext, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
+    ml_kem::{
+        MlKemCiphertext, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret, ML_KEM_CIPHERTEXT_LEN,
+    },
     traits::KemPublicKey,
     CryptoError,
 };
@@ -281,6 +284,12 @@ impl NoteCiphertext {
 
         let kem_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
+        if kem_len != ML_KEM_CIPHERTEXT_LEN {
+            return Err(CryptoError::InvalidLength {
+                expected: ML_KEM_CIPHERTEXT_LEN,
+                actual: kem_len,
+            });
+        }
         if bytes.len() < offset + kem_len {
             return Err(CryptoError::InvalidLength {
                 expected: offset + kem_len,
@@ -310,6 +319,12 @@ impl NoteCiphertext {
             });
         }
         let memo_payload = bytes[offset..offset + memo_len].to_vec();
+        if bytes.len() != offset + memo_len {
+            return Err(CryptoError::InvalidLength {
+                expected: offset + memo_len,
+                actual: bytes.len(),
+            });
+        }
 
         Ok(Self {
             version,
@@ -355,8 +370,9 @@ fn derive_aead_material(
     label: &[u8],
     crypto_suite: u16,
 ) -> ([u8; AEAD_KEY_SIZE], [u8; AEAD_NONCE_SIZE]) {
-    let mut material =
-        Vec::with_capacity(shared.as_bytes().len() + label.len() + core::mem::size_of::<u16>());
+    let mut material = Zeroizing::new(Vec::with_capacity(
+        shared.as_bytes().len() + label.len() + core::mem::size_of::<u16>(),
+    ));
     material.extend_from_slice(shared.as_bytes());
     material.extend_from_slice(label);
     material.extend_from_slice(&crypto_suite.to_le_bytes());
@@ -484,5 +500,41 @@ mod tests {
 
         let result = tampered.decrypt(&sk_enc, [2u8; 32], 7);
         assert!(result.is_err(), "tampered diversifier_index must fail");
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_trailing_bytes() {
+        let keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-trailing");
+        let pk_enc = keypair.public_key();
+        let note = NotePlaintext::new(42, 0, [1u8; 32], [2u8; 32], b"memo".to_vec());
+        let mut bytes = NoteCiphertext::encrypt(&pk_enc, [3u8; 32], 1, 3, 0, &note, &[4u8; 32])
+            .unwrap()
+            .to_bytes();
+        bytes.push(0x99);
+
+        let err = NoteCiphertext::from_bytes(&bytes).expect_err("trailing bytes must be rejected");
+        assert!(matches!(err, CryptoError::InvalidLength { .. }));
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_invalid_kem_length() {
+        let ciphertext = NoteCiphertext {
+            version: 1,
+            crypto_suite: 3,
+            diversifier_index: 0,
+            kem_ciphertext: vec![0u8; ML_KEM_CIPHERTEXT_LEN - 1],
+            note_payload: vec![1, 2, 3],
+            memo_payload: vec![4, 5, 6],
+        };
+
+        let err = NoteCiphertext::from_bytes(&ciphertext.to_bytes())
+            .expect_err("wrong ML-KEM ciphertext length must be rejected");
+        assert_eq!(
+            err,
+            CryptoError::InvalidLength {
+                expected: ML_KEM_CIPHERTEXT_LEN,
+                actual: ML_KEM_CIPHERTEXT_LEN - 1,
+            }
+        );
     }
 }

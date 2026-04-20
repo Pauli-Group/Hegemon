@@ -11401,6 +11401,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha3 0.10.8",
  "slh-dsa",
+ "subtle 2.6.1",
  "thiserror 1.0.69",
  "zeroize",
 ]

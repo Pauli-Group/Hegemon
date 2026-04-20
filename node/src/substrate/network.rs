@@ -253,12 +253,12 @@ impl PqNetworkKeypair {
         use crypto::ml_kem::MlKemCiphertext;
 
         let ct = MlKemCiphertext::from_bytes(ciphertext)
-            .map_err(|e| format!("Invalid ciphertext: {:?}", e))?;
+            .map_err(|_| "decapsulation failed".to_string())?;
 
         let shared_secret = self
             .kem_keypair
             .decapsulate(&ct)
-            .map_err(|e| format!("Decapsulation failed: {:?}", e))?;
+            .map_err(|_| "decapsulation failed".to_string())?;
 
         Ok(shared_secret.as_bytes().to_vec())
     }
@@ -354,6 +354,21 @@ mod tests {
         // Test peer ID format
         let peer_id = keypair.peer_id();
         assert_eq!(peer_id.len(), 64); // 32 bytes as hex
+    }
+
+    #[test]
+    fn test_decapsulation_errors_are_generic() {
+        let keypair = PqNetworkKeypair::from_seed(b"test-seed-decapsulation-errors").unwrap();
+
+        let short_err = keypair
+            .decapsulate(&[0u8; 7])
+            .expect_err("short ciphertext must fail");
+        let long_err = keypair
+            .decapsulate(&vec![0x55u8; crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN + 1])
+            .expect_err("long ciphertext must fail");
+
+        assert_eq!(short_err, "decapsulation failed");
+        assert_eq!(long_err, "decapsulation failed");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
@@ -31,7 +31,9 @@ impl RootSecret {
     pub fn from_rng<R: RngCore + ?Sized>(rng: &mut R) -> Self {
         let mut bytes = [0u8; KEY_SIZE];
         rng.fill_bytes(&mut bytes);
-        Self(bytes)
+        let root = Self(bytes);
+        bytes.zeroize();
+        root
     }
 
     pub fn to_bytes(&self) -> [u8; KEY_SIZE] {
@@ -100,14 +102,14 @@ impl ViewKey {
     }
 
     pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
-        let mut material = Vec::with_capacity(b"view_nf".len() + self.0.len());
+        let mut material = Zeroizing::new(Vec::with_capacity(b"view_nf".len() + self.0.len()));
         material.extend_from_slice(b"view_nf");
         material.extend_from_slice(&self.0);
         blake3_256(&material)
     }
 
     pub fn pk_recipient(&self, diversifier: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-        let mut material = Vec::with_capacity(self.0.len() + diversifier.len());
+        let mut material = Zeroizing::new(Vec::with_capacity(self.0.len() + diversifier.len()));
         material.extend_from_slice(&self.0);
         material.extend_from_slice(diversifier);
         blake3_256(&material)
@@ -121,7 +123,8 @@ pub struct EncryptionSeed(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl EncryptionSeed {
     pub fn derive_keypair(&self, diversifier: &[u8; KEY_SIZE], index: u32) -> MlKemKeyPair {
-        let mut seed_material = Vec::with_capacity(2 * KEY_SIZE + 4 + b"addr-seed".len());
+        let mut seed_material =
+            Zeroizing::new(Vec::with_capacity(2 * KEY_SIZE + 4 + b"addr-seed".len()));
         seed_material.extend_from_slice(b"addr-seed");
         seed_material.extend_from_slice(&self.0);
         seed_material.extend_from_slice(diversifier);
@@ -239,7 +242,7 @@ impl AddressKeyMaterial {
 }
 
 fn derive_subkey(label: &[u8], root: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-    let mut material = Vec::with_capacity(label.len() + root.len());
+    let mut material = Zeroizing::new(Vec::with_capacity(label.len() + root.len()));
     material.extend_from_slice(label);
     material.extend_from_slice(root);
     let derived = expand_to_length(b"wallet-hkdf", &material, KEY_SIZE);
