@@ -5,7 +5,9 @@ use rand::{rngs::StdRng, SeedableRng};
 use runtime::{Kernel, Runtime, RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
 use sp_runtime::traits::ValidateUnsigned;
-use sp_runtime::transaction_validity::TransactionSource;
+use sp_runtime::transaction_validity::{
+    InvalidTransaction, TransactionSource, TransactionValidityError,
+};
 use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
 use tempfile::tempdir;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
@@ -248,6 +250,72 @@ fn kernel_wallet_unsigned_transfer_survives_kernel_validate_and_apply() {
                 "runtime should record submitted nullifier"
             );
         }
+    });
+}
+
+#[test]
+fn kernel_wallet_unsigned_transfer_missing_anchor_is_future() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+        let ciphertexts = vec![pallet_shielded_pool::types::EncryptedNote::default()];
+        let anchor = [9u8; 48];
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let nullifiers = vec![[1u8; 48]];
+        let commitments = vec![[2u8; 48]];
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|note| {
+                let mut bytes =
+                    Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+                bytes.extend_from_slice(&note.ciphertext);
+                bytes.extend_from_slice(&note.kem_ciphertext);
+                ciphertext_hash_bytes(&bytes)
+            })
+            .collect::<Vec<_>>();
+        let binding_hash = pallet_shielded_pool::verifier::StarkVerifier::compute_binding_hash(
+            &pallet_shielded_pool::verifier::ShieldedTransferInputs {
+                anchor,
+                nullifiers: nullifiers.clone(),
+                commitments: commitments.clone(),
+                ciphertext_hashes,
+                balance_slot_asset_ids,
+                fee: 0,
+                value_balance: 0,
+                stablecoin: None,
+            },
+        );
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: vec![1u8; 32],
+            commitments,
+            ciphertexts,
+            anchor,
+            balance_slot_asset_ids,
+            binding_hash: binding_hash.data,
+            stablecoin: None,
+            fee: 0,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            nullifiers,
+            args.encode(),
+        );
+        let call = pallet_kernel::Call::<Runtime>::submit_action { envelope };
+
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Future
+                ))
+            ),
+            "kernel wrapper should preserve future-anchor deferral: {validity:?}"
+        );
     });
 }
 

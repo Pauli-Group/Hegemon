@@ -22,6 +22,21 @@ use sp_runtime::transaction_validity::{
     ValidTransaction,
 };
 
+fn validity_from_family_error(err: &DispatchError) -> InvalidTransaction {
+    match err {
+        DispatchError::Other("call") => InvalidTransaction::Call,
+        DispatchError::Other("payment") => InvalidTransaction::Payment,
+        DispatchError::Other("future") => InvalidTransaction::Future,
+        DispatchError::Other("stale") => InvalidTransaction::Stale,
+        DispatchError::Other("bad-proof") => InvalidTransaction::BadProof,
+        DispatchError::Other("bad-signer") => InvalidTransaction::BadSigner,
+        DispatchError::Other("exhausts-resources") => InvalidTransaction::ExhaustsResources,
+        DispatchError::Other("bad-mandatory") => InvalidTransaction::BadMandatory,
+        DispatchError::Other("mandatory-validation") => InvalidTransaction::MandatoryValidation,
+        _ => InvalidTransaction::BadProof,
+    }
+}
+
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
@@ -217,7 +232,7 @@ pub mod pallet {
                         envelope.action_id,
                         err,
                     );
-                    return InvalidTransaction::BadProof.into();
+                    return validity_from_family_error(&err).into();
                 }
             };
 

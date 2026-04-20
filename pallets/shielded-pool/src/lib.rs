@@ -1546,14 +1546,7 @@ pub mod pallet {
                 );
                 return Err(InvalidTransaction::Custom(2));
             }
-            if !MerkleRoots::<T>::contains_key(anchor) {
-                warn!(
-                    target: "shielded-pool",
-                    "inline unsigned transfer rejected: unknown anchor={:?}",
-                    anchor
-                );
-                return Err(InvalidTransaction::Custom(3));
-            }
+            Self::ensure_known_anchor_for_unsigned(anchor, "inline unsigned transfer")?;
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     warn!(
@@ -1826,9 +1819,7 @@ pub mod pallet {
                     return Err(InvalidTransaction::Custom(4));
                 }
             }
-            if !MerkleRoots::<T>::contains_key(anchor) {
-                return Err(InvalidTransaction::Custom(3));
-            }
+            Self::ensure_known_anchor_for_unsigned(anchor, "sidecar unsigned transfer")?;
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
                     return Err(InvalidTransaction::Custom(4));
@@ -2030,9 +2021,7 @@ pub mod pallet {
                     return Err(InvalidTransaction::Custom(2));
                 }
             }
-            if !MerkleRoots::<T>::contains_key(anchor) {
-                return Err(InvalidTransaction::Custom(3));
-            }
+            Self::ensure_known_anchor_for_unsigned(anchor, "batch unsigned transfer")?;
 
             let mut seen_nullifiers = sp_std::vec::Vec::new();
             for nf in nullifiers.iter() {
@@ -2902,6 +2891,23 @@ pub mod pallet {
                 .map_err(|_| Error::<T>::MerkleRootHistoryFull)?;
             MerkleRootHistory::<T>::put(history);
             Ok(())
+        }
+
+        fn ensure_known_anchor_for_unsigned(
+            anchor: &[u8; 48],
+            context: &'static str,
+        ) -> Result<(), InvalidTransaction> {
+            if MerkleRoots::<T>::contains_key(anchor) {
+                return Ok(());
+            }
+            warn!(
+                target: "shielded-pool",
+                "{context} deferred: unknown anchor={:?}",
+                anchor
+            );
+            // Relayed txs can arrive before this peer imports the block that made the anchor
+            // historical. Keep them in the future queue so they can be revalidated on the next tip.
+            Err(InvalidTransaction::Future)
         }
 
         /// Update the Merkle tree with new commitments.
@@ -4019,6 +4025,66 @@ mod tests {
             assert!(
                 validity.is_ok(),
                 "native tx-leaf inline payload should validate: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_inline_native_tx_leaf_missing_anchor_is_future() {
+        mock::new_test_ext().execute_with(|| {
+            let proof = types::StarkProof::from_bytes(vec![1u8; 32]);
+            let nullifiers: BoundedVec<[u8; 48], mock::MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], mock::MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let ciphertexts: BoundedVec<types::EncryptedNote, mock::MaxEncryptedNotesPerTx> =
+                vec![types::EncryptedNote::default()].try_into().unwrap();
+            let anchor = [9u8; 48];
+            let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+            let ciphertext_hashes = ciphertexts
+                .iter()
+                .map(|note| {
+                    let mut bytes =
+                        Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+                    bytes.extend_from_slice(&note.ciphertext);
+                    bytes.extend_from_slice(&note.kem_ciphertext);
+                    transaction_core::hashing_pq::ciphertext_hash_bytes(&bytes)
+                })
+                .collect::<Vec<_>>();
+            let binding_hash =
+                verifier::StarkVerifier::compute_binding_hash(&verifier::ShieldedTransferInputs {
+                    anchor,
+                    nullifiers: nullifiers.clone().into_inner(),
+                    commitments: commitments.clone().into_inner(),
+                    ciphertext_hashes,
+                    balance_slot_asset_ids,
+                    fee: 0,
+                    value_balance: 0,
+                    stablecoin: None,
+                });
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned {
+                proof,
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 0,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                matches!(
+                    validity,
+                    Err(TransactionValidityError::Invalid(
+                        InvalidTransaction::Future
+                    ))
+                ),
+                "missing anchors should defer unsigned txs into the future queue: {validity:?}"
             );
         });
     }

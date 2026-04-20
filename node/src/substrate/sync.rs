@@ -1317,6 +1317,18 @@ where
                 "🔄 SYNC: Received EMPTY blocks response - peer has no blocks?"
             );
 
+            if let SyncState::Downloading {
+                current_height,
+                requested_height,
+                ..
+            } = &mut self.state
+            {
+                // The request produced no follow-on blocks, so do not keep the optimistic
+                // request cursor ahead of the imported tip. That would block retries forever
+                // once tick() starts waiting for import catch-up.
+                *requested_height = *current_height;
+            }
+
             // Mark peer failure
             if let Some(peer_state) = self.peers.get_mut(&peer_id) {
                 peer_state.failed_requests += 1;
@@ -1423,11 +1435,13 @@ where
             if let SyncState::Downloading {
                 ref mut current_height,
                 ref mut current_hash,
+                ref mut requested_height,
                 ..
             } = &mut self.state
             {
                 *current_height = current_height_snapshot.saturating_sub(1);
                 *current_hash = parent_of_current;
+                *requested_height = *current_height;
             }
             return;
         }
@@ -1505,6 +1519,16 @@ where
             );
             expected_parent = header_hash_bytes;
             expected_number = expected_number.saturating_add(1);
+        }
+
+        if let SyncState::Downloading {
+            requested_height, ..
+        } = &mut self.state
+        {
+            // Track the first height above the blocks we actually received rather than the
+            // optimistic "requested up to" cursor. tick() uses this to avoid issuing the next
+            // batch until import has caught up to the last downloaded block.
+            *requested_height = expected_number;
         }
 
         tracing::info!(
@@ -2258,8 +2282,20 @@ where
                     return None;
                 }
 
-                // Request the next batch of blocks
-                let next_height = current_height + 1;
+                if requested_height > current_height + 1 {
+                    tracing::trace!(
+                        current_height,
+                        requested_height,
+                        "Waiting for block imports to catch up before requesting the next batch"
+                    );
+                    return None;
+                }
+
+                // Request the next missing batch of blocks. `requested_height` tracks the first
+                // height above the most recent range we already asked this peer for. Once local
+                // import catches up to that cursor, use it as a floor so we never re-request an
+                // overlapping tip block while import is catching up.
+                let next_height = requested_height.max(current_height + 1);
                 if let Some(front) = self.downloaded_blocks.front() {
                     if front.number <= next_height {
                         tracing::trace!(
@@ -2705,11 +2741,13 @@ mod tests {
             SyncState::Downloading {
                 current_height,
                 current_hash,
+                requested_height,
                 request_pending,
                 ..
             } => {
                 assert_eq!(*current_height, 1198);
                 assert_eq!(*current_hash, hash_bytes(hash_1198));
+                assert_eq!(*requested_height, 1198);
                 assert!(!request_pending);
             }
             other => panic!("expected downloading state after backtrack, got {other:?}"),
@@ -2925,6 +2963,151 @@ mod tests {
         match next.2 {
             SyncRequest::GetBlocks { start_height, .. } => assert_eq!(start_height, 1199),
             other => panic!("expected GetBlocks request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_tick_waits_for_tail_imports_before_requesting_next_batch() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1885 = header_with_marker(1885u64, H256::repeat_byte(0x42), 0x55);
+        let hash_1885 = header_1885.hash();
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1885],
+            hash_1885,
+            1885u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
+        let peer_id = [0x33u8; 32];
+        sync.on_peer_connected(peer_id);
+        {
+            let peer = sync.peers.get_mut(&peer_id).expect("peer connected");
+            peer.compatibility = PeerCompatibility::Compatible;
+            peer.best_height = 3608;
+            peer.best_hash = [0x44; 32];
+        }
+
+        sync.state = SyncState::Downloading {
+            target_height: 3608,
+            peer: peer_id,
+            current_height: 1885,
+            current_hash: hash_bytes(hash_1885),
+            requested_height: 1887,
+            request_pending: false,
+            last_request_time: None,
+        };
+
+        assert!(
+            sync.tick().is_none(),
+            "sync should wait for block import to catch up before requesting another batch"
+        );
+    }
+
+    #[test]
+    fn test_tick_requests_requested_height_once_import_catches_up() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1886 = header_with_marker(1886u64, H256::repeat_byte(0x42), 0x55);
+        let hash_1886 = header_1886.hash();
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1886],
+            hash_1886,
+            1886u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
+        let peer_id = [0x32u8; 32];
+        sync.on_peer_connected(peer_id);
+        {
+            let peer = sync.peers.get_mut(&peer_id).expect("peer connected");
+            peer.compatibility = PeerCompatibility::Compatible;
+            peer.best_height = 3608;
+            peer.best_hash = [0x44; 32];
+        }
+
+        sync.state = SyncState::Downloading {
+            target_height: 3608,
+            peer: peer_id,
+            current_height: 1886,
+            current_hash: hash_bytes(hash_1886),
+            requested_height: 1887,
+            request_pending: false,
+            last_request_time: None,
+        };
+
+        let next = sync.tick().expect(
+            "sync should request the next batch once import reaches the last received block",
+        );
+        assert_eq!(next.0, peer_id);
+        match next.2 {
+            SyncRequest::GetBlocks { start_height, .. } => assert_eq!(start_height, 1887),
+            other => panic!("expected GetBlocks request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_blocks_response_clamps_requested_height_to_last_received_block() {
+        let genesis_hash = H256::repeat_byte(0x01);
+        let header_1199 = header_with_marker(1199u64, H256::repeat_byte(0x10), 0x20);
+        let hash_1199 = header_1199.hash();
+        let header_1200 = header_with_marker(1200u64, hash_1199, 0x30);
+        let hash_1200 = header_1200.hash();
+
+        let client = Arc::new(MockClient::new(
+            genesis_hash,
+            vec![header_1199.clone()],
+            hash_1199,
+            1199u64,
+        ));
+        let mut sync = ChainSyncService::<runtime::Block, _>::new(client, "test-network");
+        let peer_id = [0x31u8; 32];
+        sync.on_peer_connected(peer_id);
+        {
+            let peer = sync.peers.get_mut(&peer_id).expect("peer connected");
+            peer.compatibility = PeerCompatibility::Compatible;
+            peer.best_height = 1243;
+            peer.best_hash = hash_bytes(hash_1200);
+        }
+
+        sync.state = SyncState::Downloading {
+            target_height: 1243,
+            peer: peer_id,
+            current_height: 1199,
+            current_hash: hash_bytes(hash_1199),
+            requested_height: 1215,
+            request_pending: true,
+            last_request_time: Some(Instant::now()),
+        };
+        sync.pending_requests.insert(
+            9,
+            PendingRequest {
+                request_type: PendingRequestType::GetBlocks { from_height: 1200 },
+                peer: peer_id,
+                sent_at: Instant::now(),
+                request_id: 9,
+            },
+        );
+
+        sync.handle_blocks_response(
+            peer_id,
+            9,
+            vec![crate::substrate::network_bridge::SyncBlock {
+                number: 1200,
+                hash: hash_bytes(hash_1200),
+                header: header_1200.encode(),
+                body: Vec::new(),
+            }],
+        );
+
+        match &sync.state {
+            SyncState::Downloading {
+                requested_height,
+                request_pending,
+                ..
+            } => {
+                assert_eq!(*requested_height, 1201);
+                assert!(!request_pending);
+            }
+            other => panic!("expected downloading state after queuing blocks, got {other:?}"),
         }
     }
 
