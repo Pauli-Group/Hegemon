@@ -2225,7 +2225,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
     fn recursive_block_v2_verifier_is_registered_and_accepts_valid_artifact() {
         let registry = VerifierRegistry::default();
         let verifier_profile = backend_recursive_block_profile_v2();
@@ -2287,7 +2286,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "tree_v2 is experimental and not on the shipped product lane"]
     fn recursive_block_v2_verifier_rejects_tx_count_mismatch() {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV2,

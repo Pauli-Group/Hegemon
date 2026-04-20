@@ -28,6 +28,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 - `rust-lints`: runs the lean formatting/lint gate through `./scripts/check-core.sh lint`.
 - `core-tests`: runs the fast shipping-path Rust tests through `./scripts/check-core.sh test`.
+- `security-adversarial`: runs `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`, including hostile proving regressions plus review-package parity checks.
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.
 
 Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping InlineTx node, runtime, wallet, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
@@ -35,7 +36,7 @@ The expensive `circuits/batch` proving tests are intentionally `#[ignore]` becau
 
 Operator-scenario harnesses such as `./scripts/test-substrate.sh restart-recovery` remain available for manual debugging, but they are not part of the default blocking CI gate.
 Benchmark, simulator, and profiling harnesses such as `circuits-bench`, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
-Manual adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, and `cargo test -p wallet --test address_fuzz` are also kept out of the default gate unless you are touching those surfaces.
+The merge-blocking hostile minimum is `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. Heavier adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, `cargo test -p wallet --test address_fuzz`, and `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` remain manual unless you are hardening those surfaces or preparing a release.
 
 When you add a new crate or language toolchain, extend CI accordingly **and** document the new step here and in `METHODS.md`.
 

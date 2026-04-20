@@ -445,6 +445,8 @@ const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 const DEFAULT_PENDING_CIPHERTEXTS_CAPACITY: usize = 4096;
 const DEFAULT_PENDING_PROOFS_CAPACITY: usize = 256;
+const DEFAULT_PENDING_CIPHERTEXTS_MAX_BYTES: usize = 4 * 1024 * 1024;
+const DEFAULT_PENDING_PROOFS_MAX_BYTES: usize = 32 * 1024 * 1024;
 const CIPHERTEXT_COUNT_KEY: &[u8] = b"ciphertext_count";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -826,39 +828,76 @@ impl CommitmentBlockProofStore {
 #[derive(Debug, Clone)]
 pub struct PendingCiphertextStore {
     capacity: usize,
+    max_total_bytes: usize,
+    total_bytes: usize,
     order: VecDeque<[u8; 48]>,
     entries: HashMap<[u8; 48], Vec<u8>>,
 }
 
 impl PendingCiphertextStore {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, max_total_bytes: usize) -> Self {
         Self {
             capacity,
+            max_total_bytes,
+            total_bytes: 0,
             order: VecDeque::new(),
             entries: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, hash: [u8; 48], bytes: Vec<u8>) {
-        if self.capacity == 0 {
-            return;
+    pub fn insert(&mut self, hash: [u8; 48], bytes: Vec<u8>) -> Result<(), String> {
+        if self.capacity == 0 || self.max_total_bytes == 0 {
+            return Err("pending ciphertext store is disabled".to_string());
+        }
+
+        if bytes.len() > self.max_total_bytes {
+            return Err(format!(
+                "ciphertext entry size {} exceeds pending ciphertext byte budget {}",
+                bytes.len(),
+                self.max_total_bytes
+            ));
         }
 
         if let Some(existing) = self.entries.get_mut(&hash) {
+            let updated_total = self
+                .total_bytes
+                .saturating_sub(existing.len())
+                .saturating_add(bytes.len());
+            if updated_total > self.max_total_bytes {
+                return Err(format!(
+                    "pending ciphertext byte budget exhausted (current {}, requested {}, max {})",
+                    self.total_bytes,
+                    bytes.len(),
+                    self.max_total_bytes
+                ));
+            }
+            self.total_bytes = self.total_bytes.saturating_sub(existing.len());
             *existing = bytes;
+            self.total_bytes = self.total_bytes.saturating_add(existing.len());
             self.order.retain(|entry| entry != &hash);
             self.order.push_back(hash);
-            return;
+            return Ok(());
         }
 
         if self.entries.len() >= self.capacity {
-            if let Some(evicted) = self.order.pop_front() {
-                self.entries.remove(&evicted);
-            }
+            return Err(format!(
+                "pending ciphertext store capacity exhausted (max {})",
+                self.capacity
+            ));
+        }
+        if self.total_bytes.saturating_add(bytes.len()) > self.max_total_bytes {
+            return Err(format!(
+                "pending ciphertext byte budget exhausted (current {}, requested {}, max {})",
+                self.total_bytes,
+                bytes.len(),
+                self.max_total_bytes
+            ));
         }
 
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len());
         self.entries.insert(hash, bytes);
         self.order.push_back(hash);
+        Ok(())
     }
 
     pub fn get_many(&self, hashes: &[[u8; 48]]) -> Result<Vec<Vec<u8>>, String> {
@@ -882,48 +921,91 @@ impl PendingCiphertextStore {
 
     pub fn remove_many(&mut self, hashes: &[[u8; 48]]) {
         for hash in hashes {
-            self.entries.remove(hash);
+            if let Some(bytes) = self.entries.remove(hash) {
+                self.total_bytes = self.total_bytes.saturating_sub(bytes.len());
+            }
             self.order.retain(|entry| entry != hash);
         }
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct PendingProofStore {
     capacity: usize,
+    max_total_bytes: usize,
+    total_bytes: usize,
     order: VecDeque<[u8; 64]>,
     entries: HashMap<[u8; 64], Vec<u8>>,
 }
 
 impl PendingProofStore {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, max_total_bytes: usize) -> Self {
         Self {
             capacity,
+            max_total_bytes,
+            total_bytes: 0,
             order: VecDeque::new(),
             entries: HashMap::new(),
         }
     }
 
-    pub fn insert(&mut self, binding_hash: [u8; 64], bytes: Vec<u8>) {
-        if self.capacity == 0 {
-            return;
+    pub fn insert(&mut self, binding_hash: [u8; 64], bytes: Vec<u8>) -> Result<(), String> {
+        if self.capacity == 0 || self.max_total_bytes == 0 {
+            return Err("pending proof store is disabled".to_string());
+        }
+
+        if bytes.len() > self.max_total_bytes {
+            return Err(format!(
+                "proof entry size {} exceeds pending proof byte budget {}",
+                bytes.len(),
+                self.max_total_bytes
+            ));
         }
 
         if let Some(existing) = self.entries.get_mut(&binding_hash) {
+            let updated_total = self
+                .total_bytes
+                .saturating_sub(existing.len())
+                .saturating_add(bytes.len());
+            if updated_total > self.max_total_bytes {
+                return Err(format!(
+                    "pending proof byte budget exhausted (current {}, requested {}, max {})",
+                    self.total_bytes,
+                    bytes.len(),
+                    self.max_total_bytes
+                ));
+            }
+            self.total_bytes = self.total_bytes.saturating_sub(existing.len());
             *existing = bytes;
+            self.total_bytes = self.total_bytes.saturating_add(existing.len());
             self.order.retain(|entry| entry != &binding_hash);
             self.order.push_back(binding_hash);
-            return;
+            return Ok(());
         }
 
         if self.entries.len() >= self.capacity {
-            if let Some(evicted) = self.order.pop_front() {
-                self.entries.remove(&evicted);
-            }
+            return Err(format!(
+                "pending proof store capacity exhausted (max {})",
+                self.capacity
+            ));
+        }
+        if self.total_bytes.saturating_add(bytes.len()) > self.max_total_bytes {
+            return Err(format!(
+                "pending proof byte budget exhausted (current {}, requested {}, max {})",
+                self.total_bytes,
+                bytes.len(),
+                self.max_total_bytes
+            ));
         }
 
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len());
         self.entries.insert(binding_hash, bytes);
         self.order.push_back(binding_hash);
+        Ok(())
     }
 
     pub fn get(&self, binding_hash: &[u8; 64]) -> Option<&Vec<u8>> {
@@ -958,9 +1040,15 @@ impl PendingProofStore {
 
     pub fn remove_many(&mut self, binding_hashes: &[[u8; 64]]) {
         for binding_hash in binding_hashes {
-            self.entries.remove(binding_hash);
+            if let Some(bytes) = self.entries.remove(binding_hash) {
+                self.total_bytes = self.total_bytes.saturating_sub(bytes.len());
+            }
             self.order.retain(|entry| entry != binding_hash);
         }
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
     }
 }
 
@@ -1136,6 +1224,19 @@ fn load_pending_ciphertext_capacity() -> usize {
     capacity
 }
 
+fn load_pending_ciphertext_max_bytes() -> usize {
+    let max_total_bytes = env_usize("HEGEMON_PENDING_CIPHERTEXTS_MAX_BYTES")
+        .unwrap_or(DEFAULT_PENDING_CIPHERTEXTS_MAX_BYTES);
+    if max_total_bytes == 0 {
+        tracing::warn!(
+            "HEGEMON_PENDING_CIPHERTEXTS_MAX_BYTES is zero; falling back to {}",
+            DEFAULT_PENDING_CIPHERTEXTS_MAX_BYTES
+        );
+        return DEFAULT_PENDING_CIPHERTEXTS_MAX_BYTES;
+    }
+    max_total_bytes
+}
+
 fn load_pending_proof_capacity() -> usize {
     let capacity =
         env_usize("HEGEMON_PENDING_PROOFS_CAPACITY").unwrap_or(DEFAULT_PENDING_PROOFS_CAPACITY);
@@ -1147,6 +1248,19 @@ fn load_pending_proof_capacity() -> usize {
         return DEFAULT_PENDING_PROOFS_CAPACITY;
     }
     capacity
+}
+
+fn load_pending_proof_max_bytes() -> usize {
+    let max_total_bytes =
+        env_usize("HEGEMON_PENDING_PROOFS_MAX_BYTES").unwrap_or(DEFAULT_PENDING_PROOFS_MAX_BYTES);
+    if max_total_bytes == 0 {
+        tracing::warn!(
+            "HEGEMON_PENDING_PROOFS_MAX_BYTES is zero; falling back to {}",
+            DEFAULT_PENDING_PROOFS_MAX_BYTES
+        );
+        return DEFAULT_PENDING_PROOFS_MAX_BYTES;
+    }
+    max_total_bytes
 }
 
 fn fetch_da_policy(
@@ -8166,7 +8280,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_sample_timeout = load_da_sample_timeout();
     let da_store_path = da_store_path(&config);
     let pending_ciphertext_capacity = load_pending_ciphertext_capacity();
+    let pending_ciphertext_max_bytes = load_pending_ciphertext_max_bytes();
     let pending_proof_capacity = load_pending_proof_capacity();
+    let pending_proof_max_bytes = load_pending_proof_max_bytes();
     let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> = Arc::new(ParkingMutex::new(
         DaChunkStore::open(
@@ -8177,11 +8293,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         )
         .map_err(|err| ServiceError::Other(format!("failed to open DA store: {err}")))?,
     ));
-    let pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>> = Arc::new(
-        ParkingMutex::new(PendingCiphertextStore::new(pending_ciphertext_capacity)),
-    );
+    let pending_ciphertext_store: Arc<ParkingMutex<PendingCiphertextStore>> =
+        Arc::new(ParkingMutex::new(PendingCiphertextStore::new(
+            pending_ciphertext_capacity,
+            pending_ciphertext_max_bytes,
+        )));
     let pending_proof_store: Arc<ParkingMutex<PendingProofStore>> = Arc::new(ParkingMutex::new(
-        PendingProofStore::new(pending_proof_capacity),
+        PendingProofStore::new(pending_proof_capacity, pending_proof_max_bytes),
     ));
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
@@ -8195,7 +8313,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         da_sample_count = da_params.sample_count,
         da_store_capacity,
         pending_ciphertext_capacity,
+        pending_ciphertext_max_bytes,
         pending_proof_capacity,
+        pending_proof_max_bytes,
         ciphertext_da_retention_blocks,
         proof_da_retention_blocks,
         da_store_path = %da_store_path.display(),
@@ -13220,8 +13340,10 @@ mod tests {
             balance_slot_asset_ids,
         );
 
-        let mut pending_proofs = PendingProofStore::new(4);
-        pending_proofs.insert(binding_hash, built.artifact_bytes.clone());
+        let mut pending_proofs = PendingProofStore::new(4, 1024 * 1024);
+        pending_proofs
+            .insert(binding_hash, built.artifact_bytes.clone())
+            .expect("insert staged proof bytes");
         let extracted = extract_shielded_transfers_for_parallel_verification(
             std::slice::from_ref(&extrinsic),
             Some(std::slice::from_ref(&ciphertext_bytes)),
@@ -13235,7 +13357,7 @@ mod tests {
             "staged native proof bytes should materialize a tx artifact"
         );
 
-        let restarted_pending_proofs = PendingProofStore::new(4);
+        let restarted_pending_proofs = PendingProofStore::new(4, 1024 * 1024);
         let err = extract_shielded_transfers_for_parallel_verification(
             &[extrinsic],
             Some(std::slice::from_ref(&ciphertext_bytes)),
@@ -13261,8 +13383,10 @@ mod tests {
             [0, u64::MAX, u64::MAX, u64::MAX],
         );
 
-        let mut pending_ciphertexts = PendingCiphertextStore::new(4);
-        pending_ciphertexts.insert(hash, ciphertext.clone());
+        let mut pending_ciphertexts = PendingCiphertextStore::new(4, 4096);
+        pending_ciphertexts
+            .insert(hash, ciphertext.clone())
+            .expect("insert staged ciphertext bytes");
         let build = build_da_blob_from_extrinsics(
             std::slice::from_ref(&extrinsic),
             Some(&pending_ciphertexts),
@@ -13271,11 +13395,45 @@ mod tests {
         assert_eq!(build.transactions, vec![vec![ciphertext.clone()]]);
         assert_eq!(build.used_ciphertext_hashes, vec![hash]);
 
-        let restarted_pending_ciphertexts = PendingCiphertextStore::new(4);
+        let restarted_pending_ciphertexts = PendingCiphertextStore::new(4, 4096);
         let err = build_da_blob_from_extrinsics(&[extrinsic], Some(&restarted_pending_ciphertexts))
             .err()
             .expect("sidecar ciphertexts must be restaged after restart");
         assert!(err.contains("missing ciphertext bytes"));
+    }
+
+    #[test]
+    fn pending_proof_store_preserves_existing_entries_when_byte_budget_is_exhausted() {
+        let mut store = PendingProofStore::new(4, 8);
+        let first = [1u8; 64];
+        let second = [2u8; 64];
+        let third = [3u8; 64];
+
+        store
+            .insert(first, vec![0x11; 3])
+            .expect("insert first proof");
+        store
+            .insert(second, vec![0x22; 3])
+            .expect("insert second proof");
+        let err = store
+            .insert(third, vec![0x33; 3])
+            .expect_err("third proof should be rejected once the byte budget is exhausted");
+
+        assert!(err.contains("byte budget"), "unexpected error: {err}");
+        assert!(store.contains(&first));
+        assert!(store.contains(&second));
+        assert!(!store.contains(&third));
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.total_bytes(), 6);
+    }
+
+    #[test]
+    fn pending_ciphertext_store_rejects_single_entry_larger_than_byte_budget() {
+        let mut store = PendingCiphertextStore::new(4, 8);
+        let err = store
+            .insert([7u8; 48], vec![0x55; 9])
+            .expect_err("oversized ciphertext should be rejected");
+        assert!(err.contains("byte budget"));
     }
 
     #[test]

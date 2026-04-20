@@ -44,6 +44,15 @@ use transaction_circuit::{
 
 use crate::error::WalletError;
 
+const PRODUCTION_MIN_BLOWUP_FACTOR: usize = 16;
+const PRODUCTION_MIN_NUM_QUERIES: usize = 32;
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Local post-prove verification policy for the wallet prover.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalProofSelfCheckPolicy {
@@ -157,7 +166,12 @@ impl StarkProverConfig {
         }
     }
 
-    fn normalized(&self) -> Self {
+    fn normalized_with_controls(
+        &self,
+        allow_fast: bool,
+        allow_recursion: bool,
+        enforce_production_floor: bool,
+    ) -> Self {
         let mut cfg = self.clone();
         if cfg.num_queries == 0 {
             cfg.num_queries = 1;
@@ -176,21 +190,20 @@ impl StarkProverConfig {
             cfg.grinding_bits = 0;
         }
 
-        let allow_fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let allow_recursion = std::env::var("HEGEMON_WALLET_PROVER_RECURSION")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        if !cfg!(debug_assertions) && !allow_fast {
-            cfg.num_queries = cfg.num_queries.max(32);
-            cfg.blowup_factor = cfg.blowup_factor.max(16);
+        if enforce_production_floor && !allow_fast {
+            cfg.num_queries = cfg.num_queries.max(PRODUCTION_MIN_NUM_QUERIES);
+            cfg.blowup_factor = cfg.blowup_factor.max(PRODUCTION_MIN_BLOWUP_FACTOR);
         }
         if allow_recursion {
             cfg.recursion_profile = true;
         }
 
         cfg
+    }
+
+    fn weakens_production_floor(&self) -> bool {
+        self.num_queries < PRODUCTION_MIN_NUM_QUERIES
+            || self.blowup_factor < PRODUCTION_MIN_BLOWUP_FACTOR
     }
 }
 
@@ -210,7 +223,24 @@ impl StarkProver {
     ///
     /// Note: Key generation is deterministic and requires no trusted setup.
     pub fn new(config: StarkProverConfig) -> Self {
-        let config = config.normalized();
+        let allow_fast = env_truthy("HEGEMON_WALLET_PROVER_FAST");
+        let allow_recursion = env_truthy("HEGEMON_WALLET_PROVER_RECURSION");
+        let config =
+            config.normalized_with_controls(allow_fast, allow_recursion, !cfg!(debug_assertions));
+        if !cfg!(debug_assertions) && allow_fast && config.weakens_production_floor() {
+            eprintln!(
+                "warning: HEGEMON_WALLET_PROVER_FAST enabled; wallet prover is running below the production proof-margin floor (num_queries={}, blowup_factor={})",
+                config.num_queries,
+                config.blowup_factor
+            );
+        }
+        if !cfg!(debug_assertions)
+            && config.local_self_check_policy == LocalProofSelfCheckPolicy::Never
+        {
+            eprintln!(
+                "warning: wallet prover local self-check disabled; this is unsafe for production proof generation"
+            );
+        }
         let (proving_key, verifying_key) = generate_keys();
         Self {
             config,
@@ -584,6 +614,29 @@ mod tests {
     fn test_prover_creation() {
         let prover = StarkProver::with_defaults();
         assert_eq!(prover.config().blowup_factor, 16);
+    }
+
+    #[test]
+    fn test_fast_config_is_clamped_without_explicit_override() {
+        let config = StarkProverConfig::fast().normalized_with_controls(false, false, true);
+        assert_eq!(config.blowup_factor, PRODUCTION_MIN_BLOWUP_FACTOR);
+        assert_eq!(config.num_queries, PRODUCTION_MIN_NUM_QUERIES);
+        assert_eq!(
+            config.local_self_check_policy,
+            LocalProofSelfCheckPolicy::Always
+        );
+    }
+
+    #[test]
+    fn test_fast_config_requires_explicit_override_to_weaken_floor() {
+        let config = StarkProverConfig::fast().normalized_with_controls(true, false, true);
+        assert_eq!(config.blowup_factor, 8);
+        assert_eq!(config.num_queries, 1);
+        assert!(config.weakens_production_floor());
+        assert_eq!(
+            config.local_self_check_policy,
+            LocalProofSelfCheckPolicy::Always
+        );
     }
 
     #[test]

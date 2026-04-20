@@ -358,7 +358,6 @@ impl DaApiServer for DaRpc {
 
         let mut total_bytes = 0usize;
         let mut entries = Vec::with_capacity(request.ciphertexts.len());
-        let mut pending = self.pending_ciphertexts.lock();
         for encoded in request.ciphertexts {
             let bytes = parse_bytes(&encoded)?;
             if bytes.is_empty() {
@@ -389,7 +388,10 @@ impl DaApiServer for DaRpc {
 
             let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
             let hash = ciphertext_hash_bytes(&bytes);
-            pending.insert(hash, bytes);
+            self.pending_ciphertexts
+                .lock()
+                .insert(hash, bytes)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
             entries.push(SubmitCiphertextsEntry {
                 hash: format!("0x{}", hex::encode(hash)),
                 size,
@@ -418,7 +420,6 @@ impl DaApiServer for DaRpc {
 
         let mut total_bytes = 0usize;
         let mut entries = Vec::with_capacity(request.proofs.len());
-        let mut pending = self.pending_proofs.lock();
 
         for item in request.proofs {
             let binding_hash = parse_binding_hash(&item.binding_hash)?;
@@ -448,6 +449,7 @@ impl DaApiServer for DaRpc {
 
             let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
             let proof_hash = blake3_384(&bytes);
+            let mut pending = self.pending_proofs.lock();
             if let Some(existing) = pending.get(&binding_hash) {
                 if existing.as_slice() != bytes.as_slice() {
                     return Err(invalid_params(
@@ -455,7 +457,9 @@ impl DaApiServer for DaRpc {
                     ));
                 }
             }
-            pending.insert(binding_hash, bytes);
+            pending
+                .insert(binding_hash, bytes)
+                .map_err(|err| ErrorObjectOwned::owned(INVALID_PARAMS_CODE, err, None::<()>))?;
             tracing::debug!(
                 binding_hash = %hex::encode(binding_hash),
                 proof_size = size,
@@ -469,10 +473,11 @@ impl DaApiServer for DaRpc {
             });
         }
 
+        let pending_proof_entries = self.pending_proofs.lock().len();
         tracing::debug!(
             proofs_staged = entries.len(),
             total_bytes,
-            pending_proof_entries = pending.len(),
+            pending_proof_entries,
             "Completed da_submitProofs request"
         );
 
@@ -682,8 +687,8 @@ mod tests {
         (
             DaRpc::new(
                 Arc::new(Mutex::new(store)),
-                Arc::new(Mutex::new(PendingCiphertextStore::new(8))),
-                Arc::new(Mutex::new(PendingProofStore::new(8))),
+                Arc::new(Mutex::new(PendingCiphertextStore::new(8, 4096))),
+                Arc::new(Mutex::new(PendingProofStore::new(8, 1024 * 1024))),
                 DaParams {
                     chunk_size: 1024,
                     sample_count: 4,
@@ -748,13 +753,13 @@ mod tests {
 
     #[tokio::test]
     async fn submit_proofs_rejects_conflicting_existing_entry() {
-        let pending_proofs = Arc::new(Mutex::new(PendingProofStore::new(8)));
+        let pending_proofs = Arc::new(Mutex::new(PendingProofStore::new(8, 1024 * 1024)));
         let tmpdir = TempDir::new().expect("temp dir");
         let rpc = DaRpc::new(
             Arc::new(Mutex::new(
                 DaChunkStore::open(tmpdir.path(), 8, 16, 16).expect("chunk store"),
             )),
-            Arc::new(Mutex::new(PendingCiphertextStore::new(8))),
+            Arc::new(Mutex::new(PendingCiphertextStore::new(8, 4096))),
             Arc::clone(&pending_proofs),
             DaParams {
                 chunk_size: 1024,
@@ -763,7 +768,10 @@ mod tests {
             sc_rpc::DenyUnsafe::No,
         );
         let (proof_bytes, binding_hash) = valid_native_tx_leaf_proof_and_binding(42);
-        pending_proofs.lock().insert(binding_hash, vec![7u8; 32]);
+        pending_proofs
+            .lock()
+            .insert(binding_hash, vec![7u8; 32])
+            .expect("insert conflicting pending proof");
 
         let err = rpc
             .submit_proofs(SubmitProofsRequest {
@@ -795,6 +803,69 @@ mod tests {
             .expect_err("safe rpc mode must reject DA proof staging");
         assert!(
             err.message().contains("unsafe"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_ciphertexts_rejects_store_byte_budget_exhaustion() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let rpc = DaRpc::new(
+            Arc::new(Mutex::new(
+                DaChunkStore::open(tmpdir.path(), 8, 16, 16).expect("chunk store"),
+            )),
+            Arc::new(Mutex::new(PendingCiphertextStore::new(8, 8))),
+            Arc::new(Mutex::new(PendingProofStore::new(8, 1024 * 1024))),
+            DaParams {
+                chunk_size: 1024,
+                sample_count: 4,
+            },
+            sc_rpc::DenyUnsafe::No,
+        );
+
+        let err = rpc
+            .submit_ciphertexts(SubmitCiphertextsRequest {
+                ciphertexts: vec![format!("0x{}", hex::encode([7u8; 16]))],
+            })
+            .await
+            .expect_err("ciphertext staging must reject store byte budget exhaustion");
+        assert!(
+            err.message().contains("byte budget"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_proofs_rejects_store_byte_budget_exhaustion() {
+        let (proof_bytes, binding_hash) = valid_native_tx_leaf_proof_and_binding(44);
+        let tmpdir = TempDir::new().expect("temp dir");
+        let rpc = DaRpc::new(
+            Arc::new(Mutex::new(
+                DaChunkStore::open(tmpdir.path(), 8, 16, 16).expect("chunk store"),
+            )),
+            Arc::new(Mutex::new(PendingCiphertextStore::new(8, 4096))),
+            Arc::new(Mutex::new(PendingProofStore::new(
+                8,
+                proof_bytes.len().saturating_sub(1),
+            ))),
+            DaParams {
+                chunk_size: 1024,
+                sample_count: 4,
+            },
+            sc_rpc::DenyUnsafe::No,
+        );
+
+        let err = rpc
+            .submit_proofs(SubmitProofsRequest {
+                proofs: vec![SubmitProofsItem {
+                    binding_hash: format!("0x{}", hex::encode(binding_hash)),
+                    proof: format!("0x{}", hex::encode(proof_bytes)),
+                }],
+            })
+            .await
+            .expect_err("proof staging must reject store byte budget exhaustion");
+        assert!(
+            err.message().contains("byte budget"),
             "unexpected error: {err:?}"
         );
     }

@@ -123,7 +123,10 @@ Whenever the active native backend parameters, live witness schema, or claim mod
   - `network/tests/adversarial.rs` – tampered handshake transcripts and miner-share control messages must be rejected deterministically.
   - `wallet/tests/address_fuzz.rs` – randomized address derivations plus adversarial mutations.
   - Root-level `tests/security_pipeline.rs` orchestrates cross-component adversarial flows, including simulated pool payout tampering.
-- CI job `security-adversarial` (see `.github/workflows/ci.yml`) runs these harnesses on every push/PR. Failures block merges until triaged via `runbooks/security_testing.md`.
+- The proving attack ledger lives in [docs/crypto/proving_attack_matrix.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/proving_attack_matrix.md).
+- `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` is the merge-blocking hostile proving suite.
+- `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` is the heavier release-hardening pass and adds fuzz/adversarial suites that are too expensive for every PR.
+- CI job `security-adversarial` (see `.github/workflows/ci.yml`) runs the `ci` red-team suite on every push/PR. Failures block merges until triaged via `runbooks/security_testing.md`.
 
 ## 4. Finding log template
 

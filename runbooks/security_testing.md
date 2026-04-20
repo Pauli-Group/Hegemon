@@ -1,6 +1,6 @@
 # Security Testing Runbook
 
-This runbook explains how to run, debug, and report on the adversarial security pipelines introduced in `docs/SECURITY_REVIEWS.md` and referenced by the `security-adversarial` CI job.
+This runbook explains how to run, debug, and report on the adversarial security pipelines introduced in `docs/SECURITY_REVIEWS.md`, mapped in `docs/crypto/proving_attack_matrix.md`, and referenced by the `security-adversarial` CI job.
 
 ## 1. When to run this
 
@@ -15,6 +15,18 @@ All commands assume repository root. Use a deterministic proptest cap so local r
 ```bash
 export PROPTEST_MAX_CASES=64
 
+# Merge-blocking hostile proving suite
+HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
+
+# Heavier release-hardening pass
+HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh
+```
+
+The runner writes transcripts and summaries under `output/proving-redteam/<timestamp>/`.
+
+If you need to rerun the individual component suites directly, use:
+
+```bash
 # Transaction witness fuzzing
 cargo test -p transaction-circuit --test security_fuzz -- --nocapture
 
@@ -28,7 +40,7 @@ cargo test -p wallet --test address_fuzz -- --nocapture
 cargo test security_pipeline -- --nocapture
 ```
 
-Collect the last 50 lines of each command’s output and attach them to the incident ticket or PR.
+Collect the relevant transcript files from `output/proving-redteam/<timestamp>/` and attach them to the incident ticket or PR.
 
 ## 3. Formal model checks
 
