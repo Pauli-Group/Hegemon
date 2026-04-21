@@ -33,6 +33,32 @@ fn validity_from_family_error(err: &DispatchError) -> InvalidTransaction {
         DispatchError::Other("exhausts-resources") => InvalidTransaction::ExhaustsResources,
         DispatchError::Other("bad-mandatory") => InvalidTransaction::BadMandatory,
         DispatchError::Other("mandatory-validation") => InvalidTransaction::MandatoryValidation,
+        DispatchError::Other("ancient-birth-block") => InvalidTransaction::AncientBirthBlock,
+        DispatchError::Other("shielded-missing-components") => InvalidTransaction::Custom(1),
+        DispatchError::Other("shielded-ciphertext-layout") => InvalidTransaction::Custom(2),
+        DispatchError::Other("shielded-duplicate-or-zero-element") => InvalidTransaction::Custom(4),
+        DispatchError::Other("shielded-verifier-unavailable") => InvalidTransaction::Custom(6),
+        DispatchError::Other("shielded-stablecoin-binding") => InvalidTransaction::Custom(7),
+        DispatchError::Other("shielded-proof-required") => InvalidTransaction::Custom(12),
+        DispatchError::Other("native-inline-public-args-mismatch") => {
+            InvalidTransaction::Custom(40)
+        }
+        DispatchError::Other("native-inline-balance-slots") => InvalidTransaction::Custom(41),
+        DispatchError::Other("native-inline-balance-tag") => InvalidTransaction::Custom(42),
+        DispatchError::Other("native-inline-tx-payload") => InvalidTransaction::Custom(43),
+        DispatchError::Other("native-inline-statement-hash-reconstruction") => {
+            InvalidTransaction::Custom(44)
+        }
+        DispatchError::Other("native-inline-statement-hash-mismatch") => {
+            InvalidTransaction::Custom(45)
+        }
+        DispatchError::Other("native-inline-public-inputs-digest-reconstruction") => {
+            InvalidTransaction::Custom(46)
+        }
+        DispatchError::Other("native-inline-public-inputs-digest-mismatch") => {
+            InvalidTransaction::Custom(47)
+        }
+        DispatchError::Other("native-inline-zero-receipt-fields") => InvalidTransaction::Custom(48),
         _ => InvalidTransaction::BadProof,
     }
 }

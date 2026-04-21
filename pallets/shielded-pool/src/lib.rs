@@ -155,6 +155,12 @@ const NATIVE_TX_INLINE_STATEMENT_HASH_MISMATCH_CODE: u8 = 45;
 const NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_RECONSTRUCTION_CODE: u8 = 46;
 const NATIVE_TX_INLINE_PUBLIC_INPUTS_DIGEST_MISMATCH_CODE: u8 = 47;
 const NATIVE_TX_INLINE_ZERO_RECEIPT_FIELDS_CODE: u8 = 48;
+const SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE: u8 = 1;
+const SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE: u8 = 2;
+const SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE: u8 = 4;
+const SHIELDED_TRANSFER_VERIFIER_UNAVAILABLE_CODE: u8 = 6;
+const SHIELDED_TRANSFER_STABLECOIN_BINDING_CODE: u8 = 7;
+const SHIELDED_TRANSFER_PROOF_REQUIRED_CODE: u8 = 12;
 
 mod native_serde_bytes48 {
     use serde::Serializer;
@@ -1502,7 +1508,9 @@ pub mod pallet {
                     target: "shielded-pool",
                     "inline unsigned transfer rejected: unstable stablecoin binding"
                 );
-                return Err(InvalidTransaction::Custom(7));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_STABLECOIN_BINDING_CODE,
+                ));
             }
             if !matches!(
                 CiphertextPolicyStorage::<T>::get(),
@@ -1528,14 +1536,18 @@ pub mod pallet {
                     target: "shielded-pool",
                     "inline unsigned transfer rejected: empty nullifiers and commitments"
                 );
-                return Err(InvalidTransaction::Custom(1));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+                ));
             }
             if !commitments.is_empty() && nullifiers.is_empty() {
                 warn!(
                     target: "shielded-pool",
                     "inline unsigned transfer rejected: commitments present without nullifiers"
                 );
-                return Err(InvalidTransaction::Custom(1));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+                ));
             }
             if ciphertexts.len() != commitments.len() {
                 warn!(
@@ -1544,7 +1556,9 @@ pub mod pallet {
                     ciphertexts.len(),
                     commitments.len()
                 );
-                return Err(InvalidTransaction::Custom(2));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                ));
             }
             Self::ensure_known_anchor_for_unsigned(anchor, "inline unsigned transfer")?;
             for nf in nullifiers.iter() {
@@ -1553,7 +1567,9 @@ pub mod pallet {
                         target: "shielded-pool",
                         "inline unsigned transfer rejected: zero nullifier"
                     );
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
             }
             for cm in commitments.iter() {
@@ -1562,7 +1578,9 @@ pub mod pallet {
                         target: "shielded-pool",
                         "inline unsigned transfer rejected: zero commitment"
                     );
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
             }
             let mut seen = Vec::new();
@@ -1573,7 +1591,9 @@ pub mod pallet {
                         "inline unsigned transfer rejected: duplicate nullifier={:?}",
                         nf
                     );
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
                 seen.push(*nf);
             }
@@ -1584,7 +1604,7 @@ pub mod pallet {
                         "inline unsigned transfer rejected: nullifier already spent={:?}",
                         nf
                     );
-                    return Err(InvalidTransaction::Custom(5));
+                    return Err(InvalidTransaction::Stale);
                 }
             }
 
@@ -1794,52 +1814,72 @@ pub mod pallet {
             version: VersionBinding,
         ) -> Result<ValidActionMeta, InvalidTransaction> {
             if Self::ensure_stablecoin_binding(stablecoin).is_err() {
-                return Err(InvalidTransaction::Custom(7));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_STABLECOIN_BINDING_CODE,
+                ));
             }
             if proof.data.len() > crate::types::NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
                 return Err(InvalidTransaction::ExhaustsResources);
             }
             if nullifiers.is_empty() && commitments.is_empty() {
-                return Err(InvalidTransaction::Custom(1));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+                ));
             }
             if !commitments.is_empty() && nullifiers.is_empty() {
-                return Err(InvalidTransaction::Custom(1));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+                ));
             }
             if ciphertext_hashes.len() != commitments.len() {
-                return Err(InvalidTransaction::Custom(2));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                ));
             }
             if ciphertext_sizes.len() != commitments.len() {
-                return Err(InvalidTransaction::Custom(2));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                ));
             }
             if Self::validate_ciphertext_sizes(ciphertext_sizes.as_slice()).is_err() {
-                return Err(InvalidTransaction::Custom(2));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                ));
             }
             for hash in ciphertext_hashes.iter() {
                 if *hash == [0u8; 48] {
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
             }
             Self::ensure_known_anchor_for_unsigned(anchor, "sidecar unsigned transfer")?;
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
             }
             for cm in commitments.iter() {
                 if is_zero_commitment(cm) {
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
             }
             let mut seen = Vec::new();
             for nf in nullifiers.iter() {
                 if seen.contains(nf) {
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
                 seen.push(*nf);
             }
             for nf in nullifiers.iter() {
                 if Nullifiers::<T>::contains_key(nf) {
-                    return Err(InvalidTransaction::Custom(5));
+                    return Err(InvalidTransaction::Stale);
                 }
             }
 
@@ -1861,7 +1901,9 @@ pub mod pallet {
             if proof.data.is_empty()
                 && !matches!(proof_policy, types::ProofAvailabilityPolicy::SelfContained)
             {
-                return Err(InvalidTransaction::Custom(12));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_PROOF_REQUIRED_CODE,
+                ));
             }
 
             if !aggregation_mode && !proof.data.is_empty() {
@@ -1882,7 +1924,9 @@ pub mod pallet {
 
                 let vk = VerifyingKeyStorage::<T>::get();
                 if !vk.enabled {
-                    return Err(InvalidTransaction::Custom(6));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_VERIFIER_UNAVAILABLE_CODE,
+                    ));
                 }
                 match verifier.verify_stark(proof, &inputs, &vk) {
                     VerificationResult::Valid => {}
@@ -2011,14 +2055,20 @@ pub mod pallet {
                 return Err(InvalidTransaction::BadProof);
             }
             if nullifiers.is_empty() && commitments.is_empty() {
-                return Err(InvalidTransaction::Custom(1));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+                ));
             }
             if ciphertexts.len() != commitments.len() {
-                return Err(InvalidTransaction::Custom(2));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                ));
             }
             for note in ciphertexts.iter() {
                 if Self::validate_encrypted_note(note).is_err() {
-                    return Err(InvalidTransaction::Custom(2));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+                    ));
                 }
             }
             Self::ensure_known_anchor_for_unsigned(anchor, "batch unsigned transfer")?;
@@ -2029,7 +2079,9 @@ pub mod pallet {
                     continue;
                 }
                 if seen_nullifiers.contains(nf) {
-                    return Err(InvalidTransaction::Custom(4));
+                    return Err(InvalidTransaction::Custom(
+                        SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+                    ));
                 }
                 seen_nullifiers.push(*nf);
             }
@@ -2038,7 +2090,7 @@ pub mod pallet {
                     continue;
                 }
                 if Nullifiers::<T>::contains_key(nf) {
-                    return Err(InvalidTransaction::Custom(5));
+                    return Err(InvalidTransaction::Stale);
                 }
             }
 
@@ -2051,7 +2103,9 @@ pub mod pallet {
             };
             let vk = VerifyingKeyStorage::<T>::get();
             if !vk.enabled {
-                return Err(InvalidTransaction::Custom(6));
+                return Err(InvalidTransaction::Custom(
+                    SHIELDED_TRANSFER_VERIFIER_UNAVAILABLE_CODE,
+                ));
             }
             let batch_verifier = T::BatchProofVerifier::default();
             match batch_verifier.verify_batch(proof, &batch_inputs, &vk) {
@@ -4085,6 +4139,135 @@ mod tests {
                     ))
                 ),
                 "missing anchors should defer unsigned txs into the future queue: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_sidecar_native_tx_leaf_missing_anchor_is_future() {
+        mock::new_test_ext().execute_with(|| {
+            let (
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                _anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+            ) = test_native_sidecar_fixture(53);
+            let missing_anchor = [53u8; 48];
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned_sidecar {
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor: missing_anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 5,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                matches!(
+                    validity,
+                    Err(TransactionValidityError::Invalid(
+                        InvalidTransaction::Future
+                    ))
+                ),
+                "missing anchors should defer sidecar unsigned txs into the future queue: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_batch_missing_anchor_is_future() {
+        mock::new_test_ext().execute_with(|| {
+            let (_, nullifiers, commitments, ciphertexts, _anchor, _, _) =
+                test_native_inline_fixture(61);
+            let batch_nullifiers: BoundedVec<[u8; 48], mock::MaxNullifiersPerBatch> = nullifiers
+                .into_inner()
+                .try_into()
+                .expect("bounded batch nullifiers");
+            let batch_commitments: BoundedVec<[u8; 48], mock::MaxCommitmentsPerBatch> =
+                commitments
+                    .into_inner()
+                    .try_into()
+                    .expect("bounded batch commitments");
+            let batch_ciphertexts: BoundedVec<types::EncryptedNote, mock::MaxCommitmentsPerBatch> =
+                ciphertexts
+                    .into_inner()
+                    .try_into()
+                    .expect("bounded batch ciphertexts");
+            let missing_anchor = [61u8; 48];
+
+            let call = crate::Call::<mock::Test>::batch_shielded_transfer {
+                proof: types::BatchStarkProof::from_bytes(vec![1u8; 32], 2),
+                nullifiers: batch_nullifiers,
+                commitments: batch_commitments,
+                ciphertexts: batch_ciphertexts,
+                anchor: missing_anchor,
+                total_fee: 0,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                matches!(
+                    validity,
+                    Err(TransactionValidityError::Invalid(
+                        InvalidTransaction::Future
+                    ))
+                ),
+                "missing anchors should defer batch unsigned txs into the future queue: {validity:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_sidecar_spent_nullifier_is_stale() {
+        mock::new_test_ext().execute_with(|| {
+            let (
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+            ) = test_native_sidecar_fixture(67);
+            pallet::MerkleRoots::<mock::Test>::insert(anchor, 1u64);
+            pallet::Nullifiers::<mock::Test>::insert(nullifiers[0], ());
+
+            let call = crate::Call::<mock::Test>::shielded_transfer_unsigned_sidecar {
+                proof,
+                nullifiers,
+                commitments,
+                ciphertext_hashes,
+                ciphertext_sizes,
+                anchor,
+                balance_slot_asset_ids,
+                binding_hash,
+                stablecoin: None,
+                fee: 5,
+            };
+
+            let validity =
+                pallet::Pallet::<mock::Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(
+                matches!(
+                    validity,
+                    Err(TransactionValidityError::Invalid(
+                        InvalidTransaction::Stale
+                    ))
+                ),
+                "spent nullifiers should be classified as stale for sidecar unsigned txs: {validity:?}"
             );
         });
     }

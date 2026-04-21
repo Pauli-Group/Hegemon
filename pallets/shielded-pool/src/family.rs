@@ -18,7 +18,12 @@ use crate::types::{
     BatchStarkProof, BlockRewardBundle, CandidateArtifact, EncryptedNote, StablecoinPolicyBinding,
     StarkProof,
 };
-use crate::Config;
+use crate::{
+    Config, SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+    SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE, SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+    SHIELDED_TRANSFER_PROOF_REQUIRED_CODE, SHIELDED_TRANSFER_STABLECOIN_BINDING_CODE,
+    SHIELDED_TRANSFER_VERIFIER_UNAVAILABLE_CODE,
+};
 
 fn invalid_tx_detail(err: &sp_runtime::transaction_validity::InvalidTransaction) -> &'static str {
     match err {
@@ -38,6 +43,24 @@ fn invalid_tx_detail(err: &sp_runtime::transaction_validity::InvalidTransaction)
         sp_runtime::transaction_validity::InvalidTransaction::AncientBirthBlock => {
             "ancient-birth-block"
         }
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_MISSING_COMPONENTS_CODE,
+        ) => "shielded-missing-components",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_CIPHERTEXT_LAYOUT_CODE,
+        ) => "shielded-ciphertext-layout",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_DUPLICATE_OR_ZERO_ELEMENT_CODE,
+        ) => "shielded-duplicate-or-zero-element",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_VERIFIER_UNAVAILABLE_CODE,
+        ) => "shielded-verifier-unavailable",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_STABLECOIN_BINDING_CODE,
+        ) => "shielded-stablecoin-binding",
+        sp_runtime::transaction_validity::InvalidTransaction::Custom(
+            SHIELDED_TRANSFER_PROOF_REQUIRED_CODE,
+        ) => "shielded-proof-required",
         sp_runtime::transaction_validity::InvalidTransaction::Custom(
             crate::NATIVE_TX_INLINE_PUBLIC_ARGS_MISMATCH_CODE,
         ) => "native-inline-public-args-mismatch",

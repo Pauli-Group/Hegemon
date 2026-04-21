@@ -320,6 +320,201 @@ fn kernel_wallet_unsigned_transfer_missing_anchor_is_future() {
 }
 
 #[test]
+fn kernel_wallet_unsigned_sidecar_missing_anchor_is_future() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        seed_wallet_note(&sender, 250_000_000);
+
+        let built = build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"sidecar missing anchor".to_vec()),
+            }],
+            0,
+        )
+        .expect("wallet build_transaction");
+
+        let mut args = wallet_sidecar_args(&built.bundle);
+        args.anchor = [9u8; 48];
+        let binding_hash = pallet_shielded_pool::verifier::StarkVerifier::compute_binding_hash(
+            &pallet_shielded_pool::verifier::ShieldedTransferInputs {
+                anchor: args.anchor,
+                nullifiers: built.bundle.nullifiers.clone(),
+                commitments: built.bundle.commitments.clone(),
+                ciphertext_hashes: args.ciphertext_hashes.clone(),
+                balance_slot_asset_ids: built.bundle.balance_slot_asset_ids,
+                fee: built.bundle.fee,
+                value_balance: 0,
+                stablecoin: None,
+            },
+        );
+        args.binding_hash = binding_hash.data;
+
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+            built.bundle.nullifiers.clone(),
+            args.encode(),
+        );
+        let call = pallet_kernel::Call::<Runtime>::submit_action { envelope };
+
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Future
+                ))
+            ),
+            "kernel wrapper should preserve future-anchor deferral for sidecar transfers: {validity:?}"
+        );
+    });
+}
+
+#[test]
+fn kernel_wallet_unsigned_transfer_replay_is_stale() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let dir = tempdir().expect("tempdir");
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "sender-pass").expect("sender wallet");
+        let recipient =
+            WalletStore::create_full(&recipient_path, "recipient-pass").expect("recipient wallet");
+
+        seed_wallet_note(&sender, 250_000_000);
+
+        let built = build_transaction(
+            &sender,
+            &[Recipient {
+                address: recipient.primary_address().expect("recipient address"),
+                value: 100_000_000,
+                asset_id: NATIVE_ASSET_ID,
+                memo: MemoPlaintext::new(b"stale replay regression".to_vec()),
+            }],
+            0,
+        )
+        .expect("wallet build_transaction");
+
+        let ciphertexts = built
+            .bundle
+            .decode_notes()
+            .expect("decode built notes")
+            .into_iter()
+            .map(|note| {
+                let bytes = note.to_pallet_bytes().expect("note to pallet bytes");
+                pallet_shielded_pool::types::EncryptedNote::decode(&mut bytes.as_slice())
+                    .expect("decode note")
+            })
+            .collect::<Vec<_>>();
+
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: built.bundle.proof_bytes.clone(),
+            commitments: built.bundle.commitments.clone(),
+            ciphertexts,
+            anchor: built.bundle.anchor,
+            balance_slot_asset_ids: built.bundle.balance_slot_asset_ids,
+            binding_hash: built.bundle.binding_hash,
+            stablecoin: None,
+            fee: built.bundle.fee,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            built.bundle.nullifiers.clone(),
+            args.encode(),
+        );
+        let call = pallet_kernel::Call::<Runtime>::submit_action {
+            envelope: envelope.clone(),
+        };
+
+        assert!(
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call)
+                .is_ok()
+        );
+        assert_ok!(Kernel::submit_action(RuntimeOrigin::none(), envelope));
+
+        let replay_validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            matches!(
+                replay_validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Stale
+                ))
+            ),
+            "replayed spent nullifier should be classified as stale, not bad proof: {replay_validity:?}"
+        );
+    });
+}
+
+#[test]
+fn kernel_wallet_preserves_shielded_custom_validity_codes() {
+    let mut ext = new_ext();
+
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+
+        let anchor = ShieldedPool::merkle_tree().root();
+        pallet_shielded_pool::pallet::MerkleRoots::<Runtime>::insert(
+            anchor,
+            System::block_number(),
+        );
+        sync_kernel_roots();
+
+        let args = pallet_shielded_pool::family::ShieldedTransferInlineArgs {
+            proof: vec![1u8; 32],
+            commitments: vec![[2u8; 48]],
+            ciphertexts: Vec::new(),
+            anchor,
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            binding_hash: [0u8; 64],
+            stablecoin: None,
+            fee: 0,
+        };
+        let envelope = pallet_shielded_pool::family::build_envelope(
+            protocol_versioning::DEFAULT_VERSION_BINDING,
+            pallet_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            vec![[1u8; 48]],
+            args.encode(),
+        );
+        let call = pallet_kernel::Call::<Runtime>::submit_action { envelope };
+
+        let validity =
+            pallet_kernel::Pallet::<Runtime>::validate_unsigned(TransactionSource::External, &call);
+        assert!(
+            matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(2)
+                ))
+            ),
+            "kernel wrapper should preserve shielded custom validity codes: {validity:?}"
+        );
+    });
+}
+
+#[test]
 fn kernel_wallet_rejects_non_native_transfer_payload() {
     let mut ext = new_ext();
 
