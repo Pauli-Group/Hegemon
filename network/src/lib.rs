@@ -5,6 +5,7 @@ use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 use crypto::ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSharedSecret};
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -125,7 +126,7 @@ impl PeerIdentity {
 
     pub fn create_offer(&self) -> Result<HandshakeOffer, NetworkError> {
         let kem_public = self.kem.public_key().to_bytes();
-        let nonce = derive_nonce(b"offer", &self.verify.to_bytes());
+        let nonce = random_nonce();
         let preimage = offer_preimage(&self.verify.to_bytes(), &kem_public, nonce);
         let signature = self.signing.sign(&preimage);
         Ok(HandshakeOffer {
@@ -147,11 +148,11 @@ impl PeerIdentity {
             .verify(&preimage, &signature)
             .map_err(|_| NetworkError::InvalidSignature)?;
 
-        let seed_material = sha256(&[self.verify.to_bytes(), offer.identity_key.clone()].concat());
+        let seed_material = random_encapsulation_seed();
         let kem_pk = MlKemPublicKey::from_bytes(&offer.kem_public)?;
         let (ciphertext, shared_secret) = kem_pk.encapsulate(&seed_material);
         let ciphertext_bytes = ciphertext.to_bytes().to_vec();
-        let nonce = derive_nonce(b"accept", &self.verify.to_bytes());
+        let nonce = random_nonce();
         let acceptance_preimage = acceptance_preimage(
             &self.verify.to_bytes(),
             &self.kem.public_key().to_bytes(),
@@ -172,7 +173,7 @@ impl PeerIdentity {
 
     pub fn finalize_handshake(
         &self,
-        offer: &HandshakeOffer,
+        _offer: &HandshakeOffer,
         acceptance: &HandshakeAcceptance,
         offer_bytes: &[u8],
         acceptance_bytes: &[u8],
@@ -192,11 +193,10 @@ impl PeerIdentity {
         let ciphertext = MlKemCiphertext::from_bytes(&acceptance.ciphertext_to_initiator)?;
         let responder_secret = self.kem.decapsulate(&ciphertext)?;
         let responder_kem = MlKemPublicKey::from_bytes(&acceptance.kem_public)?;
-        let seed_material =
-            sha256(&[offer.identity_key.clone(), acceptance.identity_key.clone()].concat());
+        let seed_material = random_encapsulation_seed();
         let (ciphertext_to_responder, initiator_secret) = responder_kem.encapsulate(&seed_material);
         let cipher_bytes = ciphertext_to_responder.to_bytes().to_vec();
-        let nonce = derive_nonce(b"confirm", &self.verify.to_bytes());
+        let nonce = random_nonce();
         let confirmation_preimage = confirmation_preimage(&cipher_bytes, nonce);
         let signature = self.signing.sign(&confirmation_preimage);
         let confirmation = HandshakeConfirmation {
@@ -414,14 +414,14 @@ fn confirmation_preimage(ciphertext: &[u8], nonce: u64) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-fn derive_nonce(label: &[u8], key: &[u8]) -> u64 {
-    let mut hasher = Sha256::new();
-    hasher.update(label);
-    hasher.update(key);
-    let digest = hasher.finalize();
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&digest[..8]);
-    u64::from_be_bytes(bytes)
+fn random_nonce() -> u64 {
+    OsRng.next_u64()
+}
+
+fn random_encapsulation_seed() -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    seed
 }
 
 fn derive_session_material(

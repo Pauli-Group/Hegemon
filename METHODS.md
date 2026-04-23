@@ -183,7 +183,9 @@ Miners populate `CoinbaseData` with the minted amount, collected fees, and any e
 running `supply_digest = parent_digest + minted + fees − burns`. If the coinbase is missing, points at an invalid transaction,
 or mints more than the scheduled subsidy `R(epoch)` (~4.98 × 10⁸ base units halving every ~4 years per `TOKENOMICS_CALCULATION.md`), the block is rejected
 before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
-lockstep.
+lockstep. PoW headers must also bind one registered miner identity: `validator_set_commitment` maps to the miner ML-DSA public key,
+`signature_aggregate` carries exactly one ML-DSA-65 signature over the header signing hash, and PoW headers with BFT signature
+bitmaps are rejected.
 
 Substrate nodes wire the same enforcement path into block import. `consensus::substrate::import_pow_block` wraps the `PowConsensus`
 state machine with a Substrate-friendly `BlockOrigin` tag and returns an `ImportReceipt` that records the validated proof
@@ -216,6 +218,7 @@ For the fresh-chain 0.10.0 product path, non-empty shielded blocks now always us
 * The unsigned transfer runtime path caps the outer native `tx_leaf` payload at the exact live artifact envelope and caps the embedded STARK proof separately at `512KiB`, so runtime admission and consensus/native verification stay aligned.
 * Proof sidecars may still be staged off-chain via `da_submitProofs` keyed by `binding_hash`, but this is proposer/mempool coordination only and is not part of consensus validity. The DA staging RPC (`da_submitCiphertexts`, `da_submitProofs`) is unsafe-only and should be exposed only on a trusted local/proposer control plane with `--rpc-methods=unsafe`. Those staged sidecars are proposer-local RAM caches, not durable consensus state; node restarts drop them and wallets/provers must restage.
 * Import verifies the ordered native `tx_leaf` artifacts plus the native `recursive_block` artifact and rejects any non-empty shielded block whose native bundle is missing, malformed, inconsistent with the canonical `tx_statements_commitment`, or tries to carry legacy commitment-proof bytes on the recursive lane.
+* Proof verification is not an operator-selectable validity rule. `HEGEMON_PARALLEL_PROOF_VERIFICATION=0` is treated as a logged no-op during block production/import so development builds cannot accidentally accept a chain that full verification would reject.
 
 ---
 
@@ -557,6 +560,7 @@ We do not need signatures inside the shielded circuit, only for block authentica
 #### 1.5 Network identity seeds
 
 PQ network identities are derived from a 32-byte secret seed that must be generated from OS entropy and persisted on disk with restrictive permissions (mode 0600). The node loads this seed from `HEGEMON_PQ_IDENTITY_SEED` (hex) when provided, otherwise it reads `HEGEMON_PQ_IDENTITY_SEED_PATH` or defaults to `<base-path>/pq-identity.seed`. The seed is never derived from public peer IDs; peer IDs are computed from the public keys that result from this secret seed. This keeps PQ transport identity keys unpredictable while keeping peer identity stable across restarts.
+Every session must still rekey: both the modern PQ transport and the legacy `PeerIdentity` handshake use OS-random KEM encapsulation seeds plus fresh transcript nonces per connection, so repeated connections between the same persisted identities do not reuse the first AEAD key/nonce pair.
 
 #### 1.6 Peer discovery (PQ address exchange)
 

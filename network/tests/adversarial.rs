@@ -37,3 +37,22 @@ fn ciphertext_tampering_is_detected() {
         .expect_err("tamper should fail");
     assert!(matches!(err, NetworkError::Encryption));
 }
+
+#[test]
+fn repeated_legacy_handshakes_rekey_the_first_channel_nonce() {
+    let initiator = PeerIdentity::generate(b"rekey-initiator");
+    let responder = PeerIdentity::generate(b"rekey-responder");
+
+    let (mut first_a, _) =
+        establish_secure_channel(&initiator, &responder).expect("first secure channel");
+    let (mut second_a, _) =
+        establish_secure_channel(&initiator, &responder).expect("second secure channel");
+
+    let first_ciphertext = first_a.encrypt(b"same first plaintext").expect("encrypt 1");
+    let second_ciphertext = second_a.encrypt(b"same first plaintext").expect("encrypt 2");
+
+    assert_ne!(
+        first_ciphertext, second_ciphertext,
+        "reconnecting static peers must not reuse the same AES-GCM key and first nonce"
+    );
+}

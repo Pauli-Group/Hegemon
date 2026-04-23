@@ -19,6 +19,7 @@ The Substrate node uses `sc-consensus-pow` with a SHA-256d seal format and a run
 
 - Seal and work function: `sha256d(pre_hash || nonce)` with a 32-byte nonce, and `work <= target(bits)` (`consensus/src/substrate_pow.rs`).
 - Difficulty source of truth: runtime API `DifficultyApi::difficulty() -> U256` backed by `pallet-difficulty` storage (`runtime/src/apis.rs`, `pallets/difficulty/src/lib.rs`).
+- Compact difficulty bits source of truth: runtime API `ConsensusApi::difficulty_bits() -> u32`; PoW seals must carry exactly this compact value and work is checked against that runtime value, not the seal's claimed value.
 - Import pipeline: `sc_consensus_pow::PowBlockImport` is instantiated in `node/src/substrate/service.rs` and used for network block import (`node/src/substrate/service.rs`).
 
 **Expected fork-choice** for PoW in Substrate’s PoW engine is *cumulative difficulty*, not “longest height”. `PowBlockImport` will compute total difficulty and set `ForkChoiceStrategy::Custom(...)` **only if** the caller leaves `BlockImportParams.fork_choice` unset.
@@ -71,7 +72,8 @@ This stack is not what `hegemon-node` imports/produces today. Until the repo cho
    - `consensus::reward` defines `RETARGET_WINDOW = 10` for the legacy consensus crate.
 
 2. **Environment-variable toggles can change validity**
-   - Proof verification and commitment proof inclusion are gated by env vars (e.g. `HEGEMON_COMMITMENT_BLOCK_PROOFS`, `HEGEMON_PARALLEL_PROOF_VERIFICATION`).
+   - `HEGEMON_PARALLEL_PROOF_VERIFICATION=0` is now ignored for block import/production; proof verification remains mandatory in development and production builds.
+   - Other authoring/proving env vars such as `HEGEMON_COMMITMENT_BLOCK_PROOFS` still affect local block production behavior and must not become alternate block-validity rules.
    - DA sampling parameters are also env-driven (`HEGEMON_DA_*`).
    - If these gates are consensus-critical for the network, they must not be optional per-node.
 
@@ -83,7 +85,8 @@ The following invariants are phrased so they can be turned into tests. Treat the
 
 - **No manual fork-choice override for PoW imports**: code that calls `sc_consensus_pow::PowBlockImport::import_block` MUST leave `BlockImportParams.fork_choice` as `None`, so the PoW engine can set `ForkChoiceStrategy::Custom` based on total difficulty.
 - **Seal placement is canonical**: imported network headers MUST have the PoW seal removed from the header digest and provided via `post_digests.last()` (Substrate PoW engine requirement).
-- **Difficulty coherence**: `ConsensusApi::difficulty_bits()` MUST be consistent with `DifficultyApi::difficulty()` (i.e., `difficulty_bits == target_to_compact(U256::MAX / difficulty)` within the tolerance that `consensus::Sha256dAlgorithm` enforces).
+- **Difficulty coherence**: `ConsensusApi::difficulty_bits()` MUST be consistent with `DifficultyApi::difficulty()` (i.e., `difficulty_bits == target_to_compact(U256::MAX / difficulty)`). Seal verification rejects any compact-bit mismatch exactly.
+- **Proof verification non-bypass**: block import and local production MUST ignore attempts to disable proof verification via `HEGEMON_PARALLEL_PROOF_VERIFICATION=0`.
 
 Suggested tests:
 - Unit/integration test in `tests/multi_node_substrate.rs` that exercises the network import path and asserts the `PowBlockImport` fork-choice is not overridden.

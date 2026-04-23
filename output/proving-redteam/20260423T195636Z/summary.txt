@@ -1,0 +1,10 @@
+mode=ci
+output_dir=/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z
+overall=pass
+parser-malleability pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/parser-malleability.log
+semantic-aliasing pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/semantic-aliasing.log
+staged-proof-abuse pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/staged-proof-abuse.log
+recursive-block-mismatch pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/recursive-block-mismatch.log
+receipt-root-tamper pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/receipt-root-tamper.log
+prover-configuration-downgrade pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/prover-configuration-downgrade.log
+review-package-parity pass /Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/review-package-parity.log

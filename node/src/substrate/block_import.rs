@@ -54,8 +54,8 @@
 //! ```
 
 use codec::Decode;
-use consensus::{compact_to_target, compute_work, seal_meets_target, Sha256dSeal};
-use sp_core::{H256, U256};
+use consensus::{compute_work, seal_meets_target, Sha256dSeal};
+use sp_core::H256;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -294,7 +294,7 @@ pub fn pop_canonical_seal_from_header<Block: BlockT<Hash = H256>>(
 pub fn verify_pow_seal(
     extracted: &ExtractedSeal,
     expected_difficulty_bits: u32,
-    tolerance: u32,
+    _tolerance: u32,
 ) -> ImportResult<bool> {
     let seal = &extracted.seal;
 
@@ -306,37 +306,20 @@ pub fn verify_pow_seal(
         ));
     }
 
-    // 2. Verify work meets target
-    if !seal_meets_target(&seal.work, seal.difficulty) {
-        return Err(ImportError::SealVerification(
-            "Work does not meet difficulty target".into(),
-        ));
-    }
-
-    // 3. Verify difficulty matches expected (with tolerance)
-    let diff_match = if seal.difficulty == expected_difficulty_bits {
-        true
-    } else {
-        // Allow some tolerance for rounding in compact bits representation
-        let seal_target = compact_to_target(seal.difficulty).unwrap_or(U256::zero());
-        let expected_target = compact_to_target(expected_difficulty_bits).unwrap_or(U256::MAX);
-
-        let diff = if seal_target > expected_target {
-            seal_target - expected_target
-        } else {
-            expected_target - seal_target
-        };
-
-        // Allow tolerance% difference
-        let tolerance_threshold = expected_target / U256::from(1000u32 / tolerance.max(1));
-        diff <= tolerance_threshold
-    };
-
-    if !diff_match {
+    // 2. Verify the seal commits to the exact runtime difficulty. Any tolerance here changes the
+    // consensus target and lets blocks through with less work than the runtime selected.
+    if seal.difficulty != expected_difficulty_bits {
         return Err(ImportError::SealVerification(format!(
             "Difficulty mismatch: seal has {:#x}, expected {:#x}",
             seal.difficulty, expected_difficulty_bits
         )));
+    }
+
+    // 3. Verify work meets the exact runtime target.
+    if !seal_meets_target(&seal.work, expected_difficulty_bits) {
+        return Err(ImportError::SealVerification(
+            "Work does not meet difficulty target".into(),
+        ));
     }
 
     Ok(true)
@@ -800,6 +783,28 @@ mod tests {
         // Check with different expected difficulty (outside tolerance)
         let result = verify_pow_seal(&extracted, 0x1a00ffff, 1); // Very different difficulty
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_pow_seal_rejects_near_difficulty_mismatch() {
+        let pre_hash = H256::repeat_byte(0x23);
+        let pow_bits = 0x2100ffff;
+
+        let mut seal =
+            consensus::mine_round(&pre_hash, pow_bits, 0, 100_000).expect("Should find seal");
+        seal.difficulty = pow_bits + 1;
+
+        let extracted = ExtractedSeal {
+            seal,
+            pre_hash,
+            header_hash: pre_hash,
+        };
+
+        let result = verify_pow_seal(&extracted, pow_bits, 1000);
+        assert!(
+            matches!(result, Err(ImportError::SealVerification(ref message)) if message.contains("Difficulty mismatch")),
+            "near difficulty mismatches must not be accepted by tolerance: {result:?}"
+        );
     }
 
     #[test]

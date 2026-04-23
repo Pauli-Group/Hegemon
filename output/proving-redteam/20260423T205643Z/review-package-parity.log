@@ -1,0 +1,1335 @@
+# mode: ci
+# campaign: review-package-parity
+# started_at_utc: 2026-04-23T21:11:39Z
+# command_script:
+cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
+cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
+./scripts/package_native_backend_review.sh
+./scripts/verify_native_backend_review_package.sh
+if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
+  cargo run -p native-backend-timing --release
+fi
+
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/native_backend_ref-33a7b18bd04736cd)
+
+running 4 tests
+test tests::packaged_claim_verifier_accepts_and_rejects_expected_documents ... ok
+test tests::parses_and_verifies_bundle_from_testdata ... ok
+test tests::recomputes_active_family_claim_arithmetic ... ok
+test tests::review_bundle_params_round_trip_to_matching_fingerprint ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+     Running unittests src/main.rs (target/debug/deps/native_backend_ref-e115cd464f40fec8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/superneo_backend_lattice-bb344669af5f498b)
+
+running 27 tests
+test tests::canonical_recursive_decider_transcript_matches_hash_helper ... ok
+test tests::derive_fold_challenge_uses_configured_width_above_16_bits ... ok
+test tests::fold_challenges_change_when_transcript_domain_changes ... ok
+test tests::kernel_report_tracks_cache_hits_and_delayed_reduction ... ok
+test tests::leaf_and_fold_roundtrip ... ok
+test tests::leaf_proof_digest_changes_when_relation_id_changes ... ok
+test tests::native_commitment_opening_rejects_noncanonical_randomness_seed ... ok
+test tests::native_commitment_opening_rejects_wrong_randomness_and_params ... ok
+test tests::native_commitment_opening_round_trip_and_randomizes ... ok
+test tests::parameter_fingerprint_covers_security_regime ... ok
+test tests::prepared_matrix_cache_evicts_least_recently_used_entries ... ok
+test tests::prepared_matrix_cache_key_separates_ring_profiles ... ok
+test tests::recursive_backend_v2_cccs_roundtrip_is_witness_sound ... ok
+test tests::recursive_backend_v2_decider_attestation_roundtrip ... ok
+test tests::recursive_backend_v2_linearize_fold_and_normalize_roundtrip ... ok
+test tests::recursive_backend_v2_setup_matches_native_shape ... ok
+test tests::recursive_bundle_roundtrips_without_trailing_bytes ... ok
+test tests::recursive_decider_profile_roundtrips_and_matches_backend_helper ... ok
+test tests::setup_rejects_security_param_drift ... ok
+test tests::spec_digest_covers_spec_identity ... ok
+test tests::structural_128b_security_claim_matches_current_floor ... ok
+test tests::theorem_backed_transcript_soundness_matches_active_schedule ... ok
+test tests::validate_rejects_security_target_above_soundness_floor ... ok
+test tests::verify_fold_rejects_parent_metadata_mismatch ... ok
+test tests::verify_fold_rejects_tampered_parent_rows ... ok
+test tests::verify_leaf_rejects_tampered_expected_witness ... ok
+test tests::width_metadata_drives_generic_commitment_kernel ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running unittests src/main.rs (target/debug/deps/superneo_bench-e06403ac7464609b)
+
+running 6 tests
+test tests::default_cli_relation_is_canonical_native_receipt_root ... ok
+test tests::diagnostic_relations_require_explicit_opt_in ... ok
+test tests::fold_to_root_handles_odd_leaf_count ... ok
+test tests::native_review_manifest_reports_verified_aggregation_surface ... ok
+test tests::note_prefix_labels_canonical_and_diagnostic_lanes ... ok
+test tests::review_vectors_agree_between_production_and_reference_verifiers ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 91.51s
+
+     Running unittests src/lib.rs (target/debug/deps/superneo_hegemon-23c499f55c60ef9f)
+
+running 40 tests
+test tests::canonical_receipt_root_rejects_receipt_mismatch ... ok
+test tests::canonical_receipt_root_round_trip ... ok
+test tests::native_receipt_root_accepts_smallwood_candidate_leaf_record ... ignored, experimental SmallWood release proving is still too slow for the default test lane
+test tests::native_receipt_root_builder_rejects_too_many_leaves ... ok
+test tests::native_receipt_root_chunked_builder_matches_serial_builder ... ok
+test tests::native_receipt_root_hierarchy_matches_flat_root ... ok
+test tests::native_receipt_root_hierarchy_rejects_zero_mini_root_size ... ok
+test tests::native_receipt_root_hierarchy_reports_expected_layers ... ok
+test tests::native_receipt_root_leaf_cache_is_parameter_bound ... ok
+test tests::native_receipt_root_rejects_mixed_child_commitments ... ok
+test tests::native_receipt_root_rejects_spec_digest_mismatch ... ok
+test tests::native_receipt_root_rejects_tampered_fold_rows ... ok
+test tests::native_receipt_root_rejects_tampered_leaf_proof_digest ... ok
+test tests::native_receipt_root_rejects_tampered_leaf_statement_digest ... ok
+test tests::native_receipt_root_rejects_trailing_bytes ... ok
+test tests::native_receipt_root_verifier_rejects_too_many_leaves ... ok
+test tests::native_tx_leaf_artifact_accepts_smallwood_candidate_backend ... ignored, experimental SmallWood release proving is still too slow for the default test lane
+test tests::native_tx_leaf_artifact_defaults_missing_backend_byte_to_plonky3 ... ok
+test tests::native_tx_leaf_artifact_rejects_tampered_smallwood_candidate_backend ... ignored, experimental SmallWood release proving is still too slow for the default test lane
+test tests::native_tx_leaf_artifact_round_trip ... ok
+test tests::native_tx_leaf_commitment_stats_match_current_relation ... ok
+test tests::native_tx_leaf_rejects_malformed_commitment ... ok
+test tests::native_tx_leaf_rejects_mixed_parameter_set ... ok
+test tests::native_tx_leaf_rejects_oversized_stark_proof_bytes ... ok
+test tests::native_tx_leaf_rejects_spec_digest_mismatch ... ok
+test tests::native_tx_leaf_rejects_tampered_stark_proof ... ok
+test tests::native_tx_leaf_setup_cache_hits_on_repeated_builds ... ok
+test tests::native_tx_leaf_setup_cache_separates_alternate_params ... ok
+test tests::native_tx_validity_rejects_bad_merkle_path ... ok
+test tests::native_tx_validity_roundtrip ... ok
+test tests::recursive_leaf_payload_rejects_mismatch ... ok
+test tests::recursive_leaf_payload_round_trip ... ok
+test tests::toy_balance_roundtrip ... ok
+test tests::tx_leaf_artifact_rejects_trailing_bytes ... ok
+test tests::tx_leaf_artifact_rejects_wrong_tx_view ... ok
+test tests::tx_leaf_artifact_round_trip ... ok
+test tests::tx_leaf_public_witness_accepts_smallwood_direct_profile_digest ... ok
+test tests::tx_receipt_rejects_trace_digest_mismatch ... ok
+test tests::tx_receipt_roundtrip ... ok
+test tests::verified_tx_proof_receipt_root_round_trip ... ok
+
+test result: ok. 37 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 1092.94s
+
+   Doc-tests native_backend_ref
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests superneo_backend_lattice
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests superneo_hegemon
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running `target/debug/native-backend-ref verify-vectors testdata/native_backend_vectors`
+{
+  "results": [
+    {
+      "detail": "accepted",
+      "expected_valid": true,
+      "name": "native_tx_leaf_valid",
+      "passed": true
+    },
+    {
+      "detail": "spec digest mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_spec_digest",
+      "passed": true
+    },
+    {
+      "detail": "parameter fingerprint mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_params_fingerprint",
+      "passed": true
+    },
+    {
+      "detail": "canonical receipt mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_stark_proof",
+      "passed": true
+    },
+    {
+      "detail": "native tx-leaf verification failed: leaf proof digest mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_proof_digest",
+      "passed": true
+    },
+    {
+      "detail": "native tx-leaf artifact has 1 trailing bytes",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_trailing_bytes",
+      "passed": true
+    },
+    {
+      "detail": "accepted",
+      "expected_valid": true,
+      "name": "receipt_root_valid",
+      "passed": true
+    },
+    {
+      "detail": "spec digest mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_spec_digest",
+      "passed": true
+    },
+    {
+      "detail": "parent rows mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_fold_rows",
+      "passed": true
+    },
+    {
+      "detail": "root commitment mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_root_commitment",
+      "passed": true
+    },
+    {
+      "detail": "receipt-root artifact has 1 trailing bytes",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_trailing_bytes",
+      "passed": true
+    }
+  ],
+  "summary": {
+    "bundle_path": "testdata/native_backend_vectors/bundle.json",
+    "case_count": 11,
+    "failed_cases": 0,
+    "passed_cases": 11
+  }
+}
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.61s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-security-claim`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.58s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-review-manifest`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-attack-model`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.64s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-message-class`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-claim-sweep`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.71s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --print-native-structured-lattice-model`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.88s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --run-native-reduced-cryptanalysis-spikes`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.70s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --export-native-flattened-sis-instance /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.kBAtWSZqrj/native-backend-128b-review-package/structured_lattice`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running `target/debug/native-backend-ref verify-vectors /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.kBAtWSZqrj/native-backend-128b-review-package/testdata/native_backend_vectors`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.64s
+     Running `target/debug/native-backend-ref verify-claim --package-dir /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.kBAtWSZqrj/native-backend-128b-review-package`
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --verify-review-bundle-production /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.kBAtWSZqrj/native-backend-128b-review-package/testdata/native_backend_vectors`
+f0fb40969071cab821594861462aec9bceb905723d9393db722937b884c56e2c
+/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b/package.sha256
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running `target/debug/native-backend-ref verify-vectors /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/testdata/native_backend_vectors`
+{
+  "results": [
+    {
+      "detail": "accepted",
+      "expected_valid": true,
+      "name": "native_tx_leaf_valid",
+      "passed": true
+    },
+    {
+      "detail": "spec digest mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_spec_digest",
+      "passed": true
+    },
+    {
+      "detail": "parameter fingerprint mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_params_fingerprint",
+      "passed": true
+    },
+    {
+      "detail": "canonical receipt mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_stark_proof",
+      "passed": true
+    },
+    {
+      "detail": "native tx-leaf verification failed: leaf proof digest mismatch",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_proof_digest",
+      "passed": true
+    },
+    {
+      "detail": "native tx-leaf artifact has 1 trailing bytes",
+      "expected_valid": false,
+      "name": "native_tx_leaf_invalid_trailing_bytes",
+      "passed": true
+    },
+    {
+      "detail": "accepted",
+      "expected_valid": true,
+      "name": "receipt_root_valid",
+      "passed": true
+    },
+    {
+      "detail": "spec digest mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_spec_digest",
+      "passed": true
+    },
+    {
+      "detail": "parent rows mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_fold_rows",
+      "passed": true
+    },
+    {
+      "detail": "root commitment mismatch",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_root_commitment",
+      "passed": true
+    },
+    {
+      "detail": "receipt-root artifact has 1 trailing bytes",
+      "expected_valid": false,
+      "name": "receipt_root_invalid_trailing_bytes",
+      "passed": true
+    }
+  ],
+  "summary": {
+    "bundle_path": "/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/testdata/native_backend_vectors/bundle.json",
+    "case_count": 11,
+    "failed_cases": 0,
+    "passed_cases": 11
+  }
+}
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running `target/debug/native-backend-ref verify-claim --package-dir /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package`
+{
+  "package_dir": "/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package",
+  "attack_model_path": "/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/attack_model.json",
+  "current_claim_path": "/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/current_claim.json",
+  "passed": true,
+  "mismatches": [],
+  "attack_model": {
+    "parameter_fingerprint": "dc2fae3cd1f05cf81a446b46afa6ad70ed8582de8402e598bae1dd3bdf35b429acb87c9939969efa0c54b97b9920a0d7",
+    "native_backend_params": {
+      "family_label": "goldilocks_128b_structural_commitment",
+      "spec_label": "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8",
+      "spec_digest": "c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23",
+      "commitment_scheme_label": "bounded_message_random_matrix_commitment",
+      "challenge_schedule_label": "quint_goldilocks_fs_challenge_profile_mix",
+      "maturity_label": "structural_candidate",
+      "security_bits": 128,
+      "ring_profile": "GoldilocksFrog",
+      "matrix_rows": 11,
+      "matrix_cols": 54,
+      "challenge_bits": 63,
+      "fold_challenge_count": 5,
+      "max_fold_arity": 2,
+      "transcript_domain_label": "hegemon.superneo.fold.v3",
+      "decomposition_bits": 8,
+      "opening_randomness_bits": 256,
+      "commitment_security_model": "bounded_kernel_module_sis",
+      "commitment_estimator_model": "sis_lattice_euclidean_adps16",
+      "max_commitment_message_ring_elems": 76,
+      "max_claimed_receipt_root_leaves": 128
+    },
+    "native_security_claim": {
+      "claimed_security_bits": 128,
+      "soundness_scope_label": "verified_leaf_aggregation",
+      "transcript_soundness_bits": 312,
+      "opening_hiding_bits": 0,
+      "commitment_codomain_bits": 37422,
+      "commitment_same_seed_search_bits": 36936,
+      "commitment_random_matrix_bits": 486,
+      "commitment_problem_equations": 594,
+      "commitment_problem_dimension": 4104,
+      "commitment_problem_coeff_bound": 255,
+      "commitment_problem_l2_bound": 16336,
+      "commitment_estimator_dimension": 4104,
+      "commitment_estimator_block_size": 3294,
+      "commitment_estimator_classical_bits": 961,
+      "commitment_estimator_quantum_bits": 872,
+      "commitment_estimator_paranoid_bits": 683,
+      "commitment_reduction_loss_bits": 0,
+      "commitment_binding_bits": 872,
+      "composition_loss_bits": 7,
+      "soundness_floor_bits": 305,
+      "assumption_ids": [
+        "random_oracle.blake3_fiat_shamir",
+        "serialization.canonical_native_artifact_bytes",
+        "fs.quint_goldilocks_profile_fold_challenges",
+        "aggregation.native_receipt_root_replays_verified_tx_leaves",
+        "commitment.deterministic_public_witness_reconstruction",
+        "commitment.bounded_kernel_module_sis_exact_reduction",
+        "commitment.sis_lattice_euclidean_adps16_quantum_estimator"
+      ],
+      "review_state": "candidate_under_review"
+    },
+    "exact_live_tx_leaf_commitment": {
+      "witness_bits": 4935,
+      "digit_bits": 8,
+      "packed_digits": 617,
+      "ring_degree": 54,
+      "live_message_ring_elems": 12,
+      "live_coefficient_dimension": 648,
+      "live_problem_coeff_bound": 255,
+      "live_problem_l2_bound": 6492
+    },
+    "transcript_model": {
+      "challenge_bits": 63,
+      "fold_challenge_count": 5,
+      "support_size": 9223372036854775807,
+      "raw_space_bits": 64,
+      "max_preimage_count": 3,
+      "transcript_soundness_bits": 312,
+      "tuple_min_entropy_bits": 312.0751874963942,
+      "composition_loss_bits": 7,
+      "transcript_floor_bits": 305
+    },
+    "estimator_trace": {
+      "equation_dimension": 594,
+      "witness_dimension": 4104,
+      "modulus": 18446744069414584321,
+      "l2_bound": 16336,
+      "log2_q": 63.9999999996641,
+      "log2_bound": 13.995767150877802,
+      "log_delta": 0.0012881516870700378,
+      "reduced_dimension": 4104,
+      "target_delta": 1.0007998309696493,
+      "block_size": 3294,
+      "classical_bits": 961,
+      "quantum_bits": 872,
+      "paranoid_bits": 683
+    },
+    "theorem_documents": [
+      "docs/crypto/native_backend_formal_theorems.md",
+      "docs/crypto/native_backend_verified_aggregation.md"
+    ]
+  },
+  "packaged_current_claim": {
+    "parameter_fingerprint": "dc2fae3cd1f05cf81a446b46afa6ad70ed8582de8402e598bae1dd3bdf35b429acb87c9939969efa0c54b97b9920a0d7",
+    "native_backend_params": {
+      "family_label": "goldilocks_128b_structural_commitment",
+      "spec_label": "hegemon.superneo.native-backend-spec.goldilocks-128b-structural-commitment.v8",
+      "spec_digest": "c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23",
+      "commitment_scheme_label": "bounded_message_random_matrix_commitment",
+      "challenge_schedule_label": "quint_goldilocks_fs_challenge_profile_mix",
+      "maturity_label": "structural_candidate",
+      "security_bits": 128,
+      "ring_profile": "GoldilocksFrog",
+      "matrix_rows": 11,
+      "matrix_cols": 54,
+      "challenge_bits": 63,
+      "fold_challenge_count": 5,
+      "max_fold_arity": 2,
+      "transcript_domain_label": "hegemon.superneo.fold.v3",
+      "decomposition_bits": 8,
+      "opening_randomness_bits": 256,
+      "commitment_security_model": "bounded_kernel_module_sis",
+      "commitment_estimator_model": "sis_lattice_euclidean_adps16",
+      "max_commitment_message_ring_elems": 76,
+      "max_claimed_receipt_root_leaves": 128
+    },
+    "native_security_claim": {
+      "claimed_security_bits": 128,
+      "soundness_scope_label": "verified_leaf_aggregation",
+      "transcript_soundness_bits": 312,
+      "opening_hiding_bits": 0,
+      "commitment_codomain_bits": 37422,
+      "commitment_same_seed_search_bits": 36936,
+      "commitment_random_matrix_bits": 486,
+      "commitment_problem_equations": 594,
+      "commitment_problem_dimension": 4104,
+      "commitment_problem_coeff_bound": 255,
+      "commitment_problem_l2_bound": 16336,
+      "commitment_estimator_dimension": 4104,
+      "commitment_estimator_block_size": 3294,
+      "commitment_estimator_classical_bits": 961,
+      "commitment_estimator_quantum_bits": 872,
+      "commitment_estimator_paranoid_bits": 683,
+      "commitment_reduction_loss_bits": 0,
+      "commitment_binding_bits": 872,
+      "composition_loss_bits": 7,
+      "soundness_floor_bits": 305,
+      "assumption_ids": [
+        "random_oracle.blake3_fiat_shamir",
+        "serialization.canonical_native_artifact_bytes",
+        "fs.quint_goldilocks_profile_fold_challenges",
+        "aggregation.native_receipt_root_replays_verified_tx_leaves",
+        "commitment.deterministic_public_witness_reconstruction",
+        "commitment.bounded_kernel_module_sis_exact_reduction",
+        "commitment.sis_lattice_euclidean_adps16_quantum_estimator"
+      ],
+      "review_state": "candidate_under_review"
+    }
+  },
+  "recomputed_native_security_claim": {
+    "claimed_security_bits": 128,
+    "soundness_scope_label": "verified_leaf_aggregation",
+    "transcript_soundness_bits": 312,
+    "opening_hiding_bits": 0,
+    "commitment_codomain_bits": 37422,
+    "commitment_same_seed_search_bits": 36936,
+    "commitment_random_matrix_bits": 486,
+    "commitment_problem_equations": 594,
+    "commitment_problem_dimension": 4104,
+    "commitment_problem_coeff_bound": 255,
+    "commitment_problem_l2_bound": 16336,
+    "commitment_estimator_dimension": 4104,
+    "commitment_estimator_block_size": 3294,
+    "commitment_estimator_classical_bits": 961,
+    "commitment_estimator_quantum_bits": 872,
+    "commitment_estimator_paranoid_bits": 683,
+    "commitment_reduction_loss_bits": 0,
+    "commitment_binding_bits": 872,
+    "composition_loss_bits": 7,
+    "soundness_floor_bits": 305,
+    "assumption_ids": [
+      "random_oracle.blake3_fiat_shamir",
+      "serialization.canonical_native_artifact_bytes",
+      "fs.quint_goldilocks_profile_fold_challenges",
+      "aggregation.native_receipt_root_replays_verified_tx_leaves",
+      "commitment.deterministic_public_witness_reconstruction",
+      "commitment.bounded_kernel_module_sis_exact_reduction",
+      "commitment.sis_lattice_euclidean_adps16_quantum_estimator"
+    ],
+    "review_state": "candidate_under_review"
+  },
+  "recomputed_derived_values": {
+    "live_tx_leaf_public_relation_digits": 617,
+    "live_tx_leaf_public_relation_ring_elems": 12,
+    "live_tx_leaf_public_relation_coeff_dimension": 648,
+    "live_tx_leaf_public_relation_l2_bound": 6492,
+    "transcript_max_preimage_count": 3,
+    "transcript_entropy_bits": 312.0751874963942,
+    "transcript_soundness_bits": 312,
+    "composition_loss_bits": 7,
+    "commitment_codomain_bits": 37422,
+    "commitment_same_seed_search_bits": 36936,
+    "commitment_random_matrix_bits": 486,
+    "commitment_problem_equations": 594,
+    "commitment_problem_dimension": 4104,
+    "commitment_problem_coeff_bound": 255,
+    "commitment_problem_l2_bound": 16336,
+    "commitment_estimator_dimension": 4104,
+    "commitment_estimator_block_size": 3294,
+    "commitment_estimator_classical_bits": 961,
+    "commitment_estimator_quantum_bits": 872,
+    "commitment_estimator_paranoid_bits": 683,
+    "commitment_binding_bits": 872,
+    "soundness_floor_bits": 305,
+    "estimate_log2_q": 63.9999999996641,
+    "estimate_log2_bound": 13.995767150877802,
+    "estimate_log_delta": 0.0012881516870700378,
+    "estimate_delta": 1.0007998309696493
+  }
+}
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.65s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/debug/superneo-bench --verify-review-bundle-production /var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/testdata/native_backend_vectors`
+{
+  "summary": {
+    "bundle_path": "/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/tmp.uRcMRfmAsu/native-backend-128b-review-package/testdata/native_backend_vectors/bundle.json",
+    "case_count": 11,
+    "passed_cases": 11,
+    "failed_cases": 0
+  },
+  "results": [
+    {
+      "name": "native_tx_leaf_valid",
+      "expected_valid": true,
+      "passed": true,
+      "detail": "accepted"
+    },
+    {
+      "name": "native_tx_leaf_invalid_spec_digest",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native tx-leaf spec digest mismatch"
+    },
+    {
+      "name": "native_tx_leaf_invalid_params_fingerprint",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native tx-leaf parameter fingerprint mismatch"
+    },
+    {
+      "name": "native_tx_leaf_invalid_stark_proof",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native tx-leaf canonical receipt mismatch"
+    },
+    {
+      "name": "native_tx_leaf_invalid_proof_digest",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "leaf proof digest mismatch"
+    },
+    {
+      "name": "native_tx_leaf_invalid_trailing_bytes",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native tx-leaf artifact has 1 trailing bytes"
+    },
+    {
+      "name": "receipt_root_valid",
+      "expected_valid": true,
+      "passed": true,
+      "detail": "accepted"
+    },
+    {
+      "name": "receipt_root_invalid_spec_digest",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native receipt-root spec digest mismatch"
+    },
+    {
+      "name": "receipt_root_invalid_fold_rows",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native receipt-root fold parent rows mismatch"
+    },
+    {
+      "name": "receipt_root_invalid_root_commitment",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "native receipt-root root commitment mismatch"
+    },
+    {
+      "name": "receipt_root_invalid_trailing_bytes",
+      "expected_valid": false,
+      "passed": true,
+      "detail": "receipt-root artifact has 1 trailing bytes"
+    }
+  ]
+}

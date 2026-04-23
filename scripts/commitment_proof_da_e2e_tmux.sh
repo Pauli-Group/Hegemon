@@ -15,6 +15,8 @@ RECIPIENTS_JSON="${HEGEMON_E2E_RECIPIENTS_JSON:-/tmp/hegemon-recipients-e2e.json
 
 RPC_HTTP="${HEGEMON_E2E_RPC_HTTP:-http://127.0.0.1:9944}"
 RPC_WS="${HEGEMON_E2E_RPC_WS:-ws://127.0.0.1:9944}"
+MINE_THREADS="${HEGEMON_MINE_THREADS:-1}"
+NODE_ARGS="${HEGEMON_E2E_NODE_ARGS:---dev --tmp}"
 
 require_bin() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -25,8 +27,16 @@ require_bin() {
 
 require_bin tmux
 require_bin curl
-require_bin rg
+require_bin grep
 require_bin python3
+
+search_text() {
+  if command -v rg >/dev/null 2>&1; then
+    rg "$@"
+  else
+    grep -E "$@"
+  fi
+}
 
 cd "$ROOT_DIR"
 
@@ -68,11 +78,11 @@ echo "Initializing wallets..." >&2
 
 MINER_ADDRESS="$(
   ./target/release/wallet status --store "$WALLET_A" --passphrase "$PASS_A" --no-sync \
-    | rg "Shielded Address" | awk '{print $3}'
+    | search_text "Shielded Address" | awk '{print $3}'
 )"
 RECIPIENT_ADDRESS="$(
   ./target/release/wallet status --store "$WALLET_B" --passphrase "$PASS_B" --no-sync \
-    | rg "Shielded Address" | awk '{print $3}'
+    | search_text "Shielded Address" | awk '{print $3}'
 )"
 
 if [ -z "$MINER_ADDRESS" ] || [ -z "$RECIPIENT_ADDRESS" ]; then
@@ -96,13 +106,14 @@ tmux new-session -d -s "$SESSION" -n node \
   "cd '$ROOT_DIR' && \
    RUST_LOG=info \
    HEGEMON_MINE=1 \
+   HEGEMON_MINE_THREADS='$MINE_THREADS' \
    HEGEMON_COMMITMENT_BLOCK_PROOFS=1 \
    HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST=1 \
    HEGEMON_PARALLEL_PROOF_VERIFICATION=1 \
    HEGEMON_ACCEPT_FAST_PROOFS=1 \
    HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK=1 \
    HEGEMON_MINER_ADDRESS='$MINER_ADDRESS' \
-   ./target/release/hegemon-node --dev --tmp 2>&1 | tee '$LOG_FILE'"
+   ./target/release/hegemon-node $NODE_ARGS 2>&1 | tee '$LOG_FILE'"
 
 echo "Waiting for RPC to respond..." >&2
 for i in $(seq 1 60); do
@@ -124,9 +135,9 @@ for i in $(seq 1 120); do
   HEADER_JSON="$(curl -s -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
     "$RPC_HTTP" || true)"
-  BLOCK_NUM="$(python3 - <<'PY'
-import json,sys
-data = sys.stdin.read()
+  BLOCK_NUM="$(HEADER_JSON="$HEADER_JSON" python3 - <<'PY'
+import json, os
+data = os.environ.get("HEADER_JSON", "")
 try:
     obj = json.loads(data) if data.strip() else {}
 except Exception:
@@ -138,12 +149,18 @@ try:
 except Exception:
     print(0)
 PY
-  <<<"$HEADER_JSON")"
+  )"
   if [ "$BLOCK_NUM" -ge "$TARGET_BLOCK" ]; then
     break
   fi
   sleep 1
 done
+
+if [ "${BLOCK_NUM:-0}" -lt "$TARGET_BLOCK" ]; then
+  echo "Timed out waiting for $TARGET_BLOCK block(s); chain reached ${BLOCK_NUM:-0}. Check logs: $LOG_FILE" >&2
+  echo "Tip: increase HEGEMON_MINE_THREADS or lower HEGEMON_E2E_TARGET_BLOCKS for slow machines." >&2
+  exit 1
+fi
 
 echo "Syncing miner wallet (fast mode)..." >&2
 HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-sync \
@@ -161,7 +178,7 @@ touch "$LOG_FILE"
 FOUND_BLOCK=""
 FOUND_BLOCK_HASH=""
 for i in $(seq 1 "$PROOF_WAIT_SECS"); do
-  LINE="$(rg "Commitment block proof stored for imported block" "$LOG_FILE" | tail -n 1 || true)"
+  LINE="$(search_text "Commitment block proof stored for imported block" "$LOG_FILE" | tail -n 1 || true)"
   if [ -n "$LINE" ]; then
     FOUND_BLOCK="$(echo "$LINE" | sed -n 's/.*block_number=\([0-9][0-9]*\).*/\1/p')"
     FOUND_BLOCK_HASH="$(echo "$LINE" | sed -n 's/.*block_hash=\([0-9a-fA-F]\{64\}\).*/\1/p')"
@@ -184,16 +201,16 @@ echo "Commitment proof stored for block $FOUND_BLOCK" >&2
 BLOCK_HASH_JSON="$(curl -s -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain_getBlockHash\",\"params\":[${FOUND_BLOCK}],\"id\":1}" \
   "$RPC_HTTP")"
-BLOCK_HASH="$(python3 - <<'PY'
-import json,sys
-data = sys.stdin.read()
+BLOCK_HASH="$(BLOCK_HASH_JSON="$BLOCK_HASH_JSON" python3 - <<'PY'
+import json, os
+data = os.environ.get("BLOCK_HASH_JSON", "")
 try:
     obj = json.loads(data) if data.strip() else {}
 except Exception:
     obj = {}
 print((obj.get("result") or "").strip())
 PY
-<<<"$BLOCK_HASH_JSON")"
+)"
 
 BLOCK_HASH_FROM_LOG="0x${FOUND_BLOCK_HASH}"
 if [ -z "$BLOCK_HASH" ] || [ "$BLOCK_HASH" = "null" ]; then
@@ -206,9 +223,9 @@ fi
 echo "Waiting for DA root for block $FOUND_BLOCK..." >&2
 DA_ROOT=""
 for i in $(seq 1 "$DA_WAIT_SECS"); do
-  DA_LINE="$(rg "DA encoding stored for imported block block_number=${FOUND_BLOCK} " "$LOG_FILE" | tail -n 1 || true)"
+  DA_LINE="$(search_text "DA encoding stored for imported block block_number=${FOUND_BLOCK} " "$LOG_FILE" | tail -n 1 || true)"
   if [ -n "$DA_LINE" ]; then
-    DA_ROOT="$(echo "$DA_LINE" | sed -n 's/.*da_root=\([0-9a-fA-F]\{64\}\).*/\1/p')"
+    DA_ROOT="$(echo "$DA_LINE" | sed -n 's/.*da_root=\([0-9a-fA-F]\{96\}\).*/\1/p')"
     if [ -n "$DA_ROOT" ]; then
       break
     fi

@@ -1112,21 +1112,14 @@ fn env_usize(name: &str) -> Option<usize> {
 }
 
 fn proof_verification_enabled() -> bool {
-    let env_value = std::env::var("HEGEMON_PARALLEL_PROOF_VERIFICATION").ok();
-    if cfg!(feature = "production") {
-        if let Some(value) = env_value {
-            if value == "0" || value.eq_ignore_ascii_case("false") {
-                tracing::warn!(
-                    "HEGEMON_PARALLEL_PROOF_VERIFICATION disabled but production builds require proof verification; ignoring"
-                );
-            }
+    if let Ok(value) = std::env::var("HEGEMON_PARALLEL_PROOF_VERIFICATION") {
+        if value == "0" || value.eq_ignore_ascii_case("false") {
+            tracing::warn!(
+                "HEGEMON_PARALLEL_PROOF_VERIFICATION disabled but consensus import requires proof verification; ignoring"
+            );
         }
-        true
-    } else {
-        env_value
-            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
-            .unwrap_or(true)
     }
+    true
 }
 
 fn chain_property_u32(properties: &sc_chain_spec::Properties, key: &str) -> Option<u32> {
@@ -14278,6 +14271,31 @@ mod import_tests {
     #[test]
     fn test_full_block_import_config_from_env() {
         let _config = FullBlockImportConfig::from_env();
+    }
+
+    #[test]
+    fn test_proof_verification_env_disable_is_ignored() {
+        let _guard = crate::substrate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var("HEGEMON_PARALLEL_PROOF_VERIFICATION").ok();
+        unsafe {
+            std::env::set_var("HEGEMON_PARALLEL_PROOF_VERIFICATION", "0");
+        }
+
+        assert!(
+            proof_verification_enabled(),
+            "proof verification must remain enabled for consensus import"
+        );
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var("HEGEMON_PARALLEL_PROOF_VERIFICATION", value);
+            },
+            None => unsafe {
+                std::env::remove_var("HEGEMON_PARALLEL_PROOF_VERIFICATION");
+            },
+        }
     }
 
     #[test]

@@ -149,6 +149,61 @@ Document each review or audit item under this heading so engineers and auditors 
 
 Keep the log chronological; when closing a finding, link the merge commit and update the affected documents.
 
+### 2026-04-23 hostile review findings
+
+```json
+[
+  {
+    "id": "SEC-2026-0001",
+    "source": "Hostile security review",
+    "component": "consensus::PowConsensus",
+    "description": "Legacy PoW block validation accepted valid work without binding the block to a registered miner ML-DSA key.",
+    "severity": "critical",
+    "status": "patched",
+    "evidence": "consensus/tests/pow_rules.rs::pow_block_requires_registered_miner_identity and ::pow_block_requires_valid_miner_signature",
+    "remediation": "PoW headers now require exactly one ML-DSA signature, no BFT bitmap, and a validator_set_commitment that maps to the registered miner key.",
+    "design_notes": "DESIGN.md and METHODS.md document miner identity binding.",
+    "tests": ["cargo test -p consensus --test pow_rules -- --nocapture"]
+  },
+  {
+    "id": "SEC-2026-0002",
+    "source": "Hostile security review",
+    "component": "consensus::Sha256dAlgorithm / node::block_import",
+    "description": "PoW seal verification tolerated compact difficulty mismatches and checked work against the seal's claimed difficulty.",
+    "severity": "high",
+    "status": "patched",
+    "evidence": "node/src/substrate/block_import.rs::tests::test_verify_pow_seal_rejects_near_difficulty_mismatch",
+    "remediation": "Substrate PoW verification now requires exact runtime difficulty bits and checks work against that runtime target.",
+    "design_notes": "DESIGN.md and docs/CONSENSUS_AUDIT.md document exact compact-bit binding.",
+    "tests": ["cargo test -p hegemon-node test_verify_pow_seal -- --nocapture"]
+  },
+  {
+    "id": "SEC-2026-0003",
+    "source": "Hostile security review",
+    "component": "node::substrate::service",
+    "description": "Development node builds could honor HEGEMON_PARALLEL_PROOF_VERIFICATION=0 and diverge from fully verified block validity.",
+    "severity": "high",
+    "status": "patched",
+    "evidence": "node/src/substrate/service.rs::import_tests::test_proof_verification_env_disable_is_ignored",
+    "remediation": "The env var is now a logged no-op; block import and production always keep proof verification enabled.",
+    "design_notes": "METHODS.md and docs/CONSENSUS_AUDIT.md document proof verification as non-optional.",
+    "tests": ["cargo test -p hegemon-node test_proof_verification_env_disable_is_ignored -- --nocapture"]
+  },
+  {
+    "id": "SEC-2026-0004",
+    "source": "Hostile security review",
+    "component": "network::PeerIdentity legacy handshake",
+    "description": "Repeated legacy handshakes between the same static identities derived deterministic KEM seeds and nonces, risking AEAD key/nonce reuse on reconnect.",
+    "severity": "high",
+    "status": "patched",
+    "evidence": "network/tests/adversarial.rs::repeated_legacy_handshakes_rekey_the_first_channel_nonce",
+    "remediation": "Offer, acceptance, and confirmation paths now use OS-random transcript nonces and KEM encapsulation seeds.",
+    "design_notes": "DESIGN.md and METHODS.md document per-session rekeying.",
+    "tests": ["cargo test -p network --test handshake --test adversarial -- --nocapture"]
+  }
+]
+```
+
 ## 5. Local checklist
 
 1. Read `DESIGN.md`, `METHODS.md`, and this file before any cryptographic, miner-identity, or network change.

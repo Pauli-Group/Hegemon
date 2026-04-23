@@ -17,7 +17,7 @@ use crate::types::{
 };
 use crate::version_policy::VersionSchedule;
 use crypto::hashes::{blake3_384, sha256};
-use crypto::ml_dsa::MlDsaPublicKey;
+use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::VerifyKey;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
@@ -156,6 +156,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
             return Err(ConsensusError::InvalidHeader("expected PoW header"));
         }
         block.header.ensure_structure()?;
+        self.verify_pow_miner_signature(&block.header)?;
         verify_commitments(&block)?;
         if let Some(version) = self.version_schedule.first_unsupported(
             block.header.height,
@@ -305,6 +306,40 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn has_miner(&self, id: &ValidatorId) -> bool {
         self.miners.values().any(|(miner_id, _)| miner_id == id)
+    }
+
+    fn verify_pow_miner_signature(
+        &self,
+        header: &crate::header::BlockHeader,
+    ) -> Result<(), ConsensusError> {
+        if header.signature_bitmap.is_some() {
+            return Err(ConsensusError::InvalidHeader(
+                "pow header must not carry a signature bitmap",
+            ));
+        }
+
+        let (miner_id, miner_key) = self
+            .miners
+            .get(&header.validator_set_commitment)
+            .ok_or(ConsensusError::ValidatorSetMismatch)?;
+
+        if header.signature_aggregate.len() != ML_DSA_SIGNATURE_LEN {
+            return Err(ConsensusError::InvalidHeader(
+                "invalid pow miner signature length",
+            ));
+        }
+
+        let signature = MlDsaSignature::from_bytes(&header.signature_aggregate).map_err(|_| {
+            ConsensusError::SignatureVerificationFailed {
+                validator: *miner_id,
+            }
+        })?;
+        let signing_hash = header.signing_hash()?;
+        miner_key.verify(&signing_hash, &signature).map_err(|_| {
+            ConsensusError::SignatureVerificationFailed {
+                validator: *miner_id,
+            }
+        })
     }
 
     /// Register a miner key so downstream verification can recover from

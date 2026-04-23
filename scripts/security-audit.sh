@@ -90,6 +90,7 @@ check_pattern() {
         | grep -v "pq_params_audit.rs" \
         | grep -v "stark_soundness.rs" \
         | grep -v "println!" \
+        | grep -v "keywords =" \
         | grep -v "// " \
         || true)
     
@@ -124,12 +125,12 @@ check_pattern "bn254" "Pairing-friendly curve, quantum-vulnerable" || VIOLATIONS
 check_pattern "jubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "babyjubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "pallas" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "vesta" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "curve25519" "Elliptic curve, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "dalek" "Curve25519 library, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ristretto" "Curve25519 variant, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "halo2" "ECC-based zkSNARK, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "plonk" "Polynomial commitment SNARK (often ECC), check dependencies" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)" "Polynomial commitment SNARK (often ECC), check dependencies" || VIOLATIONS=$((VIOLATIONS + 1))
 
 echo ""
 

@@ -208,13 +208,13 @@ mod substrate_impl {
     use sp_runtime::generic::BlockId;
     use sp_runtime::traits::Block as BlockT;
 
-    use runtime::apis::DifficultyApi;
+    use runtime::apis::{ConsensusApi, DifficultyApi};
 
     impl<B, C> PowAlgorithm<B> for Sha256dAlgorithm<C>
     where
         B: BlockT<Hash = H256>,
         C: ProvideRuntimeApi<B> + Send + Sync,
-        C::Api: DifficultyApi<B>,
+        C::Api: DifficultyApi<B> + ConsensusApi<B>,
     {
         type Difficulty = U256;
 
@@ -227,14 +227,26 @@ mod substrate_impl {
 
         fn verify(
             &self,
-            _parent: &BlockId<B>,
+            parent: &BlockId<B>,
             pre_hash: &B::Hash,
             _pre_digest: Option<&[u8]>,
             seal: &Seal,
             difficulty: Self::Difficulty,
         ) -> Result<bool, PowError<B>> {
             let pow_seal = Sha256dSeal::decode(&mut &seal[..]).map_err(PowError::Codec)?;
-            let expected_bits = target_to_compact(U256::MAX / difficulty);
+            let expected_bits = match parent {
+                BlockId::Hash(parent_hash) => self
+                    .client
+                    .runtime_api()
+                    .difficulty_bits(*parent_hash)
+                    .map_err(|e| {
+                        PowError::Environment(format!(
+                            "Difficulty bits fetch failed: {:?}",
+                            e
+                        ))
+                    })?,
+                BlockId::Number(_) => target_to_compact(U256::MAX / difficulty),
+            };
 
             tracing::debug!(
                 seal_nonce = ?pow_seal.nonce,
@@ -244,22 +256,12 @@ mod substrate_impl {
             );
 
             if pow_seal.difficulty != expected_bits {
-                let seal_target = compact_to_target(pow_seal.difficulty).unwrap_or(U256::zero());
-                let expected_target = U256::MAX / difficulty;
-                let diff = if seal_target > expected_target {
-                    seal_target - expected_target
-                } else {
-                    expected_target - seal_target
-                };
-
-                if diff > expected_target / U256::from(1000u32) {
-                    tracing::warn!(
-                        seal_difficulty = pow_seal.difficulty,
-                        expected_difficulty = expected_bits,
-                        "Difficulty mismatch in PoW seal"
-                    );
-                    return Ok(false);
-                }
+                tracing::warn!(
+                    seal_difficulty = pow_seal.difficulty,
+                    expected_difficulty = expected_bits,
+                    "Difficulty mismatch in PoW seal"
+                );
+                return Ok(false);
             }
 
             let pre_hash_bytes: [u8; 32] = pre_hash.as_ref().try_into().unwrap_or([0u8; 32]);
@@ -276,7 +278,8 @@ mod substrate_impl {
                 "PoW seal verification details"
             );
 
-            let result = verify_seal(&pre_hash_h256, &pow_seal);
+            let result =
+                work_matches && seal_meets_target(&pow_seal.work, expected_bits);
             if !result {
                 tracing::warn!(
                     pre_hash = ?pre_hash,

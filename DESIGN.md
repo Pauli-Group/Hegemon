@@ -71,6 +71,7 @@ Where they're used:
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
   * PQ network identity seeds are generated from OS entropy, persisted under the node base path (for example `pq-identity.seed`) or provided via environment override, and never derived from public peer IDs.
+  * PQ session establishment uses fresh OS-random KEM encapsulation seeds and transcript nonces for every handshake so reconnects between the same long-term identities cannot reuse AEAD key/nonce pairs.
   * The PQ discovery channel (`/hegemon/discovery/pq/1`) exchanges both dialable addresses (`GetAddrs`/`Addrs`) and bounded connected-peer lists (`GetPeerGraph`/`PeerGraph`) so dashboards can visualize multi-hop peer graphs.
   * Identity/session records store optional PQ session keys via `SessionKey::PostQuantum` (Dilithium/Falcon); registrations provide PQ bundles through `pallet_identity::register_did`.
 * **User layer**:
@@ -291,14 +292,18 @@ Consensus checks:
 
 The PoW fork mirrors conventional PoW mechanics so operators can reason about liveness intuitively:
 
-* Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
-  full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
-  A zero mantissa is invalid, and every PoW header must carry the seal (there is no “missing” difficulty case between retargets).
+* Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners bind identity
+  with exactly one ML-DSA signature over the header signing fields: `validator_set_commitment` must resolve to a registered miner
+  public key, the signature length must match ML-DSA-65, and PoW headers must not carry a BFT signature bitmap. Miners then search
+  over the nonce until the PoW work meets `target(pow_bits)`. A zero mantissa is invalid, and every PoW header must carry the seal
+  (there is no “missing” difficulty case between retargets).
 * Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 10` blocks the chain recomputes the target from the window's
   timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 60 s` (1 minute). Honest nodes reject any block whose
   `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
   retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
-  timestamps cannot skew difficulty even after a reorg.
+  timestamps cannot skew difficulty even after a reorg. The shipping Substrate verifier also requires the compact difficulty bits
+  embedded in a PoW seal to equal the runtime `ConsensusApi::difficulty_bits()` value exactly and checks work against that runtime
+  target, not an attacker-supplied near match.
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
   `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks (height 0 mints nothing).
@@ -321,7 +326,7 @@ The PoW fork mirrors conventional PoW mechanics so operators can reason about li
 
 No transparent outputs; everything is in this one PQ pool from day 1.
 
-Substrate RPC extensions in `node/src/substrate/rpc` expose that state machine so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `pallets/coinbase/src/lib.rs`. Per `TOKENOMICS_CALCULATION.md`, the initial block reward is ~4.98 HEG (derived from the 60-second block time), and epochs last 4 years (~2.1M blocks). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values.
+Substrate RPC extensions in `node/src/substrate/rpc` expose that state machine so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `pallets/coinbase/src/lib.rs`. Per `TOKENOMICS_CALCULATION.md`, the initial block reward is ~4.98 HEG (derived from the 60-second block time), and epochs last 4 years (~2.1M blocks). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values. Proof verification is mandatory on production and development node imports; attempts to set `HEGEMON_PARALLEL_PROOF_VERIFICATION=0` are logged and ignored rather than changing block validity.
 
 ### 3.3 Shielded stablecoin issuance
 
