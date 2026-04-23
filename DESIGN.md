@@ -1,8 +1,8 @@
 ## 0. Design goals (what we’re optimizing for)
 
-I’d keep (roughly) Zcash’s original goals, updated for 2025:
+The design goals are:
 
-1. **One canonical privacy pool** (no Sprout/Sapling/Orchard zoo).
+1. **One canonical privacy pool** (no fragmented upgrade pools).
 2. **End-to-end PQ security**
 
    * No ECC, no pairings, no RSA anywhere.
@@ -15,7 +15,7 @@ I’d keep (roughly) Zcash’s original goals, updated for 2025:
 
    * No trusted setup.
    * SNARK/STARK based only on collision-resistant hashes (FRI-style IOPs etc.). ([C# Corner][2])
-4. **Bitcoin-like mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
+4. **Note-based mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
 5. **Upgradability**: built-in versioning and “escape hatches” for *future* PQ breaks.
 6. **Secure, seamless, delighting UX**: wallet, release-coordination, and miner/operator touchpoints must keep the PQ stack invisible,
    provide ergonomic flows across devices, and surface positive confirmation cues so users feel safe and delighted without
@@ -30,13 +30,13 @@ Everything else is negotiable.
 * **No sudo or session pallets** in production/testnet genesis. The PoW chain runs without validator sessions.
 * The live chain has no on-chain governance path. Protocol changes ship through socially adopted release lines and PoW uptake, not a built‑in superuser key.
 
-### 0.1 Explicit overheads relative to Zcash
+### 0.1 Explicit overheads relative to classical private-money stacks
 
-Contributors routinely ask how these PQ and MASP design choices differ from Zcash’s Sapling/Orchard stack. The high-level costs
-are:
+Contributors routinely ask how these PQ and MASP design choices differ from classical ECC-based shielded pools. The high-level
+costs are:
 
 * **Cryptographic payload sizes** – ML-DSA/ML-KEM artifacts are orders of magnitude larger than the ECC keys, signatures, and
-  ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
+  ECIES-style ciphertexts used by classical private-money systems. Even though the spend circuit keeps the “prove key knowledge inside the ZK proof”
   model (so there are no per-input signatures), block headers, miner identities, and the note encryption layer all absorb PQ
   size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts (note encryption)
   = 1,568 B vs ~80–100 B for Jubjub-based ECIES. Runtime AccountIds hash PQ public keys with BLAKE2 into SS58-compatible 32-byte
@@ -47,8 +47,8 @@ are:
   proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
   that bandwidth/latency overhead.
 * **Circuit-level MASP costs** – Supporting multi-asset notes requires in-circuit sorting/aggregation of `(asset_id, delta)`
-  tuples, introducing an \(O((M+N) \log (M+N))\) constraint factor that Sapling’s single-asset equations avoid. We explicitly
-  accept this blow-up because it stays manageable at Zcash-like `M, N` and keeps the user model aligned with today’s MASP work.
+  tuples, introducing an \(O((M+N) \log (M+N))\) constraint factor that single-asset equations avoid. We explicitly accept
+  this blow-up because it stays manageable at the target `M, N` and keeps the user model aligned with MASP-style semantics.
 
 These considerations don’t change the core protocol, but they should show up in performance estimations, benchmarking, and any
 communication that compares this system to the status quo.
@@ -75,7 +75,7 @@ Where they're used:
   * Identity/session records store optional PQ session keys via `SessionKey::PostQuantum` (Dilithium/Falcon); registrations provide PQ bundles through `pallet_identity::register_did`.
 * **User layer**:
 
-  * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
+  * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK; here we do it with hash/lattice PRFs rather than ECC.
 
 So: signatures are *mostly* a consensus/network thing, not something you see for each coin input.
 
@@ -99,7 +99,7 @@ Design pattern:
   * runs a KDF on the shared secret plus `crypto_suite` to get the AEAD key and nonce,
   * authenticates `(address_version, crypto_suite, diversifier_index)` as AEAD AAD.
 
-This is directly analogous to ECIES-style note encryption in Zcash, but with ML-KEM.
+This is a direct note-encryption analogue built on ML-KEM instead of ECC.
 
 ---
 
@@ -124,7 +124,7 @@ Commitments:
   * `Com(m, r) = H("c" || m || r)` with `H = BLAKE3-256` by default (or SHA3-256 when aligning with STARK hash parameters) is the commitment to `m` with randomness `r`.
 * **Note commitment tree**:
 
-  * Same conceptual tree as Zcash, but using the global hash or the STARK hash consistently; no Pedersen, no Sinsemilla, no EC cofactor dance.
+  * Same conceptual note-commitment tree throughout the stack, but using the global hash or the STARK hash consistently; no Pedersen, no Sinsemilla, no EC cofactor dance.
 
 PRFs:
 
@@ -172,7 +172,7 @@ Rather than BCTV14 → Groth16 → Halo2, we pick **one** family: hash-based IOP
 Properties:
 
 * **Transparent**: no trusted setup (only hash assumptions). ([C# Corner][2])
-* **Post-quantum**: soundness reduces to collision resistance of the hashes + random oracle, so Shor has nothing to grab; Grover just reduces effective hash security by ~½.
+* **Post-quantum**: soundness reduces to collision resistance of the hashes + random oracle, so Shor has nothing to grab; generic quantum search only affects the symmetric margin rather than creating a public-key collapse.
 * **Recursive-friendly**: pick something in the Plonky2/Plonky3 space that supports efficient recursion and aggregation. ([C# Corner][2])
 
 Concretely:
@@ -186,7 +186,7 @@ Concretely:
 
   * Proof sizes are materially larger than SNARKs; with 48-byte digests and a 128-bit PQ target, single-transaction Plonky3 proofs are currently hundreds of kB (≈354KB for the active release `TransactionAirP3` e2e profile, with about 349KB of that in the opening layer alone). The first measured conservative STIR spike only projects that down to about 273KB, so the next serious `2x` or `3x` proof-size attempt needs a stronger PCS branch than “swap in STIR and hope.”
 
-**Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
+**Lesson from legacy pool migrations:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
 
 Implementation detail: the Plonky3 backend uses `p3-uni-stark` (v0.4.x). For the transaction AIR, fixed schedule selectors (Poseidon round flags, cycle markers, and row-specific assertions) are embedded as explicit schedule columns in the main trace; this keeps the schedule deterministic while avoiding preprocessed-trace OOD mismatches. The stablecoin binding payload and the fixed four balance-slot asset ids are carried in the STARK public inputs, the native MASP slot remains slot `0`, the witness trace keeps only the per-slot running sums plus the compact 2-bit stablecoin slot selector, and a single shared rho carry lane is reused across the two input-note phases. Runtime/API validation now enforces the canonical slot-asset encoding (`slot 0 = native`, strictly increasing non-native ids, padding only as a suffix) so the binding hash, statement hash, and prover all commit to the same slot layout. Other circuits may still use preprocessed columns where stable.
 
@@ -199,7 +199,7 @@ The transparent stack above is heavier than Groth16/Halo2, but a few circuit-lev
 * **Batched range proofs via radix embeddings** – Instead of per-note binary range proofs, the current production transaction AIR decomposes bounded values into 21 shared radix-8 limbs (`3` bits each, boolean top limb) and reuses one limb region across note, fee, value-balance, and issuance rows. A later lookup-backed higher-radix path remains possible, but the deployed shape already avoids the old 61-bit-per-value blow-up while keeping the constraint degree low.
 * **Folded multi-openings for recursion** – Recursively verifying child proofs requires many polynomial openings; batching them through a single FRI transcript with linear-combination challenges keeps the verifier time in the "tens of ms" bucket despite the larger STARK proofs.
 
-None of these tricks negate the inherent bandwidth hit of transparent proofs, but they make the witness columns thinner and the constraint system shallower so that prover time and memory stay near the Zcash baseline even with PQ primitives.
+None of these tricks negate the inherent bandwidth hit of transparent proofs, but they make the witness columns thinner and the constraint system shallower so that prover time and memory stay near the current baseline even with PQ primitives.
 
 ### 2.5 Formal verification and adversarial pipelines
 
@@ -245,7 +245,7 @@ The experimental relation layer is now deliberately narrow. `TxLeafPublicRelatio
 
 ### 3.1 Objects: notes and nullifiers
 
-We keep the Zcash mental model, but trimmed:
+We keep the shielded-note mental model, but trimmed:
 
 * A **note** is a record:
 
@@ -289,7 +289,7 @@ Consensus checks:
 * STARK proofs verify.
 * Block value balance is respected (including fees and issuance).
 
-The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liveness intuitively:
+The PoW fork mirrors conventional PoW mechanics so operators can reason about liveness intuitively:
 
 * Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
   full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
@@ -331,7 +331,7 @@ Issuance and burn therefore stay shielded: the proof shows `inputs - outputs = i
 
 ---
 
-## 4. Addresses and keys (PQ analogue of Sapling/Orchard)
+## 4. Addresses and keys (PQ shielded-address model)
 
 We still want:
 
@@ -399,7 +399,7 @@ A **shielded address** contains:
 * A **KEM public key** `pk_enc` (for ML-KEM).
 * An **address-id / diversifier** derived from `sk_view` via PRF.
 
-You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses). Each address binds the crypto suite, ML-KEM public key, and recipient key derived from a diversifier index.
+You can have multiple diversified addresses derived from the same underlying key material. Each address binds the crypto suite, ML-KEM public key, and recipient key derived from a diversifier index.
 
 ### 4.3 Wallet crate implementation
 
@@ -435,9 +435,9 @@ When a sender must prove a specific shielded payment to an exchange or auditor w
 
 ## 5. Privacy & “store now, decrypt later”
 
-Because we’re using only PQ primitives, the main “store-now-decrypt-later” concern is:
+Because we’re using only PQ primitives, the main “store-now-decrypt-later” concern is Shor-style compromise of legacy public-key assumptions, which this design removes:
 
-* Hashes & symmetric: we dimension them (e.g. 256-bit hash output, 256-bit AEAD keys) to keep ≈128-bit post-quantum security even with Grover. ([ISACA][4])
+* Hashes & symmetric: we dimension them (e.g. 256-bit hash output, 256-bit AEAD keys) conservatively so generic quantum search does not become the limiting factor. ([ISACA][4])
 * Lattice schemes: we stick close to NIST’s strength categories for ML-KEM/ML-DSA. ([NIST][1])
 
 Architecturally, we:
@@ -445,7 +445,7 @@ Architecturally, we:
 * Ensure that **address privacy** is not tied to any structure that might become classically invertible (no dlog; only KDFs).
 * Use **one-time KEM keys** per transaction where helpful to add forward secrecy: sender can include ephemeral KEM pk in the ciphertext, so even compromise of recipient’s long-term `sk_enc` only reveals part of the past, not all.
 
-The nice bit vs current Zcash: if a “Shor-class” machine appears, *nothing* trivially collapses, because there’s nothing ECC-based to break.
+The important property is that if a “Shor-class” machine appears, *nothing* trivially collapses, because there’s nothing ECC-based to break.
 
 ---
 
@@ -471,7 +471,7 @@ We can hard-bake in lessons from the whole “quantum-recoverability” ZIP saga
      * stop accepting new TXs using that primitive,
      * require users to “upgrade notes” via a special circuit that proves correct transfer into a new algorithm set.
 
-So you get the “compartmentalization” Zcash achieved by multiple pools, but implemented via *versioning & recursion* rather than parallel pools.
+So you get compartmentalized upgrades through *versioning & recursion* rather than parallel pools.
 
 Concrete modules in the repository now reflect the cleaned split. A dedicated `state/merkle` crate maintains the append-only commitment tree with Poseidon-style hashing, `circuits/block-recursion` owns the shipped constant-size recursive block artifact, and `circuits/block` now remains only for the explicit parent-bound `ReceiptRoot` compatibility lane. The shipped fresh-chain 0.10.0 path is simpler: ordered native `TxLeaf` artifacts are the only shielded transaction-validity bytes wallets submit by default, block import verifies that ordered artifact stream plus the constant-size recursive block artifact, and the node’s prove-ahead coordinator prepares either recursive bundles or explicit native `ReceiptRoot` bundles depending on the selected native lane. The coordinator keeps a bounded local worker queue, exact proof-lane identity on prepared-bundle lookup, deterministic candidate upsizing, and bounded stale-parent reuse for cache amortization, but it no longer publishes external work packages, dead recursive-stage placeholders, or accepts unverified remote prepared-bundle imports into the authoring cache.
 
@@ -481,7 +481,7 @@ Consensus enforces version rollouts via `VersionSchedule`, a protocol-release st
 
 ---
 
-## 7. What we explicitly **prune** from legacy Zcash
+## 7. What we explicitly **prune** from legacy shielded stacks
 
 If we’re being ruthless:
 
@@ -502,7 +502,7 @@ If we’re being ruthless:
 3. **No trusted setups, no separate SNARK generations**
 
    * One transparent STARK family from day one.
-   * Migration handled via recursion and circuit versions, not by creating Sapling/Orchard-style new pools.
+   * Migration handled via recursion and circuit versions, not by creating new parallel pools.
 
 4. **No ECC-based in-circuit commitments**
 

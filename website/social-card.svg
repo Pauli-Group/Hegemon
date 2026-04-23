@@ -1,6 +1,6 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">HEGEMON social preview card</title>
-  <desc id="desc">A dark branded banner for HEGEMON with the protocol emblem and the headline Quantum-resistant private payments.</desc>
+  <desc id="desc">A dark branded banner for HEGEMON with the protocol emblem and the headline Post-quantum shielded money.</desc>
   <defs>
     <linearGradient id="bg" x1="64" y1="44" x2="1148" y2="590" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0E1C36"/>
@@ -43,13 +43,13 @@
   </g>
 
   <text fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="74" font-weight="700" letter-spacing="-1.6">
-    <tspan x="96" y="246">Quantum-resistant</tspan>
-    <tspan x="96" y="332" fill="#1BE7FF">private payments</tspan>
+    <tspan x="96" y="246">Post-quantum</tspan>
+    <tspan x="96" y="332" fill="#1BE7FF">shielded money</tspan>
   </text>
 
   <text fill="#E1E6EE" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="28" font-weight="400">
-    <tspan x="96" y="392">A shielded settlement layer for self-custodied</tspan>
-    <tspan x="96" y="430">private payments. One pool from genesis.</tspan>
+    <tspan x="96" y="392">A shielded-only monetary protocol with one</tspan>
+    <tspan x="96" y="430">pool from genesis. Proof of disclosure on demand.</tspan>
   </text>
 
   <g>
@@ -86,9 +86,9 @@
 
   <g>
     <rect x="804" y="448" width="286" height="94" rx="22" fill="#0D1A31" stroke="#1BE7FF" stroke-opacity="0.2"/>
-    <text x="834" y="480" fill="#1BE7FF" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="700" letter-spacing="1.8">AUTONOMY / PRIVACY / POW</text>
+    <text x="834" y="480" fill="#1BE7FF" font-family="JetBrains Mono, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="700" letter-spacing="1.8">SHIELDED / PQ / POW</text>
     <path d="M834 500H1060" stroke="#1BE7FF" stroke-opacity="0.16"/>
-    <text x="834" y="526" fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="24" font-weight="600">No trusted setup.</text>
+    <text x="834" y="526" fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="24" font-weight="600">No transparent mode.</text>
     <text x="834" y="555" fill="#E1E6EE" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="21">Proof of disclosure on demand.</text>
   </g>
 

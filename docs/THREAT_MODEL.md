@@ -4,7 +4,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ## Global assumptions
 
-- **Post-quantum only**: Attackers may possess Shor/Grover-class quantum computers. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, 256-bit symmetric primitives, and 48-byte (384-bit) digests for commitments and Merkle roots. Grover/BHT reductions are already accounted for with 384-bit collision targets.
+- **Post-quantum only**: Attackers may possess Shor-class quantum computers capable of collapsing classical public-key systems. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, 256-bit symmetric primitives, and 48-byte (384-bit) digests for commitments and Merkle roots. Generic quantum search remains a conservative sizing consideration for the symmetric/hash layer, not the primary protocol threat.
 - **Transparent proving**: There is no trusted setup; proving soundness relies solely on collision resistance of the STARK-friendly hashes described in `DESIGN.md §2`. Compromise of a setup ceremony is out-of-scope because none exists.
 - **Adaptive adversaries**: Attackers can corrupt miners, mining pools, or wallets after observing traffic. Key rotation, nullifier privacy, and block template integrity must hold even with partial compromise.
 - **Proof-of-work fairness**: Hash-rate swings and rented rigs are assumed. Difficulty targeting plus share accounting must resist sudden 51% bursts for at least 10 minutes while alerts propagate to pool maintainers.

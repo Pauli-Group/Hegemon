@@ -7,14 +7,14 @@ Say each transaction supports up to:
 * `M` inputs (old notes),
 * `N` outputs (new notes),
 
-per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recursion if you need more.
+per proof. Use fixed `M, N` for the base circuit, recursion if you need more.
 
 ### 1.1 Data model
 
 A **note** is conceptually:
 
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
-* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = native coin (ZEC-like).
+* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = the native coin.
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `pk_auth` – a spend-authorization public key derived from the owner’s spend secret
 * `rho` – per‑note secret (random)
@@ -32,7 +32,7 @@ cm = Com_note(value, asset_id, pk_recipient, pk_auth, rho, r)
 
 On‑chain, the **global state** for the pool is:
 
-* An append‑only **Merkle tree of `cm`** (like Zcash’s note commitment tree)
+* An append‑only **Merkle tree of `cm`** (the note commitment tree)
 * A **nullifier set**: any `nf` that has appeared as an input is “spent”
 
 Each **transaction** includes:
@@ -110,7 +110,7 @@ The core statement the STARK proves:
 >
 >    * Check `0 <= value_i, value'_j <= 2^64 - 1` (or your chosen bound) by range‑checking in‑circuit.
 
-You can think of this as “Sapling/Orchard semantics with: no ECC, no Pedersen, no RedDSA — everything is hash‑or lattice‑based.”
+You can think of this as canonical shielded-note semantics with: no ECC, no Pedersen, no RedDSA — everything is hash‑ or lattice‑based.
 
 ---
 
@@ -160,7 +160,7 @@ Instead of explicitly enumerating all possible assets in the circuit, you:
 This gives MASP semantics without any ECC:
 
 * The sort + run‑sum works over plain integers in the STARK field.
-* The size cost is O((M+N) log (M+N)) constraints, which is manageable at Zcash‑like M,N.
+* The size cost is O((M+N) log (M+N)) constraints, which is manageable at the target M,N.
 
 If you want to be more aggressive, you can avoid exposing per‑asset details publicly: the proof enforces the equalities, but `balance_tag` is simply a commitment to the whole vector `(Δ_k)`. Nodes don’t need to inspect it; they only check that the proof verifies.
 
@@ -422,7 +422,7 @@ A wallet with `vk_incoming`:
 * Knows `sk_derive`, so can recompute each `sk_enc(d)` and `pk_enc(d)` for its diversified addresses.
 * For each new note on chain, try decapsulation with every `sk_enc(d)` you care about; if decap succeeds and the AEAD tag verifies, it’s yours.
 
-Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, trial decryption is acceptable in v1. The scanning cost is similar order of magnitude to Sapling’s trial decryption.
+Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, trial decryption is acceptable in v1. The scanning cost is of the same order of magnitude as a contemporary shielded-wallet scan/decryption pass.
 
 **Full viewing key** `vk_full`:
 

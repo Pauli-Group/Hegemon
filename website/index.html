@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HEGEMON — Quantum-Resistant Private Payments</title>
-    <meta name="description" content="A post-quantum, shielded settlement layer for private payments. One pool from genesis, self-custody first, no trusted setup, and proof of disclosure when specific facts must be proven.">
+    <title>HEGEMON — Post-Quantum Shielded Money</title>
+    <meta name="description" content="HEGEMON is post-quantum shielded money: a shielded-only monetary protocol with one pool from genesis, self-custody by default, transparent proofs, and proof of disclosure when specific facts must be proven.">
     <link rel="canonical" href="https://hegemonprotocol.com/">
     <meta property="og:site_name" content="HEGEMON">
-    <meta property="og:title" content="HEGEMON — Quantum-Resistant Private Payments">
-    <meta property="og:description" content="A post-quantum, shielded settlement layer for private payments. One pool from genesis, self-custody first, no trusted setup, and proof of disclosure when specific facts must be proven.">
+    <meta property="og:title" content="HEGEMON — Post-Quantum Shielded Money">
+    <meta property="og:description" content="HEGEMON is post-quantum shielded money: a shielded-only monetary protocol with one pool from genesis, self-custody by default, transparent proofs, and proof of disclosure when specific facts must be proven.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://hegemonprotocol.com/">
-    <meta property="og:image" content="https://hegemonprotocol.com/social-card.png?v=20260331">
-    <meta property="og:image:secure_url" content="https://hegemonprotocol.com/social-card.png?v=20260331">
+    <meta property="og:image" content="https://hegemonprotocol.com/social-card.png?v=20260422">
+    <meta property="og:image:secure_url" content="https://hegemonprotocol.com/social-card.png?v=20260422">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="HEGEMON social card showing the protocol emblem and the headline Quantum-resistant private payments.">
+    <meta property="og:image:alt" content="HEGEMON social card showing the protocol emblem and the headline Post-quantum shielded money.">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="HEGEMON — Quantum-Resistant Private Payments">
-    <meta name="twitter:description" content="A post-quantum, shielded settlement layer for private payments. One pool from genesis, self-custody first, no trusted setup, and proof of disclosure when specific facts must be proven.">
-    <meta name="twitter:image" content="https://hegemonprotocol.com/social-card.png?v=20260331">
-    <meta name="twitter:image:alt" content="HEGEMON social card showing the protocol emblem and the headline Quantum-resistant private payments.">
+    <meta name="twitter:title" content="HEGEMON — Post-Quantum Shielded Money">
+    <meta name="twitter:description" content="HEGEMON is post-quantum shielded money: a shielded-only monetary protocol with one pool from genesis, self-custody by default, transparent proofs, and proof of disclosure when specific facts must be proven.">
+    <meta name="twitter:image" content="https://hegemonprotocol.com/social-card.png?v=20260422">
+    <meta name="twitter:image:alt" content="HEGEMON social card showing the protocol emblem and the headline Post-quantum shielded money.">
     <meta name="theme-color" content="#0E1C36">
     
     <!-- Fonts (self-hosted) -->
@@ -47,7 +47,7 @@
                 <span>HEGEMON</span>
             </a>
             <div class="nav-links">
-                <a href="#commerce">Commerce</a>
+                <a href="#money">Money</a>
                 <a href="#why">Threat Model</a>
                 <a href="#architecture">Architecture</a>
                 <a href="#security">Security</a>
@@ -64,12 +64,12 @@
         <div class="hero-content">
             <div class="hero-badge">ALPHA RELEASE</div>
             <h1 class="hero-title">
-                <span class="hero-title-main">Quantum-resistant</span>
-                <span class="hero-title-accent">private payments</span>
+                <span class="hero-title-main">Post-quantum</span>
+                <span class="hero-title-accent">shielded money</span>
             </h1>
             <p class="hero-subtitle">
-                A shielded settlement layer for people and businesses that want private payments, self-custody,
-                and post-quantum durability. One pool from genesis, with proof of disclosure when specific facts must be proven.
+                A shielded-only monetary protocol with one pool from genesis, self-custody by default,
+                transparent proofs, and proof of disclosure when specific facts must be proven.
             </p>
             <div class="hero-ctas">
                 <a href="#whitepaper" class="btn btn-primary">Read the Whitepaper</a>
@@ -108,14 +108,15 @@
         </div>
     </section>
 
-    <!-- Commerce Section -->
-    <section class="section section-dark" id="commerce">
+    <!-- Money Section -->
+    <section class="section section-dark" id="money">
         <div class="container">
             <div class="section-header">
-                <span class="section-badge">PAYMENTS</span>
-                <h2 class="section-title">Private payments for real life</h2>
+                <span class="section-badge">MONEY</span>
+                <h2 class="section-title">Shielded money from genesis</h2>
                 <p class="section-subtitle">
-                    Transparent ledgers expose balances, counterparties, payroll, and inventory timing. HEGEMON keeps payment history legible to participants and opaque to everyone else.
+                    HEGEMON keeps value inside one shielded pool from issuance onward. No transparent mode,
+                    no split privacy sets, and no public relationship graph.
                 </p>
             </div>
 
@@ -127,8 +128,8 @@
                             <path d="M9 12l2 2 4-4"/>
                         </svg>
                     </div>
-                    <h3>Digital bearer instrument</h3>
-                    <p>Custody notes locally and transact without exposing balances, ownership, or memos on-chain.</p>
+                    <h3>Shielded-only monetary base</h3>
+                    <p>All value lives in the shielded pool. Commitments and nullifiers are public; balances, recipients, and memos are not.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -138,8 +139,8 @@
                             <path d="M12 22V12"/>
                         </svg>
                     </div>
-                    <h3>Borderless settlement rail</h3>
-                    <p>Settle cross-border payments, payroll, and bilateral transfers with permissionless PoW finality—without publishing the relationship graph.</p>
+                    <h3>One pool from genesis</h3>
+                    <p>Issuance, transfers, and rewards all land inside the same privacy set instead of splintering users across public and private modes.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -149,7 +150,7 @@
                         </svg>
                     </div>
                     <h3>Proof of disclosure</h3>
-                    <p>Generate proofs of disclosure or scoped disclosures to prove specific facts without handing over your whole history.</p>
+                    <p>Prove a payment, balance claim, or source-of-funds fact without handing over your whole history.</p>
                 </div>
             </div>
         </div>
@@ -216,7 +217,7 @@
                 <span class="section-badge">PROTOCOL</span>
                 <h2 class="section-title">Architecture</h2>
                 <p class="section-subtitle">
-                    Four tightly-coupled subsystems deliver private, settlement-grade commerce.
+                    Four tightly-coupled subsystems deliver shielded money under a post-quantum threat model.
                 </p>
             </div>
             
@@ -348,15 +349,14 @@
             
             <div class="whitepaper-content">
                 <p>
-                    HEGEMON (HGN) establishes a unified, privacy-preserving settlement layer built for users 
-                    who want autonomy over money even in the presence of large-scale quantum adversaries. The 
-                    project combines a post-quantum shielded pool, manifest-driven protocol evolution, and 
-                    permissionless PoW consensus into a self-custodied monetary primitive for private payments.
+                    HEGEMON (HGN) is post-quantum shielded money. The protocol combines a shielded-only
+                    pool, manifest-driven protocol evolution, and permissionless PoW consensus into a
+                    self-custodied monetary system built for quantum-capable adversaries.
                 </p>
                 <p>
-                    Private payments need more than secrecy. Honest users also need the ability to prove specific 
-                    facts without exposing the rest of their lives or businesses. HEGEMON treats proof of 
-                    disclosure as the way to prove specific claims without defaulting to universal visibility.
+                    Private money needs more than secrecy. Honest users also need the ability to prove specific
+                    facts without exposing the rest of their history. HEGEMON treats proof of disclosure as the
+                    way to prove specific claims without defaulting to universal visibility.
                 </p>
                 <div class="whitepaper-cta">
                     <a href="https://github.com/Pauli-Group/Hegemon/blob/main/README.md" class="btn btn-primary" target="_blank" rel="noopener">
@@ -371,50 +371,46 @@
     <section class="section" id="comparison">
         <div class="container">
             <div class="section-header">
-                <span class="section-badge">COMPARISON</span>
-                <h2 class="section-title">vs. Legacy Privacy Coins</h2>
+                <span class="section-badge">GUARANTEES</span>
+                <h2 class="section-title">Protocol guarantees</h2>
             </div>
             
             <div class="comparison-table-wrapper">
                 <table class="comparison-table">
                     <thead>
                         <tr>
-                            <th>Feature</th>
+                            <th>Property</th>
                             <th class="highlight">HEGEMON</th>
-                            <th>Zcash</th>
-                            <th>Aleo</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td>Quantum-resistant</td>
-                            <td class="highlight">✓ ML-DSA/SLH-DSA</td>
-                            <td>✗ ECC</td>
-                            <td>✗ ECC</td>
+                            <td>Monetary mode</td>
+                            <td class="highlight">Shielded-only</td>
                         </tr>
                         <tr>
-                            <td>Trusted setup</td>
-                            <td class="highlight">✓ None (STARKs)</td>
-                            <td>✗ Powers of Tau</td>
-                            <td>✗ Universal SRS</td>
-                        </tr>
-                        <tr>
-                            <td>Single shielded pool</td>
-                            <td class="highlight">✓ From genesis</td>
-                            <td>✗ 3 pools</td>
-                            <td>✓</td>
-                        </tr>
-                        <tr>
-                            <td>Transparent mode</td>
-                            <td class="highlight">✗ Shielded only</td>
-                            <td>✓ t-addrs</td>
-                            <td>✓ Public state</td>
+                            <td>Cryptography</td>
+                            <td class="highlight">Post-quantum by default</td>
                         </tr>
                         <tr>
                             <td>Proof system</td>
-                            <td class="highlight">STARK</td>
-                            <td>Groth16</td>
-                            <td>Marlin</td>
+                            <td class="highlight">Transparent STARKs</td>
+                        </tr>
+                        <tr>
+                            <td>Pool topology</td>
+                            <td class="highlight">One pool from genesis</td>
+                        </tr>
+                        <tr>
+                            <td>Custody</td>
+                            <td class="highlight">Self-custody first</td>
+                        </tr>
+                        <tr>
+                            <td>Disclosure</td>
+                            <td class="highlight">User-scoped proofs and viewing keys</td>
+                        </tr>
+                        <tr>
+                            <td>Issuance</td>
+                            <td class="highlight">Permissionless PoW</td>
                         </tr>
                     </tbody>
                 </table>
@@ -426,8 +422,8 @@
     <section class="section section-cta">
         <div class="container">
             <div class="cta-content">
-                <h2>Ready to run private payments?</h2>
-                <p>Start a dev node, mine blocks, and integrate wallets and proofs of disclosure.</p>
+                <h2>Run post-quantum shielded money.</h2>
+                <p>Start a dev node, mine shielded rewards, and integrate wallets and proofs of disclosure.</p>
                 <div class="cta-buttons">
                     <a href="https://github.com/Pauli-Group/Hegemon/blob/main/runbooks/miner_wallet_quickstart.md" class="btn btn-primary btn-large" target="_blank" rel="noopener">
                         Node + Wallet Quickstart →
@@ -454,7 +450,7 @@
                         </svg>
                         <span>HEGEMON</span>
                     </div>
-                    <p>Quantum-resistant private payments</p>
+                    <p>Post-quantum shielded money</p>
                 </div>
                 <div class="footer-links">
                     <div class="footer-column">
