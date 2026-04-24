@@ -50,7 +50,6 @@ rust-embed = "8.0"
 sha2 = "0.10"
 mime_guess = "2.0"
 rpassword = "7.4.0"
-atty = "0.2.14"
 url = "2"
 base64 = "0.22"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

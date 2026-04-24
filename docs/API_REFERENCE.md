@@ -87,12 +87,16 @@ Hegemon-specific RPC methods exposed on the native JSON-RPC server:
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
+  - Unsafe-only local/operator control RPC. Requires `--rpc-methods=unsafe`; `auto` exposes it only on loopback.
 - `hegemon_stopMining() -> MiningControlResponse`
+  - Unsafe-only local/operator control RPC. Requires `--rpc-methods=unsafe`; `auto` exposes it only on loopback.
 - `hegemon_compactJob(params?: { auth_token?: String }) -> CompactJobResponse`
 - `hegemon_submitCompactSolution(request: { worker_name: String, job_id: String, nonce: String, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolWork(params?: { auth_token?: String }) -> PoolWorkResponse`
 - `hegemon_submitPoolShare(request: { worker_name: String, nonce: String, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolStatus(params?: { auth_token?: String }) -> PoolStatusResponse`
+- `hegemon_submitTransaction(...) -> { success: false, error: String }`
+  - Disabled compatibility stub. Wallets and applications must use `hegemon_submitAction` for live native protocol actions.
 - `hegemon_consensusStatus() -> ConsensusStatus`
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`

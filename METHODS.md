@@ -195,7 +195,7 @@ is always valid on the product path. The shielded reward mint path (`mint_coinba
 `mint_block_rewards` internal path) validates a `BlockRewardBundle` with one required miner note. Miner reward must equal
 `subsidy + miner_fees`. There is no separate prover reward or artifact-claim payout lane on the product path, and there is
 no deterministic fee-quote schedule. If a block omits reward minting, accumulated miner tips are treated as burned
-and tracked on-chain.
+and tracked on-chain; the missing subsidy is not added to `supply_digest` because no shielded coinbase note was created.
 
 The legacy forced-inclusion bond queue is removed in the proof-native cut. Censorship resistance for the private lane is now handled by the unsigned shielded submission path itself plus block-import validation, rather than by reserving public balances behind a transparent account.
 

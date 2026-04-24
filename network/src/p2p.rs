@@ -10,6 +10,15 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+const MAX_WIRE_FRAME_LEN: usize = 16 * 1024 * 1024;
+const MAX_HANDSHAKE_FRAME_LEN: usize = 64 * 1024;
+
+fn wire_codec() -> LengthDelimitedCodec {
+    let mut codec = LengthDelimitedCodec::new();
+    codec.set_max_frame_length(MAX_WIRE_FRAME_LEN);
+    codec
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CompactAddress {
     V4 { ip: [u8; 4], port: u16 },
@@ -82,7 +91,7 @@ where
 {
     pub fn new(socket: S) -> Self {
         Self {
-            stream: Framed::new(socket, LengthDelimitedCodec::new()),
+            stream: Framed::new(socket, wire_codec()),
             channel: None,
         }
     }
@@ -152,8 +161,14 @@ where
 
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
         let bytes = bincode::serialize(&msg)?;
+        if bytes.len() > MAX_WIRE_FRAME_LEN {
+            return Err(NetworkError::Handshake("wire message too large"));
+        }
         if let Some(channel) = &mut self.channel {
             let encrypted = channel.encrypt(&bytes)?;
+            if encrypted.len() > MAX_WIRE_FRAME_LEN {
+                return Err(NetworkError::Handshake("encrypted frame too large"));
+            }
             self.stream.send(Bytes::copy_from_slice(&encrypted)).await?;
         } else {
             return Err(NetworkError::Handshake("connection not encrypted"));
@@ -178,13 +193,21 @@ where
     }
 
     async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), NetworkError> {
+        if bytes.len() > MAX_HANDSHAKE_FRAME_LEN {
+            return Err(NetworkError::Handshake("handshake frame too large"));
+        }
         self.stream.send(Bytes::copy_from_slice(bytes)).await?;
         Ok(())
     }
 
     async fn recv_raw(&mut self) -> Result<Vec<u8>, NetworkError> {
         match self.stream.next().await {
-            Some(Ok(bytes)) => Ok(bytes.to_vec()),
+            Some(Ok(bytes)) => {
+                if bytes.len() > MAX_HANDSHAKE_FRAME_LEN {
+                    return Err(NetworkError::Handshake("handshake frame too large"));
+                }
+                Ok(bytes.to_vec())
+            }
             Some(Err(e)) => Err(e.into()),
             None => Err(NetworkError::Handshake("connection closed")),
         }
@@ -269,6 +292,28 @@ mod tests {
 
         assert_eq!(initiator_peer, responder_identity.peer_id());
         assert_eq!(responder_peer, initiator_identity.peer_id());
+    }
+
+    #[tokio::test]
+    async fn oversized_handshake_frame_is_rejected() {
+        let responder_identity = PeerIdentity::generate(b"oversized-handshake-responder");
+        let (client_stream, responder_stream) = duplex(MAX_HANDSHAKE_FRAME_LEN * 2);
+
+        let responder_task = task::spawn(async move {
+            let mut conn = Connection::new(responder_stream);
+            conn.handshake_responder(&responder_identity).await
+        });
+
+        let mut raw = Framed::new(client_stream, wire_codec());
+        raw.send(Bytes::from(vec![0u8; MAX_HANDSHAKE_FRAME_LEN + 1]))
+            .await
+            .expect("send oversized handshake frame");
+
+        let err = responder_task
+            .await
+            .expect("responder task")
+            .expect_err("oversized handshake should fail");
+        assert!(err.to_string().contains("handshake frame too large"));
     }
 
     #[tokio::test]

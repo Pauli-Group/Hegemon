@@ -31,13 +31,17 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
-    BLOCK_PROOF_BUNDLE_SCHEMA,
+    BLOCK_PROOF_BUNDLE_SCHEMA, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE,
+    RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -59,6 +63,15 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
+const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
+const PQ_IDENTITY_SEED_LEN: usize = 32;
+const MAX_NATIVE_RPC_ACTION_BYTES: usize = 2 * 1024 * 1024;
+const MAX_NATIVE_DA_CIPHERTEXT_UPLOADS: usize = 1024;
+const MAX_NATIVE_DA_PROOF_UPLOADS: usize = 256;
+const MAX_NATIVE_STAGED_CIPHERTEXTS: usize = 100_000;
+const MAX_NATIVE_STAGED_PROOFS: usize = 10_000;
+const DEFAULT_NATIVE_WALLET_PAGE_LIMIT: u64 = 128;
+const MAX_NATIVE_WALLET_PAGE_LIMIT: u64 = 1024;
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "hegemon-node")]
@@ -116,10 +129,27 @@ pub struct NativeConfig {
     pub pow_bits: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RpcMethodPolicy {
+    Safe,
+    Unsafe,
+}
+
+impl RpcMethodPolicy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Unsafe => "unsafe",
+        }
+    }
+}
+
 impl NativeConfig {
     pub fn from_cli(cli: NativeCli) -> Result<Self> {
         let base_path = resolve_base_path(&cli)?;
         let db_path = base_path.join("native-chain.sled");
+        let rpc_methods =
+            effective_rpc_methods_label(&cli.rpc_methods, cli.rpc_external)?.to_string();
         let rpc_ip = if cli.rpc_external {
             IpAddr::from(Ipv4Addr::UNSPECIFIED)
         } else {
@@ -159,7 +189,7 @@ impl NativeConfig {
             rpc_addr,
             p2p_listen_addr,
             node_name: cli.name.unwrap_or_else(|| "hegemon-native".to_string()),
-            rpc_methods: cli.rpc_methods,
+            rpc_methods,
             rpc_external: cli.rpc_external,
             rpc_cors: cli.rpc_cors,
             seeds,
@@ -252,6 +282,14 @@ struct SubmitActionRpcRequest {
     #[serde(default)]
     new_nullifiers: Vec<String>,
     public_args: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct NativePagination {
+    #[serde(default)]
+    start: u64,
+    #[serde(default = "default_native_wallet_page_limit")]
+    limit: u64,
 }
 
 #[derive(Debug)]
@@ -834,6 +872,10 @@ impl NativeNode {
         })
     }
 
+    fn rpc_policy(&self) -> Result<RpcMethodPolicy> {
+        rpc_method_policy(&self.config.rpc_methods, self.config.rpc_external)
+    }
+
     fn note_status(&self) -> Value {
         let state = self.state.read();
         let root = state.commitment_tree.root();
@@ -869,67 +911,141 @@ impl NativeNode {
         )
     }
 
-    fn wallet_commitments(&self) -> Value {
+    fn wallet_commitments(&self, params: Value) -> Result<Value> {
+        let page = pagination_from_params(params)?;
         let mut entries = Vec::new();
-        for item in self.commitment_tree.iter() {
+        let start_key = page.start.to_be_bytes();
+        for item in self.commitment_tree.range(start_key..) {
             let Ok((key, value)) = item else {
                 continue;
             };
             if key.len() == 8 && value.len() == 48 {
                 let mut index = [0u8; 8];
                 index.copy_from_slice(&key);
+                let index = u64::from_be_bytes(index);
+                if index < page.start {
+                    continue;
+                }
+                if entries.len() >= page.limit as usize {
+                    break;
+                }
                 let mut commitment = [0u8; 48];
                 commitment.copy_from_slice(&value);
+                let commitment_hex = hex48(&commitment);
                 entries.push(json!({
-                    "index": u64::from_be_bytes(index),
-                    "commitment": hex48(&commitment),
+                    "index": index,
+                    "value": commitment_hex,
+                    "commitment": commitment_hex,
                 }));
             }
         }
-        json!({
+        let total = self.commitment_tree.len() as u64;
+        Ok(json!({
             "entries": entries,
-            "total": self.commitment_tree.len(),
-            "has_more": false,
-        })
+            "total": total,
+            "has_more": page.start.saturating_add(page.limit) < total,
+        }))
     }
 
-    fn wallet_ciphertexts(&self) -> Value {
+    fn wallet_ciphertexts(&self, params: Value) -> Result<Value> {
+        let page = pagination_from_params(params)?;
+        let (entries, total) = self.ciphertext_entries_page(page)?;
+        Ok(json!({
+            "entries": entries,
+            "total": total,
+            "has_more": page.start.saturating_add(page.limit) < total,
+        }))
+    }
+
+    fn ciphertext_entries_page(&self, page: NativePagination) -> Result<(Vec<Value>, u64)> {
+        use base64::Engine;
+
+        let chain = self.chain_to_hash(self.best_meta().hash)?;
         let mut entries = Vec::new();
-        for item in self.ciphertext_index_tree.iter() {
-            let Ok((key, value)) = item else {
-                continue;
-            };
-            if key.len() == 48 && value.len() >= 44 {
-                let mut hash = [0u8; 48];
-                hash.copy_from_slice(&key);
-                let mut tx_hash = [0u8; 32];
-                tx_hash.copy_from_slice(&value[..32]);
-                let mut size = [0u8; 4];
-                size.copy_from_slice(&value[32..36]);
-                let mut output_index = [0u8; 8];
-                output_index.copy_from_slice(&value[36..44]);
-                entries.push(json!({
-                    "hash": hex48(&hash),
-                    "tx_hash": hex32(&tx_hash),
-                    "size": u32::from_le_bytes(size),
-                    "output_index": u64::from_le_bytes(output_index),
-                }));
+        let mut index = 0u64;
+        let end = page.start.saturating_add(page.limit);
+        for meta in chain.iter().skip(1) {
+            for action in decode_block_actions(meta)? {
+                match action.action_id {
+                    ACTION_SHIELDED_TRANSFER_INLINE => {
+                        let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+                            .map_err(|err| {
+                                anyhow!("decode shielded inline action args failed: {err:?}")
+                            })?;
+                        for note in &args.ciphertexts {
+                            if index >= page.start && index < end {
+                                let bytes = encrypted_note_da_bytes(note)?;
+                                entries.push(json!({
+                                    "index": index,
+                                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes),
+                                }));
+                            }
+                            index = index.saturating_add(1);
+                        }
+                    }
+                    ACTION_SHIELDED_TRANSFER_SIDECAR => {
+                        let args =
+                            ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+                                .map_err(|err| {
+                                    anyhow!("decode shielded sidecar action args failed: {err:?}")
+                                })?;
+                        for hash in &args.ciphertext_hashes {
+                            if index >= page.start && index < end {
+                                let bytes = self
+                                    .da_ciphertext_tree
+                                    .get(hash.as_slice())?
+                                    .ok_or_else(|| {
+                                        anyhow!("missing canonical DA ciphertext {}", hex48(hash))
+                                    })?;
+                                entries.push(json!({
+                                    "index": index,
+                                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes.as_ref()),
+                                }));
+                            }
+                            index = index.saturating_add(1);
+                        }
+                    }
+                    ACTION_MINT_COINBASE => {
+                        let args = MintCoinbaseArgs::decode(&mut &action.public_args[..]).map_err(
+                            |err| anyhow!("decode coinbase action args failed: {err:?}"),
+                        )?;
+                        if index >= page.start && index < end {
+                            let bytes = encrypted_note_da_bytes(
+                                &args.reward_bundle.miner_note.encrypted_note,
+                            )?;
+                            entries.push(json!({
+                                "index": index,
+                                "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes),
+                            }));
+                        }
+                        index = index.saturating_add(1);
+                    }
+                    _ => {}
+                }
+                if index >= end && entries.len() >= page.limit as usize {
+                    continue;
+                }
             }
         }
-        json!({
-            "entries": entries,
-            "total": self.ciphertext_index_tree.len(),
-            "has_more": false,
-        })
+        Ok((entries, index))
     }
 
-    fn wallet_nullifiers(&self) -> Value {
+    fn wallet_nullifiers(&self, params: Value) -> Result<Value> {
+        let page = pagination_from_params(params)?;
         let state = self.state.read();
-        json!({
-            "nullifiers": state.nullifiers.iter().map(hex48).collect::<Vec<_>>(),
-            "total": state.nullifiers.len() as u64,
-            "has_more": false,
-        })
+        let total = state.nullifiers.len() as u64;
+        let nullifiers = state
+            .nullifiers
+            .iter()
+            .skip(page.start as usize)
+            .take(page.limit as usize)
+            .map(hex48)
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "nullifiers": nullifiers,
+            "total": total,
+            "has_more": page.start.saturating_add(page.limit) < total,
+        }))
     }
 
     fn submit_action(&self, request: Value) -> Value {
@@ -957,7 +1073,17 @@ impl NativeNode {
             return Err(anyhow!("unsupported family {}", request.family_id));
         }
 
+        if request.public_args.len() > encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES) {
+            return Err(anyhow!(
+                "public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
+            ));
+        }
         let public_args = decode_base64(&request.public_args).context("decode public_args")?;
+        if public_args.len() > MAX_NATIVE_RPC_ACTION_BYTES {
+            return Err(anyhow!(
+                "decoded public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
+            ));
+        }
         let binding = KernelVersionBinding {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
@@ -1162,28 +1288,7 @@ impl NativeNode {
             return Ok(());
         }
 
-        if action.nullifiers.is_empty() {
-            return Err(anyhow!(
-                "shielded transfer must include at least one nullifier"
-            ));
-        }
-        if action.nullifiers.len() > transaction_core::constants::MAX_INPUTS {
-            return Err(anyhow!("too many nullifiers"));
-        }
-        if action.commitments.is_empty() {
-            return Err(anyhow!(
-                "shielded transfer must include at least one commitment"
-            ));
-        }
-        if action.commitments.len() > transaction_core::constants::MAX_OUTPUTS {
-            return Err(anyhow!("too many commitments"));
-        }
-        if action.ciphertext_hashes.len() != action.commitments.len() {
-            return Err(anyhow!("ciphertext hash count must match commitments"));
-        }
-        if action.ciphertext_sizes.len() != action.commitments.len() {
-            return Err(anyhow!("ciphertext size count must match commitments"));
-        }
+        validate_transfer_action_payload(action)?;
 
         let state = self.state.read();
         if !state.commitment_tree.contains_root(&action.anchor) {
@@ -1217,38 +1322,36 @@ impl NativeNode {
         }
 
         if action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR {
-            let args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded sidecar action args failed: {err:?}"))?;
-            if args.proof.is_empty() {
-                return Err(anyhow!("shielded sidecar transfer missing proof"));
-            }
-            for hash in &action.ciphertext_hashes {
-                if !state.staged_ciphertexts.contains_key(&hex48(hash)) {
-                    return Err(anyhow!("missing staged ciphertext {}", hex48(hash)));
+            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                let observed = state
+                    .staged_ciphertexts
+                    .get(&hex48(hash))
+                    .copied()
+                    .ok_or_else(|| anyhow!("missing staged ciphertext {}", hex48(hash)))?;
+                let expected = action
+                    .ciphertext_sizes
+                    .get(idx)
+                    .copied()
+                    .ok_or_else(|| anyhow!("missing ciphertext size for {}", hex48(hash)))?;
+                if observed != expected {
+                    return Err(anyhow!(
+                        "staged ciphertext size mismatch for {}: expected {}, observed {}",
+                        hex48(hash),
+                        expected,
+                        observed
+                    ));
                 }
-            }
-        } else if action.action_id == ACTION_SHIELDED_TRANSFER_INLINE {
-            let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
-            if args.proof.is_empty() {
-                return Err(anyhow!("shielded inline transfer missing proof"));
             }
         }
 
         Ok(())
     }
 
-    fn submit_transaction(&self, bundle: Value) -> Value {
-        let encoded = serde_json::to_vec(&bundle).unwrap_or_default();
-        let hash = hash32_with_parts(&[
-            b"native-wallet-tx-v1",
-            &encoded,
-            &current_time_ms().to_le_bytes(),
-        ]);
+    fn submit_transaction(&self, _bundle: Value) -> Value {
         json!({
-            "success": true,
-            "tx_id": hex32(&hash),
-            "error": null,
+            "success": false,
+            "tx_id": null,
+            "error": "generic transaction submission is disabled; use hegemon_submitAction",
         })
     }
 
@@ -1257,12 +1360,34 @@ impl NativeNode {
             .get("ciphertexts")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("da_submitCiphertexts requires ciphertexts array"))?;
+        if ciphertexts.len() > MAX_NATIVE_DA_CIPHERTEXT_UPLOADS {
+            return Err(anyhow!(
+                "too many ciphertexts in one request: {} > {}",
+                ciphertexts.len(),
+                MAX_NATIVE_DA_CIPHERTEXT_UPLOADS
+            ));
+        }
         let mut results = Vec::with_capacity(ciphertexts.len());
         let mut state = self.state.write();
         for ciphertext in ciphertexts {
             let raw = parse_bytes_value(ciphertext)?;
+            if raw.len() > MAX_CIPHERTEXT_BYTES {
+                return Err(anyhow!(
+                    "ciphertext size {} exceeds limit {}",
+                    raw.len(),
+                    MAX_CIPHERTEXT_BYTES
+                ));
+            }
             let hash = ciphertext_hash_bytes(&raw);
             let hash_hex = hex48(&hash);
+            if !state.staged_ciphertexts.contains_key(&hash_hex)
+                && state.staged_ciphertexts.len() >= MAX_NATIVE_STAGED_CIPHERTEXTS
+            {
+                return Err(anyhow!(
+                    "staged ciphertext capacity reached: {}",
+                    MAX_NATIVE_STAGED_CIPHERTEXTS
+                ));
+            }
             let size = u32::try_from(raw.len()).unwrap_or(u32::MAX);
             self.da_ciphertext_tree.insert(hash.as_slice(), raw)?;
             state.staged_ciphertexts.insert(hash_hex.clone(), size);
@@ -1280,6 +1405,13 @@ impl NativeNode {
             .get("proofs")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("da_submitProofs requires proofs array"))?;
+        if proofs.len() > MAX_NATIVE_DA_PROOF_UPLOADS {
+            return Err(anyhow!(
+                "too many proofs in one request: {} > {}",
+                proofs.len(),
+                MAX_NATIVE_DA_PROOF_UPLOADS
+            ));
+        }
         let mut results = Vec::with_capacity(proofs.len());
         let mut state = self.state.write();
         for item in proofs {
@@ -1295,8 +1427,26 @@ impl NativeNode {
                 item.get("proof")
                     .ok_or_else(|| anyhow!("proof item missing proof"))?,
             )?;
+            if proof.is_empty() {
+                return Err(anyhow!("proof item proof must be non-empty"));
+            }
+            if proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+                return Err(anyhow!(
+                    "proof size {} exceeds native tx-leaf artifact limit {}",
+                    proof.len(),
+                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
+                ));
+            }
             let proof_hash = hash48_with_parts(&[b"da-proof-v1", binding_hash.as_bytes(), &proof]);
             let proof_hash_hex = hex48(&proof_hash);
+            if !state.staged_proofs.contains_key(&binding_hash_key)
+                && state.staged_proofs.len() >= MAX_NATIVE_STAGED_PROOFS
+            {
+                return Err(anyhow!(
+                    "staged proof capacity reached: {}",
+                    MAX_NATIVE_STAGED_PROOFS
+                ));
+            }
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
             self.da_proof_tree
                 .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
@@ -1369,11 +1519,7 @@ fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> 
     let peer_store = PeerStore::new(PeerStoreConfig::with_path(
         config.base_path.join("pq-peers.bin"),
     ));
-    let identity_seed = hash32_with_parts(&[
-        b"hegemon-native-peer-v1",
-        config.node_name.as_bytes(),
-        config.base_path.display().to_string().as_bytes(),
-    ]);
+    let identity_seed = load_native_identity_seed(config)?;
     let mut service = P2PService::new(
         PeerIdentity::generate(&identity_seed),
         listen_addr,
@@ -1626,9 +1772,15 @@ fn dispatch_rpc_request(node: &Arc<NativeNode>, request: Value) -> Value {
 }
 
 fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> Result<Value> {
+    if is_unsafe_rpc_method(method) && node.rpc_policy()? != RpcMethodPolicy::Unsafe {
+        return Err(anyhow!(
+            "unsafe RPC method {method} is disabled; use --rpc-methods=unsafe only on a trusted local control plane"
+        ));
+    }
+
     match method {
         "rpc_methods" => Ok(json!({
-            "methods": native_rpc_methods(),
+            "methods": native_rpc_methods(node.rpc_policy()?),
         })),
         "system_health" => Ok(json!({
             "isSyncing": false,
@@ -1704,9 +1856,9 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
             Ok(node.submit_action(first_param(&params).cloned().unwrap_or(params)))
         }
         "hegemon_walletNotes" => Ok(node.note_status()),
-        "hegemon_walletCommitments" => Ok(node.wallet_commitments()),
-        "hegemon_walletCiphertexts" => Ok(node.wallet_ciphertexts()),
-        "hegemon_walletNullifiers" => Ok(node.wallet_nullifiers()),
+        "hegemon_walletCommitments" => node.wallet_commitments(params),
+        "hegemon_walletCiphertexts" => node.wallet_ciphertexts(params),
+        "hegemon_walletNullifiers" => node.wallet_nullifiers(params),
         "hegemon_latestBlock" => Ok(node.latest_block()),
         "hegemon_generateProof" => Ok(json!({
             "success": false,
@@ -2097,12 +2249,169 @@ fn validate_binding_hash(
     Ok(())
 }
 
+fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
+    if !is_transfer_action(action.action_id) {
+        return Err(anyhow!("action is not a shielded transfer"));
+    }
+    if action.nullifiers.is_empty() {
+        return Err(anyhow!(
+            "shielded transfer must include at least one nullifier"
+        ));
+    }
+    if action.nullifiers.len() > transaction_core::constants::MAX_INPUTS {
+        return Err(anyhow!("too many nullifiers"));
+    }
+    if action.commitments.is_empty() {
+        return Err(anyhow!(
+            "shielded transfer must include at least one commitment"
+        ));
+    }
+    if action.commitments.len() > transaction_core::constants::MAX_OUTPUTS {
+        return Err(anyhow!("too many commitments"));
+    }
+    if action.ciphertext_hashes.len() != action.commitments.len() {
+        return Err(anyhow!("ciphertext hash count must match commitments"));
+    }
+    if action.ciphertext_sizes.len() != action.commitments.len() {
+        return Err(anyhow!("ciphertext size count must match commitments"));
+    }
+    for size in &action.ciphertext_sizes {
+        if *size as usize > MAX_CIPHERTEXT_BYTES {
+            return Err(anyhow!(
+                "ciphertext size {} exceeds limit {}",
+                size,
+                MAX_CIPHERTEXT_BYTES
+            ));
+        }
+    }
+
+    match action.action_id {
+        ACTION_SHIELDED_TRANSFER_INLINE => {
+            let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+                .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
+            if args.proof.is_empty() {
+                return Err(anyhow!("shielded inline transfer missing proof"));
+            }
+            if args.proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+                return Err(anyhow!(
+                    "shielded inline proof size {} exceeds native tx-leaf artifact limit {}",
+                    args.proof.len(),
+                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
+                ));
+            }
+            if args.anchor != action.anchor {
+                return Err(anyhow!("shielded inline anchor mismatch"));
+            }
+            if args.commitments != action.commitments {
+                return Err(anyhow!("shielded inline commitments mismatch"));
+            }
+            let ciphertext_hashes = args
+                .ciphertexts
+                .iter()
+                .map(|note| {
+                    let total_len = note
+                        .ciphertext
+                        .len()
+                        .saturating_add(note.kem_ciphertext.len());
+                    if total_len > MAX_CIPHERTEXT_BYTES {
+                        return Err(anyhow!(
+                            "inline ciphertext size {} exceeds limit {}",
+                            total_len,
+                            MAX_CIPHERTEXT_BYTES
+                        ));
+                    }
+                    let mut bytes = Vec::with_capacity(total_len);
+                    bytes.extend_from_slice(&note.ciphertext);
+                    bytes.extend_from_slice(&note.kem_ciphertext);
+                    Ok(ciphertext_hash_bytes(&bytes))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let ciphertext_sizes = args
+                .ciphertexts
+                .iter()
+                .map(|note| {
+                    u32::try_from(note.ciphertext.len() + note.kem_ciphertext.len())
+                        .unwrap_or(u32::MAX)
+                })
+                .collect::<Vec<_>>();
+            if ciphertext_hashes != action.ciphertext_hashes {
+                return Err(anyhow!("shielded inline ciphertext hashes mismatch"));
+            }
+            if ciphertext_sizes != action.ciphertext_sizes {
+                return Err(anyhow!("shielded inline ciphertext sizes mismatch"));
+            }
+            validate_binding_hash(
+                args.anchor,
+                &action.nullifiers,
+                &args.commitments,
+                &ciphertext_hashes,
+                args.balance_slot_asset_ids,
+                args.fee,
+                args.binding_hash,
+                args.stablecoin,
+            )?;
+            if args.fee != action.fee {
+                return Err(anyhow!("shielded inline fee mismatch"));
+            }
+        }
+        ACTION_SHIELDED_TRANSFER_SIDECAR => {
+            let args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+                .map_err(|err| anyhow!("decode shielded sidecar action args failed: {err:?}"))?;
+            if args.proof.is_empty() {
+                return Err(anyhow!("shielded sidecar transfer missing proof"));
+            }
+            if args.proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+                return Err(anyhow!(
+                    "shielded sidecar proof size {} exceeds native tx-leaf artifact limit {}",
+                    args.proof.len(),
+                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
+                ));
+            }
+            if args.anchor != action.anchor {
+                return Err(anyhow!("shielded sidecar anchor mismatch"));
+            }
+            if args.commitments != action.commitments {
+                return Err(anyhow!("shielded sidecar commitments mismatch"));
+            }
+            if args.ciphertext_hashes != action.ciphertext_hashes {
+                return Err(anyhow!("shielded sidecar ciphertext hashes mismatch"));
+            }
+            if args.ciphertext_sizes != action.ciphertext_sizes {
+                return Err(anyhow!("shielded sidecar ciphertext sizes mismatch"));
+            }
+            validate_binding_hash(
+                args.anchor,
+                &action.nullifiers,
+                &args.commitments,
+                &args.ciphertext_hashes,
+                args.balance_slot_asset_ids,
+                args.fee,
+                args.binding_hash,
+                args.stablecoin,
+            )?;
+            if args.fee != action.fee {
+                return Err(anyhow!("shielded sidecar fee mismatch"));
+            }
+        }
+        _ => unreachable!("transfer action checked above"),
+    }
+
+    Ok(())
+}
+
 fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     if artifact.version != BLOCK_PROOF_BUNDLE_SCHEMA {
         return Err(anyhow!("candidate artifact schema mismatch"));
     }
     if artifact.tx_count == 0 {
         return Err(anyhow!("candidate artifact tx_count must be non-zero"));
+    }
+    if artifact.tx_count > MAX_BATCH_SIZE {
+        return Err(anyhow!(
+            "candidate artifact tx_count {} exceeds max {}",
+            artifact.tx_count,
+            MAX_BATCH_SIZE
+        ));
     }
     if artifact.da_chunk_count == 0 {
         return Err(anyhow!("candidate artifact must declare DA chunks"));
@@ -2129,6 +2438,18 @@ fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     if recursive.proof.data.is_empty() {
         return Err(anyhow!("candidate artifact recursive proof is empty"));
     }
+    let max_recursive_bytes = match artifact.proof_kind {
+        PoolProofArtifactKind::RecursiveBlockV1 => RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE,
+        PoolProofArtifactKind::RecursiveBlockV2 => RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+        _ => unreachable!("recursive proof kind checked above"),
+    };
+    if recursive.proof.data.len() > max_recursive_bytes {
+        return Err(anyhow!(
+            "candidate artifact recursive proof size {} exceeds {}",
+            recursive.proof.data.len(),
+            max_recursive_bytes
+        ));
+    }
     Ok(())
 }
 
@@ -2143,6 +2464,13 @@ fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
     let mut actions = state.pending_actions.values().cloned().collect::<Vec<_>>();
     actions.sort_by_key(action_order_key);
     actions
+}
+
+fn is_transfer_action(action_id: u16) -> bool {
+    matches!(
+        action_id,
+        ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
+    )
 }
 
 fn action_order_key(action: &PendingAction) -> [u8; 32] {
@@ -2188,6 +2516,7 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
     let mut seen_nullifiers = BTreeSet::new();
     let mut seen_actions = BTreeSet::new();
+    let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
         if action.tx_hash != pending_action_hash(action) {
             return Err(anyhow!("block action hash mismatch"));
@@ -2213,11 +2542,24 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             {
                 return Err(anyhow!("coinbase commitment mismatch"));
             }
+            if action.commitments[0] == [0u8; 48] {
+                return Err(anyhow!("zero coinbase commitment rejected"));
+            }
             if action.ciphertext_hashes.len() != 1 || action.ciphertext_sizes.len() != 1 {
                 return Err(anyhow!("coinbase ciphertext metadata mismatch"));
             }
             continue;
         }
+        validate_transfer_action_payload(action)?;
+        let transfer_key = action_order_key(action);
+        if let Some(previous) = previous_transfer_key {
+            if transfer_key < previous {
+                return Err(anyhow!(
+                    "shielded transfer actions are not in canonical order"
+                ));
+            }
+        }
+        previous_transfer_key = Some(transfer_key);
         if !state.commitment_tree.contains_root(&action.anchor) {
             return Err(anyhow!("block action references unknown anchor"));
         }
@@ -2342,14 +2684,13 @@ fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Resul
 }
 
 fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u128> {
-    let subsidy = consensus::reward::block_subsidy(height) as u128;
     if actions
         .iter()
         .any(|action| action.action_id == ACTION_MINT_COINBASE)
     {
         return expected_coinbase_amount(actions, height).map(u128::from);
     }
-    Ok(subsidy)
+    Ok(0)
 }
 
 fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u64> {
@@ -2431,6 +2772,13 @@ fn verify_native_block_artifacts_locked(
     }
 
     let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfers)?;
+    let mut expected_nullifiers = state.nullifiers.clone();
+    for action in &transfers {
+        for nullifier in &action.nullifiers {
+            expected_nullifiers.insert(*nullifier);
+        }
+    }
+    let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
     let header = consensus::BlockHeader {
         version: 1,
         height: state.best.height.saturating_add(1),
@@ -2439,7 +2787,7 @@ fn verify_native_block_artifacts_locked(
         parent_hash: state.best.hash,
         state_root: expected_tree.root(),
         kernel_root: consensus::types::kernel_root_from_shielded_root(&expected_tree.root()),
-        nullifier_root: state.best.nullifier_root,
+        nullifier_root: expected_nullifier_root,
         proof_commitment: consensus::types::compute_proof_commitment(&transactions),
         da_root: computed_da_root,
         da_params,
@@ -2552,6 +2900,24 @@ fn transfer_proof_and_ciphertexts(
         }
         _ => Err(anyhow!("action is not a shielded transfer")),
     }
+}
+
+fn encrypted_note_da_bytes(note: &protocol_shielded_pool::types::EncryptedNote) -> Result<Vec<u8>> {
+    let total_len = note
+        .ciphertext
+        .len()
+        .saturating_add(note.kem_ciphertext.len());
+    if total_len > MAX_CIPHERTEXT_BYTES {
+        return Err(anyhow!(
+            "encrypted note size {} exceeds limit {}",
+            total_len,
+            MAX_CIPHERTEXT_BYTES
+        ));
+    }
+    let mut bytes = Vec::with_capacity(total_len);
+    bytes.extend_from_slice(&note.ciphertext);
+    bytes.extend_from_slice(&note.kem_ciphertext);
+    Ok(bytes)
 }
 
 fn preview_commitment_tree(
@@ -2727,6 +3093,12 @@ fn validate_announced_block(parent: &NativeBlockMeta, meta: &NativeBlockMeta) ->
     if meta.timestamp_ms <= parent.timestamp_ms {
         return Err(anyhow!("announced block timestamp did not advance"));
     }
+    let future_limit = current_time_ms().saturating_add(consensus::reward::MAX_FUTURE_SKEW_MS);
+    if meta.timestamp_ms > future_limit {
+        return Err(anyhow!(
+            "announced block timestamp exceeds future skew bound"
+        ));
+    }
     if meta.pow_bits != parent.pow_bits {
         return Err(anyhow!("native difficulty retargeting is not active yet"));
     }
@@ -2858,6 +3230,142 @@ fn resolve_base_path(cli: &NativeCli) -> Result<PathBuf> {
     Ok(PathBuf::from(".hegemon/native"))
 }
 
+fn load_native_identity_seed(config: &NativeConfig) -> Result<[u8; 32]> {
+    if let Ok(raw) = std::env::var("HEGEMON_PQ_IDENTITY_SEED") {
+        return parse_identity_seed_hex(&raw)
+            .ok_or_else(|| anyhow!("HEGEMON_PQ_IDENTITY_SEED must be 32-byte hex"));
+    }
+    let path = std::env::var("HEGEMON_PQ_IDENTITY_SEED_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config.base_path.join(PQ_IDENTITY_SEED_FILE));
+    load_or_create_identity_seed(&path)
+}
+
+fn load_or_create_identity_seed(path: &Path) -> Result<[u8; 32]> {
+    if path.exists() {
+        tighten_identity_seed_permissions(path)?;
+        return read_identity_seed(path);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create identity seed directory {}", parent.display()))?;
+    }
+    let mut seed = [0u8; PQ_IDENTITY_SEED_LEN];
+    OsRng.fill_bytes(&mut seed);
+    let encoded = format!("{}\n", hex::encode(seed));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(encoded.as_bytes())
+                .with_context(|| format!("write identity seed {}", path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync identity seed {}", path.display()))?;
+            tighten_identity_seed_permissions(path)?;
+            Ok(seed)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            tighten_identity_seed_permissions(path)?;
+            read_identity_seed(path)
+        }
+        Err(err) => Err(err).with_context(|| format!("create identity seed {}", path.display())),
+    }
+}
+
+fn read_identity_seed(path: &Path) -> Result<[u8; 32]> {
+    let bytes = fs::read(path).with_context(|| format!("read identity seed {}", path.display()))?;
+    if bytes.len() == PQ_IDENTITY_SEED_LEN {
+        let mut seed = [0u8; PQ_IDENTITY_SEED_LEN];
+        seed.copy_from_slice(&bytes);
+        return Ok(seed);
+    }
+    let raw = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(parse_identity_seed_hex)
+        .ok_or_else(|| anyhow!("identity seed file must contain 32 raw bytes or 32-byte hex"))?;
+    Ok(raw)
+}
+
+fn parse_identity_seed_hex(raw: &str) -> Option<[u8; 32]> {
+    let clean = raw.trim().strip_prefix("0x").unwrap_or(raw.trim());
+    let bytes = hex::decode(clean).ok()?;
+    if bytes.len() != PQ_IDENTITY_SEED_LEN {
+        return None;
+    }
+    let mut seed = [0u8; PQ_IDENTITY_SEED_LEN];
+    seed.copy_from_slice(&bytes);
+    Some(seed)
+}
+
+fn tighten_identity_seed_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("set permissions on identity seed {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn effective_rpc_methods_label(raw: &str, rpc_external: bool) -> Result<&'static str> {
+    Ok(rpc_method_policy(raw, rpc_external)?.label())
+}
+
+fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "safe" => Ok(RpcMethodPolicy::Safe),
+        "unsafe" => Ok(RpcMethodPolicy::Unsafe),
+        "auto" | "" => {
+            if rpc_external {
+                Ok(RpcMethodPolicy::Safe)
+            } else {
+                Ok(RpcMethodPolicy::Unsafe)
+            }
+        }
+        other => Err(anyhow!(
+            "invalid --rpc-methods value {other:?}; expected auto, safe, or unsafe"
+        )),
+    }
+}
+
+fn default_native_wallet_page_limit() -> u64 {
+    DEFAULT_NATIVE_WALLET_PAGE_LIMIT
+}
+
+fn pagination_from_params(params: Value) -> Result<NativePagination> {
+    let value = first_param(&params).cloned().unwrap_or(Value::Null);
+    let mut page = if value.is_null() {
+        NativePagination {
+            start: 0,
+            limit: DEFAULT_NATIVE_WALLET_PAGE_LIMIT,
+        }
+    } else {
+        serde_json::from_value::<NativePagination>(value).context("decode pagination params")?
+    };
+    if page.limit == 0 {
+        page.limit = DEFAULT_NATIVE_WALLET_PAGE_LIMIT;
+    }
+    page.limit = page.limit.min(MAX_NATIVE_WALLET_PAGE_LIMIT);
+    Ok(page)
+}
+
+fn is_unsafe_rpc_method(method: &str) -> bool {
+    matches!(
+        method,
+        "hegemon_startMining" | "hegemon_stopMining" | "da_submitCiphertexts" | "da_submitProofs"
+    )
+}
+
 fn current_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2929,6 +3437,10 @@ fn decode_base64(raw: &str) -> Result<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(raw)
         .context("decode base64")
+}
+
+fn encoded_len_limit(decoded_len_limit: usize) -> usize {
+    decoded_len_limit.saturating_mul(4).saturating_add(2) / 3 + 4
 }
 
 fn parse_bytes_value(value: &Value) -> Result<Vec<u8>> {
@@ -3056,8 +3568,8 @@ fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> Value {
     })
 }
 
-fn native_rpc_methods() -> Vec<&'static str> {
-    vec![
+fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
+    let mut methods = vec![
         "archive_getContract",
         "archive_getProvider",
         "archive_listContracts",
@@ -3112,7 +3624,11 @@ fn native_rpc_methods() -> Vec<&'static str> {
         "system_name",
         "system_peers",
         "system_version",
-    ]
+    ];
+    if policy != RpcMethodPolicy::Unsafe {
+        methods.retain(|method| !is_unsafe_rpc_method(method));
+    }
+    methods
 }
 
 mod serde_array48 {
@@ -3403,16 +3919,224 @@ mod tests {
         assert_eq!(node.state.read().pending_actions.len(), 0);
     }
 
+    #[test]
+    fn wallet_archive_rpcs_are_paginated_and_wallet_compatible() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), test_pow_bits, "safe", false)).expect("node");
+
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [21u8; 48]);
+        let work = node.prepare_work();
+        let seal = mine_native_round(work.clone(), 0).expect("first seal");
+        node.import_mined_block(&work, seal)
+            .expect("first import")
+            .expect("first block");
+
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(2), [22u8; 48]);
+        let work = node.prepare_work();
+        let seal = mine_native_round(work.clone(), 0).expect("second seal");
+        node.import_mined_block(&work, seal)
+            .expect("second import")
+            .expect("second block");
+
+        {
+            let mut state = node.state.write();
+            state.nullifiers.insert([31u8; 48]);
+            state.nullifiers.insert([32u8; 48]);
+        }
+
+        let commitments = node
+            .wallet_commitments(json!({"start": 0, "limit": 1}))
+            .expect("commitments page");
+        assert_eq!(commitments["total"], json!(2));
+        assert_eq!(commitments["has_more"], json!(true));
+        let commitment_entry = commitments["entries"][0].as_object().expect("entry object");
+        assert!(commitment_entry.contains_key("value"));
+        assert!(commitment_entry.contains_key("commitment"));
+
+        let ciphertexts = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1}))
+            .expect("ciphertexts page");
+        assert_eq!(ciphertexts["total"], json!(2));
+        assert_eq!(ciphertexts["has_more"], json!(true));
+        let ciphertext = ciphertexts["entries"][0]["ciphertext"]
+            .as_str()
+            .expect("ciphertext string");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(ciphertext)
+            .expect("base64 ciphertext");
+        assert_eq!(
+            decoded.len(),
+            protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE + 32
+        );
+
+        let nullifiers = node
+            .wallet_nullifiers(json!({"start": 1, "limit": 1}))
+            .expect("nullifier page");
+        assert_eq!(nullifiers["total"], json!(2));
+        assert_eq!(nullifiers["has_more"], json!(false));
+        assert_eq!(nullifiers["nullifiers"].as_array().expect("array").len(), 1);
+    }
+
+    #[test]
+    fn empty_block_does_not_advance_supply_digest() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+
+        let work = node.prepare_work();
+        let seal = mine_native_round(work.clone(), 0).expect("empty seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("empty import")
+            .expect("empty block");
+
+        assert_eq!(imported.supply_digest, 0);
+        assert_eq!(node.best_meta().supply_digest, 0);
+    }
+
+    #[test]
+    fn announced_block_rejects_future_timestamp_skew() {
+        let pow_bits = 0x207f_ffff;
+        let parent = genesis_meta(pow_bits).expect("genesis");
+        let timestamp_ms =
+            current_time_ms().saturating_add(consensus::reward::MAX_FUTURE_SKEW_MS + 10_000);
+        let future = mined_empty_child_at(&parent, 1, pow_bits, 0, timestamp_ms);
+
+        let err = validate_announced_block(&parent, &future)
+            .expect_err("future-dated block should be rejected");
+        assert!(err.to_string().contains("future skew"));
+    }
+
+    #[test]
+    fn rpc_policy_gates_unsafe_methods() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let safe_node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false))
+            .expect("safe node");
+        let err = dispatch_rpc_method(
+            &safe_node,
+            "da_submitCiphertexts",
+            json!({"ciphertexts": []}),
+        )
+        .expect_err("safe RPC should reject DA staging");
+        assert!(err.to_string().contains("unsafe RPC method"));
+
+        assert_eq!(
+            rpc_method_policy("auto", true).expect("external auto"),
+            RpcMethodPolicy::Safe
+        );
+        assert_eq!(
+            rpc_method_policy("auto", false).expect("local auto"),
+            RpcMethodPolicy::Unsafe
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let unsafe_node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false))
+            .expect("unsafe node");
+        let allowed = dispatch_rpc_method(
+            &unsafe_node,
+            "da_submitCiphertexts",
+            json!({"ciphertexts": []}),
+        )
+        .expect("unsafe RPC should allow DA staging");
+        assert_eq!(allowed, Value::Array(Vec::new()));
+
+        let methods = native_rpc_methods(RpcMethodPolicy::Safe);
+        assert!(!methods.contains(&"da_submitCiphertexts"));
+        assert!(!methods.contains(&"hegemon_startMining"));
+    }
+
+    #[test]
+    fn identity_seed_is_random_persisted_and_reloaded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("pq-identity.seed");
+        let first = load_or_create_identity_seed(&path).expect("create seed");
+        let second = load_or_create_identity_seed(&path).expect("reload seed");
+        assert_eq!(first, second);
+        assert_eq!(parse_identity_seed_hex(&hex::encode(first)), Some(first));
+
+        let old_deterministic = hash32_with_parts(&[
+            b"hegemon-native-peer-v1",
+            b"test",
+            tmp.path().display().to_string().as_bytes(),
+        ]);
+        assert_ne!(first, old_deterministic);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn imported_block_actions_require_canonical_transfer_order() {
+        let pow_bits = 0x207f_ffff;
+        let best = genesis_meta(pow_bits).expect("genesis");
+        let state = test_state(best.clone());
+        let anchor = state.commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [1u8; 48], [11u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [2u8; 48], [22u8; 48], 0);
+        let mut ordered = vec![first, second];
+        ordered.sort_by_key(action_order_key);
+        validate_block_actions_locked(&state, &ordered).expect("ordered actions should validate");
+
+        let mut reversed = ordered.clone();
+        reversed.reverse();
+        if action_order_key(&reversed[0]) != action_order_key(&reversed[1]) {
+            let err = validate_block_actions_locked(&state, &reversed)
+                .expect_err("reversed actions should fail ordering");
+            assert!(err.to_string().contains("canonical order"));
+        }
+    }
+
+    #[test]
+    fn imported_block_actions_recompute_binding_hash() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [3u8; 48], [33u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.binding_hash = [99u8; 64];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("mismatched binding hash should fail");
+        assert!(err.to_string().contains("binding hash mismatch"));
+    }
+
     fn mined_empty_child(
         parent: &NativeBlockMeta,
         height: u64,
         pow_bits: u32,
         round: u64,
     ) -> NativeBlockMeta {
+        mined_empty_child_at(
+            parent,
+            height,
+            pow_bits,
+            round,
+            parent.timestamp_ms.saturating_add(1),
+        )
+    }
+
+    fn mined_empty_child_at(
+        parent: &NativeBlockMeta,
+        height: u64,
+        pow_bits: u32,
+        round: u64,
+        timestamp_ms: u64,
+    ) -> NativeBlockMeta {
         let state_root = parent.state_root;
         let nullifier_root = parent.nullifier_root;
         let extrinsics_root = actions_extrinsics_root(&[]);
-        let timestamp_ms = parent.timestamp_ms.saturating_add(1);
         let pre_hash = native_pre_hash(
             parent,
             height,
@@ -3448,11 +4172,137 @@ mod tests {
             cumulative_work: cumulative_work_after(parent, pow_bits)
                 .expect("cumulative work")
                 .to_bytes_be(),
-            supply_digest: parent
-                .supply_digest
-                .saturating_add(consensus::reward::block_subsidy(height) as u128),
+            supply_digest: parent.supply_digest,
             tx_count: 0,
             action_bytes: Vec::new(),
         }
+    }
+
+    fn test_config(
+        path: &Path,
+        pow_bits: u32,
+        rpc_methods: &str,
+        rpc_external: bool,
+    ) -> NativeConfig {
+        NativeConfig {
+            dev: true,
+            tmp: false,
+            base_path: path.to_path_buf(),
+            db_path: path.join("native-chain.sled"),
+            rpc_addr: "127.0.0.1:0".parse().expect("rpc addr"),
+            p2p_listen_addr: "127.0.0.1:0".to_string(),
+            node_name: "test".to_string(),
+            rpc_methods: rpc_methods.to_string(),
+            rpc_external,
+            rpc_cors: None,
+            seeds: Vec::new(),
+            max_peers: 0,
+            mine: false,
+            mine_threads: 1,
+            miner_address: None,
+            pow_bits,
+        }
+    }
+
+    fn test_state(best: NativeBlockMeta) -> NativeState {
+        NativeState {
+            best,
+            pending_actions: BTreeMap::new(),
+            commitment_tree: CommitmentTreeState::default(),
+            nullifiers: BTreeSet::new(),
+            staged_ciphertexts: BTreeMap::new(),
+            staged_proofs: BTreeMap::new(),
+        }
+    }
+
+    fn test_inline_transfer_action(
+        anchor: [u8; 48],
+        nullifier: [u8; 48],
+        commitment: [u8; 48],
+        fee: u64,
+    ) -> PendingAction {
+        let note = protocol_shielded_pool::types::EncryptedNote {
+            ciphertext: [3u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+            kem_ciphertext: vec![4u8; 32],
+        };
+        let mut note_bytes = Vec::new();
+        note_bytes.extend_from_slice(&note.ciphertext);
+        note_bytes.extend_from_slice(&note.kem_ciphertext);
+        let ciphertext_hash = ciphertext_hash_bytes(&note_bytes);
+        let inputs = ShieldedTransferInputs {
+            anchor,
+            nullifiers: vec![nullifier],
+            commitments: vec![commitment],
+            ciphertext_hashes: vec![ciphertext_hash],
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            fee,
+            value_balance: 0,
+            stablecoin: None,
+        };
+        let binding_hash = StarkVerifier::compute_binding_hash(&inputs).data;
+        let args = ShieldedTransferInlineArgs {
+            proof: vec![9u8; 32],
+            commitments: vec![commitment],
+            ciphertexts: vec![note],
+            anchor,
+            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            binding_hash,
+            stablecoin: None,
+            fee,
+        };
+        let ciphertext_size = u32::try_from(
+            args.ciphertexts[0].ciphertext.len() + args.ciphertexts[0].kem_ciphertext.len(),
+        )
+        .expect("ciphertext size");
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_SHIELDED_TRANSFER_INLINE,
+            anchor,
+            nullifiers: vec![nullifier],
+            commitments: vec![commitment],
+            ciphertext_hashes: vec![ciphertext_hash],
+            ciphertext_sizes: vec![ciphertext_size],
+            public_args: args.encode(),
+            fee,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment: [u8; 48]) {
+        use base64::Engine;
+
+        let note = protocol_shielded_pool::types::EncryptedNote {
+            ciphertext: [11u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+            kem_ciphertext: vec![12u8; 32],
+        };
+        let args = MintCoinbaseArgs {
+            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle {
+                miner_note: protocol_shielded_pool::types::CoinbaseNoteData {
+                    commitment,
+                    encrypted_note: note,
+                    recipient_address: [14u8;
+                        protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
+                    amount,
+                    public_seed: [15u8; 32],
+                },
+            },
+        };
+        node.validate_and_stage_action(json!({
+            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            "family_id": FAMILY_SHIELDED_POOL,
+            "action_id": ACTION_MINT_COINBASE,
+            "new_nullifiers": [],
+            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+        }))
+        .expect("stage test coinbase");
     }
 }
