@@ -211,6 +211,7 @@ fn recursive_block_semantic_inputs_from_block(
         end_kernel_root,
         nullifier_root,
         da_root,
+        message_root: block.header.message_root(),
         start_tree_commitment: parent_commitment_tree.recursive_state_commitment(),
         end_tree_commitment: expected_tree.recursive_state_commitment(),
     })
@@ -2197,6 +2198,7 @@ mod tests {
             end_kernel_root: [6u8; 48],
             nullifier_root: [7u8; 48],
             da_root: [8u8; 48],
+            message_root: [11u8; 48],
             start_tree_commitment: [9u8; 48],
             end_tree_commitment: [10u8; 48],
         }

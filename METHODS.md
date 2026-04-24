@@ -202,6 +202,27 @@ The legacy forced-inclusion bond queue is removed in the proof-native cut. Censo
 Within a block, shielded transfer actions must appear in nondecreasing order of `blake2_256(binding_hash || nullifiers...)`, with SCALE-encoded action/family payloads preserved for wallet compatibility.
 Nodes enforce this during block import and local block production so miners do not have discretionary ordering inside the private lane.
 
+### zk bridge light-client method
+
+The bridge path deliberately separates Hegemon consensus from zk proof transport. Full nodes still accept the greatest-work valid PoW chain. A zkVM prover only proves a light-client statement about that chain to another verifier:
+
+```text
+given a trusted Hegemon checkpoint,
+verify a compact long-range PoW proof with deterministic target/work rules,
+verify the fixed-width cumulative-work claimed by the message header and canonical tip,
+verify MMR openings for the message header and deterministic FlyClient-style sampled headers,
+verify an ordered BridgeMessageV1 is included under message_root,
+emit BridgeCheckpointOutputV1.
+```
+
+The reusable verifier lives in `consensus-light-client` and exposes `PowHeaderV1`, `TrustedCheckpointV1`, `BridgeCheckpointOutputV1`, `HeaderMmrOpeningV1`, `HegemonLongRangeProofV1`, `verify_pow_header`, `verify_header_chain`, `verify_cumulative_work`, `verify_header_mmr_opening`, `verify_hegemon_long_range_proof`, and `verify_message_inclusion`. It is `no_std + alloc` compatible and has no node, sled, networking, async, or zkVM-vendor dependencies.
+
+The native node computes bridge commitments during block production and import. Outbound bridge actions use the `protocol-kernel` bridge family and become ordered `BridgeMessageV1` records with nonce `source_height << 64 | per_block_index`; the block header binds their ordered `message_root` and `message_count`. Inbound bridge actions carry a versioned external proof receipt and are rejected unless the message is addressed to Hegemon, the payload hash matches, the `(source_chain_id, source_message_nonce)` replay key is neither pending nor consumed, and the action carries no shielded-state deltas.
+
+`hegemon_exportBridgeWitness` exports the current canonical witness object for a committed outbound message: parent checkpoint, canonical `PowHeaderV1`, header-history hashes, compact `HegemonLongRangeProofV1` bytes when the message has at least one confirming source tip, bridge messages, selected message index, and the decoded `BridgeCheckpointOutputV1`. The long-range proof uses a real MMR root over historical header hashes plus deterministic FlyClient-style sample indices derived from the tip root, tip hash, and message header hash. It is probabilistic in the same sense as FlyClient: it avoids linear header replay, but it does not turn PoW into deterministic BFT finality.
+
+The RISC Zero bridge method under `zk/risc0-bridge/methods` reads `HegemonLongRangeProofV1`, runs `verify_hegemon_long_range_proof` inside the zkVM, and commits the SCALE-encoded `BridgeCheckpointOutputV1` as the authenticated journal. The host prover under `zk/risc0-bridge/prover` emits `RiscZeroBridgeReceiptV1`, and destination Hegemon verifies the RISC Zero receipt image ID plus journal before staging an inbound action. The loopback example in `node/examples/hegemon_loopback_bridge.rs` and `docs/bridge_loopback.md` demonstrates the two-end shape: source exports the compact proof input, the RISC Zero prover produces a STARK receipt, and destination Hegemon consumes the proven message once.
+
 ### Aggregation mode and proof sidecar (product block path)
 
 For the fresh-chain 0.10.0 product path, non-empty shielded blocks now always use native same-block recursive aggregation. Wallets submit native `tx_leaf` artifacts in each transfer extrinsic, and block authors must also attach a native constant-size `recursive_block` artifact so import verifies the block through `SelfContainedAggregation` instead of the removed `InlineRequired` product lane. On this lane the legacy `commitment_proof` payload is required to be empty and consensus derives the semantic tuple directly from the ordered verified `tx_leaf` stream plus parent state. The older native `receipt_root` object remains available as an explicit compatibility/research lane, not the shipped default.

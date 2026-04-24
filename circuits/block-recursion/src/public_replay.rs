@@ -33,6 +33,7 @@ pub struct BlockSemanticInputsV1 {
     pub end_kernel_root: Digest48,
     pub nullifier_root: Digest48,
     pub da_root: Digest48,
+    pub message_root: Digest48,
     pub start_tree_commitment: Digest48,
     pub end_tree_commitment: Digest48,
 }
@@ -49,6 +50,7 @@ pub struct RecursiveBlockPublicV1 {
     pub end_kernel_root: Digest48,
     pub nullifier_root: Digest48,
     pub da_root: Digest48,
+    pub message_root: Digest48,
     pub start_tree_commitment: Digest48,
     pub end_tree_commitment: Digest48,
 }
@@ -123,6 +125,7 @@ pub fn public_replay_v1(
         end_kernel_root: semantic.end_kernel_root,
         nullifier_root: semantic.nullifier_root,
         da_root: semantic.da_root,
+        message_root: semantic.message_root,
         start_tree_commitment: semantic.start_tree_commitment,
         end_tree_commitment: semantic.end_tree_commitment,
     })
@@ -176,6 +179,7 @@ pub fn prefix_public_v1(
         end_kernel_root: semantic.end_kernel_root,
         nullifier_root: semantic.nullifier_root,
         da_root: semantic.da_root,
+        message_root: semantic.message_root,
         start_tree_commitment: semantic.start_tree_commitment,
         end_tree_commitment,
     })

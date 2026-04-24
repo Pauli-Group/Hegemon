@@ -1,0 +1,22 @@
+[package]
+name = "consensus-light-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake3 = { version = "1", default-features = false }
+codec = { workspace = true }
+protocol-kernel = { path = "../protocol/kernel", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "blake3/std",
+    "codec/std",
+    "protocol-kernel/std",
+    "sha2/std",
+]
+
+[lints]
+workspace = true

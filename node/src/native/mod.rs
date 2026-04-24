@@ -16,14 +16,29 @@ use consensus::{
     CommitmentTreeState, DaParams, ProofEnvelope, Transaction, TxValidityArtifact,
     COMMITMENT_TREE_DEPTH,
 };
+use consensus_light_client::{
+    bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
+    canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
+    cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
+    flyclient_sample_indices, hash_meets_target, header_mmr_opening_from_hashes,
+    header_mmr_root_from_hashes, pow_hash_from_pre_hash, verify_pow_header,
+    BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
+    HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+};
 use network::{
     service::DirectedProtocolMessage, GossipRouter, NatTraversalConfig, P2PService, PeerId,
     PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
     RelayConfig,
 };
-use num_bigint::BigUint;
 use parking_lot::{Mutex, RwLock};
 use protocol_kernel::types::KernelVersionBinding;
+use protocol_kernel::{
+    bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
+    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND,
+    ACTION_BRIDGE_OUTBOUND, ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
+};
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
     SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE,
@@ -59,6 +74,7 @@ const NATIVE_DEV_POW_BITS: u32 = 0x1f00_ffff;
 const HASHES_PER_ROUND: u64 = 16_384;
 const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
+const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
@@ -72,6 +88,7 @@ const MAX_NATIVE_STAGED_CIPHERTEXTS: usize = 100_000;
 const MAX_NATIVE_STAGED_PROOFS: usize = 10_000;
 const DEFAULT_NATIVE_WALLET_PAGE_LIMIT: u64 = 128;
 const MAX_NATIVE_WALLET_PAGE_LIMIT: u64 = 1024;
+const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "hegemon-node")]
@@ -204,20 +221,29 @@ impl NativeConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct NativeBlockMeta {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
     height: u64,
     hash: [u8; 32],
     parent_hash: [u8; 32],
     #[serde(with = "serde_array48")]
     state_root: [u8; 48],
     #[serde(with = "serde_array48")]
+    kernel_root: [u8; 48],
+    #[serde(with = "serde_array48")]
     nullifier_root: [u8; 48],
     extrinsics_root: [u8; 32],
+    #[serde(with = "serde_array48")]
+    message_root: [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
     timestamp_ms: u64,
     pow_bits: u32,
     nonce: [u8; 32],
     work_hash: [u8; 32],
-    #[serde(default)]
-    cumulative_work: Vec<u8>,
+    #[serde(with = "serde_array48")]
+    cumulative_work: [u8; 48],
     supply_digest: u128,
     tx_count: u32,
     #[serde(default)]
@@ -230,8 +256,14 @@ struct NativeWork {
     parent_hash: [u8; 32],
     pre_hash: [u8; 32],
     state_root: [u8; 48],
+    kernel_root: [u8; 48],
     nullifier_root: [u8; 48],
     extrinsics_root: [u8; 32],
+    message_root: [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
+    cumulative_work: [u8; 48],
     tx_count: u32,
     timestamp_ms: u64,
     pow_bits: u32,
@@ -298,6 +330,7 @@ struct NativeState {
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
     commitment_tree: CommitmentTreeState,
     nullifiers: BTreeSet<[u8; 48]>,
+    consumed_bridge_messages: BTreeSet<[u8; 48]>,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
 }
@@ -311,6 +344,7 @@ pub struct NativeNode {
     action_tree: sled::Tree,
     nullifier_tree: sled::Tree,
     commitment_tree: sled::Tree,
+    bridge_inbound_tree: sled::Tree,
     ciphertext_index_tree: sled::Tree,
     da_ciphertext_tree: sled::Tree,
     da_proof_tree: sled::Tree,
@@ -338,6 +372,7 @@ impl NativeNode {
         let action_tree = db.open_tree("mempool_actions")?;
         let nullifier_tree = db.open_tree("shielded_nullifiers")?;
         let commitment_tree = db.open_tree("shielded_commitments")?;
+        let bridge_inbound_tree = db.open_tree("bridge_inbound_messages")?;
         let ciphertext_index_tree = db.open_tree("shielded_ciphertext_index")?;
         let da_ciphertext_tree = db.open_tree("da_pending_ciphertexts")?;
         let da_proof_tree = db.open_tree("da_pending_proofs")?;
@@ -346,6 +381,7 @@ impl NativeNode {
         let pending_actions = load_pending_actions(&action_tree)?;
         let nullifiers = load_nullifiers(&nullifier_tree)?;
         let commitment_state = load_commitment_tree(&commitment_tree)?;
+        let consumed_bridge_messages = load_consumed_bridge_messages(&bridge_inbound_tree)?;
         let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&da_proof_tree)?;
 
@@ -358,6 +394,7 @@ impl NativeNode {
             action_tree,
             nullifier_tree,
             commitment_tree,
+            bridge_inbound_tree,
             ciphertext_index_tree,
             da_ciphertext_tree,
             da_proof_tree,
@@ -366,6 +403,7 @@ impl NativeNode {
                 pending_actions,
                 commitment_tree: commitment_state,
                 nullifiers,
+                consumed_bridge_messages,
                 staged_ciphertexts,
                 staged_proofs,
             }),
@@ -423,22 +461,53 @@ impl NativeNode {
             });
         let timestamp_ms = current_time_ms().max(best.timestamp_ms.saturating_add(1));
         let height = best.height.saturating_add(1);
-        let pre_hash = native_pre_hash(
-            &best,
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let bridge_messages = bridge_messages_from_actions(&actions, height);
+        let message_root = bridge_message_root(&bridge_messages);
+        let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
+        let header_history = self.header_hashes_to_hash(best.hash).unwrap_or_else(|err| {
+            warn!(error = %err, "failed to build header MMR history for native work");
+            Vec::new()
+        });
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
+            .unwrap_or(best.cumulative_work);
+        let supply_digest = best
+            .supply_digest
+            .saturating_add(native_block_supply_delta(&actions, height).unwrap_or_default());
+        let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
+            best.hash,
             self.config.pow_bits,
+            [0u8; 32],
+            cumulative_work,
             &state_root,
+            &kernel_root,
             &nullifier_root,
             &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            supply_digest,
+            tx_count,
         );
+        let pre_hash = pre_header.pre_hash();
         NativeWork {
             height,
             parent_hash: best.hash,
             pre_hash,
             state_root,
+            kernel_root,
             nullifier_root,
             extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
             tx_count,
             timestamp_ms,
             pow_bits: self.config.pow_bits,
@@ -479,21 +548,35 @@ impl NativeNode {
         let previous_supply = state.best.supply_digest;
         let supply_delta = native_block_supply_delta(&actions, work.height)?;
         let meta = NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height: work.height,
             hash: seal.work_hash,
             parent_hash: work.parent_hash,
             state_root: work.state_root,
+            kernel_root: work.kernel_root,
             nullifier_root: work.nullifier_root,
             extrinsics_root: work.extrinsics_root,
+            message_root: work.message_root,
+            message_count: work.message_count,
+            header_mmr_root: work.header_mmr_root,
+            header_mmr_len: work.header_mmr_len,
             timestamp_ms: work.timestamp_ms,
             pow_bits: work.pow_bits,
             nonce: seal.nonce,
             work_hash: seal.work_hash,
-            cumulative_work: cumulative_work_after(&state.best, work.pow_bits)?.to_bytes_be(),
+            cumulative_work: work.cumulative_work,
             supply_digest: previous_supply.saturating_add(supply_delta),
             tx_count: work.tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
         };
+        let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
+        if meta.header_mmr_root != header_mmr_root_from_hashes(&expected_header_history)
+            || meta.header_mmr_len != expected_header_history.len() as u64
+        {
+            return Err(anyhow!("native mined block header MMR mismatch"));
+        }
+        verify_native_pow_meta(&state.best, &meta)?;
 
         persist_block(&self.meta_tree, &self.height_tree, &self.block_tree, &meta)?;
         state.best = meta.clone();
@@ -516,6 +599,12 @@ impl NativeNode {
             return Ok(false);
         };
         validate_announced_block(&parent, &meta)?;
+        let expected_header_history = self.header_hashes_to_hash(parent.hash)?;
+        if meta.header_mmr_root != header_mmr_root_from_hashes(&expected_header_history)
+            || meta.header_mmr_len != expected_header_history.len() as u64
+        {
+            return Err(anyhow!("announced block header MMR mismatch"));
+        }
 
         let parent_state = if parent.hash == state.best.hash {
             NativeState {
@@ -523,6 +612,7 @@ impl NativeNode {
                 pending_actions: BTreeMap::new(),
                 commitment_tree: state.commitment_tree.clone(),
                 nullifiers: state.nullifiers.clone(),
+                consumed_bridge_messages: state.consumed_bridge_messages.clone(),
                 staged_ciphertexts: BTreeMap::new(),
                 staged_proofs: BTreeMap::new(),
             }
@@ -535,9 +625,15 @@ impl NativeNode {
         if tx_count != meta.tx_count {
             return Err(anyhow!("announced block action count mismatch"));
         }
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let bridge_messages = bridge_messages_from_actions(&actions, meta.height);
+        let message_root = bridge_message_root(&bridge_messages);
         if state_root != meta.state_root
+            || kernel_root != meta.kernel_root
             || nullifier_root != meta.nullifier_root
             || extrinsics_root != meta.extrinsics_root
+            || message_root != meta.message_root
+            || bridge_messages.len() as u32 != meta.message_count
         {
             return Err(anyhow!("announced block state transition mismatch"));
         }
@@ -629,6 +725,14 @@ impl NativeNode {
         Ok(chain)
     }
 
+    fn header_hashes_to_hash(&self, hash: [u8; 32]) -> Result<Vec<Hash32>> {
+        Ok(self
+            .chain_to_hash(hash)?
+            .into_iter()
+            .map(|meta| meta.hash)
+            .collect())
+    }
+
     fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
         let chain = self.chain_to_hash(hash)?;
         let genesis = chain
@@ -640,6 +744,7 @@ impl NativeNode {
             pending_actions: BTreeMap::new(),
             commitment_tree: CommitmentTreeState::default(),
             nullifiers: BTreeSet::new(),
+            consumed_bridge_messages: BTreeSet::new(),
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
@@ -677,6 +782,7 @@ impl NativeNode {
         self.height_tree.clear()?;
         self.commitment_tree.clear()?;
         self.nullifier_tree.clear()?;
+        self.bridge_inbound_tree.clear()?;
         self.ciphertext_index_tree.clear()?;
 
         for meta in &new_chain {
@@ -687,6 +793,7 @@ impl NativeNode {
             &new_chain,
             &self.commitment_tree,
             &self.nullifier_tree,
+            &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
         )?;
 
@@ -722,6 +829,7 @@ impl NativeNode {
         self.height_tree.flush()?;
         self.commitment_tree.flush()?;
         self.nullifier_tree.flush()?;
+        self.bridge_inbound_tree.flush()?;
         self.ciphertext_index_tree.flush()?;
 
         new_state.pending_actions = pending;
@@ -753,6 +861,15 @@ impl NativeNode {
                     return Err(anyhow!("duplicate nullifier during block import"));
                 }
                 self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
+            }
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                if !state.consumed_bridge_messages.insert(replay_key) {
+                    return Err(anyhow!(
+                        "duplicate inbound bridge message during block import"
+                    ));
+                }
+                self.bridge_inbound_tree
+                    .insert(replay_key.as_slice(), b"1")?;
             }
 
             for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
@@ -1069,7 +1186,7 @@ impl NativeNode {
     fn validate_and_stage_action(&self, request: Value) -> Result<PendingAction> {
         let request: SubmitActionRpcRequest =
             serde_json::from_value(request).context("decode submit action request")?;
-        if request.family_id != FAMILY_SHIELDED_POOL {
+        if request.family_id != FAMILY_SHIELDED_POOL && request.family_id != FAMILY_BRIDGE {
             return Err(anyhow!("unsupported family {}", request.family_id));
         }
 
@@ -1095,8 +1212,85 @@ impl NativeNode {
             .collect::<Result<Vec<_>>>()?;
 
         let received_ms = current_time_ms();
-        let mut pending = match request.action_id {
-            ACTION_SHIELDED_TRANSFER_INLINE => {
+        let mut pending = match (request.family_id, request.action_id) {
+            (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => {
+                let args = OutboundBridgeArgsV1::decode(&mut &public_args[..])
+                    .map_err(|err| anyhow!("decode outbound bridge action args failed: {err:?}"))?;
+                if args.payload.is_empty() {
+                    return Err(anyhow!("outbound bridge payload must be non-empty"));
+                }
+                PendingAction {
+                    tx_hash: [0u8; 32],
+                    binding,
+                    family_id: request.family_id,
+                    action_id: request.action_id,
+                    anchor: [0u8; 48],
+                    nullifiers: Vec::new(),
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    ciphertext_sizes: Vec::new(),
+                    public_args,
+                    fee: 0,
+                    candidate_artifact: None,
+                    received_ms,
+                }
+            }
+            (FAMILY_BRIDGE, ACTION_BRIDGE_INBOUND) => {
+                let args = InboundBridgeArgsV1::decode(&mut &public_args[..])
+                    .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+                if args.proof_receipt.is_empty() {
+                    return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
+                }
+                if args.message.source_chain_id != args.source_chain_id
+                    || args.message.message_nonce != args.source_message_nonce
+                {
+                    return Err(anyhow!("inbound bridge replay key does not match message"));
+                }
+                if args.message.destination_chain_id != HEGEMON_CHAIN_ID_V1 {
+                    return Err(anyhow!(
+                        "inbound bridge message is not addressed to Hegemon"
+                    ));
+                }
+                if args.message.payload_hash != bridge_payload_hash(&args.message.payload) {
+                    return Err(anyhow!("inbound bridge message payload hash mismatch"));
+                }
+                PendingAction {
+                    tx_hash: [0u8; 32],
+                    binding,
+                    family_id: request.family_id,
+                    action_id: request.action_id,
+                    anchor: [0u8; 48],
+                    nullifiers: Vec::new(),
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    ciphertext_sizes: Vec::new(),
+                    public_args,
+                    fee: 0,
+                    candidate_artifact: None,
+                    received_ms,
+                }
+            }
+            (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER) => {
+                BridgeVerifierRegistrationV1::decode(&mut &public_args[..]).map_err(|err| {
+                    anyhow!("decode bridge verifier registration args failed: {err:?}")
+                })?;
+                PendingAction {
+                    tx_hash: [0u8; 32],
+                    binding,
+                    family_id: request.family_id,
+                    action_id: request.action_id,
+                    anchor: [0u8; 48],
+                    nullifiers: Vec::new(),
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    ciphertext_sizes: Vec::new(),
+                    public_args,
+                    fee: 0,
+                    candidate_artifact: None,
+                    received_ms,
+                }
+            }
+            (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
                 let args = ShieldedTransferInlineArgs::decode(&mut &public_args[..])
                     .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
                 let ciphertext_hashes = args
@@ -1144,7 +1338,7 @@ impl NativeNode {
                     received_ms,
                 }
             }
-            ACTION_SHIELDED_TRANSFER_SIDECAR => {
+            (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
                 let mut args =
                     ShieldedTransferSidecarArgs::decode(&mut &public_args[..]).map_err(|err| {
                         anyhow!("decode shielded sidecar action args failed: {err:?}")
@@ -1189,7 +1383,7 @@ impl NativeNode {
                     received_ms,
                 }
             }
-            ACTION_SUBMIT_CANDIDATE_ARTIFACT => {
+            (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
                 let args =
                     SubmitCandidateArtifactArgs::decode(&mut &public_args[..]).map_err(|err| {
                         anyhow!("decode candidate artifact action args failed: {err:?}")
@@ -1211,7 +1405,7 @@ impl NativeNode {
                     received_ms,
                 }
             }
-            ACTION_MINT_COINBASE => {
+            (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
                 let args = MintCoinbaseArgs::decode(&mut &public_args[..])
                     .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
                 if args.reward_bundle.miner_note.amount == 0 {
@@ -1238,7 +1432,7 @@ impl NativeNode {
                     received_ms,
                 }
             }
-            other => return Err(anyhow!("unsupported native shielded action {other}")),
+            (_, other) => return Err(anyhow!("unsupported native action {other}")),
         };
 
         self.validate_action_state(&pending)?;
@@ -1264,10 +1458,30 @@ impl NativeNode {
     }
 
     fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
-        if action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT {
+        if action.family_id == FAMILY_BRIDGE {
+            validate_bridge_action_payload(action)?;
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                let state = self.state.read();
+                if state.consumed_bridge_messages.contains(&replay_key) {
+                    return Err(anyhow!("inbound bridge message already consumed"));
+                }
+                if state.pending_actions.values().any(|pending| {
+                    bridge_inbound_replay_key_from_action(pending)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|key| key == replay_key)
+                }) {
+                    return Err(anyhow!("inbound bridge message already pending"));
+                }
+            }
             return Ok(());
         }
-        if action.action_id == ACTION_MINT_COINBASE {
+        if action.family_id == FAMILY_SHIELDED_POOL
+            && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
+        {
+            return Ok(());
+        }
+        if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
             if action.commitments.len() != 1
                 || action.ciphertext_hashes.len() != 1
                 || action.ciphertext_sizes.len() != 1
@@ -1321,7 +1535,9 @@ impl NativeNode {
             }
         }
 
-        if action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR {
+        if action.family_id == FAMILY_SHIELDED_POOL
+            && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
+        {
             for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
                 let observed = state
                     .staged_ciphertexts
@@ -1841,6 +2057,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
             }))
         }
         "hegemon_consensusStatus" => Ok(node.consensus_status()),
+        "hegemon_exportBridgeWitness" => export_bridge_witness(node, params),
         "hegemon_telemetry" => Ok(node.telemetry_snapshot()),
         "hegemon_storageFootprint" => Ok(node.storage_footprint()),
         "hegemon_nodeConfig" => Ok(node.node_config_snapshot()),
@@ -2019,15 +2236,238 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
     Ok(Value::Array(rows))
 }
 
+fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
+    let block_hash = first_param(&params)
+        .and_then(Value::as_str)
+        .and_then(parse_hash32)
+        .unwrap_or_else(|| node.best_meta().hash);
+    let message_index = nth_param(&params, 1).and_then(Value::as_u64).unwrap_or(0) as usize;
+    let meta = node
+        .header_by_hash(&block_hash)?
+        .ok_or_else(|| anyhow!("unknown block {}", hex32(&block_hash)))?;
+    let actions = decode_block_actions(&meta)?;
+    let messages = bridge_messages_from_actions(&actions, meta.height);
+    let message = messages
+        .get(message_index)
+        .cloned()
+        .ok_or_else(|| anyhow!("bridge message index out of bounds"))?;
+    let parent = node
+        .header_by_hash(&meta.parent_hash)?
+        .ok_or_else(|| anyhow!("missing parent for bridge witness"))?;
+    let header = pow_header_from_meta(&meta);
+    let parent_checkpoint = checkpoint_from_meta(&parent);
+    let best = node.best_meta();
+    let confirmations_checked = best
+        .height
+        .saturating_sub(meta.height)
+        .saturating_add(1)
+        .min(u32::MAX as u64) as u32;
+    let output = bridge_checkpoint_output_with_tip(
+        &checkpoint_from_meta(&meta),
+        &checkpoint_from_meta(&best),
+        meta.message_root,
+        &message,
+        confirmations_checked,
+        [0u8; 48],
+    );
+    let direct_output = bridge_checkpoint_output(
+        &checkpoint_from_meta(&meta),
+        meta.message_root,
+        &message,
+        1,
+        [0u8; 48],
+    );
+    let light_client_receipt = HegemonLightClientProofReceiptV1 {
+        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+        parent_checkpoint: parent_checkpoint.clone(),
+        header: header.clone(),
+        messages: messages.clone(),
+        message_index: message_index
+            .try_into()
+            .map_err(|_| anyhow!("bridge message index out of bounds"))?,
+        output: direct_output,
+    };
+    let long_range_proof = build_long_range_bridge_proof(
+        node,
+        &meta,
+        &best,
+        &messages,
+        message_index,
+        output.clone(),
+    )?;
+    let canonical_long_range_proof = long_range_proof
+        .as_ref()
+        .map(|proof| format!("0x{}", hex::encode(proof.encode())));
+    Ok(json!({
+        "schema": "hegemon.bridge-witness.v1",
+        "parent_checkpoint": checkpoint_json(&parent_checkpoint),
+        "header": pow_header_json(&header),
+        "header_hashes": node.header_hashes_to_hash(parent.hash)?
+            .into_iter()
+            .map(|hash| hex32(&hash))
+            .collect::<Vec<_>>(),
+        "message_index": message_index,
+        "messages": messages.iter().map(bridge_message_json).collect::<Vec<_>>(),
+        "output": bridge_checkpoint_output_json(&output),
+        "canonical": {
+            "parent_checkpoint": format!("0x{}", hex::encode(canonical_trusted_checkpoint_bytes_v1(&parent_checkpoint))),
+            "header": format!("0x{}", hex::encode(header.canonical_bytes())),
+            "message": format!("0x{}", hex::encode(message.encode())),
+            "output": format!("0x{}", hex::encode(canonical_bridge_checkpoint_output_bytes_v1(&output))),
+            "light_client_receipt": format!("0x{}", hex::encode(light_client_receipt.encode())),
+            "long_range_proof": canonical_long_range_proof,
+        },
+    }))
+}
+
+fn build_long_range_bridge_proof(
+    node: &NativeNode,
+    message_meta: &NativeBlockMeta,
+    tip_meta: &NativeBlockMeta,
+    messages: &[BridgeMessageV1],
+    message_index: usize,
+    output: BridgeCheckpointOutputV1,
+) -> Result<Option<HegemonLongRangeProofV1>> {
+    if tip_meta.height <= message_meta.height {
+        return Ok(None);
+    }
+    let genesis_hash = node
+        .hash_by_height(0)?
+        .ok_or_else(|| anyhow!("missing genesis hash for bridge witness"))?;
+    let genesis = node
+        .header_by_hash(&genesis_hash)?
+        .ok_or_else(|| anyhow!("missing genesis header for bridge witness"))?;
+    let tip_history = node.header_hashes_to_hash(tip_meta.parent_hash)?;
+    let message_header = pow_header_from_meta(message_meta);
+    let tip_header = pow_header_from_meta(tip_meta);
+    let message_header_opening = header_mmr_opening_from_hashes(&tip_history, message_meta.height)
+        .map_err(|err| anyhow!("build message header MMR opening failed: {err:?}"))?;
+    let sample_indices = flyclient_sample_indices(
+        tip_meta.header_mmr_root,
+        tip_meta.hash,
+        message_meta.hash,
+        genesis.height.saturating_add(1),
+        tip_meta.height,
+        DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT,
+    );
+    let mut sample_headers = Vec::with_capacity(sample_indices.len());
+    for sample_height in sample_indices {
+        let sample_hash = node
+            .hash_by_height(sample_height)?
+            .ok_or_else(|| anyhow!("missing sampled header at height {sample_height}"))?;
+        let sample_meta = node
+            .header_by_hash(&sample_hash)?
+            .ok_or_else(|| anyhow!("missing sampled header {}", hex32(&sample_hash)))?;
+        let opening = header_mmr_opening_from_hashes(&tip_history, sample_height)
+            .map_err(|err| anyhow!("build sampled header MMR opening failed: {err:?}"))?;
+        sample_headers.push(HeaderMmrLeafWitnessV1 {
+            header: pow_header_from_meta(&sample_meta),
+            opening,
+        });
+    }
+    Ok(Some(HegemonLongRangeProofV1 {
+        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+        trusted_checkpoint: checkpoint_from_meta(&genesis),
+        tip_header,
+        message_header,
+        message_header_opening,
+        messages: messages.to_vec(),
+        message_index: message_index
+            .try_into()
+            .map_err(|_| anyhow!("bridge message index out of bounds"))?,
+        sample_headers,
+        sample_count: DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT,
+        output,
+    }))
+}
+
 fn header_json(meta: &NativeBlockMeta) -> Value {
     json!({
         "parentHash": hex32(&meta.parent_hash),
         "number": format!("0x{:x}", meta.height),
         "stateRoot": hex32(&hash32_with_parts(&[b"native-state-root-view", &meta.state_root])),
         "extrinsicsRoot": hex32(&meta.extrinsics_root),
+        "chainId": hex32(&meta.chain_id),
+        "rulesHash": hex32(&meta.rules_hash),
+        "kernelRoot": hex48(&meta.kernel_root),
+        "nullifierRoot": hex48(&meta.nullifier_root),
+        "messageRoot": hex48(&meta.message_root),
+        "messageCount": meta.message_count,
+        "headerMmrRoot": hex32(&meta.header_mmr_root),
+        "headerMmrLen": meta.header_mmr_len,
+        "cumulativeWork": format!("0x{}", hex::encode(meta.cumulative_work)),
+        "powBits": meta.pow_bits,
+        "nonce": hex32(&meta.nonce),
         "digest": {
             "logs": [],
         },
+    })
+}
+
+fn checkpoint_json(checkpoint: &TrustedCheckpointV1) -> Value {
+    json!({
+        "chain_id": hex32(&checkpoint.chain_id),
+        "rules_hash": hex32(&checkpoint.rules_hash),
+        "height": checkpoint.height,
+        "header_hash": hex32(&checkpoint.header_hash),
+        "timestamp_ms": checkpoint.timestamp_ms,
+        "pow_bits": checkpoint.pow_bits,
+        "cumulative_work": format!("0x{}", hex::encode(checkpoint.cumulative_work)),
+        "header_mmr_root": hex32(&checkpoint.header_mmr_root),
+        "header_mmr_len": checkpoint.header_mmr_len,
+    })
+}
+
+fn pow_header_json(header: &PowHeaderV1) -> Value {
+    json!({
+        "chain_id": hex32(&header.chain_id),
+        "rules_hash": hex32(&header.rules_hash),
+        "height": header.height,
+        "timestamp_ms": header.timestamp_ms,
+        "parent_hash": hex32(&header.parent_hash),
+        "state_root": hex48(&header.state_root),
+        "kernel_root": hex48(&header.kernel_root),
+        "nullifier_root": hex48(&header.nullifier_root),
+        "action_root": hex32(&header.action_root),
+        "message_root": hex48(&header.message_root),
+        "message_count": header.message_count,
+        "header_mmr_root": hex32(&header.header_mmr_root),
+        "header_mmr_len": header.header_mmr_len,
+        "pow_bits": header.pow_bits,
+        "nonce": hex32(&header.nonce),
+        "cumulative_work": format!("0x{}", hex::encode(header.cumulative_work)),
+        "pow_hash": hex32(&header.pow_hash()),
+    })
+}
+
+fn bridge_message_json(message: &BridgeMessageV1) -> Value {
+    json!({
+        "source_chain_id": hex32(&message.source_chain_id),
+        "destination_chain_id": hex32(&message.destination_chain_id),
+        "app_family_id": message.app_family_id,
+        "message_nonce": message.message_nonce.to_string(),
+        "source_height": message.source_height,
+        "payload_hash": hex48(&message.payload_hash),
+        "payload": format!("0x{}", hex::encode(&message.payload)),
+        "message_hash": hex48(&message.message_hash()),
+    })
+}
+
+fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV1) -> Value {
+    json!({
+        "source_chain_id": hex32(&output.source_chain_id),
+        "rules_hash": hex32(&output.rules_hash),
+        "checkpoint_height": output.checkpoint_height,
+        "checkpoint_header_hash": hex32(&output.checkpoint_header_hash),
+        "checkpoint_cumulative_work": format!("0x{}", hex::encode(output.checkpoint_cumulative_work)),
+        "canonical_tip_height": output.canonical_tip_height,
+        "canonical_tip_header_hash": hex32(&output.canonical_tip_header_hash),
+        "canonical_tip_cumulative_work": format!("0x{}", hex::encode(output.canonical_tip_cumulative_work)),
+        "message_root": hex48(&output.message_root),
+        "message_hash": hex48(&output.message_hash),
+        "message_nonce": output.message_nonce.to_string(),
+        "confirmations_checked": output.confirmations_checked,
+        "min_work_checked": format!("0x{}", hex::encode(output.min_work_checked)),
     })
 }
 
@@ -2093,29 +2533,40 @@ fn load_best_or_genesis(
 
 fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
     let state_root = CommitmentTreeState::default().root();
+    let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
     let nullifier_root = nullifier_root_from_set(&BTreeSet::new());
     let timestamp_ms = 0;
     let extrinsics_root = empty_extrinsics_root(0);
+    let message_root = empty_bridge_message_root();
     let hash = hash32_with_parts(&[
         b"hegemon-native-genesis-v1",
         &state_root,
+        &kernel_root,
         &nullifier_root,
         &extrinsics_root,
+        &message_root,
         &pow_bits.to_le_bytes(),
     ]);
 
     Ok(NativeBlockMeta {
+        chain_id: HEGEMON_CHAIN_ID_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
         height: 0,
         hash,
         parent_hash: [0u8; 32],
         state_root,
+        kernel_root,
         nullifier_root,
         extrinsics_root,
+        message_root,
+        message_count: 0,
+        header_mmr_root: empty_header_mmr_root(),
+        header_mmr_len: 0,
         timestamp_ms,
         pow_bits,
         nonce: [0u8; 32],
         work_hash: hash,
-        cumulative_work: Vec::new(),
+        cumulative_work: [0u8; 48],
         supply_digest: 0,
         tx_count: 0,
         action_bytes: Vec::new(),
@@ -2202,6 +2653,19 @@ fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
         }
     }
     Ok(nullifiers)
+}
+
+fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
+    let mut consumed = BTreeSet::new();
+    for item in tree.iter() {
+        let (key, _) = item?;
+        if key.len() == 48 {
+            let mut replay_key = [0u8; 48];
+            replay_key.copy_from_slice(&key);
+            consumed.insert(replay_key);
+        }
+    }
+    Ok(consumed)
 }
 
 fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeState> {
@@ -2473,21 +2937,27 @@ fn is_transfer_action(action_id: u16) -> bool {
     )
 }
 
+fn is_shielded_transfer_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL && is_transfer_action(action.action_id)
+}
+
 fn action_order_key(action: &PendingAction) -> [u8; 32] {
     let mut preimage = Vec::new();
-    match action.action_id {
-        ACTION_SHIELDED_TRANSFER_INLINE => {
+    match (action.family_id, action.action_id) {
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
             if let Ok(args) = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..]) {
                 preimage.extend_from_slice(&args.binding_hash);
             }
         }
-        ACTION_SHIELDED_TRANSFER_SIDECAR => {
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
             if let Ok(args) = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..]) {
                 preimage.extend_from_slice(&args.binding_hash);
             }
         }
         _ => {
             preimage.extend_from_slice(b"non-transfer");
+            preimage.extend_from_slice(&action.family_id.to_le_bytes());
+            preimage.extend_from_slice(&action.action_id.to_le_bytes());
             preimage.extend_from_slice(&action.tx_hash);
         }
     }
@@ -2498,6 +2968,154 @@ fn action_order_key(action: &PendingAction) -> [u8; 32] {
         preimage.extend_from_slice(&action.tx_hash);
     }
     crypto::hashes::blake2_256(&preimage)
+}
+
+fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
+    if action.family_id != FAMILY_BRIDGE {
+        return Err(anyhow!("not a bridge action"));
+    }
+    if !action.nullifiers.is_empty()
+        || !action.commitments.is_empty()
+        || !action.ciphertext_hashes.is_empty()
+        || !action.ciphertext_sizes.is_empty()
+    {
+        return Err(anyhow!(
+            "bridge actions must not carry shielded state deltas"
+        ));
+    }
+    match action.action_id {
+        ACTION_BRIDGE_OUTBOUND => {
+            let args = OutboundBridgeArgsV1::decode(&mut &action.public_args[..])
+                .map_err(|err| anyhow!("decode outbound bridge action args failed: {err:?}"))?;
+            if args.payload.is_empty() {
+                return Err(anyhow!("outbound bridge payload must be non-empty"));
+            }
+            Ok(())
+        }
+        ACTION_BRIDGE_INBOUND => {
+            let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+                .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+            if args.proof_receipt.is_empty() {
+                return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
+            }
+            if args.message.source_chain_id != args.source_chain_id
+                || args.message.message_nonce != args.source_message_nonce
+            {
+                return Err(anyhow!("inbound bridge replay key does not match message"));
+            }
+            if args.message.destination_chain_id != HEGEMON_CHAIN_ID_V1 {
+                return Err(anyhow!(
+                    "inbound bridge message is not addressed to Hegemon"
+                ));
+            }
+            if args.message.payload_hash != bridge_payload_hash(&args.message.payload) {
+                return Err(anyhow!("inbound bridge message payload hash mismatch"));
+            }
+            verify_inbound_bridge_receipt(&args)?;
+            Ok(())
+        }
+        ACTION_REGISTER_BRIDGE_VERIFIER => {
+            BridgeVerifierRegistrationV1::decode(&mut &action.public_args[..]).map_err(|err| {
+                anyhow!("decode bridge verifier registration args failed: {err:?}")
+            })?;
+            Ok(())
+        }
+        other => Err(anyhow!("unsupported bridge action {other}")),
+    }
+}
+
+fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
+    if args.source_chain_id != HEGEMON_CHAIN_ID_V1 {
+        return Err(anyhow!(
+            "Hegemon RISC Zero bridge verifier only accepts Hegemon source chain"
+        ));
+    }
+    let mut encoded = args.proof_receipt.as_slice();
+    let receipt = RiscZeroBridgeReceiptV1::decode(&mut encoded)
+        .map_err(|err| anyhow!("decode RISC Zero bridge receipt failed: {err:?}"))?;
+    if !encoded.is_empty() {
+        return Err(anyhow!("RISC Zero bridge receipt has trailing bytes"));
+    }
+    let output = verify_risc0_bridge_receipt(&receipt, args.verifier_program_hash)?;
+    if output.source_chain_id != args.source_chain_id
+        || output.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+        || output.message_nonce != args.source_message_nonce
+        || output.message_hash != args.message.message_hash()
+    {
+        return Err(anyhow!(
+            "Hegemon light-client bridge receipt output mismatch"
+        ));
+    }
+    Ok(())
+}
+
+fn verify_risc0_bridge_receipt(
+    envelope: &RiscZeroBridgeReceiptV1,
+    expected_image_id: [u8; 32],
+) -> Result<BridgeCheckpointOutputV1> {
+    if envelope.image_id != expected_image_id {
+        return Err(anyhow!("RISC Zero bridge image id mismatch"));
+    }
+    let output = decode_risc0_bridge_journal(envelope)
+        .map_err(|err| anyhow!("decode RISC Zero bridge journal failed: {err:?}"))?;
+    let receipt: risc0_zkvm::Receipt = bincode::deserialize(&envelope.receipt)
+        .map_err(|err| anyhow!("decode RISC Zero receipt failed: {err}"))?;
+    match &receipt.inner {
+        risc0_zkvm::InnerReceipt::Composite(_) | risc0_zkvm::InnerReceipt::Succinct(_) => {}
+        #[cfg(test)]
+        risc0_zkvm::InnerReceipt::Fake(_) => {}
+        risc0_zkvm::InnerReceipt::Groth16(_) => {
+            return Err(anyhow!(
+                "RISC Zero Groth16 receipts are not accepted on the PQ bridge path"
+            ));
+        }
+        _ => return Err(anyhow!("unsupported RISC Zero bridge receipt kind")),
+    }
+    if receipt.journal.bytes != envelope.journal {
+        return Err(anyhow!("RISC Zero bridge journal mismatch"));
+    }
+    receipt
+        .verify(risc0_zkvm::Digest::from(expected_image_id))
+        .map_err(|err| anyhow!("RISC Zero bridge receipt verification failed: {err:?}"))?;
+    Ok(output)
+}
+
+fn bridge_inbound_replay_key_from_action(action: &PendingAction) -> Result<Option<[u8; 48]>> {
+    if action.family_id != FAMILY_BRIDGE || action.action_id != ACTION_BRIDGE_INBOUND {
+        return Ok(None);
+    }
+    let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+        .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+    Ok(Some(inbound_replay_key(
+        args.source_chain_id,
+        args.source_message_nonce,
+    )))
+}
+
+fn bridge_messages_from_actions(
+    actions: &[PendingAction],
+    source_height: u64,
+) -> Vec<BridgeMessageV1> {
+    let mut messages = Vec::new();
+    for action in actions {
+        if action.family_id != FAMILY_BRIDGE || action.action_id != ACTION_BRIDGE_OUTBOUND {
+            continue;
+        }
+        let Ok(args) = OutboundBridgeArgsV1::decode(&mut &action.public_args[..]) else {
+            continue;
+        };
+        let message_nonce = ((source_height as u128) << 64) | messages.len() as u128;
+        messages.push(BridgeMessageV1 {
+            source_chain_id: HEGEMON_CHAIN_ID_V1,
+            destination_chain_id: args.destination_chain_id,
+            app_family_id: args.app_family_id,
+            message_nonce,
+            source_height,
+            payload_hash: bridge_payload_hash(&args.payload),
+            payload: args.payload,
+        });
+    }
+    messages
 }
 
 fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
@@ -2515,6 +3133,7 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
 
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
     let mut seen_nullifiers = BTreeSet::new();
+    let mut seen_bridge_messages = BTreeSet::new();
     let mut seen_actions = BTreeSet::new();
     let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
@@ -2524,14 +3143,27 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         if !seen_actions.insert(action.tx_hash) {
             return Err(anyhow!("duplicate action in block"));
         }
-        if action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT {
+        if action.family_id == FAMILY_BRIDGE {
+            validate_bridge_action_payload(action)?;
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                if state.consumed_bridge_messages.contains(&replay_key)
+                    || !seen_bridge_messages.insert(replay_key)
+                {
+                    return Err(anyhow!("duplicate inbound bridge message in block"));
+                }
+            }
+            continue;
+        }
+        if action.family_id == FAMILY_SHIELDED_POOL
+            && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
+        {
             let Some(artifact) = action.candidate_artifact.as_ref() else {
                 return Err(anyhow!("candidate artifact action missing payload"));
             };
             validate_candidate_artifact(artifact)?;
             continue;
         }
-        if action.action_id == ACTION_MINT_COINBASE {
+        if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
             let args = MintCoinbaseArgs::decode(&mut &action.public_args[..])
                 .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
             if args.reward_bundle.miner_note.amount == 0 {
@@ -2598,6 +3230,11 @@ fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -
                 return Err(anyhow!("duplicate nullifier during replay"));
             }
         }
+        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+            if !state.consumed_bridge_messages.insert(replay_key) {
+                return Err(anyhow!("duplicate inbound bridge message during replay"));
+            }
+        }
         state.pending_actions.remove(&action.tx_hash);
     }
     Ok(())
@@ -2607,6 +3244,7 @@ fn rebuild_canonical_indexes(
     chain: &[NativeBlockMeta],
     commitment_tree: &sled::Tree,
     nullifier_tree: &sled::Tree,
+    bridge_inbound_tree: &sled::Tree,
     ciphertext_index_tree: &sled::Tree,
 ) -> Result<()> {
     let mut next_commitment_index = 0u64;
@@ -2620,6 +3258,9 @@ fn rebuild_canonical_indexes(
             }
             for nullifier in &action.nullifiers {
                 nullifier_tree.insert(nullifier.as_slice(), b"1")?;
+            }
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(&action)? {
+                bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
             }
             for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
                 let size = action
@@ -2724,12 +3365,7 @@ fn verify_native_block_artifacts_locked(
 ) -> Result<()> {
     let transfers = actions
         .iter()
-        .filter(|action| {
-            matches!(
-                action.action_id,
-                ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
-            )
-        })
+        .filter(|action| is_shielded_transfer_action(action))
         .collect::<Vec<_>>();
     if transfers.is_empty() {
         return Ok(());
@@ -3040,16 +3676,12 @@ fn preview_pending_roots(
 ) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
     let transfer_count = actions
         .iter()
-        .filter(|action| {
-            matches!(
-                action.action_id,
-                ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
-            )
-        })
+        .filter(|action| is_shielded_transfer_action(action))
         .count();
     if transfer_count > 0 {
         let has_matching_recursive_artifact = actions.iter().any(|action| {
-            action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
+            action.family_id == FAMILY_SHIELDED_POOL
+                && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
                 && action
                     .candidate_artifact
                     .as_ref()
@@ -3099,51 +3731,107 @@ fn validate_announced_block(parent: &NativeBlockMeta, meta: &NativeBlockMeta) ->
             "announced block timestamp exceeds future skew bound"
         ));
     }
-    if meta.pow_bits != parent.pow_bits {
-        return Err(anyhow!("native difficulty retargeting is not active yet"));
-    }
-    let expected_work_pre_hash = native_pre_hash(
-        parent,
-        meta.height,
-        meta.timestamp_ms,
-        meta.pow_bits,
-        &meta.state_root,
-        &meta.nullifier_root,
-        &meta.extrinsics_root,
-    );
-    let expected_work_hash = native_pow_work_hash(&expected_work_pre_hash, meta.nonce);
-    if expected_work_hash != meta.work_hash || meta.hash != meta.work_hash {
-        return Err(anyhow!("announced block work hash mismatch"));
-    }
-    if !native_seal_meets_target(&meta.work_hash, meta.pow_bits) {
-        return Err(anyhow!("announced block does not meet native PoW target"));
-    }
-    let expected_work = cumulative_work_after(parent, meta.pow_bits)?;
-    if meta.cumulative_work != expected_work.to_bytes_be() {
-        return Err(anyhow!("announced block cumulative work mismatch"));
-    }
-    Ok(())
+    verify_native_pow_meta(parent, meta)
 }
 
-fn native_pre_hash(
-    parent: &NativeBlockMeta,
+fn native_pow_header_from_parts(
     height: u64,
     timestamp_ms: u64,
+    parent_hash: [u8; 32],
     pow_bits: u32,
+    nonce: [u8; 32],
+    cumulative_work: [u8; 48],
     state_root: &[u8; 48],
+    kernel_root: &[u8; 48],
     nullifier_root: &[u8; 48],
     extrinsics_root: &[u8; 32],
-) -> [u8; 32] {
-    hash32_with_parts(&[
-        b"hegemon-native-work-v1",
-        &parent.hash,
-        &height.to_le_bytes(),
-        &timestamp_ms.to_le_bytes(),
-        state_root,
-        nullifier_root,
-        extrinsics_root,
-        &pow_bits.to_le_bytes(),
-    ])
+    message_root: &[u8; 48],
+    message_count: u32,
+    header_mmr_root: &[u8; 32],
+    header_mmr_len: u64,
+    supply_digest: u128,
+    tx_count: u32,
+) -> PowHeaderV1 {
+    PowHeaderV1 {
+        chain_id: HEGEMON_CHAIN_ID_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        height,
+        timestamp_ms,
+        parent_hash,
+        state_root: *state_root,
+        kernel_root: *kernel_root,
+        nullifier_root: *nullifier_root,
+        proof_commitment: NATIVE_EMPTY_DIGEST48,
+        da_root: NATIVE_EMPTY_DIGEST48,
+        action_root: *extrinsics_root,
+        tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
+        version_commitment: NATIVE_EMPTY_DIGEST48,
+        fee_commitment: NATIVE_EMPTY_DIGEST48,
+        supply_digest,
+        tx_count,
+        message_root: *message_root,
+        message_count,
+        header_mmr_root: *header_mmr_root,
+        header_mmr_len,
+        pow_bits,
+        nonce,
+        cumulative_work,
+    }
+}
+
+fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV1 {
+    PowHeaderV1 {
+        chain_id: meta.chain_id,
+        rules_hash: meta.rules_hash,
+        height: meta.height,
+        timestamp_ms: meta.timestamp_ms,
+        parent_hash: meta.parent_hash,
+        state_root: meta.state_root,
+        kernel_root: meta.kernel_root,
+        nullifier_root: meta.nullifier_root,
+        proof_commitment: NATIVE_EMPTY_DIGEST48,
+        da_root: NATIVE_EMPTY_DIGEST48,
+        action_root: meta.extrinsics_root,
+        tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
+        version_commitment: NATIVE_EMPTY_DIGEST48,
+        fee_commitment: NATIVE_EMPTY_DIGEST48,
+        supply_digest: meta.supply_digest,
+        tx_count: meta.tx_count,
+        message_root: meta.message_root,
+        message_count: meta.message_count,
+        header_mmr_root: meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+        pow_bits: meta.pow_bits,
+        nonce: meta.nonce,
+        cumulative_work: meta.cumulative_work,
+    }
+}
+
+fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV1 {
+    TrustedCheckpointV1 {
+        chain_id: meta.chain_id,
+        rules_hash: meta.rules_hash,
+        height: meta.height,
+        header_hash: meta.hash,
+        timestamp_ms: meta.timestamp_ms,
+        pow_bits: meta.pow_bits,
+        cumulative_work: meta.cumulative_work,
+        header_mmr_root: meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+    }
+}
+
+fn verify_native_pow_meta(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> Result<()> {
+    if meta.hash != meta.work_hash {
+        return Err(anyhow!("native block hash must equal work hash"));
+    }
+    let header = pow_header_from_meta(meta);
+    let work_hash = verify_pow_header(&checkpoint_from_meta(parent), &header)
+        .map_err(|err| anyhow!("native light-client header verification failed: {err:?}"))?;
+    if work_hash != meta.hash {
+        return Err(anyhow!("native block work hash mismatch"));
+    }
+    Ok(())
 }
 
 fn empty_extrinsics_root(pending_count: u32) -> [u8; 32] {
@@ -3157,63 +3845,23 @@ fn nonce_from_counter(counter: u64) -> [u8; 32] {
 }
 
 fn native_pow_work_hash(pre_hash: &[u8; 32], nonce: [u8; 32]) -> [u8; 32] {
-    let mut payload = [0u8; 64];
-    payload[..32].copy_from_slice(pre_hash);
-    payload[32..].copy_from_slice(&nonce);
-    let first = crypto::hashes::sha256(&payload);
-    crypto::hashes::sha256(&first)
+    pow_hash_from_pre_hash(pre_hash, nonce)
 }
 
 fn native_seal_meets_target(work_hash: &[u8; 32], pow_bits: u32) -> bool {
-    let Some(target) = compact_to_biguint(pow_bits) else {
-        return false;
-    };
-    BigUint::from_bytes_be(work_hash) <= target
+    hash_meets_target(work_hash, pow_bits).unwrap_or(false)
 }
 
 fn native_meta_better_than(candidate: &NativeBlockMeta, current: &NativeBlockMeta) -> bool {
-    let candidate_work = cumulative_work_value(candidate);
-    let current_work = cumulative_work_value(current);
-    if candidate_work != current_work {
-        return candidate_work > current_work;
+    match candidate.cumulative_work.cmp(&current.cumulative_work) {
+        std::cmp::Ordering::Greater => return true,
+        std::cmp::Ordering::Less => return false,
+        std::cmp::Ordering::Equal => {}
     }
     if candidate.height != current.height {
         return candidate.height > current.height;
     }
     candidate.hash < current.hash
-}
-
-fn cumulative_work_value(meta: &NativeBlockMeta) -> BigUint {
-    if meta.cumulative_work.is_empty() {
-        return BigUint::from(meta.height)
-            * block_work_from_bits(meta.pow_bits).unwrap_or_default();
-    }
-    BigUint::from_bytes_be(&meta.cumulative_work)
-}
-
-fn cumulative_work_after(parent: &NativeBlockMeta, pow_bits: u32) -> Result<BigUint> {
-    Ok(cumulative_work_value(parent) + block_work_from_bits(pow_bits)?)
-}
-
-fn block_work_from_bits(pow_bits: u32) -> Result<BigUint> {
-    let target = compact_to_biguint(pow_bits).ok_or_else(|| anyhow!("invalid native pow bits"))?;
-    let max = BigUint::from(1u8) << 256u32;
-    Ok(max / (target + BigUint::from(1u8)))
-}
-
-fn compact_to_biguint(bits: u32) -> Option<BigUint> {
-    let exponent = bits >> 24;
-    let mantissa = bits & 0x00ff_ffff;
-    if mantissa == 0 {
-        return None;
-    }
-    let mut target = BigUint::from(mantissa);
-    if exponent > 3 {
-        target <<= 8 * (exponent as usize - 3);
-    } else {
-        target >>= 8 * (3 - exponent as usize);
-    }
-    Some(target)
 }
 
 fn resolve_base_path(cli: &NativeCli) -> Result<PathBuf> {
@@ -3590,6 +4238,7 @@ fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         "hegemon_blockTimestamps",
         "hegemon_compactJob",
         "hegemon_consensusStatus",
+        "hegemon_exportBridgeWitness",
         "hegemon_generateProof",
         "hegemon_latestBlock",
         "hegemon_minedBlockTimestamps",
@@ -4112,6 +4761,292 @@ mod tests {
         assert!(err.to_string().contains("binding hash mismatch"));
     }
 
+    #[test]
+    fn bridge_outbound_message_root_and_witness_are_exported() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let args = OutboundBridgeArgsV1 {
+            destination_chain_id: [41u8; 32],
+            app_family_id: 77,
+            payload: b"bridge payload".to_vec(),
+        };
+        node.validate_and_stage_action(json!({
+            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            "family_id": FAMILY_BRIDGE,
+            "action_id": ACTION_BRIDGE_OUTBOUND,
+            "new_nullifiers": [],
+            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+        }))
+        .expect("stage outbound bridge message");
+
+        let work = node.prepare_work();
+        assert_eq!(work.message_count, 1);
+        assert_ne!(work.message_root, empty_bridge_message_root());
+        let seal = mine_native_round(work.clone(), 0).expect("bridge seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("bridge import")
+            .expect("bridge block");
+        assert_eq!(imported.message_count, 1);
+        assert_eq!(imported.message_root, work.message_root);
+
+        let actions = decode_block_actions(&imported).expect("decode block actions");
+        let messages = bridge_messages_from_actions(&actions, imported.height);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].source_chain_id, HEGEMON_CHAIN_ID_V1);
+        assert_eq!(messages[0].message_nonce, 1u128 << 64);
+        assert_eq!(bridge_message_root(&messages), imported.message_root);
+
+        let witness = export_bridge_witness(&node, json!([hex32(&imported.hash), 0]))
+            .expect("export bridge witness");
+        assert_eq!(witness["schema"], json!("hegemon.bridge-witness.v1"));
+        assert_eq!(
+            witness["output"]["message_root"],
+            json!(hex48(&imported.message_root))
+        );
+        assert_eq!(witness["output"]["confirmations_checked"], json!(1));
+        assert_eq!(
+            witness["output"]["message_hash"],
+            witness["messages"][0]["message_hash"]
+        );
+        assert!(witness["canonical"]["header"]
+            .as_str()
+            .expect("canonical header hex")
+            .starts_with("0x"));
+        assert!(witness["canonical"]["output"]
+            .as_str()
+            .expect("canonical output hex")
+            .starts_with("0x"));
+    }
+
+    #[test]
+    fn inbound_bridge_message_is_consumed_once() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("source");
+        let destination_path = tmp.path().join("destination");
+        fs::create_dir_all(&source_path).expect("source dir");
+        fs::create_dir_all(&destination_path).expect("destination dir");
+        let pow_bits = 0x207f_ffff;
+        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
+            .expect("source node");
+        let destination =
+            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
+                .expect("destination node");
+        let (args, message, _) = test_risc0_bridge_inbound_args(&source, b"inbound payload");
+        let request = json!({
+            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            "family_id": FAMILY_BRIDGE,
+            "action_id": ACTION_BRIDGE_INBOUND,
+            "new_nullifiers": [],
+            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+        });
+        destination
+            .validate_and_stage_action(request.clone())
+            .expect("stage inbound bridge message");
+        let pending_err = destination
+            .validate_and_stage_action(request.clone())
+            .expect_err("duplicate pending inbound should fail");
+        assert!(pending_err.to_string().contains("already pending"));
+
+        let work = destination.prepare_work();
+        let seal = mine_native_round(work.clone(), 0).expect("inbound seal");
+        destination
+            .import_mined_block(&work, seal)
+            .expect("inbound import")
+            .expect("inbound block");
+        let replay_key = inbound_replay_key(message.source_chain_id, message.message_nonce);
+        assert!(destination
+            .state
+            .read()
+            .consumed_bridge_messages
+            .contains(&replay_key));
+
+        let consumed_err = destination
+            .validate_and_stage_action(request)
+            .expect_err("consumed inbound should fail");
+        assert!(consumed_err.to_string().contains("already consumed"));
+    }
+
+    #[test]
+    fn hegemon_to_hegemon_loopback_bridge_example() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("source");
+        let destination_path = tmp.path().join("destination");
+        fs::create_dir_all(&source_path).expect("source dir");
+        fs::create_dir_all(&destination_path).expect("destination dir");
+        let pow_bits = 0x207f_ffff;
+        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
+            .expect("source node");
+        let destination =
+            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
+                .expect("destination node");
+
+        let (inbound, source_message, source_block) =
+            test_risc0_bridge_inbound_args(&source, b"hegemon-to-hegemon loopback");
+        let exported = export_bridge_witness(&source, json!([hex32(&source_block.hash), 0]))
+            .expect("export source bridge witness");
+        assert!(exported["canonical"]["long_range_proof"]
+            .as_str()
+            .expect("compact proof hex")
+            .starts_with("0x"));
+        let mut encoded_receipt = inbound.proof_receipt.as_slice();
+        let risc0_receipt =
+            RiscZeroBridgeReceiptV1::decode(&mut encoded_receipt).expect("decode RISC0 envelope");
+        let risc0_output =
+            decode_risc0_bridge_journal(&risc0_receipt).expect("decode RISC0 journal");
+        assert_eq!(risc0_output.message_hash, source_message.message_hash());
+        destination
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_INBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(inbound.encode()),
+            }))
+            .expect("stage destination inbound bridge action");
+
+        let destination_work = destination.prepare_work();
+        let destination_seal =
+            mine_native_round(destination_work.clone(), 0).expect("destination bridge seal");
+        destination
+            .import_mined_block(&destination_work, destination_seal)
+            .expect("destination bridge import")
+            .expect("destination bridge block");
+
+        let replay_key =
+            inbound_replay_key(source_message.source_chain_id, source_message.message_nonce);
+        assert!(destination
+            .state
+            .read()
+            .consumed_bridge_messages
+            .contains(&replay_key));
+    }
+
+    fn test_risc0_bridge_inbound_args(
+        source: &NativeNode,
+        payload: &[u8],
+    ) -> (InboundBridgeArgsV1, BridgeMessageV1, NativeBlockMeta) {
+        use base64::Engine;
+
+        let outbound = OutboundBridgeArgsV1 {
+            destination_chain_id: HEGEMON_CHAIN_ID_V1,
+            app_family_id: FAMILY_BRIDGE,
+            payload: payload.to_vec(),
+        };
+        source
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(outbound.encode()),
+            }))
+            .expect("stage source outbound bridge action");
+
+        let source_work = source.prepare_work();
+        let source_seal = mine_native_round(source_work.clone(), 0).expect("source bridge seal");
+        let source_block = source
+            .import_mined_block(&source_work, source_seal)
+            .expect("source bridge import")
+            .expect("source bridge block");
+        let confirmation_work = source.prepare_work();
+        let confirmation_seal =
+            mine_native_round(confirmation_work.clone(), 0).expect("source confirmation seal");
+        let source_tip = source
+            .import_mined_block(&confirmation_work, confirmation_seal)
+            .expect("source confirmation import")
+            .expect("source confirmation block");
+        let source_parent = source
+            .header_by_hash(&source_block.parent_hash)
+            .expect("parent lookup")
+            .expect("source parent");
+        let source_header = pow_header_from_meta(&source_block);
+        let source_header_hash =
+            verify_pow_header(&checkpoint_from_meta(&source_parent), &source_header)
+                .expect("source header verifies under light client");
+        assert_eq!(source_header_hash, source_block.hash);
+
+        let source_actions = decode_block_actions(&source_block).expect("decode source actions");
+        let source_messages = bridge_messages_from_actions(&source_actions, source_block.height);
+        let source_message_hash = consensus_light_client::verify_message_inclusion(
+            source_block.message_root,
+            &source_messages,
+            0,
+        )
+        .expect("source message inclusion verifies");
+        let source_message = source_messages[0].clone();
+        assert_eq!(source_message_hash, source_message.message_hash());
+
+        let output = bridge_checkpoint_output(
+            &checkpoint_from_meta(&source_block),
+            source_block.message_root,
+            &source_message,
+            1,
+            [0u8; 48],
+        );
+        let compact_output = bridge_checkpoint_output_with_tip(
+            &checkpoint_from_meta(&source_block),
+            &checkpoint_from_meta(&source_tip),
+            source_block.message_root,
+            &source_message,
+            2,
+            [0u8; 48],
+        );
+        let receipt = build_long_range_bridge_proof(
+            source,
+            &source_block,
+            &source_tip,
+            &source_messages,
+            0,
+            compact_output,
+        )
+        .expect("build compact source proof")
+        .expect("source tip confirms message");
+        consensus_light_client::verify_hegemon_long_range_proof(&receipt, 1, [0u8; 48])
+            .expect("compact source proof verifies");
+        assert_eq!(output.message_hash, receipt.output.message_hash);
+        let risc0_image_id = [0x42u8; 32];
+        let risc0_receipt = test_risc0_bridge_receipt(risc0_image_id, &receipt.output);
+        let inbound = InboundBridgeArgsV1 {
+            source_chain_id: source_message.source_chain_id,
+            source_message_nonce: source_message.message_nonce,
+            verifier_program_hash: risc0_image_id,
+            proof_receipt: risc0_receipt.encode(),
+            message: source_message.clone(),
+        };
+        (inbound, source_message, source_block)
+    }
+
+    fn test_risc0_bridge_receipt(
+        image_id: [u8; 32],
+        output: &BridgeCheckpointOutputV1,
+    ) -> RiscZeroBridgeReceiptV1 {
+        std::env::set_var("RISC0_DEV_MODE", "1");
+        let journal = output.encode();
+        let claim =
+            risc0_zkvm::ReceiptClaim::ok(risc0_zkvm::Digest::from(image_id), journal.clone());
+        let receipt = risc0_zkvm::Receipt::try_from(risc0_zkvm::FakeReceipt::new(claim))
+            .expect("fake RISC Zero receipt");
+        RiscZeroBridgeReceiptV1 {
+            proof_system_id: consensus_light_client::RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1,
+            image_id,
+            journal,
+            receipt: bincode::serialize(&receipt).expect("encode fake RISC Zero receipt"),
+        }
+    }
+
     fn mined_empty_child(
         parent: &NativeBlockMeta,
         height: u64,
@@ -4135,43 +5070,78 @@ mod tests {
         timestamp_ms: u64,
     ) -> NativeBlockMeta {
         let state_root = parent.state_root;
+        let kernel_root = parent.kernel_root;
         let nullifier_root = parent.nullifier_root;
         let extrinsics_root = actions_extrinsics_root(&[]);
-        let pre_hash = native_pre_hash(
-            parent,
+        let message_root = empty_bridge_message_root();
+        let message_count = 0;
+        let header_history = if parent.height == 0 {
+            vec![parent.hash]
+        } else if parent.height == 1 {
+            vec![parent.parent_hash, parent.hash]
+        } else {
+            vec![parent.hash]
+        };
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
+        let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
+            parent.hash,
             pow_bits,
+            [0u8; 32],
+            cumulative_work,
             &state_root,
+            &kernel_root,
             &nullifier_root,
             &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            parent.supply_digest,
+            0,
         );
+        let pre_hash = pre_header.pre_hash();
         let work = NativeWork {
             height,
             parent_hash: parent.hash,
             pre_hash,
             state_root,
+            kernel_root,
             nullifier_root,
             extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
             tx_count: 0,
             timestamp_ms,
             pow_bits,
         };
         let seal = mine_native_round(work, round).expect("side seal");
         NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
             hash: seal.work_hash,
             parent_hash: parent.hash,
             state_root,
+            kernel_root,
             nullifier_root,
             extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
             timestamp_ms,
             pow_bits,
             nonce: seal.nonce,
             work_hash: seal.work_hash,
-            cumulative_work: cumulative_work_after(parent, pow_bits)
-                .expect("cumulative work")
-                .to_bytes_be(),
+            cumulative_work,
             supply_digest: parent.supply_digest,
             tx_count: 0,
             action_bytes: Vec::new(),
@@ -4210,6 +5180,7 @@ mod tests {
             pending_actions: BTreeMap::new(),
             commitment_tree: CommitmentTreeState::default(),
             nullifiers: BTreeSet::new(),
+            consumed_bridge_messages: BTreeSet::new(),
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         }

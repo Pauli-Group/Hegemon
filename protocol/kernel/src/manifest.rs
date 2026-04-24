@@ -21,6 +21,7 @@ pub const FAMILY_SHIELDED_POOL: FamilyId = protocol_shielded_pool::family::FAMIL
 pub const FAMILY_ASSET_FACTORY: FamilyId = 2;
 pub const FAMILY_ORACLE: FamilyId = 3;
 pub const FAMILY_ATTESTATION: FamilyId = 4;
+pub const FAMILY_BRIDGE: FamilyId = crate::bridge::FAMILY_BRIDGE;
 pub const FAMILY_ZKVM: FamilyId = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode)]
@@ -235,6 +236,22 @@ pub fn kernel_manifest() -> KernelManifest {
             verifier_key_hashes: vec![[0u8; 32]],
             params_commitment,
             empty_root: shielded_family_root(),
+        },
+    );
+    families.insert(
+        FAMILY_BRIDGE,
+        FamilySpec {
+            family_id: FAMILY_BRIDGE,
+            enabled_at: 0,
+            retired_at: None,
+            supported_actions: vec![
+                crate::bridge::ACTION_BRIDGE_OUTBOUND,
+                crate::bridge::ACTION_BRIDGE_INBOUND,
+                crate::bridge::ACTION_REGISTER_BRIDGE_VERIFIER,
+            ],
+            verifier_key_hashes: Vec::new(),
+            params_commitment: hash48(b"hegemon.bridge.family.v1"),
+            empty_root: crate::bridge::empty_bridge_message_root(),
         },
     );
     for family_id in [

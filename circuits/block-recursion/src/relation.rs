@@ -2956,7 +2956,7 @@ fn bytes32_to_goldilocks(bytes: &Digest32) -> [Goldilocks; 4] {
 }
 
 pub fn block_public_inputs_v1(public: &RecursiveBlockPublicV1) -> Vec<Goldilocks> {
-    let mut inputs = Vec::with_capacity(1 + (6 * 11));
+    let mut inputs = Vec::with_capacity(1 + (6 * 12));
     inputs.push(Goldilocks::new(public.tx_count as u64));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.tx_statements_commitment));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.verified_leaf_commitment));
@@ -2967,6 +2967,7 @@ pub fn block_public_inputs_v1(public: &RecursiveBlockPublicV1) -> Vec<Goldilocks
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.end_kernel_root));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.nullifier_root));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.da_root));
+    inputs.extend_from_slice(&bytes48_to_goldilocks(&public.message_root));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.start_tree_commitment));
     inputs.extend_from_slice(&bytes48_to_goldilocks(&public.end_tree_commitment));
     inputs
@@ -3031,6 +3032,7 @@ pub fn empty_prefix_public_v1(
         end_kernel_root: [0u8; 48],
         nullifier_root: [0u8; 48],
         da_root: [0u8; 48],
+        message_root: [0u8; 48],
         start_tree_commitment: [0u8; 48],
         end_tree_commitment: [0u8; 48],
     }

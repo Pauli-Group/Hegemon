@@ -277,6 +277,9 @@ pub trait HeaderProofExt {
     fn da_root(&self) -> DaRoot;
     fn da_params(&self) -> DaParams;
     fn kernel_root(&self) -> StateRoot;
+    fn message_root(&self) -> StateRoot {
+        [0u8; 48]
+    }
 }
 
 impl HeaderProofExt for crate::header::BlockHeader {

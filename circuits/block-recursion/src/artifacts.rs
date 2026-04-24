@@ -9,7 +9,7 @@ use transaction_circuit::{
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V1: u32 = 1;
 pub const RECURSIVE_BLOCK_HEADER_BYTES_V1: usize = 336;
-pub const RECURSIVE_BLOCK_PUBLIC_BYTES_V1: usize = 532;
+pub const RECURSIVE_BLOCK_PUBLIC_BYTES_V1: usize = 580;
 pub const RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1: usize = 698_536;
 pub const RECURSIVE_BLOCK_STEP_B_PROOF_BYTES_V1: usize = 200_952;
 pub const RECURSIVE_BLOCK_PROOF_BYTES_V1: usize = RECURSIVE_BLOCK_STEP_A_PROOF_BYTES_V1;
@@ -125,6 +125,7 @@ pub fn serialize_recursive_block_public_v1(public: &RecursiveBlockPublicV1) -> V
     put_fixed(&mut out, &public.end_kernel_root);
     put_fixed(&mut out, &public.nullifier_root);
     put_fixed(&mut out, &public.da_root);
+    put_fixed(&mut out, &public.message_root);
     put_fixed(&mut out, &public.start_tree_commitment);
     put_fixed(&mut out, &public.end_tree_commitment);
     out
@@ -154,6 +155,7 @@ fn deserialize_recursive_block_public_v1(
     let end_kernel_root = read_fixed::<48>(bytes, cursor)?;
     let nullifier_root = read_fixed::<48>(bytes, cursor)?;
     let da_root = read_fixed::<48>(bytes, cursor)?;
+    let message_root = read_fixed::<48>(bytes, cursor)?;
     let start_tree_commitment = read_fixed::<48>(bytes, cursor)?;
     let end_tree_commitment = read_fixed::<48>(bytes, cursor)?;
     Ok(RecursiveBlockPublicV1 {
@@ -167,6 +169,7 @@ fn deserialize_recursive_block_public_v1(
         end_kernel_root,
         nullifier_root,
         da_root,
+        message_root,
         start_tree_commitment,
         end_tree_commitment,
     })

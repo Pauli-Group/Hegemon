@@ -1,0 +1,17 @@
+[package]
+name = "hegemon-risc0-bridge-prover"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[dependencies]
+anyhow = "1.0"
+bincode = "1.3"
+codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+consensus-light-client = { path = "../../../consensus-light-client" }
+hegemon-risc0-bridge-methods = { path = "../methods" }
+hex = "0.4"
+risc0-zkvm = { version = "3.0.5", default-features = false, features = ["prove"] }

@@ -174,6 +174,7 @@ fn sample_input(tx_count: u32) -> BlockRecursiveProverInputV1 {
             end_kernel_root: digest48(0xe1, tx_count),
             nullifier_root: digest48(0xf0, tx_count),
             da_root: digest48(0xf8, tx_count),
+            message_root: digest48(0xf9, tx_count),
             start_tree_commitment: digest48(0xa8, 0),
             end_tree_commitment: digest48(0xa9, tx_count),
         },
