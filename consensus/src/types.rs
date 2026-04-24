@@ -459,7 +459,7 @@ pub struct Block<BH> {
     /// rest of the product stack uses to build `tx_statements_commitment`.
     pub tx_validity_claims: Option<Vec<TxValidityClaim>>,
     /// Optional commitment to transaction statement hashes, derived by the caller in canonical
-    /// transaction order (for example from binding-hash statements on Substrate imports).
+    /// transaction order (for example from binding-hash statements on node imports).
     pub tx_statements_commitment: Option<[u8; 48]>,
     pub proof_verification_mode: ProofVerificationMode,
 }

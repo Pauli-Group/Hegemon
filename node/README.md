@@ -1,6 +1,6 @@
-# Node service
+# Node Service
 
-The node crate builds the Substrate-hosted `hegemon-node` binary. Substrate is used here as the execution, storage, runtime, and chain/state RPC chassis. The live money and authorization model is Hegemon-native: shielded proofs, unsigned protocol calls, and shielded coinbase.
+The node crate builds the native `hegemon-node` binary. It owns execution, sled-backed persistence, PoW mining, PQ sync, and the wallet/app JSON-RPC compatibility surface directly. The live money and authorization model is Hegemon-native: shielded proofs, unsigned protocol actions, and shielded coinbase.
 
 ## Running the node
 
@@ -24,7 +24,7 @@ Every miner should use the same `HEGEMON_SEEDS` list to avoid accidental forks. 
 
 The live node exposes:
 
-- standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
+- compatibility `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
 - Hegemon-specific RPC such as `hegemon_submitAction`, `hegemon_getEncryptedNotes`, and `hegemon_getMerkleWitness`
 - mining/prover RPC under the `hegemon_*` and `prover_*` namespaces
 
@@ -33,7 +33,7 @@ The node no longer treats generic `author_*` transaction submission as a support
 ## Behavior
 
 - All value lives in the shielded pool.
-- There is no public balance pallet or transparent fee lane in the live runtime.
+- There is no public balance module or transparent fee lane in the live native state machine.
 - Shielded transfers are accepted as unsigned proof-native protocol calls.
 - Coinbase rewards are minted as shielded notes.
 - PQ networking remains the live peer transport.

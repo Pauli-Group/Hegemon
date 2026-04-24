@@ -10,7 +10,7 @@ pub mod types;
 pub use manifest::{FamilySpec, KernelManifest};
 pub use router::FamilyRouter;
 pub use traits::{
-    ActionSourceClass, ApplyOutcome, KernelFamily, KernelStateView, KernelStateWrite,
+    ActionSourceClass, ApplyOutcome, KernelError, KernelFamily, KernelStateView, KernelStateWrite,
     ManifestProvider, ValidActionMeta,
 };
 pub use types::{

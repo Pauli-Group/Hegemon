@@ -15,7 +15,7 @@ The active default tx proof backend is now `SmallwoodCandidate`; its exact profi
 The active release transaction-proof FRI profile is now version-owned and manifest-projected instead of being only a local compile-time constant.
 
 - Version-owned source of truth: [protocol/versioning/src/lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/protocol/versioning/src/lib.rs)
-- Runtime manifest projection: [runtime/src/manifest.rs](/Users/pldd/Projects/Reflexivity/Hegemon/runtime/src/manifest.rs)
+- Protocol manifest projection: [protocol/kernel/src/manifest.rs](/Users/pldd/Projects/Reflexivity/Hegemon/protocol/kernel/src/manifest.rs)
 - Release/build config plumbing: [circuits/transaction-core/src/p3_config.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_config.rs)
 - Strict version-bound verifier: [circuits/transaction-core/src/p3_verifier.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_verifier.rs)
 

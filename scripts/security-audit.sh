@@ -166,51 +166,28 @@ if [ "$QUICK" = false ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Check runtime WASM for ECC symbols
+# Step 3: Check native node binary for ECC symbols
 # ---------------------------------------------------------------------------
 
-echo "=== Step 3: Runtime WASM Symbol Scan ==="
+echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
-WASM_PATH="$PROJECT_ROOT/target/release/wbuild/runtime/runtime.compact.wasm"
-WASM_PATH_ALT="$PROJECT_ROOT/target/release/wbuild/hegemon-runtime/hegemon_runtime.compact.wasm"
-
-if [ -f "$WASM_PATH" ]; then
-    WASM_TO_CHECK="$WASM_PATH"
-elif [ -f "$WASM_PATH_ALT" ]; then
-    WASM_TO_CHECK="$WASM_PATH_ALT"
-else
-    echo -e "${YELLOW}⚠️  WARNING: Runtime WASM not found at expected paths:${NC}"
-    echo "    $WASM_PATH"
-    echo "    $WASM_PATH_ALT"
-    echo "  Run 'cargo build --release -p runtime' to generate"
-    WASM_TO_CHECK=""
-    WARNINGS=$((WARNINGS + 1))
-fi
-
-if [ -n "$WASM_TO_CHECK" ]; then
-    echo "Checking: $WASM_TO_CHECK"
-    
-    # Check if wasm-objdump is available
-    if command -v wasm-objdump &> /dev/null; then
-        echo -n "Scanning for ECC symbols... "
-        ecc_symbols=$(wasm-objdump -x "$WASM_TO_CHECK" 2>/dev/null \
-            | grep -iE "curve|dalek|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|pallas|vesta" \
-            || true)
-        
-        if [ -n "$ecc_symbols" ]; then
-            echo -e "${RED}❌ FOUND${NC}"
-            echo "  ECC symbols in WASM:"
-            echo "$ecc_symbols" | head -10 | sed 's/^/    /'
-            VIOLATIONS=$((VIOLATIONS + 1))
-        else
-            echo -e "${GREEN}✅ No ECC symbols${NC}"
-        fi
+NODE_BIN="$PROJECT_ROOT/target/release/hegemon-node"
+if [ -f "$NODE_BIN" ]; then
+    echo "Checking: $NODE_BIN"
+    symbol_matches=$(strings "$NODE_BIN" 2>/dev/null \
+        | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|pallas|vesta" \
+        || true)
+    if [ -n "$symbol_matches" ]; then
+        echo -e "${RED}❌ FOUND${NC}"
+        echo "$symbol_matches" | head -10 | sed 's/^/    /'
+        VIOLATIONS=$((VIOLATIONS + 1))
     else
-        echo -e "${YELLOW}⚠️  WARNING: wasm-objdump not found, skipping WASM symbol scan${NC}"
-        echo "  Install with: cargo install wabt"
-        WARNINGS=$((WARNINGS + 1))
+        echo -e "${GREEN}✅ No forbidden ECC symbols${NC}"
     fi
+else
+    echo -e "${YELLOW}⚠️  WARNING: release node binary not found; run 'make node' for binary scan${NC}"
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 echo ""
@@ -234,35 +211,22 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
-# Check identity pallet uses ML-DSA (not Ed25519)
-echo -n "Checking identity pallet uses ML-DSA-65... "
-if grep -q "ml-dsa\|MlDsa" "$PROJECT_ROOT/pallets/identity/src"/*.rs 2>/dev/null || \
-   grep -q "ML_DSA\|MlDsa" "$PROJECT_ROOT/crypto/src"/*.rs 2>/dev/null; then
+# Check native identity/signing uses ML-DSA (not Ed25519)
+echo -n "Checking native signing uses ML-DSA-65... "
+if grep -q "ML_DSA\|MlDsa\|ml_dsa" "$PROJECT_ROOT/crypto/src"/*.rs "$PROJECT_ROOT/network/src"/*.rs "$PROJECT_ROOT/node/src"/*.rs 2>/dev/null; then
     echo -e "${GREEN}✅ Uses ML-DSA-65${NC}"
 else
     echo -e "${YELLOW}⚠️  Could not verify ML-DSA usage${NC}"
     WARNINGS=$((WARNINGS + 1))
 fi
 
-# Check shielded-pool uses STARK (not Groth16)
-echo -n "Checking shielded-pool uses STARK proofs... "
-if grep -q "STARK\|stark" "$PROJECT_ROOT/pallets/shielded-pool/Cargo.toml" 2>/dev/null || \
-   grep -q "StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
+# Check shielded protocol uses STARK (not Groth16)
+echo -n "Checking shielded protocol uses STARK proofs... "
+if grep -q "STARK\|stark" "$PROJECT_ROOT/circuits/transaction/Cargo.toml" "$PROJECT_ROOT/consensus/src"/*.rs 2>/dev/null; then
     echo -e "${GREEN}✅ Uses STARK (Plonky3)${NC}"
 else
     echo -e "${YELLOW}⚠️  Could not verify STARK usage${NC}"
     WARNINGS=$((WARNINGS + 1))
-fi
-
-# Check runtime config
-echo -n "Checking runtime uses StarkVerifier... "
-if grep -q "type ProofVerifier = .*StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
-    echo -e "${GREEN}✅ Runtime configured with StarkVerifier${NC}"
-elif grep -q "StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
-    echo -e "${GREEN}✅ StarkVerifier found in runtime${NC}"
-else
-    echo -e "${RED}❌ Runtime may not use StarkVerifier!${NC}"
-    VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
 echo ""

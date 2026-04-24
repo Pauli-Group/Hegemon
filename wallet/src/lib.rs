@@ -3,9 +3,8 @@ pub mod async_sync;
 pub mod consolidate;
 pub mod disclosure;
 pub mod error;
-pub mod extrinsic;
 pub mod keys;
-mod metadata;
+pub mod node_rpc;
 pub mod notes;
 pub mod prover;
 pub mod recipients;
@@ -15,7 +14,6 @@ mod serde_bytes48;
 pub mod shielded_tx;
 pub mod store;
 pub mod submission;
-pub mod substrate_rpc;
 pub mod sync;
 pub mod tx_builder;
 pub mod viewing;
@@ -24,8 +22,10 @@ pub use address::ShieldedAddress;
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
 pub use consolidate::{execute_consolidation, ConsolidationPlan, MAX_INPUTS};
 pub use error::WalletError;
-pub use extrinsic::{ml_dsa_account_id_from_seed, ChainMetadata, Era, SlhDsaExtrinsicBuilder};
-pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
+pub use keys::{
+    ml_dsa_account_id_from_seed, AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey,
+};
+pub use node_rpc::{BlockingNodeRpcClient, ChainMetadata, NodeRpcClient, NodeRpcConfig};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{
     LocalProofSelfCheckPolicy, ProofResult, ProverStats, StarkProver, StarkProverConfig,
@@ -42,7 +42,6 @@ pub use store::{
     RecentTransaction, SpendableNote, TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
 };
 pub use submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
-pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::SyncOutcome;
 pub use tx_builder::{
     build_stablecoin_burn, build_transaction, build_transaction_with_binding, precheck_nullifiers,

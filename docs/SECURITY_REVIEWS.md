@@ -168,26 +168,26 @@ Keep the log chronological; when closing a finding, link the merge commit and up
   {
     "id": "SEC-2026-0002",
     "source": "Hostile security review",
-    "component": "consensus::Sha256dAlgorithm / node::block_import",
+    "component": "consensus::PowConsensus / node::native",
     "description": "PoW seal verification tolerated compact difficulty mismatches and checked work against the seal's claimed difficulty.",
     "severity": "high",
     "status": "patched",
-    "evidence": "node/src/substrate/block_import.rs::tests::test_verify_pow_seal_rejects_near_difficulty_mismatch",
-    "remediation": "Substrate PoW verification now requires exact runtime difficulty bits and checks work against that runtime target.",
-    "design_notes": "DESIGN.md and docs/CONSENSUS_AUDIT.md document exact compact-bit binding.",
-    "tests": ["cargo test -p hegemon-node test_verify_pow_seal -- --nocapture"]
+    "evidence": "consensus/tests/pow_rules.rs and node/src/native/mod.rs::validate_native_block_meta",
+    "remediation": "Native PoW verification requires exact block difficulty bits and checks work against the native target selected for that height.",
+    "design_notes": "DESIGN.md and METHODS.md document exact compact-bit binding.",
+    "tests": ["cargo test -p consensus pow_rules -- --nocapture", "cargo test -p hegemon-node --lib"]
   },
   {
     "id": "SEC-2026-0003",
     "source": "Hostile security review",
-    "component": "node::substrate::service",
+    "component": "node::native",
     "description": "Development node builds could honor HEGEMON_PARALLEL_PROOF_VERIFICATION=0 and diverge from fully verified block validity.",
     "severity": "high",
     "status": "patched",
-    "evidence": "node/src/substrate/service.rs::import_tests::test_proof_verification_env_disable_is_ignored",
+    "evidence": "node/src/native/mod.rs imports non-empty shielded blocks through consensus proof verification",
     "remediation": "The env var is now a logged no-op; block import and production always keep proof verification enabled.",
-    "design_notes": "METHODS.md and docs/CONSENSUS_AUDIT.md document proof verification as non-optional.",
-    "tests": ["cargo test -p hegemon-node test_proof_verification_env_disable_is_ignored -- --nocapture"]
+    "design_notes": "METHODS.md documents proof verification as non-optional.",
+    "tests": ["cargo test -p hegemon-node --lib"]
   },
   {
     "id": "SEC-2026-0004",

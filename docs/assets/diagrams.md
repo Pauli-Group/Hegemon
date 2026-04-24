@@ -35,25 +35,23 @@ flowchart TB
     subgraph State["State Management"]
         SM[state/merkle]
         PV[protocol/versioning]
-        RT[runtime/]
+        NS[node/src/native]
     end
 
-    subgraph Pallets["Substrate Pallets"]
-        SP[pallet-shielded-pool]
-        PA[pallet-attestations]
-        PS[pallet-settlement]
-        PI[pallet-identity]
+    subgraph Protocol["Protocol Crates"]
+        SP[protocol/shielded-pool]
+        PK[protocol/kernel]
     end
 
     W -->|craft tx| CT
     CT -->|proof| CB
     CB -->|block proof| CON
     CON -->|validate| POW
-    POW -->|seal| RT
-    RT --> Pallets
+    POW -->|seal| NS
+    NS --> Protocol
     CT --> CR
     CB --> SM
-    SM --> RT
+    SM --> NS
     PV --> CON
     W --> ML_KEM
     CON --> ML_DSA

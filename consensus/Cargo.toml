@@ -8,10 +8,10 @@ anyhow = "1"
 batch-circuit = { path = "../circuits/batch" }
 bincode = "1"
 blake3 = "1.5"
+blake2 = "0.10"
 block-circuit = { path = "../circuits/block" }
 block-recursion = { path = "../circuits/block-recursion" }
 tx-proof-manifest = { path = "../circuits/tx-proof-manifest" }
-codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
 hex = "0.4"
@@ -36,22 +36,12 @@ rayon = "1"
 state-da = { path = "../state/da" }
 superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 sha2 = "0.10"
-sp-core = { workspace = true, features = ["std"] }
-sp-runtime = { workspace = true, features = ["std"] }
 thiserror = "1"
 tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
 transaction-circuit = { path = "../circuits/transaction" }
 zstd = { version = "0.13", default-features = false }
-
-# Substrate PoW consensus (optional, for full Substrate integration)
-sc-consensus-pow = { workspace = true, optional = true }
-sp-consensus-pow = { workspace = true, optional = true }
-sp-api = { workspace = true, optional = true }
-
-# Runtime dependency for DifficultyApi (optional, for full Substrate integration)
-runtime = { path = "../runtime", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 network = { path = "../network" }
@@ -61,8 +51,6 @@ tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
 
 [features]
 default = []
-# Enable full Substrate PowAlgorithm implementation
-substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
 fast-proofs = ["block-circuit/fast-proofs"]
 
 [lints]

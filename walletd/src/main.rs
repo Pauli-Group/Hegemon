@@ -24,10 +24,10 @@ use wallet::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
     },
+    node_rpc::NodeRpcClient,
     notes::MemoPlaintext,
     parse_recipients, precheck_nullifiers,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
-    substrate_rpc::SubstrateRpcClient,
     transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
@@ -747,16 +747,12 @@ fn sync_once(
     params: SyncParams,
 ) -> WalletdResult<SyncResponse> {
     runtime.block_on(async {
-        let client = Arc::new(
-            SubstrateRpcClient::connect(&params.ws_url)
-                .await
-                .map_err(|e| {
-                    WalletdError::new(
-                        WalletdErrorCode::RpcConnectionFailed,
-                        format!("Failed to connect: {e}"),
-                    )
-                })?,
-        );
+        let client = Arc::new(NodeRpcClient::connect(&params.ws_url).await.map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::RpcConnectionFailed,
+                format!("Failed to connect: {e}"),
+            )
+        })?);
 
         let engine = AsyncWalletSyncEngine::new(client, store.clone())
             .with_skip_genesis_check(params.force_rescan);
@@ -839,7 +835,7 @@ fn parse_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
 async fn ensure_wallet_root_consistency(
     engine: &AsyncWalletSyncEngine,
     store: &Arc<WalletStore>,
-    client: &Arc<SubstrateRpcClient>,
+    client: &Arc<NodeRpcClient>,
 ) -> WalletdResult<[u8; 48]> {
     let status = client.note_status().await.map_err(|e| {
         WalletdError::new(
@@ -896,7 +892,7 @@ async fn ensure_wallet_root_consistency(
 }
 
 async fn submit_bundle_strict(
-    client: &SubstrateRpcClient,
+    client: &NodeRpcClient,
     bundle: &wallet::TransactionBundle,
     signing_seed: Option<[u8; 32]>,
     try_signed_first: bool,
@@ -948,7 +944,7 @@ fn tx_send(
 
     runtime.block_on(async {
         let client = Arc::new(
-            SubstrateRpcClient::connect(&params.ws_url)
+            NodeRpcClient::connect(&params.ws_url)
                 .await
                 .map_err(|e| {
                     WalletdError::new(
@@ -1506,16 +1502,12 @@ fn disclosure_create(
     let tx_id = parse_hex_32(&params.tx_id)?;
 
     runtime.block_on(async {
-        let client = Arc::new(
-            SubstrateRpcClient::connect(&params.ws_url)
-                .await
-                .map_err(|e| {
-                    WalletdError::new(
-                        WalletdErrorCode::RpcConnectionFailed,
-                        format!("Failed to connect: {e}"),
-                    )
-                })?,
-        );
+        let client = Arc::new(NodeRpcClient::connect(&params.ws_url).await.map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::RpcConnectionFailed,
+                format!("Failed to connect: {e}"),
+            )
+        })?);
         let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
         engine
             .sync_once()
@@ -1658,14 +1650,12 @@ fn disclosure_verify(
     }
 
     runtime.block_on(async {
-        let client = SubstrateRpcClient::connect(&params.ws_url)
-            .await
-            .map_err(|e| {
-                WalletdError::new(
-                    WalletdErrorCode::RpcConnectionFailed,
-                    format!("Failed to connect: {e}"),
-                )
-            })?;
+        let client = NodeRpcClient::connect(&params.ws_url).await.map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::RpcConnectionFailed,
+                format!("Failed to connect: {e}"),
+            )
+        })?;
         let metadata = client
             .get_chain_metadata()
             .await

@@ -13,16 +13,9 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 # First-Run Setup
 
-Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the Substrate-based `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a dev node with mining enabled.
+Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the native `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a native dev node with mining enabled.
 
-# macOS libclang
-
-On macOS, `librocksdb-sys` needs `libclang.dylib` available at build time. The `Makefile` exports `LIBCLANG_PATH` and `DYLD_LIBRARY_PATH` by checking:
-
-- `/Library/Developer/CommandLineTools/usr/lib`
-- `/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib`
-
-If you run `cargo` directly and hit `Library not loaded: @rpath/libclang.dylib`, export those variables yourself (matching the paths above) or run through `make` targets so the environment is set.
+For shared mining environments, document and use `HEGEMON_SEEDS="hegemon.pauli.group:30333"` unless the approved seed list has been deliberately rotated. All miners on the same network must share the same seed list to avoid partitions and forks, and mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
 
 # Design and Methods Docs
 

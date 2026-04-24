@@ -5,14 +5,12 @@ pub mod bft;
 pub mod commitment_tree;
 pub mod error;
 pub mod header;
-pub mod mining;
+pub mod import;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
 pub mod proof_interface;
 pub mod reward;
-pub mod substrate;
-pub mod substrate_pow;
 pub mod types;
 pub mod validator;
 pub mod version_policy;
@@ -35,19 +33,12 @@ pub use commitment_tree::{
 };
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
-pub use mining::{
-    MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorkTrace, MiningWorker,
-};
+pub use import::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CRYPTO_SUITE_GAMMA,
     CircuitVersion, CryptoSuiteId, DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
-};
-pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
-pub use substrate_pow::{
-    Sha256dAlgorithm, Sha256dSeal, compact_to_target, compute_work, counter_to_nonce, mine_round,
-    nonce_counter_prefix, seal_meets_target, target_to_compact, verify_seal,
 };
 pub use types::{
     ArtifactAnnouncement, BLOCK_PROOF_FORMAT_ID_V5, BalanceTag, CandidateArtifact, CoinbaseData,

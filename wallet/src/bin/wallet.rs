@@ -35,10 +35,10 @@ use wallet::{
     },
     is_ambiguous_submission_error,
     keys::{DerivedKeys, RootSecret},
+    node_rpc::NodeRpcClient,
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     parse_recipients, precheck_nullifiers_with_binding, provisional_pending_tx_id,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
-    substrate_rpc::SubstrateRpcClient,
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
@@ -94,12 +94,12 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
-    /// Sync wallet using Substrate WebSocket RPC
-    #[command(name = "substrate-sync")]
-    SubstrateSync(SubstrateSyncArgs),
-    /// Run daemon using Substrate WebSocket RPC with real-time subscriptions
-    #[command(name = "substrate-daemon")]
-    SubstrateDaemon(SubstrateDaemonArgs),
+    /// Sync wallet using native node WebSocket RPC
+    #[command(name = "node-sync")]
+    NodeSync(NodeSyncArgs),
+    /// Run daemon using native node WebSocket RPC with real-time subscriptions
+    #[command(name = "node-daemon")]
+    NodeDaemon(NodeDaemonArgs),
     /// Show wallet status (syncs first by default)
     Status(StatusArgs),
     /// Print account ID (hex) for signed extrinsics
@@ -108,12 +108,12 @@ enum Commands {
     /// Reset wallet sync state (keeps keys and addresses)
     #[command(name = "reset-sync")]
     ResetSync(StoreArgs),
-    /// Send using Substrate WebSocket RPC
-    #[command(name = "substrate-send")]
-    SubstrateSend(SubstrateSendArgs),
+    /// Send using native node WebSocket RPC
+    #[command(name = "node-send")]
+    NodeSend(NodeSendArgs),
     /// Send multiple transactions in a single batched proof
-    #[command(name = "substrate-batch-send")]
-    SubstrateBatchSend(SubstrateBatchSendArgs),
+    #[command(name = "node-batch-send")]
+    NodeBatchSend(NodeBatchSendArgs),
     /// Mint stablecoin via signed shielded transfer
     #[command(name = "stablecoin-mint")]
     StablecoinMint(StablecoinMintArgs),
@@ -155,7 +155,7 @@ struct StatusArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Skip sync and show cached status
@@ -188,7 +188,7 @@ struct PaymentProofCreateArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Transaction hash (0x-prefixed hex)
@@ -207,7 +207,7 @@ struct PaymentProofVerifyArgs {
     /// Disclosure package JSON file
     #[arg(long)]
     proof: PathBuf,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Optional JSONL ledger file to append verified deposits
@@ -236,16 +236,16 @@ struct PaymentProofPurgeArgs {
     all: bool,
 }
 
-/// Arguments for Substrate WebSocket sync
+/// Arguments for native node WebSocket sync
 #[derive(Parser)]
-struct SubstrateSyncArgs {
+struct NodeSyncArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Force rescan: reset wallet sync state if chain has changed.
@@ -254,16 +254,16 @@ struct SubstrateSyncArgs {
     force_rescan: bool,
 }
 
-/// Arguments for Substrate WebSocket daemon
+/// Arguments for native node WebSocket daemon
 #[derive(Parser)]
-struct SubstrateDaemonArgs {
+struct NodeDaemonArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Use block subscriptions for real-time sync (vs polling)
@@ -274,16 +274,16 @@ struct SubstrateDaemonArgs {
     finalized_only: bool,
 }
 
-/// Arguments for Substrate WebSocket send
+/// Arguments for native node WebSocket send
 #[derive(Parser)]
-struct SubstrateSendArgs {
+struct NodeSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Path to recipients JSON file
@@ -306,16 +306,16 @@ struct SubstrateSendArgs {
     no_sync: bool,
 }
 
-/// Arguments for Substrate batch send (multiple transactions in one proof)
+/// Arguments for native node batch send (multiple transactions in one proof)
 #[derive(Parser)]
-struct SubstrateBatchSendArgs {
+struct NodeBatchSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Paths to recipient JSON files (one per transaction, 2-16 files required)
@@ -341,7 +341,7 @@ struct StablecoinMintArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Recipient shielded address
@@ -373,7 +373,7 @@ struct StablecoinBurnArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Stablecoin amount to burn
@@ -455,13 +455,13 @@ fn main() -> Result<()> {
         }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
         Commands::Init(args) => cmd_init(args),
-        Commands::SubstrateSync(args) => cmd_substrate_sync(args),
-        Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
+        Commands::NodeSync(args) => cmd_node_sync(args),
+        Commands::NodeDaemon(args) => cmd_node_daemon(args),
         Commands::Status(args) => cmd_status(args),
         Commands::AccountId(args) => cmd_account_id(args),
         Commands::ResetSync(args) => cmd_reset_sync(args),
-        Commands::SubstrateSend(args) => cmd_substrate_send(args),
-        Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
+        Commands::NodeSend(args) => cmd_node_send(args),
+        Commands::NodeBatchSend(args) => cmd_node_batch_send(args),
         Commands::StablecoinMint(args) => cmd_stablecoin_mint(args),
         Commands::StablecoinBurn(args) => cmd_stablecoin_burn(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
@@ -616,7 +616,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
         metadata_map = runtime.block_on(async {
             println!("Syncing with {}...", args.ws_url);
             let client = Arc::new(
-                SubstrateRpcClient::connect(&args.ws_url)
+                NodeRpcClient::connect(&args.ws_url)
                     .await
                     .map_err(|e| anyhow!("Failed to connect: {}", e))?,
             );
@@ -840,7 +840,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -989,7 +989,7 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
 
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
-        let client = SubstrateRpcClient::connect(&args.ws_url)
+        let client = NodeRpcClient::connect(&args.ws_url)
             .await
             .map_err(|e| anyhow!("Failed to connect: {}", e))?;
 
@@ -1170,10 +1170,10 @@ fn append_credit_record(
     Ok(())
 }
 
-fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
+fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
     if !cfg!(feature = "batch-proofs") {
         anyhow::bail!(
-            "substrate-batch-send requires --features batch-proofs (disabled in production builds)"
+            "node-batch-send requires --features batch-proofs (disabled in production builds)"
         );
     }
 
@@ -1202,7 +1202,7 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
         // Connect and sync first
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1407,8 +1407,8 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
     })
 }
 
-/// Sync wallet using Substrate WebSocket RPC
-fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
+/// Sync wallet using native node WebSocket RPC
+fn cmd_node_sync(args: NodeSyncArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
@@ -1419,10 +1419,10 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
         .context("failed to create tokio runtime")?;
 
     runtime.block_on(async {
-        // Connect to Substrate node
+        // Connect to Hegemon node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1446,8 +1446,8 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
     })
 }
 
-/// Run wallet daemon with Substrate WebSocket RPC
-fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
+/// Run wallet daemon with native node WebSocket RPC
+fn cmd_node_daemon(args: NodeDaemonArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
@@ -1457,14 +1457,14 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
         .context("failed to create tokio runtime")?;
 
     runtime.block_on(async {
-        // Connect to Substrate node
+        // Connect to Hegemon node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
-        println!("Connected to Substrate node!");
+        println!("Connected to Hegemon node!");
 
         // Create sync engine
         let engine = AsyncWalletSyncEngine::new(client, store);
@@ -1538,7 +1538,7 @@ fn is_invalid_anchor_submission(msg: &str) -> bool {
 }
 
 async fn submit_bundle_with_fallback(
-    client: &SubstrateRpcClient,
+    client: &NodeRpcClient,
     bundle: &wallet::TransactionBundle,
     use_da_sidecar: bool,
     mut use_proof_sidecar: bool,
@@ -1573,8 +1573,8 @@ async fn submit_bundle_with_fallback(
     }
 }
 
-/// Send transaction using Substrate WebSocket RPC
-fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
+/// Send transaction using native node WebSocket RPC
+fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
@@ -1590,7 +1590,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         // Connect and sync first
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1867,7 +1867,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                             args.fee,
                         )?;
                         return Err(anyhow!(
-                            "Transaction submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                            "Transaction submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                             e
                         ));
                     }
@@ -1900,7 +1900,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1999,7 +1999,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                         args.fee,
                     )?;
                     return Err(anyhow!(
-                        "Mint submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        "Mint submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                         e
                     ));
                 }
@@ -2031,7 +2031,7 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -2110,7 +2110,7 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
                         args.fee,
                     )?;
                     return Err(anyhow!(
-                        "Burn submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        "Burn submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                         e
                     ));
                 }

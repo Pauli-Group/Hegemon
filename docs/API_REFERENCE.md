@@ -48,9 +48,9 @@ p budgets.
 
 ## `wallet/`
 
-- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, Substrate RPC flows, and disclosure tooling.
+- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, native node RPC flows, and disclosure tooling.
 - `wallet payment-proof create|verify|purge` generates and verifies proofs of disclosure and manages stored outgoing disclosure records.
-- `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the Substrate RPC paths for live wallets.
+- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets.
 - Wallet sync falls back to archive providers for ciphertext recovery when hot DA is pruned. Configure `HEGEMON_WALLET_ARCHIVE_WS_URL` or ensure providers are discoverable via `archive_listProviders`.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize proof-of-disclosure packages.
 - `wallet::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
@@ -64,16 +64,16 @@ p budgets.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
-## Runtime kernel and shielded family
+## Protocol kernel and shielded family
 
-- `pallet-kernel`
+- `protocol-kernel`
   - `submit_action(envelope)` is the only live public dispatch surface for proof-native protocol actions.
   - `FamilyRoots` stores the active family roots.
   - `KernelGlobalRoot` commits to the family-root map and is part of the live validity shape.
 
-- `pallet-shielded-pool`
+- `protocol-shielded-pool`
   - remains the first kernel family backend for shielded commitments, nullifiers, fee accounting, and proof verification
-  - no longer exposes its six live state-changing calls as a public runtime dispatch surface
+  - does not expose its state-changing calls as a public runtime dispatch surface
   - still implements the underlying action semantics for:
     - per-transfer shielded proofs
     - batch transfer proofs
@@ -83,7 +83,7 @@ p budgets.
 
 ## Node RPC endpoints
 
-Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
+Hegemon-specific RPC methods exposed on the native JSON-RPC server:
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
@@ -96,7 +96,7 @@ Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
 - `hegemon_consensusStatus() -> ConsensusStatus`
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
-- `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, chain spec identity, listen addresses, PQ verbosity, peer limits)
+- `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, native genesis identity, listen addresses, PQ verbosity, peer limits)
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
 
@@ -179,7 +179,7 @@ Legacy / experimental pool-worker RPC notes:
 - `peer_id: String` (hex)
 - `address: String` (`ip:port`)
 
-Archive market RPC methods exposed on the Substrate JSON-RPC server:
+Archive market RPC methods exposed on the native JSON-RPC server:
 
 - `archive_listProviders() -> Vec<ArchiveProviderEntry>`
 - `archive_getProvider(account_id_hex: String) -> Option<ArchiveProviderEntry>`
@@ -187,7 +187,7 @@ Archive market RPC methods exposed on the Substrate JSON-RPC server:
 - `archive_listContracts(account_id_hex: String) -> Vec<ArchiveContractEntry>`
 - `archive_getContract(contract_id: u64) -> Option<ArchiveContractEntry>`
 
-Block validity and data-availability RPC methods exposed by the Substrate node:
+Block validity and data-availability RPC methods exposed by the native node:
 
 - `block_getCommitmentProof(block_hash: H256) -> Option<CommitmentProofResult>`
   - Returns the commitment proof bytes and public inputs for a block, or `null` if the block has no commitment proof (e.g., coinbase-only blocks).
@@ -206,7 +206,7 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
 - `da_submitWitnesses(...)`
   - Deliberately disabled. Witness sidecars are rejected because they may contain secret material and must not be uploaded over RPC.
 
-Prepared-artifact discovery RPC methods exposed on the Substrate node:
+Prepared-artifact discovery RPC methods exposed on the native node:
 
 - `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
 - `prover_getCandidateArtifact(artifact_hash: String) -> Option<CandidateArtifactResponse>`

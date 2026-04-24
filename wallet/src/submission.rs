@@ -1,4 +1,6 @@
 use crate::{rpc::TransactionBundle, WalletError};
+use blake2::digest::{Update as BlakeUpdate, VariableOutput};
+use blake2::Blake2bVar;
 
 /// Returns true when a submission failure may still mean the extrinsic was accepted.
 ///
@@ -29,5 +31,15 @@ pub fn provisional_pending_tx_id(bundle: &TransactionBundle) -> [u8; 32] {
     for nf in &bundle.nullifiers {
         preimage.extend_from_slice(nf);
     }
-    sp_crypto_hashing::blake2_256(&preimage)
+    blake2_256(&preimage)
+}
+
+fn blake2_256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Blake2bVar::new(32).expect("valid BLAKE2b output length");
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("fixed output buffer has requested length");
+    out
 }

@@ -34,21 +34,13 @@ This creates:
 
 All miners should use the same approved `HEGEMON_SEEDS` list when joining the shared testnet. Divergent seed lists can reduce connectivity and increase fork risk. Enable NTP/chrony on every host because PoW timestamps are rejected if they exceed the future-skew bound.
 
-### 3. Generate Chain Spec
+### 3. Build The Native Node
 
 ```bash
-# Generate human-readable spec
-./target/release/hegemon-node build-spec \
-    --chain=testnet \
-    --disable-default-bootnode \
-    > config/testnet/testnet-spec.json
-
-# Generate raw spec (required for nodes)
-./target/release/hegemon-node build-spec \
-    --chain=config/testnet/testnet-spec.json \
-    --raw \
-    > config/testnet/testnet-raw.json
+make node
 ```
+
+The native testnet starts from native genesis state and does not use chain-spec generation.
 
 ### 4. Start the Testnet
 
@@ -83,29 +75,23 @@ curl -s -X POST -H "Content-Type: application/json" \
 
 | Service | Port | Description |
 |---------|------|-------------|
-| boot1 | 9944 (RPC), 30333 (P2P), 9615 (Metrics) | Primary mining node |
-| boot2 | 9945 (RPC), 30334 (P2P), 9616 (Metrics) | Secondary mining node |
-| boot3 | 9946 (RPC), 30335 (P2P), 9617 (Metrics) | Full node (non-mining) |
-| prometheus | 9090 | Metrics aggregation |
-| grafana | 3000 | Metrics visualization |
+| boot1 | 9944 (RPC), 30333 (P2P) | Primary mining node |
+| boot2 | 9945 (RPC), 30334 (P2P) | Secondary mining node |
+| boot3 | 9946 (RPC), 30335 (P2P) | Full node (non-mining) |
 
 ## Monitoring
 
-### Prometheus
+Use JSON-RPC for current native testnet checks:
 
-Access at http://localhost:9090
+```bash
+curl -s -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result.number'
 
-Example queries:
-- `substrate_block_height{status="best"}` - Current block height
-- `substrate_sub_libp2p_peers_count` - Connected peers
-- `process_resident_memory_bytes` - Memory usage
-
-### Grafana
-
-Access at http://localhost:3000 (admin/admin)
-
-Pre-configured dashboards:
-- Hegemon Testnet Overview
+curl -s -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+    http://localhost:9944 | jq '.result.peers'
+```
 
 ## Soak Testing
 
@@ -136,7 +122,6 @@ To connect an external node to the testnet:
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 hegemon-node \
     --dev \
-    --chain=config/testnet/testnet-raw.json \
     --base-path=/data/hegemon \
     --port=30333 \
     --rpc-port=9944 \
@@ -147,10 +132,10 @@ hegemon-node \
 
 ```bash
 # Sync wallet with testnet
-wallet substrate-sync --endpoint ws://localhost:9944
+wallet node-sync --ws-url ws://localhost:9944
 
 # Start continuous sync daemon
-wallet substrate-daemon --endpoint ws://localhost:9944
+wallet node-daemon --ws-url ws://localhost:9944
 ```
 
 ## Troubleshooting
@@ -163,7 +148,6 @@ docker logs hegemon-boot1
 ```
 
 Common issues:
-- Missing chain spec: Ensure `config/testnet/testnet-raw.json` exists
 - Missing keys: Run `./scripts/generate-testnet-keys.sh`
 - Port conflict: Check if ports 9944, 30333 are in use
 
@@ -196,16 +180,8 @@ Common issues:
 
 ```
 config/
-├── testnet/
-│   ├── testnet-spec.json      # Human-readable chain spec
-│   └── testnet-raw.json       # Raw chain spec (for nodes)
-└── monitoring/
-    ├── prometheus.yml         # Prometheus config
-    └── grafana/
-        ├── provisioning/
-        │   ├── dashboards/    # Dashboard provisioning
-        │   └── datasources/   # Datasource provisioning
-        └── dashboards/        # Dashboard JSON files
+└── testnet/
+    └── README.md             # Native testnet deployment guide
 
 keys/
 ├── boot1.key                  # Boot node 1 identity

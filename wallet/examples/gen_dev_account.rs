@@ -64,7 +64,16 @@ fn print_account(name: &str, seed: &[u8; 32]) {
 }
 
 fn blake2_256(data: &[u8]) -> [u8; 32] {
-    sp_crypto_hashing::blake2_256(data)
+    use blake2::digest::{Update as BlakeUpdate, VariableOutput};
+    use blake2::Blake2bVar;
+
+    let mut hasher = Blake2bVar::new(32).expect("valid blake2 output size");
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("output size matches");
+    out
 }
 
 /// Encode account ID to SS58 format
@@ -85,9 +94,22 @@ fn to_ss58(account_id: &[u8; 32], ss58_format: u16) -> String {
 
     // Checksum: blake2b of "SS58PRE" + payload, take first 2 bytes
     let checksum_input: Vec<u8> = b"SS58PRE".iter().chain(payload.iter()).copied().collect();
-    let hash = sp_crypto_hashing::blake2_512(&checksum_input);
+    let hash = blake2_512(&checksum_input);
     payload.extend_from_slice(&hash[..2]);
 
     // Base58 encode
     bs58::encode(payload).into_string()
+}
+
+fn blake2_512(data: &[u8]) -> [u8; 64] {
+    use blake2::digest::{Update as BlakeUpdate, VariableOutput};
+    use blake2::Blake2bVar;
+
+    let mut hasher = Blake2bVar::new(64).expect("valid blake2 output size");
+    hasher.update(data);
+    let mut out = [0u8; 64];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("output size matches");
+    out
 }

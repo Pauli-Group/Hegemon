@@ -1,7 +1,7 @@
-//! Async Wallet Sync Engine for Substrate RPC
+//! Async Wallet Sync Engine for native node RPC
 //!
 //! This module provides an async synchronization engine that syncs wallet state
-//! using the Substrate WebSocket RPC client. It replaces the blocking sync engine
+//! using the Hegemon WebSocket RPC client. It replaces the blocking sync engine
 //! for use with async runtimes.
 //!
 //! # Features
@@ -14,11 +14,11 @@
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use wallet::{SubstrateRpcClient, WalletStore};
+//! use wallet::{NodeRpcClient, WalletStore};
 //! use wallet::async_sync::AsyncWalletSyncEngine;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = Arc::new(SubstrateRpcClient::connect("ws://127.0.0.1:9944").await?);
+//! let client = Arc::new(NodeRpcClient::connect("ws://127.0.0.1:9944").await?);
 //! let store = Arc::new(WalletStore::open("wallet.dat", "password")?);
 //! let engine = AsyncWalletSyncEngine::new(client, store);
 //! let outcome = engine.sync_once().await?;
@@ -35,19 +35,19 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::node_rpc::NodeRpcClient;
 use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
-use crate::substrate_rpc::SubstrateRpcClient;
 use crate::sync::SyncOutcome;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
 
 /// Async wallet synchronization engine
 ///
-/// This engine syncs wallet state with a Substrate node using WebSocket RPC.
+/// This engine syncs wallet state with a Hegemon node using WebSocket RPC.
 /// It supports both one-shot synchronization and continuous sync via subscriptions.
 pub struct AsyncWalletSyncEngine {
     /// RPC client for node communication
-    client: Arc<SubstrateRpcClient>,
+    client: Arc<NodeRpcClient>,
     /// Wallet store (wrapped for interior mutability)
     store: Arc<WalletStore>,
     /// Page size for fetching commitments/ciphertexts
@@ -61,9 +61,9 @@ impl AsyncWalletSyncEngine {
     ///
     /// # Arguments
     ///
-    /// * `client` - Substrate RPC client
+    /// * `client` - native node RPC client
     /// * `store` - Wallet store
-    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+    pub fn new(client: Arc<NodeRpcClient>, store: Arc<WalletStore>) -> Self {
         Self {
             client,
             store,
@@ -512,7 +512,7 @@ pub struct SharedSyncEngine {
 
 impl SharedSyncEngine {
     /// Create a new shared sync engine
-    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+    pub fn new(client: Arc<NodeRpcClient>, store: Arc<WalletStore>) -> Self {
         Self {
             inner: RwLock::new(AsyncWalletSyncEngine::new(client, store)),
         }

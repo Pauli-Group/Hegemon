@@ -44,9 +44,16 @@ impl PeerManager {
         self.peers.len()
     }
 
-    pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
-        self.record_addresses(peer_id, [addr]);
-
+    pub fn add_peer(
+        &mut self,
+        peer_id: PeerId,
+        addr: SocketAddr,
+        tx: mpsc::Sender<WireMessage>,
+        dialable_addr: bool,
+    ) {
+        if dialable_addr {
+            self.record_addresses(peer_id, [addr]);
+        }
         if let std::collections::hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer_id) {
             entry.insert(PeerEntry {
                 peer_id,

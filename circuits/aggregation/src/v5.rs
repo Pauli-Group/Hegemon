@@ -286,7 +286,7 @@ fn leaf_shape_id(
     bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
-    sp_core::hashing::blake2_256(&bytes)
+    crypto::hashes::blake2_256(&bytes)
 }
 
 fn merge_shape_id(
@@ -300,7 +300,7 @@ fn merge_shape_id(
     bytes.extend_from_slice(&(fan_in as u64).to_le_bytes());
     bytes.extend_from_slice(&child_shape_id);
     bytes.extend_from_slice(&(child_public_values_len as u64).to_le_bytes());
-    sp_core::hashing::blake2_256(&bytes)
+    crypto::hashes::blake2_256(&bytes)
 }
 
 fn statement_hash_from_tx_proof(proof: &TransactionProof) -> [u8; 48] {

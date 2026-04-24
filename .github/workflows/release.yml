@@ -22,16 +22,15 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libclang-dev
+          sudo apt-get install -y protobuf-compiler
       
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
       - name: Build wallet binary
         run: cargo build -p wallet --release
@@ -57,17 +56,16 @@ jobs:
       
       - name: Install dependencies
         run: |
-          brew install protobuf llvm
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+          brew install protobuf
       
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown,x86_64-apple-darwin
+          targets: x86_64-apple-darwin
           components: rust-src
       
       - name: Build node binary (cross-compile for Intel)
-        run: cargo build -p hegemon-node --features substrate --release --target x86_64-apple-darwin
+        run: cargo build -p hegemon-node --release --target x86_64-apple-darwin
 
       - name: Build wallet binary (cross-compile for Intel)
         run: cargo build -p wallet --release --target x86_64-apple-darwin
@@ -93,17 +91,15 @@ jobs:
       
       - name: Install dependencies
         run: |
-          brew install protobuf llvm
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+          brew install protobuf
       
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
       - name: Build wallet binary
         run: cargo build -p wallet --release
@@ -136,11 +132,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
       - name: Build wallet binary
         run: cargo build -p wallet --release

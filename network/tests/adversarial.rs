@@ -49,7 +49,9 @@ fn repeated_legacy_handshakes_rekey_the_first_channel_nonce() {
         establish_secure_channel(&initiator, &responder).expect("second secure channel");
 
     let first_ciphertext = first_a.encrypt(b"same first plaintext").expect("encrypt 1");
-    let second_ciphertext = second_a.encrypt(b"same first plaintext").expect("encrypt 2");
+    let second_ciphertext = second_a
+        .encrypt(b"same first plaintext")
+        .expect("encrypt 2");
 
     assert_ne!(
         first_ciphertext, second_ciphertext,

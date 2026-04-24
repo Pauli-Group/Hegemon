@@ -13,6 +13,7 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 pub mod nat;
+pub mod native_transport;
 pub mod network_backend;
 pub mod p2p;
 pub mod peer_manager;
@@ -20,9 +21,12 @@ pub mod peer_store;
 pub mod pq_transport;
 pub mod protocol;
 pub mod service;
-pub mod substrate_transport;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
+pub use native_transport::{
+    NativePqConnection, NativePqTransport, NativePqTransportConfig, NativeTransportError,
+    PqConnectionInfo, PqUpgradeOutput,
+};
 pub use network_backend::{
     BootstrapNode, PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
 };
@@ -38,10 +42,6 @@ pub use protocol::{
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
-pub use substrate_transport::{
-    PqConnectionInfo, PqUpgradeOutput, SubstratePqConnection, SubstratePqTransport,
-    SubstratePqTransportConfig, SubstrateTransportError,
-};
 
 pub type PeerId = [u8; 32];
 pub type ProtocolId = u32;

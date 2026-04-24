@@ -1,14 +1,7 @@
-//! PQ Network Backend for Substrate
+//! PQ Network Backend
 //!
-//! Custom network backend that integrates PQ-secure transport with
-//! Substrate's sc-network infrastructure.
-//!
-//! # Phase 3.5 Implementation
-//!
-//! This module implements Task 3.5.2 of the substrate migration plan:
-//! - Custom NetworkBackend with PQ transport
-//! - Connection manager with PQ handshake
-//! - Peer management with PQ identity verification
+//! Native backend that integrates PQ-secure TCP transport, peer admission,
+//! connection lifecycle events, and protocol message delivery.
 //!
 //! # Architecture
 //!
@@ -27,7 +20,7 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────┐  │
 //! │  │              PQ Transport Layer                            │  │
 //! │  │  ┌─────────────────────────────────────────────────────┐  │  │
-//! │  │  │  SubstratePqTransport (PQ-only handshake)           │  │  │
+//! │  │  │  NativePqTransport (PQ-only handshake)           │  │  │
 //! │  │  └─────────────────────────────────────────────────────┘  │  │
 //! │  └───────────────────────────────────────────────────────────┘  │
 //! │                            │                                    │
@@ -40,10 +33,8 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+use crate::native_transport::{NativePqTransport, NativePqTransportConfig, PqConnectionInfo};
 use crate::pq_transport::PqPeerIdentity;
-use crate::substrate_transport::{
-    PqConnectionInfo, SubstratePqTransport, SubstratePqTransportConfig,
-};
 use pq_noise::session::SESSION_MAX_FRAME_LEN;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -295,10 +286,10 @@ enum PeerAdmission {
 
 /// PQ Network Backend
 ///
-/// Manages PQ-secure peer connections for Substrate networking.
+/// Manages PQ-secure peer connections for native networking.
 pub struct PqNetworkBackend {
     /// Transport for establishing connections
-    transport: SubstratePqTransport,
+    transport: NativePqTransport,
     /// Configuration
     config: PqNetworkBackendConfig,
     /// Active peer connections
@@ -475,14 +466,15 @@ impl PqNetworkBackend {
 
     /// Create a new PQ network backend
     pub fn new(identity: &PqPeerIdentity, config: PqNetworkBackendConfig) -> Self {
-        let transport_config = SubstratePqTransportConfig {
+        let transport_config = NativePqTransportConfig {
             connection_timeout: config.connection_timeout,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: config.verbose_logging,
+            require_pq: true,
             protocol_id: "/hegemon/pq/1".to_string(),
         };
 
-        let transport = SubstratePqTransport::new(identity, transport_config);
+        let transport = NativePqTransport::new(identity, transport_config);
         let local_peer_id = transport.local_peer_id();
         let (lifecycle_event_tx, lifecycle_event_rx) =
             mpsc::channel(LIFECYCLE_EVENT_CHANNEL_CAPACITY);
@@ -1013,7 +1005,7 @@ impl PqNetworkBackend {
     }
 
     async fn connect_outbound_inner(
-        transport: SubstratePqTransport,
+        transport: NativePqTransport,
         peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
         lifecycle_event_tx: mpsc::Sender<PqNetworkEvent>,
         message_event_tx: mpsc::Sender<PqNetworkEvent>,

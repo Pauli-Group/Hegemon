@@ -1315,7 +1315,7 @@ fn aggregation_shape_id(
     bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
-    sp_core::hashing::blake2_256(&bytes)
+    crypto::hashes::blake2_256(&bytes)
 }
 
 fn persist_cache_build_marker(

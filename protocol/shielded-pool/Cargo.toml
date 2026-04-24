@@ -1,0 +1,22 @@
+[package]
+name = "protocol-shielded-pool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake2 = { version = "0.10", default-features = false }
+codec = { workspace = true, features = ["max-encoded-len"] }
+scale-info = { workspace = true }
+transaction-core = { path = "../../circuits/transaction-core", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "blake2/std",
+    "codec/std",
+    "scale-info/std",
+    "transaction-core/std",
+]
+
+[lints]
+workspace = true

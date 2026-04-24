@@ -276,7 +276,7 @@ pub struct MockPoolStatus {
 /// Test RPC client that wraps mock service or real connection
 pub struct TestRpcClient {
     mock: Option<Arc<MockRpcService>>,
-    // In real mode, would have wallet::SubstrateRpcClient
+    // In real mode, would have wallet::NodeRpcClient
 }
 
 impl TestRpcClient {
@@ -766,7 +766,7 @@ mod integration_tests {
 
     /// Test against real node - verifies connection and basic RPC functionality
     #[tokio::test]
-    #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
+    #[ignore = "Requires running node node - run with cargo test --ignored"]
     async fn test_real_node_connection() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
@@ -774,7 +774,7 @@ mod integration_tests {
         eprintln!("Testing connection to: {}", endpoint);
 
         // Try to connect
-        let client = wallet::SubstrateRpcClient::connect(&endpoint).await;
+        let client = wallet::NodeRpcClient::connect(&endpoint).await;
 
         if client.is_err() {
             eprintln!("❌ Connection failed: {:?}", client.err());
@@ -835,7 +835,7 @@ mod integration_tests {
 
     /// Test commitment and ciphertext retrieval
     #[tokio::test]
-    #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
+    #[ignore = "Requires running node node - run with cargo test --ignored"]
     async fn test_real_shielded_pool_queries() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
@@ -843,7 +843,7 @@ mod integration_tests {
         eprintln!("Shielded pool query test on: {}", endpoint);
 
         // Connect to node
-        let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
+        let client = match wallet::NodeRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Connection failed: {:?}", e);
@@ -908,7 +908,7 @@ mod integration_tests {
 
     /// Test nullifier queries
     #[tokio::test]
-    #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
+    #[ignore = "Requires running node node - run with cargo test --ignored"]
     async fn test_real_shielded_transfer() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
@@ -916,7 +916,7 @@ mod integration_tests {
         eprintln!("Nullifier query test on: {}", endpoint);
 
         // Connect
-        let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
+        let client = match wallet::NodeRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Connection failed: {:?}", e);
@@ -943,14 +943,14 @@ mod integration_tests {
 
     /// Test block subscription
     #[tokio::test]
-    #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
+    #[ignore = "Requires running node node - run with cargo test --ignored"]
     async fn test_real_block_subscription() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
         eprintln!("Block subscription test on: {}", endpoint);
 
-        let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
+        let client = match wallet::NodeRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 panic!("Connection failed: {:?}", e);
@@ -994,14 +994,14 @@ mod integration_tests {
 
     /// Test nonce retrieval
     #[tokio::test]
-    #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
+    #[ignore = "Requires running node node - run with cargo test --ignored"]
     async fn test_real_nonce_query() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
         eprintln!("Nonce query test on: {}", endpoint);
 
-        let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
+        let client = match wallet::NodeRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 panic!("Connection failed: {:?}", e);

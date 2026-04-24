@@ -3,23 +3,14 @@
 # This file configures a 3-node testnet for the Hegemon blockchain.
 # 
 # Usage:
-#   1. Generate boot node keys:
+#   1. Generate local native seed material and .env.testnet:
 #      ./scripts/generate-testnet-keys.sh
-#   
+#
 #   2. Set environment variables:
-#      export BOOT1_PEER_ID=<from step 1>
-#      export BOOT2_PEER_ID=<from step 1>
-#      export BOOT3_PEER_ID=<from step 1>
+#      source .env.testnet
 #
 #   3. Start the testnet:
 #      docker-compose -f docker-compose.testnet.yml up -d
-#
-# Monitoring:
-#   - Prometheus: http://localhost:9090
-#   - Grafana: http://localhost:3000 (admin/admin)
-#   - Dashboard: https://polkadot.js.org/apps/?rpc=ws%3A%2F%2Flocalhost%3A9944
-
-version: '3.8'
 
 services:
   # Boot Node 1 - Primary mining node
@@ -37,22 +28,16 @@ services:
       - --rpc-cors=all
       - --rpc-external
       - --rpc-methods=safe
-      - --prometheus-external
-      - --prometheus-port=9615
-      - --node-key-file=/keys/boot1.key
       - --name=boot1
-      - --force-authoring
     environment:
       - RUST_LOG=info,hegemon=debug
       - HEGEMON_MINE=1
       - HEGEMON_MINE_THREADS=2
     volumes:
-      - ./keys:/keys:ro
       - boot1-data:/data
     ports:
       - "30333:30333"   # P2P
       - "9944:9944"     # RPC
-      - "9615:9615"     # Prometheus
     networks:
       - hegemon-testnet
     restart: unless-stopped
@@ -69,22 +54,17 @@ services:
       - --rpc-cors=all
       - --rpc-external
       - --rpc-methods=safe
-      - --prometheus-external
-      - --prometheus-port=9615
-      - --node-key-file=/keys/boot2.key
       - --name=boot2
-      - --force-authoring
     environment:
       - RUST_LOG=info,hegemon=debug
       - HEGEMON_MINE=1
       - HEGEMON_MINE_THREADS=1
+      - HEGEMON_SEEDS=boot1:30333
     volumes:
-      - ./keys:/keys:ro
       - boot2-data:/data
     ports:
       - "30334:30333"
       - "9945:9944"
-      - "9616:9615"
     networks:
       - hegemon-testnet
     depends_on:
@@ -103,60 +83,19 @@ services:
       - --rpc-cors=all
       - --rpc-external
       - --rpc-methods=safe
-      - --prometheus-external
-      - --prometheus-port=9615
-      - --node-key-file=/keys/boot3.key
       - --name=boot3
     environment:
       - RUST_LOG=info,hegemon=debug
+      - HEGEMON_SEEDS=boot1:30333
     volumes:
-      - ./keys:/keys:ro
       - boot3-data:/data
     ports:
       - "30335:30333"
       - "9946:9944"
-      - "9617:9615"
     networks:
       - hegemon-testnet
     depends_on:
       - boot1
-    restart: unless-stopped
-
-  # Prometheus Monitoring
-  prometheus:
-    image: prom/prometheus:v2.47.0
-    container_name: hegemon-prometheus
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --web.enable-lifecycle
-    volumes:
-      - ./config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    ports:
-      - "9090:9090"
-    networks:
-      - hegemon-testnet
-    restart: unless-stopped
-
-  # Grafana Dashboard
-  grafana:
-    image: grafana/grafana:10.1.5
-    container_name: hegemon-grafana
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - ./config/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
-    ports:
-      - "3000:3000"
-    networks:
-      - hegemon-testnet
-    depends_on:
-      - prometheus
     restart: unless-stopped
 
 networks:
@@ -170,5 +109,3 @@ volumes:
   boot1-data:
   boot2-data:
   boot3-data:
-  prometheus-data:
-  grafana-data:

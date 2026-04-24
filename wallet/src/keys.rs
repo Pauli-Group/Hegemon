@@ -7,8 +7,9 @@ use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
     deterministic::expand_to_length,
     hashes::{blake3_256, derive_prf_key},
+    ml_dsa::MlDsaSecretKey,
     ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
-    traits::KemKeyPair,
+    traits::{KemKeyPair, SigningKey, VerifyKey},
 };
 use transaction_circuit::hashing_pq::spend_auth_key_bytes;
 
@@ -17,6 +18,26 @@ use crate::{address::ShieldedAddress, error::WalletError};
 const KEY_SIZE: usize = 32;
 const ADDRESS_VERSION: u8 = 3;
 const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
+
+/// Derive the legacy 32-byte account id from a deterministic ML-DSA seed.
+pub fn ml_dsa_account_id_from_seed(seed: &[u8; 32]) -> [u8; 32] {
+    let signing_key = MlDsaSecretKey::generate_deterministic(seed);
+    let public_key = signing_key.verify_key();
+    blake2_256_hash(&public_key.to_bytes())
+}
+
+fn blake2_256_hash(data: &[u8]) -> [u8; 32] {
+    use blake2::digest::{Update as BlakeUpdate, VariableOutput};
+    use blake2::Blake2bVar;
+
+    let mut hasher = Blake2bVar::new(32).expect("valid blake2 output size");
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("output size matches");
+    out
+}
 
 /// Root secret key - the master seed for the wallet.
 /// This is zeroized on drop to prevent key material from persisting in memory.

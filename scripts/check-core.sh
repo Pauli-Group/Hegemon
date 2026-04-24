@@ -16,8 +16,8 @@ run_lint() {
   cargo fmt --all -- --check
   cargo clippy \
     -p hegemon-node \
-    -p runtime \
-    -p pallet-shielded-pool \
+    -p protocol-kernel \
+    -p protocol-shielded-pool \
     -p wallet \
     -p network \
     -p consensus \
@@ -26,7 +26,6 @@ run_lint() {
     -p block-circuit \
     -p disclosure-circuit \
     --all-targets -- -D warnings
-  cargo clippy -p runtime --all-targets --all-features -- -D warnings
   cargo clippy \
     -p superneo-backend-lattice \
     -p superneo-hegemon \
@@ -45,15 +44,16 @@ run_test() {
   cargo test -p block-circuit
   cargo test -p disclosure-circuit
   cargo test -p network
-  cargo test -p pallet-shielded-pool
+  cargo test -p protocol-kernel
+  cargo test -p protocol-shielded-pool
   cargo test -p wallet
-  cargo test -p runtime
   cargo test -p hegemon-node --lib
+  cargo test -p hegemon-node --lib --no-default-features
   cargo test --test security_pipeline -- --nocapture
 }
 
 run_build() {
-  cargo build -p hegemon-node --release
+  cargo build -p hegemon-node --bin hegemon-node --no-default-features --release
 }
 
 case "${1:-all}" in

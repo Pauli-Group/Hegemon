@@ -1,6 +1,6 @@
-# Miner + wallet quickstart (Substrate node)
+# Miner + wallet quickstart (Hegemon node)
 
-Use this runbook to stand up mining nodes and verify they are producing blocks with the Substrate-based `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
+Use this runbook to stand up mining nodes and verify they are producing blocks with the native `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
 
 For fresh-testnet bring-up, if you are following [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md), use the laptop-created `hegemon-boot-wallet` address as both `HEGEMON_MINER_ADDRESS` and `HEGEMON_PROVER_REWARD_ADDRESS` on every mining/proving host.
 

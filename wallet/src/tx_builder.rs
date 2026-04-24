@@ -1,4 +1,4 @@
-use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::rngs::OsRng;
 use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
@@ -11,10 +11,10 @@ use transaction_circuit::StablecoinPolicyBinding;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
+use crate::node_rpc::NodeRpcClient;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use crate::rpc::TransactionBundle;
 use crate::store::{OutgoingDisclosureDraft, SpendableNote, WalletMode, WalletStore};
-use crate::substrate_rpc::SubstrateRpcClient;
 
 pub struct Recipient {
     pub address: ShieldedAddress,
@@ -83,7 +83,7 @@ fn submission_proof_material_from_witness(
 /// Returns Ok(nullifiers) if all notes are unspent, or Err with the index of the first spent note.
 pub async fn precheck_nullifiers(
     store: &WalletStore,
-    rpc: &SubstrateRpcClient,
+    rpc: &NodeRpcClient,
     recipients: &[Recipient],
     fee: u64,
 ) -> Result<(), WalletError> {
@@ -94,7 +94,7 @@ pub async fn precheck_nullifiers(
 /// Pre-flight check that supports stablecoin issuance/burn bindings.
 pub async fn precheck_nullifiers_with_binding(
     store: &WalletStore,
-    rpc: &SubstrateRpcClient,
+    rpc: &NodeRpcClient,
     recipients: &[Recipient],
     fee: u64,
     stablecoin: &StablecoinPolicyBinding,
@@ -349,7 +349,7 @@ pub fn build_transaction_with_binding(
         submission.balance_slot_asset_ids,
         submission.fee,
         submission.value_balance,
-        to_pallet_stablecoin_binding(&witness.stablecoin),
+        to_chain_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         submission.proof_bytes,
@@ -555,7 +555,7 @@ pub fn build_stablecoin_burn(
         submission.balance_slot_asset_ids,
         submission.fee,
         submission.value_balance,
-        to_pallet_stablecoin_binding(&witness.stablecoin),
+        to_chain_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         submission.proof_bytes,
@@ -732,7 +732,7 @@ pub fn build_consolidation_transaction(
         submission.balance_slot_asset_ids,
         submission.fee,
         submission.value_balance,
-        to_pallet_stablecoin_binding(&witness.stablecoin),
+        to_chain_stablecoin_binding(&witness.stablecoin),
     );
     let bundle = TransactionBundle::new(
         submission.proof_bytes,
@@ -767,7 +767,7 @@ fn compute_binding_hash(
     balance_slot_asset_ids: [u64; 4],
     fee: u64,
     value_balance: i128,
-    stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
+    stablecoin: Option<protocol_shielded_pool::types::StablecoinPolicyBinding>,
 ) -> [u8; 64] {
     let inputs = ShieldedTransferInputs {
         anchor: *anchor,
@@ -782,12 +782,12 @@ fn compute_binding_hash(
     StarkVerifier::compute_binding_hash(&inputs).data
 }
 
-fn to_pallet_stablecoin_binding(
+fn to_chain_stablecoin_binding(
     binding: &StablecoinPolicyBinding,
-) -> Option<pallet_shielded_pool::types::StablecoinPolicyBinding> {
+) -> Option<protocol_shielded_pool::types::StablecoinPolicyBinding> {
     binding
         .enabled
-        .then_some(pallet_shielded_pool::types::StablecoinPolicyBinding {
+        .then_some(protocol_shielded_pool::types::StablecoinPolicyBinding {
             asset_id: binding.asset_id,
             policy_hash: binding.policy_hash,
             oracle_commitment: binding.oracle_commitment,
@@ -1060,7 +1060,7 @@ mod tests {
     use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
     use tempfile::tempdir;
 
-    use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+    use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
     use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 
     use super::*;
@@ -1094,7 +1094,7 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_binding_hash_matches_pallet_verifier() {
+    fn sidecar_binding_hash_matches_protocol_verifier() {
         let dir = tempdir().unwrap();
         let sender_path = dir.path().join("sender.wallet");
         let recipient_path = dir.path().join("recipient.wallet");
@@ -1184,7 +1184,7 @@ mod tests {
             balance_slot_asset_ids,
             0,
             0,
-            to_pallet_stablecoin_binding(&stablecoin),
+            to_chain_stablecoin_binding(&stablecoin),
         );
         let bundle = TransactionBundle::new(
             Vec::new(),
@@ -1210,7 +1210,7 @@ mod tests {
             .unwrap();
 
         let stablecoin = bundle.stablecoin.enabled.then_some(
-            pallet_shielded_pool::types::StablecoinPolicyBinding {
+            protocol_shielded_pool::types::StablecoinPolicyBinding {
                 asset_id: bundle.stablecoin.asset_id,
                 policy_hash: bundle.stablecoin.policy_hash,
                 oracle_commitment: bundle.stablecoin.oracle_commitment,

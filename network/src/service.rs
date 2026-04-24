@@ -8,7 +8,7 @@ use crate::{
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::mpsc;
@@ -98,8 +98,8 @@ impl ProtocolMultiplexer {
     }
 
     fn register(&mut self, protocol_id: ProtocolId) -> ProtocolHandle {
-        let (outbound_tx, outbound_rx) = mpsc::channel(100);
-        let (inbound_tx, inbound_rx) = mpsc::channel(100);
+        let (outbound_tx, outbound_rx) = mpsc::channel(1024);
+        let (inbound_tx, inbound_rx) = mpsc::channel(1024);
 
         let stream = ReceiverStream::new(outbound_rx).boxed();
 
@@ -138,6 +138,7 @@ enum P2PCommand {
         peer_id: PeerId,
         addr: SocketAddr,
         tx: mpsc::Sender<WireMessage>,
+        inbound: bool,
     },
     Message {
         peer_id: PeerId,
@@ -146,6 +147,7 @@ enum P2PCommand {
     PeerDisconnected {
         peer_id: PeerId,
         addr: SocketAddr,
+        inbound: bool,
     },
 }
 
@@ -221,8 +223,9 @@ impl P2PService {
 
         let nat_result = NatTraversal::attempt_mapping(&self.nat_config).await;
         self.advertised_addrs = nat_result.external_addresses.clone();
-        if !self.advertised_addrs.contains(&self.addr) {
-            self.advertised_addrs.push(self.addr);
+        let listen_advertised = dialable_listen_addr(self.addr);
+        if !self.advertised_addrs.contains(&listen_advertised) {
+            self.advertised_addrs.push(listen_advertised);
         }
         self.peer_manager
             .record_static_addresses(self.advertised_addrs.iter().copied());
@@ -279,16 +282,20 @@ impl P2PService {
                 // Handle commands (NewPeer, Message, Disconnect)
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
-                        P2PCommand::NewPeer { peer_id, addr, tx } => {
+                        P2PCommand::NewPeer { peer_id, addr, tx, inbound } => {
                             info!("peer connected: {} ({:?})", addr, peer_id);
-                            self.peer_manager.add_peer(peer_id, addr, tx);
-                            self.peer_store.record_connected(addr)?;
-                            self.learned_addresses.insert(addr);
+                            self.peer_manager.add_peer(peer_id, addr, tx, !inbound);
+                            if !inbound && is_dialable_addr(addr) {
+                                self.peer_store.record_connected(addr)?;
+                                self.learned_addresses.insert(addr);
+                            }
                             self.request_addresses(peer_id).await;
                             self.share_addresses_with_peer(peer_id, addr, ADDRESS_EXCHANGE_LIMIT)
                                 .await;
-                            self.advertise_new_peer_to_others(peer_id, addr)
-                                .await;
+                            if !inbound && is_dialable_addr(addr) {
+                                self.advertise_new_peer_to_others(peer_id, addr)
+                                    .await;
+                            }
 
                             let registration = CoordinationMessage::RelayRegistration {
                                 reachable: self
@@ -303,10 +310,16 @@ impl P2PService {
                                 .send_to(&peer_id, WireMessage::Coordinate(registration))
                                 .await;
                         }
-                        P2PCommand::PeerDisconnected { peer_id, addr } => {
+                        P2PCommand::PeerDisconnected {
+                            peer_id,
+                            addr,
+                            inbound,
+                        } => {
                             info!("peer disconnected: {} ({:?})", addr, peer_id);
                             self.peer_manager.remove_peer(&peer_id);
-                            self.peer_store.record_disconnected(addr)?;
+                            if !inbound && is_dialable_addr(addr) {
+                                self.peer_store.record_disconnected(addr)?;
+                            }
                         }
                         P2PCommand::Message { peer_id, msg } => {
                             self.peer_manager.mark_heartbeat(&peer_id);
@@ -422,8 +435,14 @@ impl P2PService {
                         let mut connection = Connection::new(socket);
                         match connection.handshake_initiator(&identity).await {
                             Ok(peer_id) => {
-                                Self::run_peer_loop(connection, addr, peer_id, cmd_tx.clone())
-                                    .await;
+                                Self::run_peer_loop(
+                                    connection,
+                                    addr,
+                                    peer_id,
+                                    cmd_tx.clone(),
+                                    false,
+                                )
+                                .await;
                                 backoff = RECONNECT_BASE;
                             }
                             Err(e) => {
@@ -452,7 +471,7 @@ impl P2PService {
             let mut connection = Connection::new(socket);
             match connection.handshake_responder(&identity).await {
                 Ok(peer_id) => {
-                    Self::run_peer_loop(connection, addr, peer_id, cmd_tx).await;
+                    Self::run_peer_loop(connection, addr, peer_id, cmd_tx, true).await;
                 }
                 Err(e) => {
                     warn!("handshake failed with {}: {}", addr, e);
@@ -466,10 +485,16 @@ impl P2PService {
         addr: SocketAddr,
         peer_id: PeerId,
         cmd_tx: mpsc::Sender<P2PCommand>,
+        inbound: bool,
     ) {
         let (tx, mut rx) = mpsc::channel::<WireMessage>(100);
         if cmd_tx
-            .send(P2PCommand::NewPeer { peer_id, addr, tx })
+            .send(P2PCommand::NewPeer {
+                peer_id,
+                addr,
+                tx,
+                inbound,
+            })
             .await
             .is_err()
         {
@@ -506,7 +531,11 @@ impl P2PService {
         }
 
         let _ = cmd_tx
-            .send(P2PCommand::PeerDisconnected { peer_id, addr })
+            .send(P2PCommand::PeerDisconnected {
+                peer_id,
+                addr,
+                inbound,
+            })
             .await;
     }
 
@@ -666,10 +695,6 @@ impl P2PService {
             push_candidate(*addr);
         }
 
-        for addr in self.peer_manager.connected_addresses() {
-            push_candidate(addr);
-        }
-
         for addr in &self.learned_addresses {
             push_candidate(*addr);
         }
@@ -764,6 +789,7 @@ impl P2PService {
         let filtered: Vec<_> = addrs
             .into_iter()
             .filter(|addr| !local.contains(addr))
+            .filter(|addr| is_dialable_addr(*addr))
             .collect();
 
         if filtered.is_empty() {
@@ -810,7 +836,7 @@ impl P2PService {
                     let mut connection = Connection::new(socket);
                     match connection.handshake_initiator(&identity).await {
                         Ok(peer_id) => {
-                            Self::run_peer_loop(connection, addr, peer_id, cmd_tx).await;
+                            Self::run_peer_loop(connection, addr, peer_id, cmd_tx, false).await;
                         }
                         Err(e) => warn!("handshake failed with {}: {}", addr, e),
                     }
@@ -819,6 +845,18 @@ impl P2PService {
             }
         });
     }
+}
+
+fn dialable_listen_addr(addr: SocketAddr) -> SocketAddr {
+    if addr.ip().is_unspecified() {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+    } else {
+        addr
+    }
+}
+
+fn is_dialable_addr(addr: SocketAddr) -> bool {
+    addr.port() != 0 && !addr.ip().is_unspecified()
 }
 
 #[cfg(test)]

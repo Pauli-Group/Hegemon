@@ -1,8 +1,24 @@
 use alloc::vec::Vec;
-use sp_runtime::DispatchError;
 
 use crate::manifest::KernelManifest;
 use crate::types::{ActionEnvelope, FamilyId, FamilyRoot, GlobalRoot, Nullifier, StatementHash};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelError {
+    Other(&'static str),
+}
+
+impl KernelError {
+    pub const fn other(reason: &'static str) -> Self {
+        Self::Other(reason)
+    }
+
+    pub const fn reason(&self) -> &'static str {
+        match self {
+            Self::Other(reason) => reason,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionSourceClass {
@@ -51,11 +67,11 @@ pub trait KernelFamily {
         manifest: &KernelManifest,
         state: &dyn KernelStateView,
         envelope: &ActionEnvelope,
-    ) -> Result<ValidActionMeta, DispatchError>;
+    ) -> Result<ValidActionMeta, KernelError>;
 
     fn apply(
         manifest: &KernelManifest,
         state: &mut dyn KernelStateWrite,
         envelope: &ActionEnvelope,
-    ) -> Result<ApplyOutcome, DispatchError>;
+    ) -> Result<ApplyOutcome, KernelError>;
 }

@@ -6,6 +6,8 @@ use crate::backend_interface::{
     TransactionPublicInputsP3, Val, config_with_fri, default_build_tx_fri_profile,
     felts_to_bytes48, stark_public_inputs_p3, verify_transaction_proof_p3,
 };
+use blake2::Blake2bVar;
+use blake2::digest::{Update as BlakeUpdate, VariableOutput};
 use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
@@ -369,7 +371,7 @@ fn aggregation_shape_id(
     bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
-    sp_core::hashing::blake2_256(&bytes)
+    blake2_256(&bytes)
 }
 
 fn validate_payload_header(
@@ -666,18 +668,28 @@ fn binding_hash_from_public_inputs(
     msg0.extend_from_slice(BINDING_HASH_DOMAIN);
     msg0.push(0);
     msg0.extend_from_slice(&message);
-    let hash0 = sp_core::hashing::blake2_256(&msg0);
+    let hash0 = blake2_256(&msg0);
 
     let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
     msg1.extend_from_slice(BINDING_HASH_DOMAIN);
     msg1.push(1);
     msg1.extend_from_slice(&message);
-    let hash1 = sp_core::hashing::blake2_256(&msg1);
+    let hash1 = blake2_256(&msg1);
 
     let mut out = [0u8; 64];
     out[..32].copy_from_slice(&hash0);
     out[32..].copy_from_slice(&hash1);
     Ok(out)
+}
+
+fn blake2_256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Blake2bVar::new(32).expect("valid BLAKE2b output length");
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("fixed output buffer has requested length");
+    out
 }
 
 fn statement_hash_from_binding_hash(binding_hash: &[u8; 64]) -> [u8; 48] {

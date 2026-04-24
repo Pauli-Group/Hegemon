@@ -1,6 +1,6 @@
-# VPS node operations runbook (Substrate node)
+# VPS node operations runbook (Hegemon node)
 
-Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer port, start the Substrate-based `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
+Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer port, start the native `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
 
 > **Note:** The node currently refuses to start without `--dev` (non-dev profiles are disabled). This runbook includes `--dev` on startup until non-dev mode is re-enabled.
 
@@ -50,7 +50,7 @@ Create an environment file for node options:
 ```bash
 sudo tee /etc/default/hegemon-node <<'ENV'
 NODE_NAME=my-vps-node
-# Note: Substrate node names cannot contain '.' or '@' (use '-' / '_' instead).
+# Note: Hegemon node names cannot contain '.' or '@' (use '-' / '_' instead).
 NODE_BASE_PATH=/var/lib/hegemon-node
 NODE_PORT=30333
 NODE_RPC_PORT=9944
@@ -72,7 +72,7 @@ Create a unit that reads the environment file and restarts on failure:
 ```bash
 sudo tee /etc/systemd/system/hegemon-node.service <<'UNIT'
 [Unit]
-Description=Hegemon Substrate Node
+Description=Hegemon Native Node
 After=network-online.target
 Wants=network-online.target
 

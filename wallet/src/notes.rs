@@ -100,8 +100,8 @@ impl NotePlaintext {
     }
 }
 
-/// Size of the ciphertext portion in pallet format
-pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
+/// Size of the ciphertext portion in chain format
+pub const CHAIN_CIPHERTEXT_SIZE: usize = 579;
 const NOTE_ENCRYPTION_VERSION: u8 = 3;
 
 pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
@@ -143,8 +143,8 @@ impl NoteCiphertext {
         }
     }
 
-    fn build_ciphertext_container(&self) -> Result<[u8; PALLET_CIPHERTEXT_SIZE], WalletError> {
-        let mut ciphertext = [0u8; PALLET_CIPHERTEXT_SIZE];
+    fn build_ciphertext_container(&self) -> Result<[u8; CHAIN_CIPHERTEXT_SIZE], WalletError> {
+        let mut ciphertext = [0u8; CHAIN_CIPHERTEXT_SIZE];
         let mut offset = 0;
 
         // Version (1 byte)
@@ -162,7 +162,7 @@ impl NoteCiphertext {
         // Note + memo payloads must fit in the ciphertext container.
         let note_len = self.note_payload.len();
         let memo_len = self.memo_payload.len();
-        let max_payload = PALLET_CIPHERTEXT_SIZE - 7 - 8; // version/crypto_suite/diversifier + 2 length fields
+        let max_payload = CHAIN_CIPHERTEXT_SIZE - 7 - 8; // version/crypto_suite/diversifier + 2 length fields
         if note_len + memo_len > max_payload {
             return Err(WalletError::Serialization(format!(
                 "Encrypted note payloads too large: note={} memo={} max_total={}",
@@ -191,12 +191,12 @@ impl NoteCiphertext {
         Ok(ciphertext)
     }
 
-    /// Convert to pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
+    /// Convert to SCALE-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
     ///
-    /// The pallet's EncryptedNote type uses:
+    /// The protocol EncryptedNote type uses:
     /// - ciphertext: [u8; 579] containing version, crypto_suite, diversifier_index, note/memo payloads
     /// - kem_ciphertext: BoundedVec<u8, _> for ML-KEM ciphertext bytes
-    pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
+    pub fn to_chain_bytes(&self) -> Result<Vec<u8>, WalletError> {
         let expected_kem_len = expected_kem_ciphertext_len(self.crypto_suite)?;
         if self.kem_ciphertext.len() != expected_kem_len {
             return Err(WalletError::Serialization(format!(
@@ -209,7 +209,7 @@ impl NoteCiphertext {
         let ciphertext = self.build_ciphertext_container()?;
 
         // Combine ciphertext + SCALE-encoded kem_ciphertext
-        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + 5 + self.kem_ciphertext.len());
+        let mut result = Vec::with_capacity(CHAIN_CIPHERTEXT_SIZE + 5 + self.kem_ciphertext.len());
         result.extend_from_slice(&ciphertext);
         encode_compact_len(self.kem_ciphertext.len(), &mut result);
         result.extend_from_slice(&self.kem_ciphertext);
@@ -228,23 +228,23 @@ impl NoteCiphertext {
         }
 
         let ciphertext = self.build_ciphertext_container()?;
-        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + self.kem_ciphertext.len());
+        let mut result = Vec::with_capacity(CHAIN_CIPHERTEXT_SIZE + self.kem_ciphertext.len());
         result.extend_from_slice(&ciphertext);
         result.extend_from_slice(&self.kem_ciphertext);
         Ok(result)
     }
 
-    /// Parse from pallet-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
-    pub fn from_pallet_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        if bytes.len() < PALLET_CIPHERTEXT_SIZE + 1 {
+    /// Parse from SCALE-compatible format (ciphertext + SCALE length-prefixed KEM ciphertext)
+    pub fn from_chain_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
+        if bytes.len() < CHAIN_CIPHERTEXT_SIZE + 1 {
             return Err(WalletError::Serialization(format!(
                 "Invalid encrypted note size: expected at least {}, got {}",
-                PALLET_CIPHERTEXT_SIZE + 1,
+                CHAIN_CIPHERTEXT_SIZE + 1,
                 bytes.len()
             )));
         }
 
-        let ciphertext_bytes = &bytes[..PALLET_CIPHERTEXT_SIZE];
+        let ciphertext_bytes = &bytes[..CHAIN_CIPHERTEXT_SIZE];
 
         // Parse the ciphertext portion
         let version = ciphertext_bytes[0];
@@ -269,7 +269,7 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        if offset + note_len + 4 > PALLET_CIPHERTEXT_SIZE {
+        if offset + note_len + 4 > CHAIN_CIPHERTEXT_SIZE {
             return Err(WalletError::Serialization(format!(
                 "Note payload too large: {} bytes at offset {}",
                 note_len, offset
@@ -286,13 +286,13 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        let memo_payload = if memo_len > 0 && offset + memo_len <= PALLET_CIPHERTEXT_SIZE {
+        let memo_payload = if memo_len > 0 && offset + memo_len <= CHAIN_CIPHERTEXT_SIZE {
             ciphertext_bytes[offset..offset + memo_len].to_vec()
         } else {
             Vec::new()
         };
 
-        let (kem_len, kem_len_bytes) = decode_compact_len(&bytes[PALLET_CIPHERTEXT_SIZE..])?;
+        let (kem_len, kem_len_bytes) = decode_compact_len(&bytes[CHAIN_CIPHERTEXT_SIZE..])?;
         let expected_kem_len = expected_kem_ciphertext_len(crypto_suite)?;
         if kem_len != expected_kem_len {
             return Err(WalletError::Serialization(format!(
@@ -301,7 +301,7 @@ impl NoteCiphertext {
             )));
         }
 
-        let kem_start = PALLET_CIPHERTEXT_SIZE + kem_len_bytes;
+        let kem_start = CHAIN_CIPHERTEXT_SIZE + kem_len_bytes;
         let kem_end = kem_start
             .checked_add(kem_len)
             .ok_or_else(|| WalletError::Serialization("KEM ciphertext length overflow".into()))?;
@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn to_pallet_bytes_rejects_oversize_memo() {
+    fn to_chain_bytes_rejects_oversize_memo() {
         let mut rng = StdRng::seed_from_u64(789);
         let root = RootSecret::from_rng(&mut rng);
         let keys = root.derive();
@@ -581,7 +581,7 @@ mod tests {
         let memo = vec![0u8; 600];
         let note = NotePlaintext::random(1, 0, MemoPlaintext::new(memo), &mut rng);
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
-        assert!(ciphertext.to_pallet_bytes().is_err());
+        assert!(ciphertext.to_chain_bytes().is_err());
     }
 
     #[test]

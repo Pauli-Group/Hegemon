@@ -14,7 +14,7 @@ The unified `hegemon` binary is the canonical way to exercise the node and walle
 | --- | --- | --- |
 | PQ primitives (`crypto/`) | Rust 1.75+ | `cargo fmt --all`, `cargo test -p synthetic-crypto` |
 | Core circuits (`circuits/block`, `circuits/transaction`, `circuits/disclosure`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo test -p disclosure-circuit` |
-| Node/runtime/network (`node`, `runtime`, `network`, `consensus`) | Rust 1.75+ | `cargo test -p consensus`, `cargo test -p network`, `cargo test -p runtime`, `cargo test -p hegemon-node --lib`, `cargo build -p hegemon-node --release` |
+| Node/protocol/network (`node`, `protocol/*`, `network`, `consensus`) | Rust 1.75+ | `cargo test -p consensus`, `cargo test -p network`, `cargo test -p protocol-kernel`, `cargo test -p protocol-shielded-pool`, `cargo test -p hegemon-node --lib`, `cargo build -p hegemon-node --release` |
 | Wallet (`wallet`) | Rust 1.75+ | `cargo test -p wallet`, `cargo test --test security_pipeline -- --nocapture` |
 | Manual simulators/benchmarks (`circuits/bench`, `wallet/bench`, `consensus/bench`) | Rust + Go 1.21 | `cargo run -p circuits-bench -- --smoke`, `cargo run -p wallet-bench -- --smoke`, `go test ./...` inside `consensus/bench`, `go run ./cmd/netbench --smoke` |
 
@@ -31,10 +31,10 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 - `security-adversarial`: runs `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`, including hostile proving regressions plus review-package parity checks.
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.
 
-Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping InlineTx node, runtime, wallet, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
+Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping native node, wallet, protocol, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
 The expensive `circuits/batch` proving tests are intentionally `#[ignore]` because that auxiliary batch lane is not part of the live path; default CI keeps only cheap structural sanity coverage for that crate.
 
-Operator-scenario harnesses such as `./scripts/test-substrate.sh restart-recovery` remain available for manual debugging, but they are not part of the default blocking CI gate.
+Operator-scenario harnesses such as `./scripts/test-node.sh two-node-restart` remain available for manual debugging, but they are not part of the default blocking CI gate.
 Benchmark, simulator, and profiling harnesses such as `circuits-bench`, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
 The merge-blocking hostile minimum is `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. Heavier adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, `cargo test -p wallet --test address_fuzz`, and `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` remain manual unless you are hardening those surfaces or preparing a release.
 

@@ -4,11 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-codec = { workspace = true }
+codec = { workspace = true, features = ["max-encoded-len"] }
 scale-info = { workspace = true }
-sp-runtime = { workspace = true, default-features = false }
-sp-std = { workspace = true, default-features = false }
 protocol_versioning = { path = "../versioning", package = "protocol-versioning", default-features = false }
+protocol-shielded-pool = { path = "../shielded-pool", default-features = false }
 blake3 = { version = "1", default-features = false }
 
 [features]
@@ -16,9 +15,8 @@ default = ["std"]
 std = [
     "codec/std",
     "scale-info/std",
-    "sp-runtime/std",
-    "sp-std/std",
     "protocol_versioning/std",
+    "protocol-shielded-pool/std",
     "blake3/std",
 ]
 

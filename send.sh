@@ -10,7 +10,7 @@ if [ -z "$PASSWORD" ] || [ -z "$RECIPIENTS_FILE" ]; then
   exit 1
 fi
 
-./target/release/wallet substrate-send \
+./target/release/wallet node-send \
   --store ~/.hegemon-wallet \
   --passphrase "$PASSWORD" \
   --recipients "$RECIPIENTS_FILE" \

@@ -8,7 +8,7 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 # First-Run Setup
 
-Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the Substrate-based `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a dev node with mining enabled.
+Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the native `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a native dev node with mining enabled.
 
 # Design and Methods Docs
 

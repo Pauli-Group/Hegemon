@@ -157,7 +157,7 @@ impl CommitmentTreeState {
 
     /// Construct a commitment tree state from an externally captured compact snapshot.
     ///
-    /// This is used by the Substrate node integration to seed the consensus verifier from
+    /// This is used by the node node integration to seed the consensus verifier from
     /// runtime storage (which keeps a compact Merkle-tree frontier), without replaying all
     /// historical commitments.
     pub fn from_compact_parts(

@@ -1,6 +1,6 @@
 # Authoring Node Rollout Runbook (`hegemon-ovh` public authoring node)
 
-The filename is historical. The current rollout is not “public builder plus private prover.” It is one public authoring node running the live `InlineTx` lane.
+The filename is historical. The current rollout is not “public builder plus private prover.” It is one public authoring node running the live native recursive-block lane.
 
 Use this runbook to move from ad hoc local mining to a stable public authoring node.
 
@@ -40,14 +40,14 @@ The public authoring node should:
 
 - accept proof-ready shielded transactions,
 - keep mining enabled locally,
-- build the parent-bound commitment proof,
+- attach same-block native recursive-block artifacts for non-empty shielded blocks,
 - broadcast final blocks.
 
-The live path is `InlineTx`, so block assembly consumes canonical inline tx proofs. There is no external recursive prover dependency in the normal path.
+The live path consumes canonical native tx-leaf proof artifacts and imports non-empty shielded blocks only when the same block carries the matching native recursive-block artifact. There is no external recursive prover dependency in the normal path.
 
 Recommended operator checks:
 
-- same chainspec hash as the rest of the testnet,
+- same release binary and protocol manifest as the rest of the testnet,
 - `HEGEMON_SEEDS` set exactly to the approved list,
 - `HEGEMON_MINER_ADDRESS` set to the laptop boot-wallet address,
 - retention settings pinned explicitly on testnet if wallets need full ciphertext/proof history.
@@ -65,7 +65,7 @@ Ordinary users should not be pointed at pooled hashing or private prover roles. 
 
 The rollout is healthy when:
 
-- the public authoring node mines and imports blocks on the shared chainspec,
+- the public authoring node mines and imports blocks on the shared native genesis,
 - proof-ready txs are accepted and included,
 - full nodes sync and verify without custom prover infrastructure,
 - no operator is told to deploy `hegemon-prover` just to run the current network.

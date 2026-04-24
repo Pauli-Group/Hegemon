@@ -21,7 +21,7 @@ The HGN protocol consists of four tightly-coupled subsystems:
 
 1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
 2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions plus one same-block block artifact. On the shipped lane, wallets submit native `tx_leaf` artifacts, authors compress the ordered verified `tx_leaf` stream into one `recursive_block_v2`, and import verifies that artifact against parent state plus canonical tx order. `ReceiptRoot` remains in-tree only as an explicit comparison/research lane.
-3. **State and execution (`state/`, `protocol/`)** – Mining nodes maintain on-disk Merkle forests, aggregate optional miner tips into the shielded coinbase path, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, tx-artifact envelopes, and block-artifact verification limits.
+3. **State and execution (`node/src/native`, `state/`, `protocol/`)** – Mining nodes maintain native on-disk state, aggregate optional miner tips into the shielded coinbase path, replay higher-work side branches into canonical sled indexes, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, tx-artifact envelopes, and block-artifact verification limits.
 4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define supported proof bindings, issuance parameters, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and miner-facing procedures; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
 ```mermaid
@@ -45,18 +45,20 @@ flowchart TB
         NET[network/]
     end
 
-    subgraph State["State & Runtime"]
+    subgraph State["Native State"]
         SM[state/merkle]
-        RT[runtime/]
+        NN[node/src/native]
     end
 
     W -->|craft tx + tx_leaf| CT
     CT -->|ordered verified tx_leaf stream| BR
     BR -->|recursive_block_v2| CON
-    CON -->|seal| RT
+    CON -->|seal native block| NN
     CT --> CR
     BR --> SM
 ```
+
+The operator `hegemon-node` binary is native. It starts a fresh chain, stores native block and shielded-state metadata in `sled`, mines development PoW blocks, syncs over the Hegemon PQ service, and preserves the existing JSON-RPC method names for walletd, Electron, and scripts.
 
 #### Recursive block artifacts and data availability
 On the shipped lane, blocks carry one same-block `recursive_block_v2` artifact that binds the ordered verified `tx_leaf` stream to the block’s canonical `tx_statements_commitment`, state roots, nullifier root, and DA root. The legacy `commitment_proof` bytes remain empty on that lane. Validators accept a non-empty shielded block by (1) verifying the ordered native `tx_leaf` artifacts, (2) recomputing the semantic tuple from parent state plus block order, and (3) verifying the `recursive_block_v2` artifact against that tuple. The explicit `ReceiptRoot` lane still exists for comparison and research, but it is not the shipped default.
@@ -104,7 +106,7 @@ Multi-asset conservation is implemented exactly as `METHODS.md §2` prescribes: 
 
 Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles miner and protocol-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Because the STARK proving stack in `circuits/transaction` and the note authorization flow rely only on hash-based commitments and lattice primitives, the pool stays quantum-safe—no elliptic curves or pairing-based assumptions remain for Shor’s algorithm to break, and symmetric/hash margins are sized conservatively rather than treated as a protocol cliff.
 
-Runtime extrinsics and PoW seals now share the same PQ signing surface: `runtime/src/lib.rs` defines `PqSignature`/`PqPublic` backed by ML-DSA (3,293-byte signatures, 1,952-byte public keys) and SLH-DSA, derives `AccountId32` via BLAKE2 over the PQ public key for SS58-prefix-42 compatibility, and wires the off-chain AppCrypto path through the same primitives the PoW engine validates. This keeps address encoding stable while aligning transaction signing with the miner verification path.
+PoW seals and node-authenticated envelopes use the same PQ signing surface: ML-DSA-backed miner identities with hash-derived 32-byte ids. This keeps address encoding stable while aligning wallet and miner verification around lattice and hash-based primitives.
 
 These guarantees are not just prose: `circuits/formal` captures the nullifier uniqueness and MASP balance invariants in TLA+, and `circuits-bench` plus the `wallet-bench` suite publish the prover and client performance envelopes so reviewers can correlate the whitepaper claims with reproducible benchmarking and formal artifacts.
 
@@ -173,7 +175,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 | `governance/` | Protocol versioning and release-coordination documentation. |
 | `hegemon-app/` | Electron desktop app for node + wallet control. |
 | network/ | P2P networking stack and connectivity logic. |
-| node/ | Substrate-based node binary (`hegemon-node`) and custom RPC endpoints. |
+| node/ | Native node binary (`hegemon-node`) and sled/PQ networking service code. |
 | protocol/ | Protocol definitions, transaction formats, and versioning logic. |
 | `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
 | `scripts/` | Shell scripts for dev setup and automation. |
@@ -183,7 +185,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
-### Building the Substrate Node
+### Building the Native Node
 
 1. **Install toolchains**:
    ```bash
@@ -276,7 +278,7 @@ Use this when you want to run two nodes that peer with each other:
 | Target | Purpose |
 | --- | --- |
 | `make setup` | Runs `scripts/dev-setup.sh` to install toolchains and CLI prerequisites. |
-| `make node` | Builds the Substrate-based `hegemon-node` binary. |
+| `make node` | Builds the native `hegemon-node` binary. |
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
@@ -285,13 +287,13 @@ Use this when you want to run two nodes that peer with each other:
 
 ## Future directions: programmability
 
-Hegemon currently prioritizes privacy and post-quantum security over general-purpose programmability. There is no EVM or user-deployed WASM contract layer today; all logic lives in fixed Substrate pallets. This section outlines how user-deployed code could be introduced while preserving the shielded pool's privacy guarantees.
+Hegemon currently prioritizes privacy and post-quantum security over general-purpose programmability. There is no EVM or user-deployed WASM contract layer today; all logic lives in fixed native protocol modules. This section outlines how user-deployed code could be introduced while preserving the shielded pool's privacy guarantees.
 
 ### Current scriptability boundary
 
 Today the chain exposes:
 
-- fixed Substrate pallets rather than user-deployed contracts
+- fixed native protocol modules rather than user-deployed contracts
 - a shielded-only value layer rather than a mixed public/private account model
 - protocol upgrades through `VersionBinding` / `VersionSchedule`, not arbitrary runtime uploads
 

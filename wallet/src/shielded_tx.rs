@@ -38,7 +38,7 @@
 
 use std::time::{Duration, Instant};
 
-use pallet_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
@@ -313,7 +313,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
             if witness.stablecoin.enabled {
-                Some(pallet_shielded_pool::types::StablecoinPolicyBinding {
+                Some(protocol_shielded_pool::types::StablecoinPolicyBinding {
                     asset_id: witness.stablecoin.asset_id,
                     policy_hash: witness.stablecoin.policy_hash,
                     oracle_commitment: witness.stablecoin.oracle_commitment,
@@ -550,7 +550,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         balance_slot_asset_ids: [u64; 4],
         fee: u64,
         value_balance: i128,
-        stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
+        stablecoin: Option<protocol_shielded_pool::types::StablecoinPolicyBinding>,
     ) -> [u8; 64] {
         StarkVerifier::compute_binding_hash(&ShieldedTransferInputs {
             anchor: *anchor,

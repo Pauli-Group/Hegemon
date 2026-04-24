@@ -11,7 +11,7 @@ if [ -z "$PASSWORD" ]; then
   exit 1
 fi
 
-./target/release/wallet substrate-sync \
+./target/release/wallet node-sync \
   --store ~/.hegemon-wallet \
   --passphrase "$PASSWORD" \
   --ws-url ws://127.0.0.1:9944

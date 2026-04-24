@@ -118,7 +118,6 @@ export HEGEMON_MINER_ADDRESS="$SHIELDED_ADDR"
 NODE_ARGS=(
     --dev
     --base-path "$NODE_PATH"
-    --chain config/dev-chainspec.json
     --rpc-port 9944
     --rpc-methods "${HEGEMON_RPC_METHODS:-safe}"
     --listen-addr /ip4/0.0.0.0/tcp/30333

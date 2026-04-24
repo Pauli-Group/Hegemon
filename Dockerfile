@@ -1,6 +1,5 @@
-# Build Stage - Substrate Node
-# Using Rust nightly for Edition 2024 and latest crate compatibility
-FROM rust:nightly-slim-bookworm AS builder
+# Build Stage - Native Node
+FROM rust:stable-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -18,8 +17,8 @@ WORKDIR /app
 # Copy source code
 COPY . .
 
-# Build Substrate Node Binary with all features
-RUN cargo build --release -p hegemon-node --features substrate
+# Build native node binary
+RUN cargo build --release -p hegemon-node --bin hegemon-node --no-default-features
 
 # Runtime Stage
 FROM debian:bookworm-slim
@@ -34,7 +33,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy the Substrate node binary
+# Copy the native node binary
 COPY --from=builder /app/target/release/hegemon-node /usr/local/bin/hegemon-node
 
 # Create data directory
@@ -47,8 +46,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Expose ports
 # 30333 - P2P
 # 9944  - RPC (HTTP/WS)
-# 9615  - Prometheus metrics
-EXPOSE 30333 9944 9615
+EXPOSE 30333 9944
 
 # Default environment
 ENV RUST_LOG=info,hegemon=debug
