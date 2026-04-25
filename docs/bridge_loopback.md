@@ -56,13 +56,26 @@ Export a bridge witness from the source after the outbound message has a confirm
 Destination Hegemon accepts the Hegemon-to-Hegemon RISC Zero bridge only when the inbound action uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`. This is an allowlist check, not a relayer-controlled verifier registration.
 
 ```bash
-RISC0_SKIP_BUILD_KERNELS=1 cargo run \
+RISC0_SKIP_BUILD_KERNELS=1 cargo run --release \
   --manifest-path zk/risc0-bridge/prover/Cargo.toml \
   --bin prove_hegemon_bridge \
   -- --proof-file /tmp/hegemon-long-range-proof.hex
+```
 
 For fast local smoke tests, set `HEGEMON_RISC0_RECEIPT_KIND=composite`. Composite receipts are native STARK receipts and are accepted by Hegemon, but they are linear-size. The default `succinct` mode is the size target for production relayers.
 
+Use the profiler before proving when changing the light-client statement:
+
+```bash
+RISC0_SKIP_BUILD_KERNELS=1 cargo run \
+  --manifest-path zk/risc0-bridge/prover/Cargo.toml \
+  --bin profile_hegemon_bridge \
+  -- --proof-file /tmp/hegemon-long-range-proof.hex
+```
+
+On `hegemon-dev`, a 9951-byte live long-range proof currently executes in 962524 RISC Zero guest cycles. Cached release proving measured 8m37s for a 492158-byte composite receipt envelope and 10m46s for a 224508-byte succinct receipt envelope. Both are native STARK/PQ-path receipts; do not use Groth16/KZG wrapping for the PQ bridge path.
+
+```bash
 cargo run -p hegemon-node --example hegemon_loopback_bridge -- \
   --source-rpc http://127.0.0.1:9944 \
   --destination-rpc http://127.0.0.1:9955 \

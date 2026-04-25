@@ -1020,7 +1020,6 @@ name = "hegemon-risc0-bridge-guest"
 version = "0.1.0"
 dependencies = [
  "consensus-light-client",
- "parity-scale-codec",
  "risc0-zkvm",
 ]
 

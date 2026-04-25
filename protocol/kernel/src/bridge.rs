@@ -56,9 +56,22 @@ impl DecodeWithMemTracking for BridgeVerifierRegistrationV1 {}
 
 impl BridgeMessageV1 {
     pub fn message_hash(&self) -> MessageHash {
-        let encoded = self.encode();
+        let encoded = bridge_message_encoded_v1(self);
         hash48_with_domain(b"hegemon.bridge.message-v1", &[&encoded])
     }
+}
+
+pub fn bridge_message_encoded_v1(message: &BridgeMessageV1) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(170 + message.payload.len());
+    encoded.extend_from_slice(&message.source_chain_id);
+    encoded.extend_from_slice(&message.destination_chain_id);
+    encoded.extend_from_slice(&message.app_family_id.to_le_bytes());
+    encoded.extend_from_slice(&message.message_nonce.to_le_bytes());
+    encoded.extend_from_slice(&message.source_height.to_le_bytes());
+    encoded.extend_from_slice(&message.payload_hash);
+    push_scale_compact_len(&mut encoded, message.payload.len() as u64);
+    encoded.extend_from_slice(&message.payload);
+    encoded
 }
 
 pub fn bridge_payload_hash(payload: &[u8]) -> MessageHash {
@@ -70,17 +83,19 @@ pub fn empty_bridge_message_root() -> MessageRoot {
 }
 
 pub fn bridge_message_root(messages: &[BridgeMessageV1]) -> MessageRoot {
-    let mut chunks = Vec::with_capacity(messages.len() + 1);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.bridge.message-root-v1");
     let count = (messages.len() as u32).to_le_bytes();
-    chunks.push(count.as_slice());
-    let hashes = messages
-        .iter()
-        .map(BridgeMessageV1::message_hash)
-        .collect::<Vec<_>>();
-    for hash in &hashes {
-        chunks.push(hash.as_slice());
+    hasher.update(&(count.len() as u32).to_le_bytes());
+    hasher.update(&count);
+    for message in messages {
+        let hash = message.message_hash();
+        hasher.update(&(hash.len() as u32).to_le_bytes());
+        hasher.update(&hash);
     }
-    hash48_with_domain(b"hegemon.bridge.message-root-v1", &chunks)
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
 }
 
 pub fn inbound_replay_key(source_chain_id: ChainId, source_message_nonce: u128) -> MessageHash {
@@ -100,6 +115,26 @@ fn hash48_with_domain(domain: &[u8], chunks: &[&[u8]]) -> MessageHash {
     let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
     out
+}
+
+fn push_scale_compact_len(out: &mut Vec<u8>, value: u64) {
+    if value < 1 << 6 {
+        out.push((value as u8) << 2);
+    } else if value < 1 << 14 {
+        let encoded = ((value as u16) << 2) | 0b01;
+        out.extend_from_slice(&encoded.to_le_bytes());
+    } else if value < 1 << 30 {
+        let encoded = ((value as u32) << 2) | 0b10;
+        out.extend_from_slice(&encoded.to_le_bytes());
+    } else {
+        let value_bytes = value.to_le_bytes();
+        let mut used = value_bytes.len();
+        while used > 4 && value_bytes[used - 1] == 0 {
+            used -= 1;
+        }
+        out.push((((used - 4) as u8) << 2) | 0b11);
+        out.extend_from_slice(&value_bytes[..used]);
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +162,12 @@ mod tests {
             bridge_message_root(&[a.clone(), b.clone()]),
             bridge_message_root(&[b, a])
         );
+    }
+
+    #[test]
+    fn bridge_message_manual_encoding_matches_scale() {
+        let message = message(7);
+        assert_eq!(bridge_message_encoded_v1(&message), message.encode());
     }
 
     #[test]

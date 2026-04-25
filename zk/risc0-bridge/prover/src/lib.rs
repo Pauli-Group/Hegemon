@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use codec::Encode;
 use consensus_light_client::{
-    verify_hegemon_long_range_proof, HegemonLongRangeProofV1, RiscZeroBridgeReceiptV1,
-    RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1,
+    bridge_checkpoint_output_wire_bytes_v1, verify_hegemon_long_range_proof,
+    HegemonLongRangeProofV1, RiscZeroBridgeReceiptV1, RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1,
 };
 use hegemon_risc0_bridge_methods::{HEGEMON_BRIDGE_ELF, HEGEMON_BRIDGE_ID};
 use risc0_zkvm::{default_prover, Digest, ExecutorEnv, ProverOpts};
@@ -24,7 +24,7 @@ pub fn prove_hegemon_bridge(proof: &HegemonLongRangeProofV1) -> Result<RiscZeroB
     let input = proof.encode();
     let input_len = u32::try_from(input.len()).map_err(|_| anyhow!("bridge proof too large"))?;
     let env = ExecutorEnv::builder()
-        .write(&input_len)?
+        .write_slice(&input_len.to_le_bytes())
         .write_slice(&input)
         .build()?;
     let prove_info =
@@ -34,7 +34,7 @@ pub fn prove_hegemon_bridge(proof: &HegemonLongRangeProofV1) -> Result<RiscZeroB
         .receipt
         .verify(Digest::from(image_id))
         .map_err(|err| anyhow!("RISC Zero bridge receipt self-verification failed: {err:?}"))?;
-    if prove_info.receipt.journal.bytes != native_output.encode() {
+    if prove_info.receipt.journal.bytes != bridge_checkpoint_output_wire_bytes_v1(&native_output) {
         return Err(anyhow!(
             "RISC Zero bridge journal does not match native output"
         ));

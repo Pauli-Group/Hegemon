@@ -26,6 +26,8 @@ The observable result is that `hegemon-node` can mine/import native PoW blocks w
 - [x] (2026-04-24T23:58:00Z) Added RISC Zero guest/prover crates and installed the local RISC Zero Rust toolchain needed to build the guest method.
 - [x] (2026-04-25T00:42:00Z) Pinned inbound Hegemon-to-Hegemon receipts to the v1 RISC Zero bridge image ID and capped default witness backscan at 4096 blocks.
 - [x] (2026-04-25T06:18:00Z) Moved inbound receipt verification into action staging, unignored the RISC Zero guest/prover binaries, and added a composite receipt prover mode for smoke tests.
+- [x] (2026-04-25T08:55:00Z) Added a RISC Zero executor profiler and optimized the guest verifier from 3163261 cycles over 4 segments to 962524 cycles over 2 segments on the same 9951-byte live witness.
+- [x] (2026-04-25T09:24:00Z) Produced real RISC Zero STARK receipts on `hegemon-dev`: cached release composite in 8m37s and cached release succinct in 10m46s.
 
 ## Surprises & Discoveries
 
@@ -51,6 +53,10 @@ The observable result is that `hegemon-node` can mine/import native PoW blocks w
   Evidence: on `hegemon-dev`, a succinct receipt attempt over a 9951-byte live witness was stopped after 1402.80 seconds with no receipt, and a composite receipt attempt was stopped after 872.95 seconds with no receipt. Both were actively CPU-bound and reached about 6.5 GB RSS.
 - Observation: Root `.gitignore` ignored every `src/bin/` directory except `node/src/bin`, which hid the RISC Zero guest and prover CLI source files.
   Evidence: `.gitignore` now explicitly unignores `zk/risc0-bridge/methods/guest/src/bin/*.rs` and `zk/risc0-bridge/prover/src/bin/*.rs`.
+- Observation: The first failed RISC Zero proving runs used Cargo's dev profile, which was not a valid production proving measurement.
+  Evidence: after release-profile proving was cached on `hegemon-dev`, the same 9951-byte live witness produced a composite STARK receipt in 8m37s and a succinct STARK receipt in 10m46s.
+- Observation: The largest guest-cycle waste was repeated 384-bit PoW work division and generic input/output encoding, not the PoW model itself.
+  Evidence: precomputing expanded target/block work, caching header hashes, reusing MMR context, manually decoding the proof wire format, and committing a fixed-width 404-byte output journal reduced executor cost from 3163261 cycles to 962524 cycles.
 
 ## Decision Log
 
@@ -69,7 +75,7 @@ The observable result is that `hegemon-node` can mine/import native PoW blocks w
 - Decision: Add Hegemon-to-Hegemon loopback as a direct native light-client bridge before adding zkVM compression.
   Rationale: It is already trustless for Hegemon-to-Hegemon because the destination verifies the source PoW header and message inclusion itself; zkVM receipts remain the compression path for chains that should not run the Hegemon light-client verifier directly.
   Date/Author: 2026-04-24 / Codex
-- Decision: The RISC Zero path verifies the same `consensus-light-client` statement and commits the SCALE-encoded `BridgeCheckpointOutputV1` as the journal.
+- Decision: The RISC Zero path verifies the same `consensus-light-client` statement and commits the fixed-width 404-byte `BridgeCheckpointOutputV1` wire tuple as the journal.
   Rationale: This keeps zkVM transport substitutable while making the destination compare a canonical public output rather than trusting arbitrary receipt metadata.
   Date/Author: 2026-04-24 / Codex
 - Decision: The compact long-range proof will use a real Merkle Mountain Range over historical header hashes plus deterministic FlyClient-style sampling, not the earlier linear ordered hash list.
@@ -80,11 +86,11 @@ The observable result is that `hegemon-node` can mine/import native PoW blocks w
 
 Implemented the first bridge-ready protocol surface without changing Hegemon's PoW security model. Native mining/import now binds bridge roots and fixed-width cumulative work into `PowHeaderV1`; remote header validation calls the shared verifier; outbound bridge messages are committed under `message_root`; inbound bridge messages are replay-protected; and recursive block public metadata now includes `message_root`.
 
-The bridge proof transport is now RISC Zero-shaped instead of direct-native. `hegemon_exportBridgeWitness` emits compact `HegemonLongRangeProofV1` bytes when the message block has a confirming tip. The RISC Zero guest verifies that proof inside the zkVM and commits `BridgeCheckpointOutputV1`; destination Hegemon accepts `RiscZeroBridgeReceiptV1` only after `Receipt::verify(image_id)` succeeds and the authenticated journal matches the inbound message. The underlying PoW model is still probabilistic: FlyClient-style samples make long-range verification sublinear, not deterministic BFT-final.
+The bridge proof transport is now RISC Zero-shaped instead of direct-native. `hegemon_exportBridgeWitness` emits compact `HegemonLongRangeProofV1` bytes when the message block has a confirming tip. The RISC Zero guest verifies that proof inside the zkVM and commits the fixed-width 404-byte `BridgeCheckpointOutputV1` wire tuple; destination Hegemon accepts `RiscZeroBridgeReceiptV1` only after `Receipt::verify(image_id)` succeeds and the authenticated journal matches the inbound message. The underlying PoW model is still probabilistic: FlyClient-style samples make long-range verification sublinear, not deterministic BFT-final.
 
 Security review tightened three bridge edges: inbound Hegemon-to-Hegemon receipts now require the protocol-pinned v1 RISC Zero image ID instead of trusting a relayer-supplied verifier hash; inbound receipt verification runs before mempool staging; and default witness discovery is bounded to avoid unbounded RPC scans.
 
-Live laptop + `hegemon-dev` testing confirmed native mining, action submission, outbound bridge commitment, and witness export. The exported live witness had a 9951-byte `HegemonLongRangeProofV1`, a 171-byte `BridgeMessageV1`, a 439-byte canonical `BridgeCheckpointOutputV1`, and a 1540-byte direct native light-client receipt. The remaining blocker is proving performance: both RISC Zero succinct and composite STARK receipt attempts were CPU-bound for many minutes on `hegemon-dev` and did not emit a receipt within the interactive test window, so no real RISC Zero inbound action was submitted.
+Live laptop + `hegemon-dev` testing confirmed native mining, action submission, outbound bridge commitment, witness export, and real RISC Zero proving. The exported live witness had a 9951-byte `HegemonLongRangeProofV1`, a 171-byte `BridgeMessageV1`, a 404-byte authenticated journal, a 439-byte canonical domain-separated `BridgeCheckpointOutputV1` hash preimage, and a 1540-byte direct native light-client receipt. The RISC Zero receipt envelope measured 492158 bytes in composite mode and 224508 bytes in succinct mode. Cached release proving on `hegemon-dev` took 8m37s for composite and 10m46s for succinct; cold release build plus proof took 24m28s.
 
 Validation passed for:
 
@@ -102,7 +108,7 @@ Validation passed for:
     cargo check --manifest-path zk/risc0-bridge/methods/Cargo.toml
     RISC0_SKIP_BUILD_KERNELS=1 cargo check --manifest-path zk/risc0-bridge/prover/Cargo.toml
 
-Remaining follow-up: replace the test-only fake RISC Zero receipt used inside `hegemon-node` unit tests with an integration test that runs the real prover over a short dev chain when CI runners have the RISC Zero toolchain available.
+Remaining follow-up: replace the test-only fake RISC Zero receipt used inside `hegemon-node` unit tests with an integration test that runs the real release prover over a short dev chain when CI runners have the RISC Zero toolchain available. The production proof path is now real on `hegemon-dev`, but CI should not use Cargo dev-profile proving as a performance proxy.
 
 ## Context and Orientation
 

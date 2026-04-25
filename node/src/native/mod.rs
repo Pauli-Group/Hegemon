@@ -5094,7 +5094,7 @@ mod tests {
         output: &BridgeCheckpointOutputV1,
     ) -> RiscZeroBridgeReceiptV1 {
         std::env::set_var("RISC0_DEV_MODE", "1");
-        let journal = output.encode();
+        let journal = consensus_light_client::bridge_checkpoint_output_wire_bytes_v1(output);
         let claim =
             risc0_zkvm::ReceiptClaim::ok(risc0_zkvm::Digest::from(image_id), journal.clone());
         let receipt = risc0_zkvm::Receipt::try_from(risc0_zkvm::FakeReceipt::new(claim))
