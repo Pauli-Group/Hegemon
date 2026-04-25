@@ -51,13 +51,17 @@ cargo check --manifest-path zk/risc0-bridge/methods/Cargo.toml
 RISC0_SKIP_BUILD_KERNELS=1 cargo check --manifest-path zk/risc0-bridge/prover/Cargo.toml
 ```
 
-Export a bridge witness from the source after the outbound message has a confirming block, prove `canonical.long_range_proof` with `zk/risc0-bridge/prover`, then run the loopback example with the produced `RiscZeroBridgeReceiptV1` hex:
+Export a bridge witness from the source after the outbound message has a confirming block, prove `canonical.long_range_proof` with `zk/risc0-bridge/prover`, then run the loopback example with the produced `RiscZeroBridgeReceiptV1` hex. If no block hash is supplied, `hegemon_exportBridgeWitness` scans backward up to 4096 blocks from the current canonical tip and selects the latest canonical block containing a bridge message, so relayers do not need to race the miner before the next empty block is produced. Pass the source block hash explicitly for older messages.
+
+Destination Hegemon accepts the Hegemon-to-Hegemon RISC Zero bridge only when the inbound action uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`. This is an allowlist check, not a relayer-controlled verifier registration.
 
 ```bash
 RISC0_SKIP_BUILD_KERNELS=1 cargo run \
   --manifest-path zk/risc0-bridge/prover/Cargo.toml \
   --bin prove_hegemon_bridge \
-  -- 0x...compact-long-range-proof...
+  -- --proof-file /tmp/hegemon-long-range-proof.hex
+
+For fast local smoke tests, set `HEGEMON_RISC0_RECEIPT_KIND=composite`. Composite receipts are native STARK receipts and are accepted by Hegemon, but they are linear-size. The default `succinct` mode is the size target for production relayers.
 
 cargo run -p hegemon-node --example hegemon_loopback_bridge -- \
   --source-rpc http://127.0.0.1:9944 \

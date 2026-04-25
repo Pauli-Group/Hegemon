@@ -2,6 +2,10 @@ target/
 bin/
 !node/src/bin/
 !node/src/bin/*.rs
+!zk/risc0-bridge/methods/guest/src/bin/
+!zk/risc0-bridge/methods/guest/src/bin/*.rs
+!zk/risc0-bridge/prover/src/bin/
+!zk/risc0-bridge/prover/src/bin/*.rs
 wallet-demo-artifacts/
 node.db/
 *.db

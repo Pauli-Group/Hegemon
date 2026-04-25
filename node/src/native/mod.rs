@@ -26,6 +26,7 @@ use consensus_light_client::{
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
     RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
     HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use network::{
     service::DirectedProtocolMessage, GossipRouter, NatTraversalConfig, P2PService, PeerId,
@@ -75,6 +76,7 @@ const HASHES_PER_ROUND: u64 = 16_384;
 const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
 const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
+const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
@@ -1254,6 +1256,7 @@ impl NativeNode {
                 if args.message.payload_hash != bridge_payload_hash(&args.message.payload) {
                     return Err(anyhow!("inbound bridge message payload hash mismatch"));
                 }
+                verify_inbound_bridge_receipt(&args)?;
                 PendingAction {
                     tx_hash: [0u8; 32],
                     binding,
@@ -2237,11 +2240,12 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
 }
 
 fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
+    let message_index = nth_param(&params, 1).and_then(Value::as_u64).unwrap_or(0) as usize;
     let block_hash = first_param(&params)
         .and_then(Value::as_str)
         .and_then(parse_hash32)
-        .unwrap_or_else(|| node.best_meta().hash);
-    let message_index = nth_param(&params, 1).and_then(Value::as_u64).unwrap_or(0) as usize;
+        .map(Ok)
+        .unwrap_or_else(|| latest_bridge_message_block_hash(node, message_index))?;
     let meta = node
         .header_by_hash(&block_hash)?
         .ok_or_else(|| anyhow!("unknown block {}", hex32(&block_hash)))?;
@@ -2318,6 +2322,28 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
             "long_range_proof": canonical_long_range_proof,
         },
     }))
+}
+
+fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> Result<Hash32> {
+    let best = node.best_meta();
+    let min_height = best
+        .height
+        .saturating_sub(MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS.saturating_sub(1));
+    for height in (min_height..=best.height).rev() {
+        let Some(hash) = node.hash_by_height(height)? else {
+            continue;
+        };
+        let Some(meta) = node.header_by_hash(&hash)? else {
+            continue;
+        };
+        let actions = decode_block_actions(&meta)?;
+        if bridge_messages_from_actions(&actions, meta.height).len() > message_index {
+            return Ok(meta.hash);
+        }
+    }
+    Err(anyhow!(
+        "no bridge message found in the last {MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS} canonical blocks; pass the source block hash explicitly for older messages"
+    ))
 }
 
 fn build_long_range_bridge_proof(
@@ -3036,7 +3062,10 @@ fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
     if !encoded.is_empty() {
         return Err(anyhow!("RISC Zero bridge receipt has trailing bytes"));
     }
-    let output = verify_risc0_bridge_receipt(&receipt, args.verifier_program_hash)?;
+    if args.verifier_program_hash != HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1 {
+        return Err(anyhow!("unregistered Hegemon RISC Zero bridge verifier"));
+    }
+    let output = verify_risc0_bridge_receipt(&receipt, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1)?;
     if output.source_chain_id != args.source_chain_id
         || output.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
         || output.message_nonce != args.source_message_nonce
@@ -4876,6 +4905,37 @@ mod tests {
     }
 
     #[test]
+    fn inbound_bridge_rejects_unregistered_risc0_image_id() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("source");
+        let destination_path = tmp.path().join("destination");
+        fs::create_dir_all(&source_path).expect("source dir");
+        fs::create_dir_all(&destination_path).expect("destination dir");
+        let pow_bits = 0x207f_ffff;
+        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
+            .expect("source node");
+        let destination =
+            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
+                .expect("destination node");
+        let (mut args, _, _) = test_risc0_bridge_inbound_args(&source, b"unregistered verifier");
+        args.verifier_program_hash = [0x42u8; 32];
+        let request = json!({
+            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            "family_id": FAMILY_BRIDGE,
+            "action_id": ACTION_BRIDGE_INBOUND,
+            "new_nullifiers": [],
+            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+        });
+        let err = destination
+            .validate_and_stage_action(request)
+            .expect_err("unregistered RISC Zero verifier must fail");
+        assert!(err.to_string().contains("unregistered"));
+    }
+
+    #[test]
     fn hegemon_to_hegemon_loopback_bridge_example() {
         use base64::Engine;
 
@@ -5017,7 +5077,7 @@ mod tests {
         consensus_light_client::verify_hegemon_long_range_proof(&receipt, 1, [0u8; 48])
             .expect("compact source proof verifies");
         assert_eq!(output.message_hash, receipt.output.message_hash);
-        let risc0_image_id = [0x42u8; 32];
+        let risc0_image_id = HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1;
         let risc0_receipt = test_risc0_bridge_receipt(risc0_image_id, &receipt.output);
         let inbound = InboundBridgeArgsV1 {
             source_chain_id: source_message.source_chain_id,

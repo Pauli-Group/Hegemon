@@ -122,7 +122,23 @@ async fn poll_bridge_witness(
     let deadline = Instant::now() + Duration::from_secs(poll_seconds);
     loop {
         match rpc(client, source_rpc, "hegemon_exportBridgeWitness", json!([])).await {
-            Ok(witness) => return Ok(witness),
+            Ok(witness)
+                if witness
+                    .pointer("/canonical/long_range_proof")
+                    .and_then(Value::as_str)
+                    .is_some() =>
+            {
+                return Ok(witness)
+            }
+            Ok(_) if Instant::now() < deadline => {
+                eprintln!("waiting for source confirmation over bridge message");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "bridge witness never gained a compact long-range proof"
+                ))
+            }
             Err(err) if Instant::now() < deadline => {
                 eprintln!("waiting for source block with bridge message: {err}");
                 tokio::time::sleep(Duration::from_secs(1)).await;

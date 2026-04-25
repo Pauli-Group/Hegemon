@@ -28,7 +28,7 @@ pub fn prove_hegemon_bridge(proof: &HegemonLongRangeProofV1) -> Result<RiscZeroB
         .write_slice(&input)
         .build()?;
     let prove_info =
-        default_prover().prove_with_opts(env, HEGEMON_BRIDGE_ELF, &ProverOpts::succinct())?;
+        default_prover().prove_with_opts(env, HEGEMON_BRIDGE_ELF, &risc0_prover_opts()?)?;
     let image_id = hegemon_bridge_image_id();
     prove_info
         .receipt
@@ -45,4 +45,28 @@ pub fn prove_hegemon_bridge(proof: &HegemonLongRangeProofV1) -> Result<RiscZeroB
         journal: prove_info.receipt.journal.bytes.clone(),
         receipt: bincode::serialize(&prove_info.receipt)?,
     })
+}
+
+fn risc0_prover_opts() -> Result<ProverOpts> {
+    let kind = std::env::var("HEGEMON_RISC0_RECEIPT_KIND")
+        .unwrap_or_else(|_| "succinct".to_string())
+        .to_ascii_lowercase();
+    match kind.as_str() {
+        "succinct" => Ok(ProverOpts::succinct()),
+        "composite" | "fast" => Ok(ProverOpts::composite()),
+        other => Err(anyhow!(
+            "unsupported HEGEMON_RISC0_RECEIPT_KIND {other}; expected succinct or composite"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use consensus_light_client::HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1;
+
+    #[test]
+    fn method_image_id_matches_protocol_constant() {
+        assert_eq!(hegemon_bridge_image_id(), HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1);
+    }
 }
