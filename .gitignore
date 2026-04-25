@@ -45,6 +45,7 @@ key.pem
 
 # Test logs
 test-logs/
+output/proving-redteam/
 
 # Node data directories
 data/

@@ -21,10 +21,12 @@ run_lint() {
     -p wallet \
     -p network \
     -p consensus \
+    -p consensus-light-client \
     -p synthetic-crypto \
     -p transaction-circuit \
     -p block-circuit \
     -p disclosure-circuit \
+    -p cashvm-bridge \
     --all-targets -- -D warnings
   cargo clippy \
     -p superneo-backend-lattice \
@@ -39,6 +41,7 @@ run_test() {
   export PROPTEST_MAX_CASES="${PROPTEST_MAX_CASES:-64}"
 
   cargo test -p synthetic-crypto
+  cargo test -p consensus-light-client
   cargo test -p consensus
   cargo test -p transaction-circuit
   cargo test -p block-circuit
@@ -47,6 +50,7 @@ run_test() {
   cargo test -p protocol-kernel
   cargo test -p protocol-shielded-pool
   cargo test -p wallet
+  cargo test -p cashvm-bridge
   cargo test -p hegemon-node --lib
   cargo test -p hegemon-node --lib --no-default-features
   cargo test --test security_pipeline -- --nocapture
