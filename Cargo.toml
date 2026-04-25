@@ -35,6 +35,7 @@ members = [
     "tools/native-backend-ref",
     "tools/native-backend-timing",
     "spikes/smallwood-tx-shape",
+    "zk/cashvm-bridge",
     "fuzz",
 ]
 exclude = ["spikes/recursion"]

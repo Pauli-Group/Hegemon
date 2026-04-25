@@ -1,0 +1,12 @@
+[package]
+name = "cashvm-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+consensus-light-client = { path = "../../consensus-light-client" }
+protocol-kernel = { path = "../../protocol/kernel" }
+sha2 = "0.10"
+
+[lints]
+workspace = true
