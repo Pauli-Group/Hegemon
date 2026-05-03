@@ -1,23 +1,23 @@
 {
   "generator": {
     "command": "cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture",
-    "date_utc": "2026-04-17T00:00:00Z",
-    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the current tree after switching the inner SmallWood proof object from nested bincode serialization to the compact flat wire format. The shipped structural upper bound for this arithmetization is now 90830 bytes, and the checked exact sampled release proofs on the current benchmark witness now land in the 87246..87278 byte band."
+    "date_utc": "2026-05-03T09:37:45Z",
+    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the current tree. The shipped structural upper bound for this arithmetization is 90830 bytes; exact sampled release proofs drift slightly with sampled DECS auth paths, and this run emitted 87310 bytes."
   },
   "report": {
-    "total_bytes": 87278,
+    "total_bytes": 87310,
     "wrapper_bytes": 12,
-    "ark_proof_bytes": 87266,
+    "ark_proof_bytes": 87298,
     "transcript_bytes": 9488,
-    "commitment_bytes": 7513,
+    "commitment_bytes": 7545,
     "opened_values_bytes": 23944,
     "opening_payload_bytes": 46321,
     "other_bytes": 0,
     "arithmetization": "DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1",
     "inner": {
-      "total_bytes": 87266,
+      "total_bytes": 87298,
       "transcript_bytes": 9488,
-      "commitment_bytes": 7513,
+      "commitment_bytes": 7545,
       "opened_values_bytes": 23944,
       "opening_payload_bytes": 46321,
       "opened_witness_bytes": 30157,
@@ -29,7 +29,7 @@
       "pcs_rcombi_tails_bytes": 1108,
       "pcs_subset_evals_bytes": 23556,
       "pcs_partial_evals_bytes": 388,
-      "decs_auth_paths_bytes": 7513,
+      "decs_auth_paths_bytes": 7545,
       "decs_masking_evals_bytes": 556,
       "decs_high_coeffs_bytes": 14500
     }

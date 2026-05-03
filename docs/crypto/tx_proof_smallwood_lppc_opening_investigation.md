@@ -20,11 +20,11 @@ The current shipped line is measured in:
 Current shipped numbers:
 
 - structural upper bound: `90830`
-- current exact sampled proof bytes on the current benchmark witness: `87086 .. 87214`
-- remaining DECS multiproof headroom on the live opened set: at most `8` duplicate sibling nodes, or `256` raw digest bytes before multiproof flags / format overhead
+- current exact sampled proof bytes on the current benchmark witness: `87086 .. 87310`
+- remaining DECS multiproof headroom on the live opened set: latest sampled run saw `12` duplicate sibling nodes, or `384` raw digest bytes before multiproof flags / format overhead
 - wrapper: `12`
 - transcript: `9488`
-- sampled commitments / auth paths: `7321 .. 7449`
+- sampled commitments / auth paths: `7321 .. 7545`
 - opened values: `23944`
 - opening payload: `46321`
 
@@ -147,16 +147,16 @@ The measured current-engine projection with the full current Poseidon2 subtrace 
 
 | shape | auxiliary words | projected bytes |
 |---|---:|---:|
-| `1024 x 4` | `54912` | `493536` |
-| `512 x 8` | `54912` | `477072` |
-| `256 x 16` | `54912` | `472008` |
+| `1024 x 4` | `54912` | `492170` |
+| `512 x 8` | `54912` | `475642` |
+| `256 x 16` | `54912` | `470450` |
 
-Those numbers are not close to the current shipped proof. They are all about `5.4x .. 5.7x` worse than the current checked `87086 .. 87214`-byte band and far above the `90830`-byte structural upper bound.
+Those numbers are not close to the current shipped proof. They are all about `5.4x .. 5.7x` worse than the current checked `87086 .. 87310`-byte band and far above the `90830`-byte structural upper bound.
 
 There is now also a stronger exact result on the current engine:
 
 - the exact `512 x 8` auxiliary spike roundtrips cleanly,
-- and it lands exactly where the projection said it would: `477072` bytes.
+- and it lands exactly where the projection said it would: `472611` bytes against a `475642`-byte projection.
 
 The earlier fail-closed exact result was caused by an engine bug, not by a good design property. The verifier replay path was incorrectly substituting auxiliary witness words for linear targets during transcript recomputation. Once that was fixed, the exact spike matched the structural projection and stayed obviously dead on bytes.
 
@@ -198,7 +198,7 @@ The exact current-engine identity spike for the winning `64x` point also matches
 
 - `92402` bytes
 
-This was the first real current-backend branch that beat the old `98532`-byte shipped line. It no longer beats the current shipped inline-Merkle line, which now has a `90830`-byte structural upper bound and current exact sampled proofs in the `87086 .. 87214` band.
+This was the first real current-backend branch that beat the old `98532`-byte shipped line. It no longer beats the current shipped inline-Merkle line, which now has a `90830`-byte structural upper bound and current exact sampled proofs in the `87086 .. 87310` band.
 
 ## 2026-04-17 semantic-adapter floor rerun
 
@@ -238,6 +238,49 @@ The important surprise is that the structural projection was conservative here:
 
 So the semantic branch should now be judged on exact proofs, not only structural projections.
 
+## 2026-05-03 overnight rerun
+
+The current exact rerun confirms the semantic-adapter floor as a measured negative result for the next promotion bar.
+
+Commands run:
+
+```text
+cargo test -p transaction-circuit smallwood_backend_opening_surface_report --release -- --ignored --nocapture
+cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture
+cargo test -p transaction-circuit smallwood_semantic_helper_aux_frontier_quantifies_auxiliary_escape_hatch -- --nocapture
+cargo test -p transaction-circuit smallwood_semantic_helper_aux_exact_report_matches_projection --release -- --ignored --nocapture
+cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_spike_projection_shows_aux_path_loses --release -- --nocapture
+cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_matches_projection_and_still_loses --release -- --nocapture
+cargo test -p transaction-circuit smallwood_lvcs_planner_projection_report --release -- --ignored --nocapture
+```
+
+Measured result:
+
+| branch | structural bytes | exact prove/verify bytes | conclusion |
+|---|---:|---:|---|
+| shipped inline-Merkle SmallWood | `90830` | `87310` sampled run | baseline remains about `87 kB` |
+| semantic-adapter floor, `64x` | `88994` | `86859` | real but tiny win |
+| auxiliary Poseidon transport, `512x8` | `475642` | `472611` | dead by about `5.43x` vs shipped reference |
+| shared-row LVCS planner | `92326` | projection only | dead; soundness drops to `110.62` bits |
+
+The semantic-adapter floor improves this sampled baseline by only:
+
+- `87310 - 86859 = 451` bytes (`0.52%`) against the latest exact run,
+- `87086 - 86859 = 227` bytes (`0.26%`) against the older checked shipped reference used in the report constants.
+
+This is not close to either promotion target:
+
+- low-`80 kB` exact proof bytes, or
+- a `10%` reduction, which would require about `78.6 kB` against the latest `87310`-byte sample.
+
+Branch decision:
+
+- keep the semantic-adapter floor as evidence that exact proofs can beat the shipped line slightly,
+- do not promote it into the shipped tx-proof path,
+- kill full auxiliary-Poseidon transport on the current engine,
+- kill shared-row LVCS as a no-grinding `128-bit` release branch,
+- next proof-size work has to attack lane-aware opened rows or the opening/authentication surface more deeply than this current adapter floor.
+
 ## 2026-04-17 opening branch rerun
 
 The opening-layer branch remains a measured negative result on the current tree.
@@ -268,7 +311,7 @@ Measured branches:
 - bridge baseline: `100956`
 - compact bindings: `99828`
 - former shipped default, compact bindings + skip initial MDS row: `98532`
-- current shipped default, compact bindings + inline Merkle + skip initial MDS row: structural upper bound `90830`, checked exact sampled proofs in the `87086 .. 87214` band
+- current shipped default, compact bindings + inline Merkle + skip initial MDS row: structural upper bound `90830`, checked exact sampled proofs in the `87086 .. 87310` band
 
 The important observation is not just that the gains were small. It is where the gains landed.
 
@@ -324,7 +367,7 @@ That note uses the official SmallWood prototype with a conservative Hegemon-nati
 So the right reading is:
 
 - the semantic LPPC branch is real,
-- but it should be judged against the current shipped line (`90830` upper bound, `87086 .. 87214` checked exact bytes),
+- but it should be judged against the current shipped line (`90830` upper bound, `87086 .. 87310` checked exact bytes),
 - not against the overly optimistic raw-`4096` witness story alone.
 
 ## What the semantic LPPC frontend can actually remove
@@ -394,7 +437,7 @@ Right now the evidence says the answer is probably **no** on the current backend
 - pure semantic lower bound: `97130`
 - compact helper-aux floor: `92402`
 - lane-visible helper floor: `99794`
-- shipped default proof: structural upper bound `90830`, checked exact sampled proofs `87086 .. 87214`
+- shipped default proof: structural upper bound `90830`, checked exact sampled proofs `87086 .. 87310`
 
 That means the semantic LPPC frontend is still the right conceptual direction, but the live backend question is now narrower. The moment the nonlinear relation pays for helper rows as explicit opened rows, the branch is underwater. If the helper surface moves through auxiliary instead, the backend floor drops below the shipped default again.
 
