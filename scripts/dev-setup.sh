@@ -9,7 +9,7 @@ RUST_TOOLCHAIN="stable"
 GO_VERSION="1.21.6"
 NODE_VERSION="20.19.0"
 NODE_INSTALL_DIR=${NODE_INSTALL_DIR:-"$HOME/.local/node"}
-APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq)
+APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq protobuf-compiler)
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
@@ -20,6 +20,22 @@ ensure_macos_libclang() {
         return
     fi
     "$(dirname "$0")/ensure-macos-libclang.sh"
+}
+
+ensure_macos_protoc() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        return
+    fi
+    if have_cmd protoc; then
+        return
+    fi
+    if ! have_cmd brew; then
+        echo "error: protoc is required to build the node, but Homebrew is not installed." >&2
+        echo "Install Homebrew from https://brew.sh and re-run \`make setup\`, or install protoc manually." >&2
+        exit 1
+    fi
+    echo "Installing protobuf via Homebrew"
+    brew install protobuf
 }
 
 print_tool_version() {
@@ -215,6 +231,7 @@ ensure_node() {
 
 main() {
     ensure_macos_libclang
+    ensure_macos_protoc
     ensure_apt_packages
     install_rustup
     install_rust_toolchain
@@ -228,6 +245,7 @@ main() {
     print_tool_version "npm" npm --version
     print_tool_version "clang-format" clang-format --version
     print_tool_version "jq" jq --version
+    print_tool_version "protoc" protoc --version
 }
 
 main "$@"
