@@ -8,7 +8,21 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 # First-Run Setup
 
-Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the Substrate-based `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a dev node with mining enabled.
+Setup is layered. Build only what the user needs — never silently skip an optional component, since failures surface later as confusing runtime errors (e.g. clicking "create wallet" in the Electron app fails if `walletd` was never built).
+
+**Mandatory (every fresh clone):**
+1. `make setup` — installs toolchains (Rust, Go, jq, clang-format, protoc, libclang).
+2. `make node` — builds `./target/release/hegemon-node`.
+
+**Optional add-ons — ASK the user which they want before building:**
+- **Desktop Electron app** → also requires `make walletd` (builds `./target/release/walletd`) plus `cd hegemon-app && npm install`. The app's `resolveBinaryPath` looks for both `hegemon-node` and `walletd` in `target/release/`. Convenience target: `make app` builds both Rust binaries.
+- **Benchmarks** → `make bench` (runs prover/wallet/network smoke benches; no prebuilt binary needed).
+- **Tests / contributor flow** → `make check` (fmt + lint + test).
+- **Wallet demo artifacts** → `make wallet-demo`.
+
+For an interactive walk-through that detects state, asks the right questions, and runs the right commands in order, invoke the `hegemon-setup` skill (`/hegemon-setup`) or accept a user request like "help me set up this repo" by running it.
+
+To start a dev node after `make node`: `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp`.
 
 # Design and Methods Docs
 
