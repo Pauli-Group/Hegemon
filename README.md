@@ -278,9 +278,14 @@ Use this when you want to run two nodes that peer with each other:
 | --- | --- |
 | `make setup` | Runs `scripts/dev-setup.sh` to install toolchains and CLI prerequisites. |
 | `make node` | Builds the Substrate-based `hegemon-node` binary. |
+| `make node-fast` | Builds `hegemon-node` with `fast-proofs` enabled (development only). |
+| `make walletd` | Builds the `walletd` daemon (required for the Electron app, `make wallet-demo`, and the testnet-join flow). |
+| `make app` | Builds both Rust binaries the Electron desktop app spawns (`hegemon-node` + `walletd`). Run `npm install` in `hegemon-app/` separately for the JS side. |
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
+
+> **Setting up the desktop app?** Run `make setup`, then `make app`, then `cd hegemon-app && npm install && npm run dev`. For an interactive walk-through in Claude Code that detects existing state and only builds what's missing, invoke the `hegemon-setup` skill (`/hegemon-setup`).
 
 ---
 

@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo quickstart node node-fast
+.PHONY: setup fmt lint test check bench wallet-demo quickstart node node-fast walletd app
 
 # macOS: librocksdb-sys requires libclang.dylib at runtime during build.
 # We still export the library path for make-driven builds, and the helper script
@@ -56,3 +56,13 @@ node:
 node-fast:
 	$(MACOS_LIBCLANG_HELPER)
 	cargo build -p hegemon-node --features substrate,fast-proofs --release
+
+# Build the walletd daemon (required by the Electron desktop app and the
+# wallet-demo / testnet-join flows). Not needed for CLI-only node operation.
+walletd:
+	$(MACOS_LIBCLANG_HELPER)
+	cargo build -p walletd --release
+
+# Build everything the Electron desktop app spawns at runtime: hegemon-node + walletd.
+# Run `npm install` inside hegemon-app/ separately for the JS side.
+app: node walletd

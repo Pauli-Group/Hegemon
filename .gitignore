@@ -65,3 +65,6 @@ PROVER_ARCHITECTURE_CONSTRAINTS.toc
 PROVER_ARCHITECTURE_CONSTRAINTS.synctex.gz
 config/testnet-config
 config/testnet-config
+
+# Local UX investigation notes (per-pain-point breakdowns, not for upstream)
+ux-investigation/
