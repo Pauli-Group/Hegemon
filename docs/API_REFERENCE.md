@@ -8,7 +8,7 @@ This reference summarizes the public APIs of the monorepo components and points 
   - `Keypair::generate(seed: &[u8; 48]) -> Keypair`
   - `Keypair::sign(&self, msg: &[u8]) -> Signature`
   - `VerifyKey::verify(&self, msg: &[u8], sig: &Signature) -> Result<()>`
-  - Security margin: ML-DSA-65 (Dilithium 3) sized keys (pk 1952 B, sk 4000 B, sig 3293 B).
+  - Security margin: ML-DSA-65 (Dilithium 3) sized keys (pk 1952 B, expanded compatibility sk 4032 B, sig 3309 B).
 - `ml_kem` module
   - `Keypair::encapsulate(&self, rng_seed: &[u8; 32]) -> (Ciphertext, SharedSecret)`
   - `SecretKey::decapsulate(&self, ct: &Ciphertext) -> SharedSecret`

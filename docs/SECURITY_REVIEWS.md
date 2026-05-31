@@ -25,6 +25,7 @@ Commissioning requirements:
 4. **Cadence** – Trigger a review whenever:
    - Upgrading parameter sets (e.g., bumping to ML-DSA-87 for miner identities).
    - Touching STARK hash parameters or note commitment definitions that govern share proofs.
+   - NIST publishes errata or usage guidance affecting FIPS 203/204/205 or SP 800-227 KEM handling.
    - Annually, even without code changes, to capture new cryptanalytic results relevant to mining pools.
 
 ## 2. Third-party audit scopes
@@ -106,6 +107,14 @@ Required deliverables:
 
 Whenever the active native backend parameters, live witness schema, or claim model change, regenerate the package and attach the new `review_manifest.json` and `package.sha256` to the next external review request.
 
+The native backend is release-gated as a candidate, not production-accepted crypto. CI and tag releases run:
+
+```bash
+./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+```
+
+That default gate requires `review_state = candidate_under_review`, `maturity_label = structural_candidate`, and no completed external-cryptanalysis flag in the packaged manifest. A future production acceptance must use `--require-accepted --acceptance-artifact <path>` and must include a checked-in external acceptance note; changing repo-local prose is not enough.
+
 ## 3. Formal verification & continuous security testing
 
 - Formal specs live under `circuits/formal/` and `consensus/spec/formal/`. Run them with either [TLC](https://github.com/tlaplus/tlaplus) or [Apalache](https://apalache.informal.systems/):
@@ -127,6 +136,7 @@ Whenever the active native backend parameters, live witness schema, or claim mod
 - `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` is the merge-blocking hostile proving suite.
 - `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` is the heavier release-hardening pass and adds fuzz/adversarial suites that are too expensive for every PR.
 - CI job `security-adversarial` (see `.github/workflows/ci.yml`) runs the `ci` red-team suite on every push/PR. Failures block merges until triaged via `runbooks/security_testing.md`.
+- CI job `dependency-audit` and release job `security-gates` run `./scripts/dependency-audit-gate.sh`; every cargo-audit finding must either be removed or listed in `config/dependency-audit-waivers.json` with expiry, package/version, reason, and tracking id.
 
 ## 4. Finding log template
 
@@ -200,6 +210,42 @@ Keep the log chronological; when closing a finding, link the merge commit and up
     "remediation": "Offer, acceptance, and confirmation paths now use OS-random transcript nonces and KEM encapsulation seeds.",
     "design_notes": "DESIGN.md and METHODS.md document per-session rekeying.",
     "tests": ["cargo test -p network --test handshake --test adversarial -- --nocapture"]
+  },
+  {
+    "id": "SEC-2026-0005",
+    "source": "Hostile security review",
+    "component": "pq-noise::PqHandshake",
+    "description": "ML-KEM encapsulation seeds were derived from public transcript hashes, letting a passive observer reproduce encapsulation randomness.",
+    "severity": "critical",
+    "status": "patched",
+    "evidence": "pq-noise/src/handshake.rs::handshake_does_not_use_public_transcript_as_kem_seed",
+    "remediation": "Encapsulation seeds now come from OsRng; transcript bytes remain public context for signatures and key derivation only.",
+    "design_notes": "DESIGN.md and METHODS.md document secret OS randomness for protocol KEM callers.",
+    "tests": ["cargo test -p pq-noise"]
+  },
+  {
+    "id": "SEC-2026-0006",
+    "source": "Hostile security review",
+    "component": "network::SecureChannel",
+    "description": "The legacy secure channel reused one AES-GCM key for both directions with both counters starting at zero.",
+    "severity": "critical",
+    "status": "patched",
+    "evidence": "network/tests/adversarial.rs::legacy_channel_uses_directional_keys_for_first_nonce",
+    "remediation": "Session material now derives initiator-to-responder and responder-to-initiator AEAD keys with separate domain labels.",
+    "design_notes": "DESIGN.md documents directional keys and bounded network codec.",
+    "tests": ["cargo test -p network --test adversarial -- --nocapture"]
+  },
+  {
+    "id": "SEC-2026-0007",
+    "source": "Dependency audit",
+    "component": "workspace dependencies",
+    "description": "cargo audit is now a merge/release gate; remaining advisories require explicit expiring waivers.",
+    "severity": "high",
+    "status": "mitigated",
+    "evidence": "scripts/dependency-audit-gate.sh and config/dependency-audit-waivers.json",
+    "remediation": "CI and release workflows run the gate. ML-KEM/ML-DSA were upgraded off pre/RC paths; network and PQ Noise trust-boundary frames moved from bincode to bounded postcard codecs.",
+    "design_notes": "docs/DEPENDENCY_AUDITS.md records the gate and waiver policy.",
+    "tests": ["./scripts/dependency-audit-gate.sh"]
   }
 ]
 ```

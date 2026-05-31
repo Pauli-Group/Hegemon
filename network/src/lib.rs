@@ -21,6 +21,7 @@ pub mod peer_store;
 pub mod pq_transport;
 pub mod protocol;
 pub mod service;
+pub mod wire;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
 pub use native_transport::{
@@ -63,7 +64,7 @@ pub enum NetworkError {
     #[error("encryption error")]
     Encryption,
     #[error("serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    Serialization(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -167,7 +168,7 @@ impl PeerIdentity {
             signature: signature.to_bytes().to_vec(),
             nonce,
         };
-        let encoded = bincode::serialize(&acceptance)?;
+        let encoded = wire::encode(&acceptance, wire::MAX_HANDSHAKE_FRAME_LEN)?;
         Ok((acceptance, shared_secret, encoded))
     }
 
@@ -204,15 +205,15 @@ impl PeerIdentity {
             signature: signature.to_bytes().to_vec(),
             nonce,
         };
-        let confirmation_bytes = bincode::serialize(&confirmation)?;
-        let (key, aad) = derive_session_material(
+        let confirmation_bytes = wire::encode(&confirmation, wire::MAX_HANDSHAKE_FRAME_LEN)?;
+        let material = derive_session_material(
             offer_bytes,
             acceptance_bytes,
             &confirmation_bytes,
             responder_secret.as_bytes(),
             initiator_secret.as_bytes(),
         );
-        let channel = SecureChannel::new(key, aad)?;
+        let channel = SecureChannel::new(material, ChannelRole::Initiator)?;
         Ok((channel, confirmation, confirmation_bytes))
     }
 
@@ -235,14 +236,14 @@ impl PeerIdentity {
 
         let ciphertext = MlKemCiphertext::from_bytes(&confirmation.ciphertext_to_responder)?;
         let initiator_secret = self.kem.decapsulate(&ciphertext)?;
-        let (key, aad) = derive_session_material(
+        let material = derive_session_material(
             offer_bytes,
             acceptance_bytes,
             confirmation_bytes,
             responder_secret.as_bytes(),
             initiator_secret.as_bytes(),
         );
-        SecureChannel::new(key, aad)
+        SecureChannel::new(material, ChannelRole::Responder)
     }
 }
 
@@ -251,7 +252,7 @@ pub fn establish_secure_channel(
     responder: &PeerIdentity,
 ) -> Result<(SecureChannel, SecureChannel), NetworkError> {
     let offer = initiator.create_offer()?;
-    let offer_bytes = bincode::serialize(&offer)?;
+    let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
     let (acceptance, responder_secret, acceptance_bytes) = responder.accept_offer(&offer)?;
     let (initiator_channel, confirmation, confirmation_bytes) =
         initiator.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
@@ -333,18 +334,46 @@ impl GossipHandle {
 
 #[derive(Clone)]
 pub struct SecureChannel {
-    cipher: Aes256Gcm,
+    send_cipher: Aes256Gcm,
+    recv_cipher: Aes256Gcm,
     aad: [u8; 32],
     send_nonce: u64,
     recv_nonce: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChannelRole {
+    Initiator,
+    Responder,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SessionMaterial {
+    initiator_to_responder: [u8; 32],
+    responder_to_initiator: [u8; 32],
+    aad: [u8; 32],
+}
+
 impl SecureChannel {
-    fn new(key: [u8; 32], aad: [u8; 32]) -> Result<Self, NetworkError> {
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| NetworkError::Encryption)?;
+    fn new(material: SessionMaterial, role: ChannelRole) -> Result<Self, NetworkError> {
+        let (send_key, recv_key) = match role {
+            ChannelRole::Initiator => (
+                material.initiator_to_responder,
+                material.responder_to_initiator,
+            ),
+            ChannelRole::Responder => (
+                material.responder_to_initiator,
+                material.initiator_to_responder,
+            ),
+        };
+        let send_cipher =
+            Aes256Gcm::new_from_slice(&send_key).map_err(|_| NetworkError::Encryption)?;
+        let recv_cipher =
+            Aes256Gcm::new_from_slice(&recv_key).map_err(|_| NetworkError::Encryption)?;
         Ok(Self {
-            cipher,
-            aad,
+            send_cipher,
+            recv_cipher,
+            aad: material.aad,
             send_nonce: 0,
             recv_nonce: 0,
         })
@@ -357,7 +386,7 @@ impl SecureChannel {
             .checked_add(1)
             .ok_or(NetworkError::Encryption)?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        self.cipher
+        self.send_cipher
             .encrypt(
                 nonce,
                 Payload {
@@ -375,7 +404,7 @@ impl SecureChannel {
             .checked_add(1)
             .ok_or(NetworkError::Encryption)?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        self.cipher
+        self.recv_cipher
             .decrypt(
                 nonce,
                 Payload {
@@ -430,23 +459,59 @@ fn derive_session_material(
     confirmation: &[u8],
     secret_a: &[u8],
     secret_b: &[u8],
-) -> ([u8; 32], [u8; 32]) {
+) -> SessionMaterial {
+    let initiator_to_responder = derive_session_key(
+        b"hegemon-network-v2-i2r",
+        offer,
+        acceptance,
+        confirmation,
+        secret_a,
+        secret_b,
+    );
+    let responder_to_initiator = derive_session_key(
+        b"hegemon-network-v2-r2i",
+        offer,
+        acceptance,
+        confirmation,
+        secret_a,
+        secret_b,
+    );
+    let aad = derive_session_key(
+        b"hegemon-network-v2-aad",
+        offer,
+        acceptance,
+        confirmation,
+        secret_a,
+        secret_b,
+    );
+
+    SessionMaterial {
+        initiator_to_responder,
+        responder_to_initiator,
+        aad,
+    }
+}
+
+fn derive_session_key(
+    label: &[u8],
+    offer: &[u8],
+    acceptance: &[u8],
+    confirmation: &[u8],
+    secret_a: &[u8],
+    secret_b: &[u8],
+) -> [u8; 32] {
     let mut hasher = Sha256::new();
+    hasher.update(b"hegemon-network-secure-channel-v2");
+    hasher.update(label);
     hasher.update(offer);
     hasher.update(acceptance);
     hasher.update(confirmation);
     hasher.update(secret_a);
     hasher.update(secret_b);
     let digest = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&digest);
-    let mut aad_hasher = Sha256::new();
-    aad_hasher.update(offer);
-    aad_hasher.update(acceptance);
-    aad_hasher.update(confirmation);
-    let mut aad = [0u8; 32];
-    aad.copy_from_slice(&aad_hasher.finalize());
-    (key, aad)
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
 }
 
 fn nonce_from_u64(counter: u64) -> [u8; 12] {

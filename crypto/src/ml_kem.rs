@@ -13,8 +13,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Re-export the real ML-KEM-1024 types from the ml-kem crate
 use ml_kem::array::Array;
-use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
-use ml_kem::{EncodedSizeUser, MlKem1024Params};
+use ml_kem::kem::{Decapsulate, KeyExport};
+use ml_kem::{DecapsulationKey, EncapsulationKey, ExpandedKeyEncoding, MlKem1024};
+
+type MlKem1024EncapsulationKey = EncapsulationKey<MlKem1024>;
+type MlKem1024DecapsulationKey = DecapsulationKey<MlKem1024>;
 
 /// ML-KEM-1024 parameter sizes (FIPS 203)
 pub const ML_KEM_PUBLIC_KEY_LEN: usize = 1568;
@@ -103,10 +106,9 @@ impl MlKemPublicKey {
         &self.bytes
     }
 
-    fn to_inner(&self) -> EncapsulationKey<MlKem1024Params> {
+    fn to_inner(&self) -> MlKem1024EncapsulationKey {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
-        EncapsulationKey::<MlKem1024Params>::from_bytes(&arr)
-            .expect("invalid ML-KEM public key bytes")
+        MlKem1024EncapsulationKey::new(&arr).expect("invalid ML-KEM public key bytes")
     }
 }
 
@@ -117,7 +119,6 @@ impl KemPublicKey for MlKemPublicKey {
     fn encapsulate(&self, seed: &[u8]) -> (Self::Ciphertext, Self::SharedSecret) {
         // REAL ML-KEM encapsulation using lattice operations
         // Use deterministic encapsulation with the provided seed
-        use ml_kem::EncapsulateDeterministic;
         use sha2::{Digest, Sha256};
 
         // Derive 32-byte randomness from the seed
@@ -128,9 +129,7 @@ impl KemPublicKey for MlKemPublicKey {
         let m_array: Array<u8, _> = Array::try_from(m.as_slice()).expect("size mismatch");
 
         let ek = self.to_inner();
-        let (ct, ss) = ek
-            .encapsulate_deterministic(&m_array)
-            .expect("encapsulation failed");
+        let (ct, ss) = ek.encapsulate_deterministic(&m_array);
         m.zeroize();
 
         let mut ct_bytes = [0u8; ML_KEM_CIPHERTEXT_LEN];
@@ -159,8 +158,7 @@ impl KemPublicKey for MlKemPublicKey {
         let mut arr = [0u8; ML_KEM_PUBLIC_KEY_LEN];
         arr.copy_from_slice(bytes);
         let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
-        EncapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
-            .map_err(|_| CryptoError::InvalidKey)?;
+        MlKem1024EncapsulationKey::new(&arr_checked).map_err(|_| CryptoError::InvalidKey)?;
         Ok(Self { bytes: arr })
     }
 }
@@ -194,18 +192,21 @@ impl MlKemSecretKey {
         }
         let mut arr = [0u8; ML_KEM_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
-        let arr_checked: Array<u8, _> = Array::try_from(arr.as_slice()).expect("size mismatch");
-        DecapsulationKey::<MlKem1024Params>::from_bytes(&arr_checked)
+        let arr_checked: ml_kem::ExpandedDecapsulationKey<MlKem1024> =
+            Array::try_from(arr.as_slice()).expect("size mismatch");
+        #[allow(deprecated)]
+        MlKem1024DecapsulationKey::from_expanded(&arr_checked)
             .map_err(|_| CryptoError::InvalidKey)?;
         let out = Self { bytes: arr };
         arr.zeroize();
         Ok(out)
     }
 
-    fn to_inner(&self) -> DecapsulationKey<MlKem1024Params> {
-        let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
-        DecapsulationKey::<MlKem1024Params>::from_bytes(&arr)
-            .expect("invalid ML-KEM secret key bytes")
+    fn to_inner(&self) -> MlKem1024DecapsulationKey {
+        let arr: ml_kem::ExpandedDecapsulationKey<MlKem1024> =
+            Array::try_from(self.bytes.as_slice()).expect("size mismatch");
+        #[allow(deprecated)]
+        MlKem1024DecapsulationKey::from_expanded(&arr).expect("invalid ML-KEM secret key bytes")
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
@@ -215,9 +216,7 @@ impl MlKemSecretKey {
     ) -> Result<MlKemSharedSecret, CryptoError> {
         let dk = self.to_inner();
         let ct: Array<u8, _> = Array::try_from(ciphertext.bytes.as_slice()).expect("size mismatch");
-        let ss = dk
-            .decapsulate(&ct)
-            .map_err(|_| CryptoError::DecapsulationFailed)?;
+        let ss = dk.decapsulate(&ct);
 
         let mut ss_bytes = [0u8; ML_KEM_SHARED_SECRET_LEN];
         ss_bytes.copy_from_slice(ss.as_ref());
@@ -300,8 +299,9 @@ impl KemKeyPair for MlKemKeyPair {
             Array::try_from(full_seed.as_slice()).expect("size mismatch");
 
         // REAL ML-KEM key generation using lattice operations
-        let dk = DecapsulationKey::<MlKem1024Params>::from(seed_array);
-        let dk_bytes = dk.to_bytes();
+        let dk = MlKem1024DecapsulationKey::from_seed(seed_array);
+        #[allow(deprecated)]
+        let dk_bytes = dk.to_expanded_bytes();
 
         let mut secret_bytes = [0u8; ML_KEM_SECRET_KEY_LEN];
         secret_bytes.copy_from_slice(dk_bytes.as_ref());

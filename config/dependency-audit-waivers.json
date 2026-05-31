@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-05-31",
+  "waivers": [
+    {
+      "id": "RUSTSEC-2025-0055",
+      "package": "tracing-subscriber",
+      "version": "0.2.25",
+      "kind": "vulnerability",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0001",
+      "reason": "Transitive through risc0-groth16/arkworks. The direct fix requires a RISC0/arkworks dependency lift; until then logs on that path are not protocol inputs and release builds must keep ANSI/user-controlled log text out of consensus-facing evidence."
+    },
+    {
+      "id": "RUSTSEC-2025-0141",
+      "package": "bincode",
+      "version": "1.3.3",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0002",
+      "reason": "Network trust-boundary encoding has been moved to the bounded HNW1/postcard codec. Remaining uses are consensus/proof artifact compatibility surfaces and must move behind versioned canonical codecs before this waiver expires."
+    },
+    {
+      "id": "RUSTSEC-2024-0388",
+      "package": "derivative",
+      "version": "2.2.0",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0003",
+      "reason": "Transitive through ark-crypto-primitives. Remove with the same RISC0/arkworks dependency lift tracked for DEP-2026-0001."
+    },
+    {
+      "id": "RUSTSEC-2025-0057",
+      "package": "fxhash",
+      "version": "0.2.1",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0004",
+      "reason": "Transitive through sled. Hegemon does not use fxhash as a cryptographic hash; remove by replacing or upgrading the node storage dependency."
+    },
+    {
+      "id": "RUSTSEC-2024-0384",
+      "package": "instant",
+      "version": "0.1.13",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0005",
+      "reason": "Transitive through parking_lot 0.11 via sled/reed-solomon-erasure. Remove by lifting those dependencies to parking_lot 0.12+ paths."
+    },
+    {
+      "id": "RUSTSEC-2024-0436",
+      "package": "paste",
+      "version": "1.0.15",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0006",
+      "reason": "Transitive macro dependency through arkworks/RISC0/Plonky3. It is not a runtime trust-boundary parser; remove with upstream dependency lifts."
+    },
+    {
+      "id": "RUSTSEC-2025-0134",
+      "package": "rustls-pemfile",
+      "version": "2.2.0",
+      "kind": "unmaintained",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0007",
+      "reason": "Transitive through axum-server. TLS PEM parsing is not used for consensus messages; update axum-server/rustls-pemfile before release hardening."
+    },
+    {
+      "id": "RUSTSEC-2026-0012",
+      "package": "keccak",
+      "version": "0.1.5",
+      "kind": "unsound",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0008",
+      "reason": "The advisory is for the opt-in ARMv8 assembly backend. This build path does not enable that backend, but keccak 0.1.5 also remains yanked and must be removed by moving sha3/merlin dependents off this version."
+    },
+    {
+      "id": "yanked:keccak:0.1.5",
+      "package": "keccak",
+      "version": "0.1.5",
+      "kind": "yanked",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0008",
+      "reason": "Yanked keccak 0.1.5 remains through sha3 0.10 and merlin. Remove by lifting dependents to the keccak 0.2 line or replacing the path."
+    },
+    {
+      "id": "RUSTSEC-2026-0097",
+      "package": "rand",
+      "version": "0.8.5",
+      "kind": "unsound",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0009",
+      "reason": "No code in this repo uses the affected custom-logger rand::rng path for protocol randomness. Migrate remaining rand 0.8 users to rand 0.9 or direct rand_core/getrandom calls."
+    },
+    {
+      "id": "RUSTSEC-2026-0097",
+      "package": "rand",
+      "version": "0.9.2",
+      "kind": "unsound",
+      "expires": "2026-08-31",
+      "tracking": "DEP-2026-0009",
+      "reason": "No code in this repo uses the affected custom-logger rand::rng path for protocol randomness. Track upstream fix and pin once released."
+    }
+  ]
+}

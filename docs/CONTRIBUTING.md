@@ -27,6 +27,7 @@ The correctness/build commands below are what CI enforces by default. Performanc
 GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 - `rust-lints`: runs the lean formatting/lint gate through `./scripts/check-core.sh lint`.
+- `dependency-audit`: runs `./scripts/dependency-audit-gate.sh`; unwaived advisories or yanked crates block release build.
 - `core-tests`: runs the fast shipping-path Rust tests through `./scripts/check-core.sh test`.
 - `security-adversarial`: runs `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`, including hostile proving regressions plus review-package parity checks.
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.
@@ -42,7 +43,7 @@ When you add a new crate or language toolchain, extend CI accordingly **and** do
 
 ## Dependency advisories
 
-Use `./scripts/dependency-audit.sh --record` to run `cargo audit` and append the output to `docs/DEPENDENCY_AUDITS.md`. This is advisory-only for now, so use it to track risk and open follow-up issues without blocking normal development.
+Use `./scripts/dependency-audit-gate.sh` before opening security-sensitive PRs. It fails on unwaived cargo-audit findings. Use `./scripts/dependency-audit.sh --record` to append a human-readable snapshot to `docs/DEPENDENCY_AUDITS.md` after updating the waiver policy.
 
 ## Benchmarks
 

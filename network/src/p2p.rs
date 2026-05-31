@@ -1,6 +1,6 @@
 use crate::{
     GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerId, PeerIdentity, ProtocolMessage, SecureChannel,
+    PeerId, PeerIdentity, ProtocolMessage, SecureChannel, wire,
 };
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
@@ -10,12 +10,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-const MAX_WIRE_FRAME_LEN: usize = 16 * 1024 * 1024;
-const MAX_HANDSHAKE_FRAME_LEN: usize = 64 * 1024;
-
 fn wire_codec() -> LengthDelimitedCodec {
     let mut codec = LengthDelimitedCodec::new();
-    codec.set_max_frame_length(MAX_WIRE_FRAME_LEN);
+    codec.set_max_frame_length(wire::MAX_WIRE_FRAME_LEN);
     codec
 }
 
@@ -102,12 +99,13 @@ where
     ) -> Result<PeerId, NetworkError> {
         // 1. Create and send offer
         let offer = identity.create_offer()?;
-        let offer_bytes = bincode::serialize(&offer)?;
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
         self.send_raw(&offer_bytes).await?;
 
         // 2. Receive acceptance
         let acceptance_bytes = self.recv_raw().await?;
-        let acceptance: HandshakeAcceptance = bincode::deserialize(&acceptance_bytes)?;
+        let acceptance: HandshakeAcceptance =
+            wire::decode(&acceptance_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 3. Finalize handshake
         let (channel, _confirmation, confirmation_bytes) =
@@ -130,7 +128,7 @@ where
     ) -> Result<PeerId, NetworkError> {
         // 1. Receive offer
         let offer_bytes = self.recv_raw().await?;
-        let offer: HandshakeOffer = bincode::deserialize(&offer_bytes)?;
+        let offer: HandshakeOffer = wire::decode(&offer_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 2. Accept offer
         let (_acceptance, responder_secret, acceptance_bytes) = identity.accept_offer(&offer)?;
@@ -138,10 +136,11 @@ where
 
         // 3. Receive confirmation
         let confirmation_bytes = self.recv_raw().await?;
-        let confirmation: HandshakeConfirmation = bincode::deserialize(&confirmation_bytes)?;
+        let confirmation: HandshakeConfirmation =
+            wire::decode(&confirmation_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 4. Complete handshake
-        let offer_bytes = bincode::serialize(&offer)?;
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
         let channel = identity.complete_handshake(
             &offer,
             &confirmation,
@@ -160,13 +159,13 @@ where
     }
 
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
-        let bytes = bincode::serialize(&msg)?;
-        if bytes.len() > MAX_WIRE_FRAME_LEN {
+        let bytes = wire::encode(&msg, wire::MAX_WIRE_FRAME_LEN)?;
+        if bytes.len() > wire::MAX_WIRE_FRAME_LEN {
             return Err(NetworkError::Handshake("wire message too large"));
         }
         if let Some(channel) = &mut self.channel {
             let encrypted = channel.encrypt(&bytes)?;
-            if encrypted.len() > MAX_WIRE_FRAME_LEN {
+            if encrypted.len() > wire::MAX_WIRE_FRAME_LEN {
                 return Err(NetworkError::Handshake("encrypted frame too large"));
             }
             self.stream.send(Bytes::copy_from_slice(&encrypted)).await?;
@@ -185,7 +184,7 @@ where
 
         if let Some(channel) = &mut self.channel {
             let decrypted = channel.decrypt(&frame)?;
-            let msg = bincode::deserialize(&decrypted)?;
+            let msg = wire::decode(&decrypted, wire::MAX_WIRE_FRAME_LEN)?;
             Ok(Some(msg))
         } else {
             Err(NetworkError::Handshake("connection not encrypted"))
@@ -193,7 +192,7 @@ where
     }
 
     async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), NetworkError> {
-        if bytes.len() > MAX_HANDSHAKE_FRAME_LEN {
+        if bytes.len() > wire::MAX_HANDSHAKE_FRAME_LEN {
             return Err(NetworkError::Handshake("handshake frame too large"));
         }
         self.stream.send(Bytes::copy_from_slice(bytes)).await?;
@@ -203,7 +202,7 @@ where
     async fn recv_raw(&mut self) -> Result<Vec<u8>, NetworkError> {
         match self.stream.next().await {
             Some(Ok(bytes)) => {
-                if bytes.len() > MAX_HANDSHAKE_FRAME_LEN {
+                if bytes.len() > wire::MAX_HANDSHAKE_FRAME_LEN {
                     return Err(NetworkError::Handshake("handshake frame too large"));
                 }
                 Ok(bytes.to_vec())
@@ -297,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_handshake_frame_is_rejected() {
         let responder_identity = PeerIdentity::generate(b"oversized-handshake-responder");
-        let (client_stream, responder_stream) = duplex(MAX_HANDSHAKE_FRAME_LEN * 2);
+        let (client_stream, responder_stream) = duplex(wire::MAX_HANDSHAKE_FRAME_LEN * 2);
 
         let responder_task = task::spawn(async move {
             let mut conn = Connection::new(responder_stream);
@@ -305,7 +304,7 @@ mod tests {
         });
 
         let mut raw = Framed::new(client_stream, wire_codec());
-        raw.send(Bytes::from(vec![0u8; MAX_HANDSHAKE_FRAME_LEN + 1]))
+        raw.send(Bytes::from(vec![0u8; wire::MAX_HANDSHAKE_FRAME_LEN + 1]))
             .await
             .expect("send oversized handshake frame");
 

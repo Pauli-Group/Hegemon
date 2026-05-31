@@ -35,6 +35,7 @@
 //! session.send(b"Hello, quantum world!").await?;
 //! ```
 
+mod codec;
 pub mod config;
 pub mod error;
 pub mod handshake;

@@ -25,6 +25,20 @@ jobs:
       - name: Lean lint gate
         run: ./scripts/check-core.sh lint
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "dependency-audit"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Dependency audit waiver gate
+        run: ./scripts/dependency-audit-gate.sh
+
   core-tests:
     runs-on: ubuntu-latest
     needs: rust-lints
@@ -136,10 +150,12 @@ jobs:
           cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=30
           ./scripts/package_native_backend_review.sh
           ./scripts/verify_native_backend_review_package.sh
+          ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
 
   release-build:
     runs-on: ubuntu-latest
     needs:
+      - dependency-audit
       - core-tests
       - native-path-tests
       - security-adversarial

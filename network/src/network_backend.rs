@@ -35,6 +35,7 @@
 
 use crate::native_transport::{NativePqTransport, NativePqTransportConfig, PqConnectionInfo};
 use crate::pq_transport::PqPeerIdentity;
+use crate::wire;
 use pq_noise::session::SESSION_MAX_FRAME_LEN;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -714,7 +715,7 @@ impl PqNetworkBackend {
                                                                     }
                                                                     // Decode framed message
                                                                     if let Ok(msg) =
-                                                                        bincode::deserialize::<BorrowedFramedMessage<'_>>(&data)
+                                                                        wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_FRAME_LEN)
                                                                     {
                                                                         if let Err(reason) = try_send_message_event(
                                                                             &message_event_tx_for_task,
@@ -1133,7 +1134,7 @@ impl PqNetworkBackend {
                                 }
                                 // Decode framed message
                                 if let Ok(msg) =
-                                    bincode::deserialize::<BorrowedFramedMessage<'_>>(&data)
+                                    wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_FRAME_LEN)
                                 {
                                     if let Err(reason) = try_send_message_event(
                                         &message_event_tx_for_task,
@@ -1421,7 +1422,7 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = match bincode::serialize(&framed) {
+        let encoded = match wire::encode(&framed, SESSION_MAX_FRAME_LEN) {
             Ok(e) => e,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize broadcast message");
@@ -1547,7 +1548,7 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = bincode::serialize(&framed)
+        let encoded = wire::encode(&framed, SESSION_MAX_FRAME_LEN)
             .map_err(|e| format!("Failed to serialize message: {}", e))?;
 
         if encoded.len() > SESSION_MAX_FRAME_LEN {

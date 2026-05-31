@@ -1,7 +1,6 @@
-use bincode::serialize;
 use proptest::prelude::*;
 
-use network::{NetworkError, PeerIdentity, establish_secure_channel};
+use network::{NetworkError, PeerIdentity, establish_secure_channel, wire};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
@@ -9,13 +8,13 @@ proptest! {
         let initiator = PeerIdentity::generate(&initiator_seed.to_le_bytes());
         let responder = PeerIdentity::generate(&responder_seed.to_le_bytes());
         let offer = initiator.create_offer().expect("offer");
-        let offer_bytes = serialize(&offer).expect("offer bytes");
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN).expect("offer bytes");
         let (acceptance, _, _) = responder.accept_offer(&offer).expect("acceptance");
         let mut tampered = acceptance.clone();
         if !tampered.signature.is_empty() {
             tampered.signature[0] ^= 0x01;
         }
-        let tampered_bytes = serialize(&tampered).expect("serialize tampered");
+        let tampered_bytes = wire::encode(&tampered, wire::MAX_HANDSHAKE_FRAME_LEN).expect("serialize tampered");
         let result = initiator.finalize_handshake(&offer, &tampered, &offer_bytes, &tampered_bytes);
         match result {
             Ok(_) => prop_assert!(false, "tampering must fail"),
@@ -56,5 +55,26 @@ fn repeated_legacy_handshakes_rekey_the_first_channel_nonce() {
     assert_ne!(
         first_ciphertext, second_ciphertext,
         "reconnecting static peers must not reuse the same AES-GCM key and first nonce"
+    );
+}
+
+#[test]
+fn legacy_channel_uses_directional_keys_for_first_nonce() {
+    let initiator = PeerIdentity::generate(b"directional-initiator");
+    let responder = PeerIdentity::generate(b"directional-responder");
+
+    let (mut initiator_channel, mut responder_channel) =
+        establish_secure_channel(&initiator, &responder).expect("secure channel");
+
+    let initiator_first = initiator_channel
+        .encrypt(b"same first plaintext")
+        .expect("initiator encrypt");
+    let responder_first = responder_channel
+        .encrypt(b"same first plaintext")
+        .expect("responder encrypt");
+
+    assert_ne!(
+        initiator_first, responder_first,
+        "opposite directions must not share the same AES-GCM key with nonce zero"
     );
 }

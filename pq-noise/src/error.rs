@@ -19,7 +19,7 @@ pub enum PqNoiseError {
 
     /// Serialization error
     #[error("serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    Serialization(String),
 
     /// Encryption/decryption error
     #[error("encryption error: {0}")]

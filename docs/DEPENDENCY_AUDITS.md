@@ -1,11 +1,15 @@
 # Dependency Audit Log
 
-This log tracks `cargo audit` runs for the workspace. It is advisory only and
-does not gate builds unless explicitly wired into CI.
+This log tracks `cargo audit` runs for the workspace. CI and release builds now
+run `./scripts/dependency-audit-gate.sh`, which fails on every unwaived
+vulnerability, warning, or yanked crate. Waivers live in
+`config/dependency-audit-waivers.json` and must include a reason, tracking id,
+package/version, kind, and expiry.
 
 Run:
 
     ./scripts/dependency-audit.sh --record
+    ./scripts/dependency-audit-gate.sh
 
 Each entry records the exit status and summary output so changes can be reviewed
 over time.
@@ -62,4 +66,28 @@ Summary:
     - RUSTSEC-2021-0145 atty 0.2.14 https://github.com/softprops/atty/issues/50
     yanked: 1
     - unknown kvdb-rocksdb 0.20.1
+
+## 2026-05-31 05:30Z
+
+Command: cargo audit --color never --json --no-fetch --stale
+Exit status: 1
+
+Summary:
+
+    Database: last-commit=unknown last-updated=unknown advisories=1099
+    Vulnerabilities: 1
+    - RUSTSEC-2025-0055 tracing-subscriber 0.2.25 https://github.com/advisories/GHSA-xwfj-jgwm-7wp5
+    unmaintained: 6
+    - RUSTSEC-2025-0141 bincode 1.3.3 https://git.sr.ht/~stygianentity/bincode/tree/v3.0/item/README.md
+    - RUSTSEC-2024-0388 derivative 2.2.0 https://github.com/mcarton/rust-derivative/issues/117
+    - RUSTSEC-2025-0057 fxhash 0.2.1 https://github.com/cbreeden/fxhash/issues/20
+    - RUSTSEC-2024-0384 instant 0.1.13
+    - RUSTSEC-2024-0436 paste 1.0.15 https://github.com/dtolnay/paste
+    - RUSTSEC-2025-0134 rustls-pemfile 2.2.0 https://github.com/rustls/pemfile/issues/61
+    unsound: 3
+    - RUSTSEC-2026-0012 keccak 0.1.5 https://github.com/RustCrypto/sponges/pull/101
+    - RUSTSEC-2026-0097 rand 0.8.5 https://github.com/rust-random/rand/pull/1763
+    - RUSTSEC-2026-0097 rand 0.9.2 https://github.com/rust-random/rand/pull/1763
+    yanked: 1
+    - unknown keccak 0.1.5
 

@@ -598,7 +598,7 @@ The Hegemon node’s PQ network stack is **not** libp2p, so we do not get Kademl
 Instead, once a PQ connection is established, peers run a small “address exchange” protocol over the PQ framed message channel:
 
 * Protocol id: `/hegemon/discovery/pq/1`
-* Messages (serde+bincode encoded):
+* Messages (`HNW1` version marker plus bounded postcard encoding):
 
   * `Hello { listen_port }` – the receiver combines the *observed peer IP* with `listen_port` to form a dialable `IP:port` even if the connection’s TCP source port was ephemeral.
   * `GetAddrs { limit }` and `Addrs { addrs }` – bounded address lists used to share additional dial targets beyond seeds.
@@ -988,13 +988,13 @@ Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon2-bas
 
 ## 7. Post-quantum crypto module (reference implementations)
 
-The `crypto/` crate provides deterministic reference bindings for the PQ primitives referenced throughout the design. All APIs live in safe Rust and use fixed-length byte arrays so that serialization matches the NIST ML-DSA, SLH-DSA, and ML-KEM parameter sizes without pulling in the full reference C code.
+The `crypto/` crate provides safe Rust bindings for the PQ primitives referenced throughout the design. All APIs use fixed-length byte arrays so serialization matches the NIST ML-DSA, SLH-DSA, and ML-KEM parameter sizes. ML-KEM and ML-DSA use final RustCrypto implementations; SLH-DSA remains on the newest RustCrypto release candidate and is explicitly tracked in the dependency waiver policy until a final FIPS 205 crate is available.
 
 Module layout:
 
-* `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
+* `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations over ML-DSA-65. Public keys are 1952 bytes, expanded compatibility secret keys are 4032 bytes, and signatures are 3309 bytes.
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
-* `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
+* `crypto::ml_kem` – wraps ML-KEM-1024 with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Public keys and ciphertexts are 1568 bytes, expanded compatibility secret keys are 3168 bytes, and shared secrets are 32 bytes. The deterministic seed-taking API exists for KATs and reproducible wrappers; protocol callers must feed it secret OS randomness and bind transcripts only through HKDF/info or AEAD AAD.
 * `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, `blake3_384`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to 48-byte BLAKE3-384 with SHA3-384 fallbacks via `commit_note_with`) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address hashes remain BLAKE3-256 by default while commitments/nullifiers normalize on 48-byte digests.
 * Native identity records store optional PQ session keys as protocol metadata. New registrations supply PQ bundles through release/governance tooling when that surface is reintroduced.
 * Historical attestation and settlement storage treated verifier parameters as mutable state; the proof-native cut treats these as protocol-release parameters instead. The active default tx proof backend is now `SmallwoodCandidate`, and the version-owned manifest surface in `protocol/versioning` no longer advertises a Plonky3 FRI profile for that default binding. The old fixed-`log_blowup = 4`, `num_queries = 32`, `query_pow_bits = 0` Plonky3 profile remains checked in under `docs/crypto/tx_proof_profile_sweep.json` and `docs/crypto/tx_proof_soundness_analysis.md` as legacy comparison material. The active SmallWood profile note lives in `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`. With 384-bit digests, PQ collision resistance reaches ~128 bits.
@@ -1064,7 +1064,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 - Follow `docs/SECURITY_REVIEWS.md` whenever commissioning cryptanalysis or third-party audits. Every finding recorded there must reference the code path touched plus the mitigation PR.
 - `circuits/formal/README.md` and `consensus/spec/formal/README.md` explain how to run the new TLA+ models. Include the TLC/Apalache output summary in PR descriptions when those specs change.
 - `runbooks/security_testing.md` documents how to rerun the `security-adversarial` job locally, capture artifacts, and notify auditors if a regression appears on CI. Treat it as mandatory reading before release tagging.
-- Track dependency advisories with `./scripts/dependency-audit.sh --record`; this is advisory-only until release hardening, so treat findings as signals to triage rather than blockers.
+- Run `./scripts/dependency-audit-gate.sh` for dependency advisories; CI and release builds fail on any unwaived finding. Use `./scripts/dependency-audit.sh --record` only to append a human-readable snapshot after updating `config/dependency-audit-waivers.json`.
 
 ### Documentation + threat-model synchronization
 

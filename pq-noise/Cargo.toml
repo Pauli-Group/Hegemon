@@ -19,7 +19,7 @@ aes-gcm = "0.10"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 hex = "0.4"
 
 # Async I/O

@@ -4,6 +4,7 @@
 //! network layer, enabling post-quantum secure peer connections.
 
 use crate::p2p::WireMessage;
+use crate::wire;
 use crate::{NetworkError, PeerId, PeerIdentity};
 use pq_noise::{PqNoiseConfig, PqTransport, SecureSession};
 use std::net::SocketAddr;
@@ -175,7 +176,7 @@ impl PqSecureConnection {
 
     /// Send a wire message
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
-        let bytes = bincode::serialize(&msg)?;
+        let bytes = wire::encode(&msg, wire::MAX_WIRE_FRAME_LEN)?;
         self.session
             .send(&bytes)
             .await
@@ -186,7 +187,7 @@ impl PqSecureConnection {
     pub async fn recv(&mut self) -> Result<Option<WireMessage>, NetworkError> {
         match self.session.recv().await {
             Ok(Some(data)) => {
-                let msg = bincode::deserialize(&data)?;
+                let msg = wire::decode(&data, wire::MAX_WIRE_FRAME_LEN)?;
                 Ok(Some(msg))
             }
             Ok(None) => Ok(None),

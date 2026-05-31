@@ -1,4 +1,4 @@
-use crate::NetworkError;
+use crate::{NetworkError, wire};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -60,10 +60,18 @@ impl PeerStore {
 
     pub fn load(&mut self) -> Result<(), NetworkError> {
         if let Ok(bytes) = fs::read(&self.config.path) {
-            let records: Vec<PeerRecord> = bincode::deserialize(&bytes)?;
-            self.entries = records.into_iter().map(|rec| (rec.addr, rec)).collect();
-            if self.prune_stale() {
-                self.persist()?;
+            match wire::decode::<Vec<PeerRecord>>(&bytes, wire::MAX_PEER_STORE_LEN) {
+                Ok(records) => {
+                    self.entries = records.into_iter().map(|rec| (rec.addr, rec)).collect();
+                    if self.prune_stale() {
+                        self.persist()?;
+                    }
+                }
+                Err(_) => {
+                    let corrupt_path = self.config.path.with_extension("corrupt");
+                    let _ = fs::rename(&self.config.path, corrupt_path);
+                    self.entries.clear();
+                }
             }
         }
 
@@ -226,7 +234,10 @@ impl PeerStore {
             fs::create_dir_all(parent)?;
         }
         let tmp_path = self.config.path.with_extension("tmp");
-        let data = bincode::serialize(&self.entries.values().cloned().collect::<Vec<_>>())?;
+        let data = wire::encode(
+            &self.entries.values().cloned().collect::<Vec<_>>(),
+            wire::MAX_PEER_STORE_LEN,
+        )?;
         fs::write(&tmp_path, data)?;
         fs::rename(tmp_path, &self.config.path)?;
         Ok(())

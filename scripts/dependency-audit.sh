@@ -1,8 +1,8 @@
 #!/bin/bash
 # scripts/dependency-audit.sh
 #
-# Dependency advisory tracker (cargo audit). This is advisory-only; it does not
-# gate builds unless wired into CI. Use --record to append output to the log.
+# Dependency advisory tracker (cargo audit). The merge/release gate is
+# scripts/dependency-audit-gate.sh; this script records human-readable snapshots.
 #
 # Usage:
 #   ./scripts/dependency-audit.sh
@@ -169,12 +169,13 @@ if [ "$RECORD" = true ]; then
         cat > "$LOG_PATH" <<'EOF'
 # Dependency Audit Log
 
-This log tracks `cargo audit` runs for the workspace. It is advisory only and
-does not gate builds unless explicitly wired into CI.
+This log tracks `cargo audit` runs for the workspace. CI and release builds run
+`./scripts/dependency-audit-gate.sh`, which fails on every unwaived finding.
 
 Run:
 
     ./scripts/dependency-audit.sh --record
+    ./scripts/dependency-audit-gate.sh
 
 Each entry records the exit status and summary output so changes can be reviewed
 over time.

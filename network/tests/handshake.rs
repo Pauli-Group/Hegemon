@@ -1,8 +1,8 @@
-use bincode::deserialize;
 use futures::{SinkExt, StreamExt};
 use network::{
     HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError, PeerIdentity,
     p2p::{Connection, WireMessage},
+    wire,
 };
 use tokio::io::duplex;
 use tokio::time::timeout;
@@ -20,7 +20,7 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
 
     // Initiator -> Responder: offer
     let offer = initiator.create_offer().expect("offer");
-    let offer_bytes = bincode::serialize(&offer).expect("offer bytes");
+    let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN).expect("offer bytes");
     initiator_stream
         .send(Bytes::copy_from_slice(&offer_bytes))
         .await
@@ -33,7 +33,8 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
         .expect("offer received")
         .expect("offer bytes")
         .to_vec();
-    let offer_rx: HandshakeOffer = deserialize(&acceptance_bytes).expect("deserialize offer");
+    let offer_rx: HandshakeOffer =
+        wire::decode(&acceptance_bytes, wire::MAX_HANDSHAKE_FRAME_LEN).expect("deserialize offer");
     let (_acceptance, responder_secret, acceptance_bytes) =
         responder.accept_offer(&offer_rx).expect("acceptance");
     responder_stream
@@ -49,7 +50,8 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
         .expect("acceptance bytes")
         .to_vec();
     let acceptance_parsed: HandshakeAcceptance =
-        deserialize(&acceptance_rx).expect("deserialize acceptance");
+        wire::decode(&acceptance_rx, wire::MAX_HANDSHAKE_FRAME_LEN)
+            .expect("deserialize acceptance");
     let (mut initiator_channel, _confirmation, confirmation_bytes) = initiator
         .finalize_handshake(&offer, &acceptance_parsed, &offer_bytes, &acceptance_rx)
         .expect("finalize handshake");
@@ -66,7 +68,8 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
         .expect("confirmation bytes")
         .to_vec();
     let confirmation_parsed: HandshakeConfirmation =
-        deserialize(&confirmation_rx).expect("deserialize confirmation");
+        wire::decode(&confirmation_rx, wire::MAX_HANDSHAKE_FRAME_LEN)
+            .expect("deserialize confirmation");
     let mut responder_channel = responder
         .complete_handshake(
             &offer_rx,
@@ -95,7 +98,7 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
     // Tamper with the confirmation signature to ensure ML-DSA validation rejects it.
     let (offer, offer_bytes) = {
         let offer = initiator.create_offer().expect("offer");
-        let offer_bytes = bincode::serialize(&offer).expect("offer bytes");
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN).expect("offer bytes");
         (offer, offer_bytes)
     };
     let (acceptance, responder_secret, acceptance_bytes) =
@@ -103,7 +106,8 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
     let mut tampered_acceptance = acceptance.clone();
     tampered_acceptance.signature[0] ^= 0x01;
     let tampered_acceptance_bytes =
-        bincode::serialize(&tampered_acceptance).expect("tampered acceptance bytes");
+        wire::encode(&tampered_acceptance, wire::MAX_HANDSHAKE_FRAME_LEN)
+            .expect("tampered acceptance bytes");
 
     // Initiator receives the tampered acceptance and should reject the signature.
     let err = initiator.finalize_handshake(
@@ -124,7 +128,8 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
     let mut tampered_confirmation = confirmation.clone();
     tampered_confirmation.signature = vec![0u8; tampered_confirmation.signature.len()];
     let tampered_confirmation_bytes =
-        bincode::serialize(&tampered_confirmation).expect("tampered confirmation bytes");
+        wire::encode(&tampered_confirmation, wire::MAX_HANDSHAKE_FRAME_LEN)
+            .expect("tampered confirmation bytes");
     let err = responder.complete_handshake(
         &offer,
         &tampered_confirmation,
@@ -193,7 +198,8 @@ async fn initiator_rejects_tampered_acceptance() {
             .expect("offer frame")
             .expect("offer bytes")
             .to_vec();
-        let offer: HandshakeOffer = deserialize(&offer_bytes).expect("deserialize offer");
+        let offer: HandshakeOffer =
+            wire::decode(&offer_bytes, wire::MAX_HANDSHAKE_FRAME_LEN).expect("deserialize offer");
         let (acceptance, _secret, _acceptance_bytes) = responder_identity
             .accept_offer(&offer)
             .expect("accept offer");
@@ -201,7 +207,8 @@ async fn initiator_rejects_tampered_acceptance() {
         if let Some(first) = tampered.signature.first_mut() {
             *first ^= 0xAA;
         }
-        let tampered_bytes = bincode::serialize(&tampered).expect("serialize tampered");
+        let tampered_bytes =
+            wire::encode(&tampered, wire::MAX_HANDSHAKE_FRAME_LEN).expect("serialize tampered");
         framed
             .send(Bytes::copy_from_slice(&tampered_bytes))
             .await
