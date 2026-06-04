@@ -29,7 +29,7 @@ use consensus_light_client::{
     HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use network::{
-    service::DirectedProtocolMessage, GossipRouter, NatTraversalConfig, P2PService, PeerId,
+    service::DirectedProtocolMessage, wire, GossipRouter, NatTraversalConfig, P2PService, PeerId,
     PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
     RelayConfig,
 };
@@ -53,11 +53,11 @@ use protocol_shielded_pool::types::{
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::{rngs::OsRng, RngCore};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -90,6 +90,10 @@ const MAX_NATIVE_STAGED_CIPHERTEXTS: usize = 100_000;
 const MAX_NATIVE_STAGED_PROOFS: usize = 10_000;
 const DEFAULT_NATIVE_WALLET_PAGE_LIMIT: u64 = 128;
 const MAX_NATIVE_WALLET_PAGE_LIMIT: u64 = 1024;
+const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
+const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
+const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
 #[derive(Clone, Debug, Parser)]
@@ -348,6 +352,7 @@ pub struct NativeNode {
     commitment_tree: sled::Tree,
     bridge_inbound_tree: sled::Tree,
     ciphertext_index_tree: sled::Tree,
+    ciphertext_archive_tree: sled::Tree,
     da_ciphertext_tree: sled::Tree,
     da_proof_tree: sled::Tree,
     state: RwLock<NativeState>,
@@ -376,6 +381,7 @@ impl NativeNode {
         let commitment_tree = db.open_tree("shielded_commitments")?;
         let bridge_inbound_tree = db.open_tree("bridge_inbound_messages")?;
         let ciphertext_index_tree = db.open_tree("shielded_ciphertext_index")?;
+        let ciphertext_archive_tree = db.open_tree("shielded_ciphertexts_by_index")?;
         let da_ciphertext_tree = db.open_tree("da_pending_ciphertexts")?;
         let da_proof_tree = db.open_tree("da_pending_proofs")?;
 
@@ -387,7 +393,7 @@ impl NativeNode {
         let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&da_proof_tree)?;
 
-        Ok(Arc::new(Self {
+        let node = Arc::new(Self {
             config,
             db,
             meta_tree,
@@ -398,6 +404,7 @@ impl NativeNode {
             commitment_tree,
             bridge_inbound_tree,
             ciphertext_index_tree,
+            ciphertext_archive_tree,
             da_ciphertext_tree,
             da_proof_tree,
             state: RwLock::new(NativeState {
@@ -418,7 +425,9 @@ impl NativeNode {
             last_announce_height: AtomicU64::new(0),
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
-        }))
+        });
+        node.ensure_ciphertext_archive_index()?;
+        Ok(node)
     }
 
     fn set_sync_sender(&self, sync_tx: mpsc::Sender<DirectedProtocolMessage>) {
@@ -786,6 +795,7 @@ impl NativeNode {
         self.nullifier_tree.clear()?;
         self.bridge_inbound_tree.clear()?;
         self.ciphertext_index_tree.clear()?;
+        self.ciphertext_archive_tree.clear()?;
 
         for meta in &new_chain {
             self.height_tree
@@ -797,6 +807,8 @@ impl NativeNode {
             &self.nullifier_tree,
             &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+            &self.da_ciphertext_tree,
         )?;
 
         let new_action_hashes = action_hashes_from_chain(&new_chain)?;
@@ -833,6 +845,7 @@ impl NativeNode {
         self.nullifier_tree.flush()?;
         self.bridge_inbound_tree.flush()?;
         self.ciphertext_index_tree.flush()?;
+        self.ciphertext_archive_tree.flush()?;
 
         new_state.pending_actions = pending;
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
@@ -848,6 +861,10 @@ impl NativeNode {
     ) -> Result<()> {
         for action in actions {
             let start_index = state.commitment_tree.leaf_count();
+            let ciphertexts = canonical_ciphertexts_for_action(&self.da_ciphertext_tree, action)?;
+            if ciphertexts.len() != action.commitments.len() {
+                return Err(anyhow!("canonical ciphertext count mismatch"));
+            }
             for (offset, commitment) in action.commitments.iter().enumerate() {
                 let index = start_index.saturating_add(offset as u64);
                 state
@@ -857,6 +874,11 @@ impl NativeNode {
                 self.commitment_tree
                     .insert(index.to_be_bytes(), commitment.as_slice())?;
             }
+            insert_ciphertext_archive_entries(
+                &self.ciphertext_archive_tree,
+                start_index,
+                &ciphertexts,
+            )?;
 
             for nullifier in &action.nullifiers {
                 if !state.nullifiers.insert(*nullifier) {
@@ -894,7 +916,42 @@ impl NativeNode {
         self.commitment_tree.flush()?;
         self.nullifier_tree.flush()?;
         self.ciphertext_index_tree.flush()?;
+        self.ciphertext_archive_tree.flush()?;
         self.action_tree.flush()?;
+        Ok(())
+    }
+
+    fn ensure_ciphertext_archive_index(&self) -> Result<()> {
+        let expected = self.commitment_tree.len() as u64;
+        if self.ciphertext_archive_tree.len() as u64 == expected {
+            return Ok(());
+        }
+
+        let chain = self.chain_to_hash(self.best_meta().hash)?;
+        warn!(
+            expected,
+            observed = self.ciphertext_archive_tree.len(),
+            "rebuilding canonical native ciphertext archive"
+        );
+        self.commitment_tree.clear()?;
+        self.nullifier_tree.clear()?;
+        self.bridge_inbound_tree.clear()?;
+        self.ciphertext_index_tree.clear()?;
+        self.ciphertext_archive_tree.clear()?;
+        rebuild_canonical_indexes(
+            &chain,
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+            &self.da_ciphertext_tree,
+        )?;
+        self.commitment_tree.flush()?;
+        self.nullifier_tree.flush()?;
+        self.bridge_inbound_tree.flush()?;
+        self.ciphertext_index_tree.flush()?;
+        self.ciphertext_archive_tree.flush()?;
         Ok(())
     }
 
@@ -1079,74 +1136,28 @@ impl NativeNode {
     fn ciphertext_entries_page(&self, page: NativePagination) -> Result<(Vec<Value>, u64)> {
         use base64::Engine;
 
-        let chain = self.chain_to_hash(self.best_meta().hash)?;
         let mut entries = Vec::new();
-        let mut index = 0u64;
-        let end = page.start.saturating_add(page.limit);
-        for meta in chain.iter().skip(1) {
-            for action in decode_block_actions(meta)? {
-                match action.action_id {
-                    ACTION_SHIELDED_TRANSFER_INLINE => {
-                        let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
-                            .map_err(|err| {
-                                anyhow!("decode shielded inline action args failed: {err:?}")
-                            })?;
-                        for note in &args.ciphertexts {
-                            if index >= page.start && index < end {
-                                let bytes = encrypted_note_da_bytes(note)?;
-                                entries.push(json!({
-                                    "index": index,
-                                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes),
-                                }));
-                            }
-                            index = index.saturating_add(1);
-                        }
-                    }
-                    ACTION_SHIELDED_TRANSFER_SIDECAR => {
-                        let args =
-                            ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
-                                .map_err(|err| {
-                                    anyhow!("decode shielded sidecar action args failed: {err:?}")
-                                })?;
-                        for hash in &args.ciphertext_hashes {
-                            if index >= page.start && index < end {
-                                let bytes = self
-                                    .da_ciphertext_tree
-                                    .get(hash.as_slice())?
-                                    .ok_or_else(|| {
-                                        anyhow!("missing canonical DA ciphertext {}", hex48(hash))
-                                    })?;
-                                entries.push(json!({
-                                    "index": index,
-                                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes.as_ref()),
-                                }));
-                            }
-                            index = index.saturating_add(1);
-                        }
-                    }
-                    ACTION_MINT_COINBASE => {
-                        let args = MintCoinbaseArgs::decode(&mut &action.public_args[..]).map_err(
-                            |err| anyhow!("decode coinbase action args failed: {err:?}"),
-                        )?;
-                        if index >= page.start && index < end {
-                            let bytes = encrypted_note_da_bytes(
-                                &args.reward_bundle.miner_note.encrypted_note,
-                            )?;
-                            entries.push(json!({
-                                "index": index,
-                                "ciphertext": base64::engine::general_purpose::STANDARD.encode(bytes),
-                            }));
-                        }
-                        index = index.saturating_add(1);
-                    }
-                    _ => {}
-                }
-                if index >= end && entries.len() >= page.limit as usize {
-                    continue;
-                }
+        let start_key = page.start.to_be_bytes();
+        for item in self.ciphertext_archive_tree.range(start_key..) {
+            let (key, value) = item?;
+            if key.len() != 8 {
+                continue;
             }
+            if entries.len() >= page.limit as usize {
+                break;
+            }
+            let mut index = [0u8; 8];
+            index.copy_from_slice(&key);
+            let index = u64::from_be_bytes(index);
+            if index < page.start {
+                continue;
+            }
+            entries.push(json!({
+                "index": index,
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_ref()),
+            }));
         }
-        Ok((entries, index))
+        Ok((entries, self.ciphertext_archive_tree.len() as u64))
     }
 
     fn wallet_nullifiers(&self, params: Value) -> Result<Value> {
@@ -1216,8 +1227,8 @@ impl NativeNode {
         let received_ms = current_time_ms();
         let mut pending = match (request.family_id, request.action_id) {
             (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => {
-                let args = OutboundBridgeArgsV1::decode(&mut &public_args[..])
-                    .map_err(|err| anyhow!("decode outbound bridge action args failed: {err:?}"))?;
+                let args: OutboundBridgeArgsV1 =
+                    decode_scale_exact(&public_args, "outbound bridge action args")?;
                 if args.payload.is_empty() {
                     return Err(anyhow!("outbound bridge payload must be non-empty"));
                 }
@@ -1238,8 +1249,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_BRIDGE, ACTION_BRIDGE_INBOUND) => {
-                let args = InboundBridgeArgsV1::decode(&mut &public_args[..])
-                    .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+                let args: InboundBridgeArgsV1 =
+                    decode_scale_exact(&public_args, "inbound bridge action args")?;
                 if args.proof_receipt.is_empty() {
                     return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
                 }
@@ -1274,9 +1285,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER) => {
-                BridgeVerifierRegistrationV1::decode(&mut &public_args[..]).map_err(|err| {
-                    anyhow!("decode bridge verifier registration args failed: {err:?}")
-                })?;
+                let _: BridgeVerifierRegistrationV1 =
+                    decode_scale_exact(&public_args, "bridge verifier registration args")?;
                 PendingAction {
                     tx_hash: [0u8; 32],
                     binding,
@@ -1294,8 +1304,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
-                let args = ShieldedTransferInlineArgs::decode(&mut &public_args[..])
-                    .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
+                let args: ShieldedTransferInlineArgs =
+                    decode_scale_exact(&public_args, "shielded inline action args")?;
                 let ciphertext_hashes = args
                     .ciphertexts
                     .iter()
@@ -1342,10 +1352,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
-                let mut args =
-                    ShieldedTransferSidecarArgs::decode(&mut &public_args[..]).map_err(|err| {
-                        anyhow!("decode shielded sidecar action args failed: {err:?}")
-                    })?;
+                let mut args: ShieldedTransferSidecarArgs =
+                    decode_scale_exact(&public_args, "shielded sidecar action args")?;
                 let public_args = if args.proof.is_empty() {
                     let proof_key = hex64(&args.binding_hash);
                     let proof = self
@@ -1387,10 +1395,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
-                let args =
-                    SubmitCandidateArtifactArgs::decode(&mut &public_args[..]).map_err(|err| {
-                        anyhow!("decode candidate artifact action args failed: {err:?}")
-                    })?;
+                let args: SubmitCandidateArtifactArgs =
+                    decode_scale_exact(&public_args, "candidate artifact action args")?;
                 validate_candidate_artifact(&args.payload)?;
                 PendingAction {
                     tx_hash: [0u8; 32],
@@ -1409,8 +1415,8 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
-                let args = MintCoinbaseArgs::decode(&mut &public_args[..])
-                    .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
+                let args: MintCoinbaseArgs =
+                    decode_scale_exact(&public_args, "coinbase action args")?;
                 if args.reward_bundle.miner_note.amount == 0 {
                     return Err(anyhow!("coinbase amount must be non-zero"));
                 }
@@ -1446,6 +1452,11 @@ impl NativeNode {
             if state.pending_actions.len() >= MAX_NATIVE_MEMPOOL_ACTIONS {
                 return Err(anyhow!("native mempool full"));
             }
+            validate_mempool_byte_budget(
+                &state.pending_actions,
+                &pending,
+                MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+            )?;
             if state.pending_actions.contains_key(&pending.tx_hash) {
                 return Err(anyhow!("duplicate pending action"));
             }
@@ -1491,8 +1502,8 @@ impl NativeNode {
             {
                 return Err(anyhow!("coinbase action must contain one output"));
             }
-            let args = MintCoinbaseArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
+            let args: MintCoinbaseArgs =
+                decode_scale_exact(&action.public_args, "coinbase action args")?;
             if args.reward_bundle.miner_note.amount == 0 {
                 return Err(anyhow!("coinbase amount must be non-zero"));
             }
@@ -1782,7 +1793,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
         if msg.protocol != NATIVE_SYNC_PROTOCOL_ID {
             continue;
         }
-        let sync_msg = match bincode::deserialize::<NativeSyncMessage>(&msg.payload) {
+        let sync_msg = match decode_sync_message(&msg.payload) {
             Ok(sync_msg) => sync_msg,
             Err(err) => {
                 warn!(error = %err, "failed to decode native sync message");
@@ -1925,12 +1936,38 @@ async fn send_sync_message(handle: &ProtocolHandle, peer_id: PeerId, message: Na
 }
 
 fn encode_sync_message(message: &NativeSyncMessage) -> Result<Vec<u8>> {
-    bincode::serialize(message).context("encode native sync message")
+    wire::encode(message, MAX_NATIVE_SYNC_MESSAGE_BYTES).context("encode native sync message")
+}
+
+fn decode_sync_message(payload: &[u8]) -> Result<NativeSyncMessage> {
+    wire::decode(payload, MAX_NATIVE_SYNC_MESSAGE_BYTES).context("decode native sync message")
 }
 
 async fn rpc_handler(State(node): State<Arc<NativeNode>>, Json(payload): Json<Value>) -> Response {
     let response = match payload {
         Value::Array(requests) => {
+            if requests.is_empty() {
+                return json_response(
+                    &node,
+                    StatusCode::OK,
+                    rpc_error(Value::Null, -32600, "empty JSON-RPC batch"),
+                );
+            }
+            if requests.len() > MAX_NATIVE_RPC_BATCH_REQUESTS {
+                return json_response(
+                    &node,
+                    StatusCode::OK,
+                    rpc_error(
+                        Value::Null,
+                        -32600,
+                        format!(
+                            "JSON-RPC batch too large: {} > {}",
+                            requests.len(),
+                            MAX_NATIVE_RPC_BATCH_REQUESTS
+                        ),
+                    ),
+                );
+            }
             let responses = requests
                 .into_iter()
                 .map(|request| dispatch_rpc_request(&node, request))
@@ -2207,8 +2244,15 @@ fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value> {
 fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Result<Value> {
     if mined_only {
         let best = node.best_meta();
+        if best.height == 0 {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let start = best
+            .height
+            .saturating_sub(MAX_NATIVE_TIMESTAMP_ROWS.saturating_sub(1))
+            .max(1);
         let mut rows = Vec::new();
-        for height in 1..=best.height {
+        for height in start..=best.height {
             if let Some(hash) = node.hash_by_height(height)? {
                 if let Some(meta) = node.header_by_hash(&hash)? {
                     rows.push(json!({
@@ -2225,6 +2269,20 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
     let end = nth_param(&params, 1)
         .and_then(Value::as_u64)
         .unwrap_or(start);
+    if end < start {
+        return Err(anyhow!("timestamp range end is before start"));
+    }
+    let requested = end
+        .checked_sub(start)
+        .and_then(|delta| delta.checked_add(1))
+        .ok_or_else(|| anyhow!("timestamp range overflow"))?;
+    if requested > MAX_NATIVE_TIMESTAMP_ROWS {
+        return Err(anyhow!(
+            "timestamp range too large: {} > {}",
+            requested,
+            MAX_NATIVE_TIMESTAMP_ROWS
+        ));
+    }
     let mut rows = Vec::new();
     for height in start..=end {
         let timestamp_ms = node
@@ -2661,8 +2719,7 @@ fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingA
         }
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&key);
-        let action = PendingAction::decode(&mut &value[..])
-            .map_err(|err| anyhow!("decode pending action failed: {err:?}"))?;
+        let action: PendingAction = decode_scale_exact(&value, "pending action")?;
         actions.insert(hash, action);
     }
     Ok(actions)
@@ -2777,8 +2834,8 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
 
     match action.action_id {
         ACTION_SHIELDED_TRANSFER_INLINE => {
-            let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
+            let args: ShieldedTransferInlineArgs =
+                decode_scale_exact(&action.public_args, "shielded inline action args")?;
             if args.proof.is_empty() {
                 return Err(anyhow!("shielded inline transfer missing proof"));
             }
@@ -2845,8 +2902,8 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
             }
         }
         ACTION_SHIELDED_TRANSFER_SIDECAR => {
-            let args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded sidecar action args failed: {err:?}"))?;
+            let args: ShieldedTransferSidecarArgs =
+                decode_scale_exact(&action.public_args, "shielded sidecar action args")?;
             if args.proof.is_empty() {
                 return Err(anyhow!("shielded sidecar transfer missing proof"));
             }
@@ -2950,6 +3007,34 @@ fn pending_action_hash(action: &PendingAction) -> [u8; 32] {
     hash32_with_parts(&[b"hegemon-native-action-v1", &encoded])
 }
 
+fn pending_action_mempool_bytes(action: &PendingAction) -> usize {
+    action.encoded_size()
+}
+
+fn pending_mempool_bytes(actions: &BTreeMap<[u8; 32], PendingAction>) -> usize {
+    actions.values().fold(0usize, |acc, action| {
+        acc.saturating_add(pending_action_mempool_bytes(action))
+    })
+}
+
+fn validate_mempool_byte_budget(
+    actions: &BTreeMap<[u8; 32], PendingAction>,
+    candidate: &PendingAction,
+    max_bytes: usize,
+) -> Result<()> {
+    let pending_bytes = pending_mempool_bytes(actions);
+    let action_bytes = pending_action_mempool_bytes(candidate);
+    if pending_bytes.saturating_add(action_bytes) > max_bytes {
+        return Err(anyhow!(
+            "native mempool byte budget exceeded: {} + {} > {}",
+            pending_bytes,
+            action_bytes,
+            max_bytes
+        ));
+    }
+    Ok(())
+}
+
 fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
     let mut actions = state.pending_actions.values().cloned().collect::<Vec<_>>();
     actions.sort_by_key(action_order_key);
@@ -2971,12 +3056,18 @@ fn action_order_key(action: &PendingAction) -> [u8; 32] {
     let mut preimage = Vec::new();
     match (action.family_id, action.action_id) {
         (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
-            if let Ok(args) = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..]) {
+            if let Ok(args) = decode_scale_exact::<ShieldedTransferInlineArgs>(
+                &action.public_args,
+                "shielded inline action args",
+            ) {
                 preimage.extend_from_slice(&args.binding_hash);
             }
         }
         (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
-            if let Ok(args) = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..]) {
+            if let Ok(args) = decode_scale_exact::<ShieldedTransferSidecarArgs>(
+                &action.public_args,
+                "shielded sidecar action args",
+            ) {
                 preimage.extend_from_slice(&args.binding_hash);
             }
         }
@@ -3011,16 +3102,16 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
     }
     match action.action_id {
         ACTION_BRIDGE_OUTBOUND => {
-            let args = OutboundBridgeArgsV1::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode outbound bridge action args failed: {err:?}"))?;
+            let args: OutboundBridgeArgsV1 =
+                decode_scale_exact(&action.public_args, "outbound bridge action args")?;
             if args.payload.is_empty() {
                 return Err(anyhow!("outbound bridge payload must be non-empty"));
             }
             Ok(())
         }
         ACTION_BRIDGE_INBOUND => {
-            let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+            let args: InboundBridgeArgsV1 =
+                decode_scale_exact(&action.public_args, "inbound bridge action args")?;
             if args.proof_receipt.is_empty() {
                 return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
             }
@@ -3041,9 +3132,8 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
             Ok(())
         }
         ACTION_REGISTER_BRIDGE_VERIFIER => {
-            BridgeVerifierRegistrationV1::decode(&mut &action.public_args[..]).map_err(|err| {
-                anyhow!("decode bridge verifier registration args failed: {err:?}")
-            })?;
+            let _: BridgeVerifierRegistrationV1 =
+                decode_scale_exact(&action.public_args, "bridge verifier registration args")?;
             Ok(())
         }
         other => Err(anyhow!("unsupported bridge action {other}")),
@@ -3056,12 +3146,8 @@ fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
             "Hegemon RISC Zero bridge verifier only accepts Hegemon source chain"
         ));
     }
-    let mut encoded = args.proof_receipt.as_slice();
-    let receipt = RiscZeroBridgeReceiptV1::decode(&mut encoded)
-        .map_err(|err| anyhow!("decode RISC Zero bridge receipt failed: {err:?}"))?;
-    if !encoded.is_empty() {
-        return Err(anyhow!("RISC Zero bridge receipt has trailing bytes"));
-    }
+    let receipt: RiscZeroBridgeReceiptV1 =
+        decode_scale_exact(&args.proof_receipt, "RISC Zero bridge receipt")?;
     if args.verifier_program_hash != HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1 {
         return Err(anyhow!("unregistered Hegemon RISC Zero bridge verifier"));
     }
@@ -3087,8 +3173,8 @@ fn verify_risc0_bridge_receipt(
     }
     let output = decode_risc0_bridge_journal(envelope)
         .map_err(|err| anyhow!("decode RISC Zero bridge journal failed: {err:?}"))?;
-    let receipt: risc0_zkvm::Receipt = bincode::deserialize(&envelope.receipt)
-        .map_err(|err| anyhow!("decode RISC Zero receipt failed: {err}"))?;
+    let receipt: risc0_zkvm::Receipt =
+        bincode_deserialize_exact(&envelope.receipt, "RISC Zero receipt")?;
     match &receipt.inner {
         risc0_zkvm::InnerReceipt::Composite(_) | risc0_zkvm::InnerReceipt::Succinct(_) => {}
         #[cfg(test)]
@@ -3113,8 +3199,8 @@ fn bridge_inbound_replay_key_from_action(action: &PendingAction) -> Result<Optio
     if action.family_id != FAMILY_BRIDGE || action.action_id != ACTION_BRIDGE_INBOUND {
         return Ok(None);
     }
-    let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
-        .map_err(|err| anyhow!("decode inbound bridge action args failed: {err:?}"))?;
+    let args: InboundBridgeArgsV1 =
+        decode_scale_exact(&action.public_args, "inbound bridge action args")?;
     Ok(Some(inbound_replay_key(
         args.source_chain_id,
         args.source_message_nonce,
@@ -3130,7 +3216,10 @@ fn bridge_messages_from_actions(
         if action.family_id != FAMILY_BRIDGE || action.action_id != ACTION_BRIDGE_OUTBOUND {
             continue;
         }
-        let Ok(args) = OutboundBridgeArgsV1::decode(&mut &action.public_args[..]) else {
+        let Ok(args) = decode_scale_exact::<OutboundBridgeArgsV1>(
+            &action.public_args,
+            "outbound bridge action args",
+        ) else {
             continue;
         };
         let message_nonce = ((source_height as u128) << 64) | messages.len() as u128;
@@ -3153,10 +3242,7 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
     }
     meta.action_bytes
         .iter()
-        .map(|bytes| {
-            PendingAction::decode(&mut &bytes[..])
-                .map_err(|err| anyhow!("decode native block action failed: {err:?}"))
-        })
+        .map(|bytes| decode_scale_exact::<PendingAction>(bytes, "native block action"))
         .collect()
 }
 
@@ -3193,8 +3279,8 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             continue;
         }
         if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
-            let args = MintCoinbaseArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
+            let args: MintCoinbaseArgs =
+                decode_scale_exact(&action.public_args, "coinbase action args")?;
             if args.reward_bundle.miner_note.amount == 0 {
                 return Err(anyhow!("coinbase amount must be non-zero"));
             }
@@ -3208,6 +3294,13 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             }
             if action.ciphertext_hashes.len() != 1 || action.ciphertext_sizes.len() != 1 {
                 return Err(anyhow!("coinbase ciphertext metadata mismatch"));
+            }
+            let bytes = encrypted_note_da_bytes(&args.reward_bundle.miner_note.encrypted_note)?;
+            if action.ciphertext_hashes[0] != ciphertext_hash_bytes(&bytes) {
+                return Err(anyhow!("coinbase ciphertext hash mismatch"));
+            }
+            if action.ciphertext_sizes[0] != u32::try_from(bytes.len()).unwrap_or(u32::MAX) {
+                return Err(anyhow!("coinbase ciphertext size mismatch"));
             }
             continue;
         }
@@ -3275,16 +3368,27 @@ fn rebuild_canonical_indexes(
     nullifier_tree: &sled::Tree,
     bridge_inbound_tree: &sled::Tree,
     ciphertext_index_tree: &sled::Tree,
+    ciphertext_archive_tree: &sled::Tree,
+    da_ciphertext_tree: &sled::Tree,
 ) -> Result<()> {
     let mut next_commitment_index = 0u64;
     for meta in chain.iter().skip(1) {
         let actions = decode_block_actions(meta)?;
         for action in actions {
+            let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, &action)?;
+            if ciphertexts.len() != action.commitments.len() {
+                return Err(anyhow!("canonical ciphertext count mismatch"));
+            }
             for commitment in &action.commitments {
                 commitment_tree
                     .insert(next_commitment_index.to_be_bytes(), commitment.as_slice())?;
                 next_commitment_index = next_commitment_index.saturating_add(1);
             }
+            insert_ciphertext_archive_entries(
+                ciphertext_archive_tree,
+                next_commitment_index.saturating_sub(ciphertexts.len() as u64),
+                &ciphertexts,
+            )?;
             for nullifier in &action.nullifiers {
                 nullifier_tree.insert(nullifier.as_slice(), b"1")?;
             }
@@ -3304,6 +3408,54 @@ fn rebuild_canonical_indexes(
                 ciphertext_index_tree.insert(hash.as_slice(), value)?;
             }
         }
+    }
+    Ok(())
+}
+
+fn canonical_ciphertexts_for_action(
+    da_ciphertext_tree: &sled::Tree,
+    action: &PendingAction,
+) -> Result<Vec<Vec<u8>>> {
+    match (action.family_id, action.action_id) {
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
+            let args: ShieldedTransferInlineArgs =
+                decode_scale_exact(&action.public_args, "shielded inline action args")?;
+            args.ciphertexts
+                .iter()
+                .map(encrypted_note_da_bytes)
+                .collect()
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => action
+            .ciphertext_hashes
+            .iter()
+            .map(|hash| {
+                da_ciphertext_tree
+                    .get(hash.as_slice())?
+                    .map(|bytes| bytes.to_vec())
+                    .ok_or_else(|| anyhow!("missing canonical DA ciphertext {}", hex48(hash)))
+            })
+            .collect(),
+        (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
+            let args: MintCoinbaseArgs =
+                decode_scale_exact(&action.public_args, "coinbase action args")?;
+            Ok(vec![encrypted_note_da_bytes(
+                &args.reward_bundle.miner_note.encrypted_note,
+            )?])
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn insert_ciphertext_archive_entries(
+    tree: &sled::Tree,
+    start_index: u64,
+    ciphertexts: &[Vec<u8>],
+) -> Result<()> {
+    for (offset, bytes) in ciphertexts.iter().enumerate() {
+        let index = start_index
+            .checked_add(offset as u64)
+            .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
+        tree.insert(index.to_be_bytes(), bytes.as_slice())?;
     }
     Ok(())
 }
@@ -3382,8 +3534,7 @@ fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u6
 }
 
 fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
-    let args = MintCoinbaseArgs::decode(&mut &action.public_args[..])
-        .map_err(|err| anyhow!("decode coinbase action args failed: {err:?}"))?;
+    let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
     Ok(args.reward_bundle.miner_note.amount)
 }
 
@@ -3535,8 +3686,8 @@ fn transfer_proof_and_ciphertexts(
 ) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
     match action.action_id {
         ACTION_SHIELDED_TRANSFER_INLINE => {
-            let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded inline action args failed: {err:?}"))?;
+            let args: ShieldedTransferInlineArgs =
+                decode_scale_exact(&action.public_args, "shielded inline action args")?;
             let ciphertexts = args
                 .ciphertexts
                 .iter()
@@ -3551,8 +3702,8 @@ fn transfer_proof_and_ciphertexts(
             Ok((args.proof, ciphertexts))
         }
         ACTION_SHIELDED_TRANSFER_SIDECAR => {
-            let args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
-                .map_err(|err| anyhow!("decode shielded sidecar action args failed: {err:?}"))?;
+            let args: ShieldedTransferSidecarArgs =
+                decode_scale_exact(&action.public_args, "shielded sidecar action args")?;
             let mut ciphertexts = Vec::with_capacity(args.ciphertext_hashes.len());
             for hash in &args.ciphertext_hashes {
                 let bytes = node
@@ -4116,6 +4267,31 @@ fn decode_base64(raw: &str) -> Result<Vec<u8>> {
         .context("decode base64")
 }
 
+fn decode_scale_exact<T: Decode>(bytes: &[u8], label: &str) -> Result<T> {
+    let mut cursor = bytes;
+    let value = T::decode(&mut cursor).map_err(|err| anyhow!("decode {label} failed: {err:?}"))?;
+    if !cursor.is_empty() {
+        return Err(anyhow!(
+            "{label} has {} trailing bytes after SCALE decode",
+            cursor.len()
+        ));
+    }
+    Ok(value)
+}
+
+fn bincode_deserialize_exact<T: DeserializeOwned>(bytes: &[u8], label: &str) -> Result<T> {
+    let mut cursor = Cursor::new(bytes);
+    let value: T = bincode::deserialize_from(&mut cursor)
+        .map_err(|err| anyhow!("decode {label} failed: {err}"))?;
+    if cursor.position() as usize != bytes.len() {
+        return Err(anyhow!(
+            "{label} has {} trailing bytes after bincode decode",
+            bytes.len().saturating_sub(cursor.position() as usize)
+        ));
+    }
+    Ok(value)
+}
+
 fn encoded_len_limit(decoded_len_limit: usize) -> usize {
     decoded_len_limit.saturating_mul(4).saturating_add(2) / 3 + 4
 }
@@ -4650,6 +4826,22 @@ mod tests {
             decoded.len(),
             protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE + 32
         );
+        assert_eq!(node.ciphertext_archive_tree.len(), 2);
+        let best_hash = node.best_meta().hash;
+        node.block_tree
+            .remove(best_hash.as_slice())
+            .expect("remove block record");
+        let archived_ciphertexts = node
+            .wallet_ciphertexts(json!({"start": 1, "limit": 1}))
+            .expect("ciphertexts from archive");
+        assert_eq!(archived_ciphertexts["total"], json!(2));
+        assert_eq!(
+            archived_ciphertexts["entries"]
+                .as_array()
+                .expect("archive entries")
+                .len(),
+            1
+        );
 
         let nullifiers = node
             .wallet_nullifiers(json!({"start": 1, "limit": 1}))
@@ -4726,6 +4918,117 @@ mod tests {
         let methods = native_rpc_methods(RpcMethodPolicy::Safe);
         assert!(!methods.contains(&"da_submitCiphertexts"));
         assert!(!methods.contains(&"hegemon_startMining"));
+    }
+
+    #[test]
+    fn submit_action_rejects_trailing_public_args() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let args = OutboundBridgeArgsV1 {
+            destination_chain_id: [7u8; 32],
+            app_family_id: 9,
+            payload: b"trailing-byte exploit".to_vec(),
+        };
+        let mut encoded = args.encode();
+        encoded.push(0xaa);
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(encoded),
+            }))
+            .expect_err("trailing bytes must be rejected");
+        assert!(err.to_string().contains("trailing bytes"));
+        assert_eq!(node.state.read().pending_actions.len(), 0);
+    }
+
+    #[test]
+    fn timestamp_rpc_rejects_unbounded_ranges() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+
+        let err = block_timestamps(&node, json!([0, MAX_NATIVE_TIMESTAMP_ROWS]), false)
+            .expect_err("range one larger than cap must fail");
+        assert!(err.to_string().contains("timestamp range too large"));
+
+        let err =
+            block_timestamps(&node, json!([9, 8]), false).expect_err("inverted range must fail");
+        assert!(err.to_string().contains("before start"));
+
+        let mined = block_timestamps(&node, Value::Array(Vec::new()), true)
+            .expect("genesis-only mined timestamps");
+        assert_eq!(mined, Value::Array(Vec::new()));
+    }
+
+    #[test]
+    fn mempool_byte_budget_rejects_aggregate_overflow() {
+        let state = test_state(genesis_meta(0x207f_ffff).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [41u8; 48], [51u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [42u8; 48], [52u8; 48], 0);
+        let mut pending = BTreeMap::new();
+        pending.insert(first.tx_hash, first);
+        let max = pending_mempool_bytes(&pending)
+            .saturating_add(pending_action_mempool_bytes(&second))
+            .saturating_sub(1);
+
+        let err = validate_mempool_byte_budget(&pending, &second, max)
+            .expect_err("aggregate byte budget must reject over-limit candidate");
+        assert!(err.to_string().contains("mempool byte budget"));
+    }
+
+    #[test]
+    fn native_sync_codec_rejects_legacy_or_trailing_bytes() {
+        let message = NativeSyncMessage::Request {
+            from_height: 1,
+            to_height: 2,
+        };
+        let encoded = encode_sync_message(&message).expect("encode native sync message");
+        assert!(decode_sync_message(&encoded).is_ok());
+
+        let legacy = bincode::serialize(&message).expect("legacy bincode sync message");
+        assert!(decode_sync_message(&legacy).is_err());
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(decode_sync_message(&trailing).is_err());
+    }
+
+    #[tokio::test]
+    async fn rpc_handler_rejects_oversized_batches() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let payload = Value::Array(
+            (0..=MAX_NATIVE_RPC_BATCH_REQUESTS)
+                .map(|idx| {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": idx,
+                        "method": "system_health",
+                        "params": [],
+                    })
+                })
+                .collect(),
+        );
+
+        let response = rpc_handler(State(node), Json(payload)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let decoded: Value = serde_json::from_slice(&body).expect("json body");
+        assert!(decoded["error"]["message"]
+            .as_str()
+            .expect("error message")
+            .contains("batch too large"));
     }
 
     #[test]

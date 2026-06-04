@@ -73,6 +73,21 @@ struct AggregationVerifierCache {
     condvar: Condvar,
 }
 
+fn decode_postcard_exact<'a, T>(bytes: &'a [u8], label: &str) -> Result<T, String>
+where
+    T: Deserialize<'a>,
+{
+    let (value, remaining) =
+        postcard::take_from_bytes(bytes).map_err(|err| format!("{label} decode failed: {err}"))?;
+    if !remaining.is_empty() {
+        return Err(format!(
+            "{label} decode left {} trailing bytes",
+            remaining.len()
+        ));
+    }
+    Ok(value)
+}
+
 impl Default for AggregationVerifierCache {
     fn default() -> Self {
         Self {
@@ -821,8 +836,11 @@ pub fn warm_aggregation_cache(
     })?;
     let pub_inputs_vec = pub_inputs.to_vec();
 
-    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_proof.stark_proof)
-        .map_err(|_| {
+    let inner_proof: TransactionProofP3 = decode_postcard_exact(
+        &representative_proof.stark_proof,
+        "transaction proof",
+    )
+    .map_err(|_| {
         ProofError::AggregationProofInputsMismatch("transaction proof encoding invalid".to_string())
     })?;
     let shape = ProofShape {
@@ -861,7 +879,8 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+    if let Ok(payload_v5) =
+        decode_postcard_exact::<v5::AggregationProofV5Payload>(&decoded, "aggregation V5 payload")
         && payload_v5.version == 5
     {
         return v5::warm_aggregation_cache_from_payload(
@@ -875,9 +894,12 @@ pub fn warm_aggregation_cache_from_proof_bytes(
             "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
         ));
     }
-    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
-    })?;
+    let payload: AggregationProofV4Payload =
+        decode_postcard_exact(&decoded, "aggregation V4 payload").map_err(|_| {
+            ProofError::AggregationProofV4Decode(
+                "aggregation V4 payload encoding invalid".to_string(),
+            )
+        })?;
 
     let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
@@ -921,12 +943,13 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         ));
     }
 
-    let representative_proof: TransactionProofP3 =
-        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV4Decode(
-                "representative proof encoding invalid".to_string(),
-            )
-        })?;
+    let representative_proof: TransactionProofP3 = decode_postcard_exact(
+        &payload.representative_proof,
+        "representative proof",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV4Decode("representative proof encoding invalid".to_string())
+    })?;
     let shape = ProofShape {
         degree_bits: representative_proof.degree_bits,
         commit_phase_len: representative_proof
@@ -975,7 +998,8 @@ pub fn verify_aggregation_proof_with_metrics(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+    if let Ok(payload_v5) =
+        decode_postcard_exact::<v5::AggregationProofV5Payload>(&decoded, "aggregation V5 payload")
         && payload_v5.version == 5
     {
         return v5::verify_with_metrics(&payload_v5, tx_count, expected_statement_commitment);
@@ -985,9 +1009,12 @@ pub fn verify_aggregation_proof_with_metrics(
             "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
         ));
     }
-    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
-    })?;
+    let payload: AggregationProofV4Payload =
+        decode_postcard_exact(&decoded, "aggregation V4 payload").map_err(|_| {
+            ProofError::AggregationProofV4Decode(
+                "aggregation V4 payload encoding invalid".to_string(),
+            )
+        })?;
 
     let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
@@ -1028,12 +1055,13 @@ pub fn verify_aggregation_proof_with_metrics(
         ));
     }
 
-    let representative_proof: TransactionProofP3 =
-        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV4Decode(
-                "representative proof encoding invalid".to_string(),
-            )
-        })?;
+    let representative_proof: TransactionProofP3 = decode_postcard_exact(
+        &payload.representative_proof,
+        "representative proof",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV4Decode("representative proof encoding invalid".to_string())
+    })?;
     if payload.outer_proof.is_empty() {
         if tx_count != 1 || slot_tx_count != 1 {
             return Err(ProofError::AggregationProofV4Decode(
@@ -1087,7 +1115,7 @@ pub fn verify_aggregation_proof_with_metrics(
         get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
 
     let outer_proof: BatchProof<Config> =
-        postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+        decode_postcard_exact(&payload.outer_proof, "outer aggregation proof").map_err(|_| {
             ProofError::AggregationProofV4Decode(
                 "outer aggregation proof encoding invalid".to_string(),
             )
@@ -1196,6 +1224,21 @@ mod tests {
         let raw = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9];
         let decoded = decode_aggregation_proof_bytes(&raw).expect("decode");
         assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn exact_postcard_decoder_rejects_trailing_bytes() {
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+        struct Sample {
+            value: u64,
+        }
+
+        let mut encoded = postcard::to_allocvec(&Sample { value: 7 }).expect("encode");
+        encoded.push(0xff);
+        let err = decode_postcard_exact::<Sample>(&encoded, "sample")
+            .expect_err("trailing bytes must be rejected");
+
+        assert!(err.contains("trailing bytes"));
     }
 
     #[test]

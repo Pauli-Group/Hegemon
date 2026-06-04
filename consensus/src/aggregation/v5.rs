@@ -249,7 +249,7 @@ fn child_air_public_counts(
 }
 
 fn decode_payload(decoded: &[u8]) -> Result<AggregationProofV5Payload, ProofError> {
-    postcard::from_bytes(decoded).map_err(|_| {
+    decode_postcard_exact(decoded, "aggregation V5 payload").map_err(|_| {
         ProofError::AggregationProofV5Decode("aggregation V5 payload encoding invalid".to_string())
     })
 }
@@ -280,24 +280,30 @@ fn is_singleton_root_leaf_payload(payload: &AggregationProofV5Payload, tx_count:
 fn decode_leaf_representative_tx(
     payload: &AggregationProofV5Payload,
 ) -> Result<LeafRepresentativeTxContext, ProofError> {
-    let representative_tx: TransactionProof =
-        postcard::from_bytes(&payload.representative_child_proof).map_err(|_| {
-            ProofError::AggregationProofV5Decode(
-                "leaf representative transaction encoding invalid".to_string(),
-            )
-        })?;
+    let representative_tx: TransactionProof = decode_postcard_exact(
+        &payload.representative_child_proof,
+        "leaf representative transaction",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV5Decode(
+            "leaf representative transaction encoding invalid".to_string(),
+        )
+    })?;
     let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
         ProofError::AggregationProofV5Binding(format!(
             "representative transaction public inputs invalid: {err}"
         ))
     })?;
     let pub_inputs_vec = pub_inputs.to_vec();
-    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_tx.stark_proof)
-        .map_err(|_| {
-            ProofError::AggregationProofV5Decode(
-                "representative transaction proof encoding invalid".to_string(),
-            )
-        })?;
+    let inner_proof: TransactionProofP3 = decode_postcard_exact(
+        &representative_tx.stark_proof,
+        "representative transaction proof",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV5Decode(
+            "representative transaction proof encoding invalid".to_string(),
+        )
+    })?;
     let shape = ProofShape {
         degree_bits: inner_proof.degree_bits,
         commit_phase_len: inner_proof.opening_proof.commit_phase_commits.len(),
@@ -440,7 +446,7 @@ fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, ProofEr
                 &representative.inner_proof,
             )?;
             let outer_proof: OuterBatchProof =
-                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                decode_postcard_exact(&payload.outer_proof, "leaf outer proof").map_err(|_| {
                     ProofError::AggregationProofV5Decode(
                         "leaf outer proof encoding invalid".to_string(),
                     )
@@ -473,7 +479,7 @@ fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, ProofEr
                 &representative_child,
             )?;
             let outer_proof: OuterBatchProof =
-                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                decode_postcard_exact(&payload.outer_proof, "merge outer proof").map_err(|_| {
                     ProofError::AggregationProofV5Decode(
                         "merge outer proof encoding invalid".to_string(),
                     )
@@ -711,7 +717,7 @@ pub(crate) fn verify_with_metrics(
                 });
             }
             let outer_proof: OuterBatchProof =
-                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                decode_postcard_exact(&payload.outer_proof, "leaf outer proof").map_err(|_| {
                     ProofError::AggregationProofV5Decode(
                         "leaf outer proof encoding invalid".to_string(),
                     )
@@ -759,7 +765,7 @@ pub(crate) fn verify_with_metrics(
                 ));
             }
             let outer_proof: OuterBatchProof =
-                postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+                decode_postcard_exact(&payload.outer_proof, "merge outer proof").map_err(|_| {
                     ProofError::AggregationProofV5Decode(
                         "merge outer proof encoding invalid".to_string(),
                     )

@@ -58,8 +58,15 @@ fn decode_with_magic<T: DeserializeOwned>(
             "missing PQ Noise codec marker".to_string(),
         ));
     }
-    postcard::from_bytes(&bytes[magic.len()..])
-        .map_err(|err| PqNoiseError::Serialization(format!("postcard decode failed: {err}")))
+    let (value, remaining) = postcard::take_from_bytes(&bytes[magic.len()..])
+        .map_err(|err| PqNoiseError::Serialization(format!("postcard decode failed: {err}")))?;
+    if !remaining.is_empty() {
+        return Err(PqNoiseError::Serialization(format!(
+            "postcard decode left {} trailing bytes",
+            remaining.len()
+        )));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -95,5 +102,17 @@ mod tests {
             sample
         );
         assert!(encode_session(&sample, 8).is_err());
+    }
+
+    #[test]
+    fn codec_rejects_trailing_bytes() {
+        let sample = Sample {
+            nonce: 11,
+            payload: vec![4, 5, 6],
+        };
+        let mut encoded = encode_session(&sample, 128).expect("encode");
+        encoded.push(0xff);
+
+        assert!(decode_session::<Sample>(&encoded, 128).is_err());
     }
 }

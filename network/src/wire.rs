@@ -30,8 +30,15 @@ pub fn decode_borrowed<'de, T: Deserialize<'de>>(
     max_len: usize,
 ) -> Result<T, NetworkError> {
     let body = checked_body(bytes, max_len)?;
-    postcard::from_bytes(body)
-        .map_err(|err| NetworkError::Serialization(format!("postcard decode failed: {err}")))
+    let (value, remaining) = postcard::take_from_bytes(body)
+        .map_err(|err| NetworkError::Serialization(format!("postcard decode failed: {err}")))?;
+    if !remaining.is_empty() {
+        return Err(NetworkError::Serialization(format!(
+            "postcard decode left {} trailing bytes",
+            remaining.len()
+        )));
+    }
+    Ok(value)
 }
 
 fn checked_body<'a>(bytes: &'a [u8], max_len: usize) -> Result<&'a [u8], NetworkError> {
@@ -80,5 +87,17 @@ mod tests {
             payload: vec![0; 32],
         };
         assert!(encode(&sample, 8).is_err());
+    }
+
+    #[test]
+    fn codec_rejects_trailing_bytes() {
+        let sample = Sample {
+            name: "sync".to_string(),
+            payload: vec![1, 2, 3],
+        };
+        let mut encoded = encode(&sample, 128).expect("encode");
+        encoded.push(0xff);
+
+        assert!(decode::<Sample>(&encoded, 128).is_err());
     }
 }
