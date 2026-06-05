@@ -36,7 +36,7 @@
 use crate::native_transport::{NativePqTransport, NativePqTransportConfig, PqConnectionInfo};
 use crate::pq_transport::PqPeerIdentity;
 use crate::wire;
-use pq_noise::session::SESSION_MAX_FRAME_LEN;
+use pq_noise::session::SESSION_MAX_PLAINTEXT_LEN;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -715,7 +715,7 @@ impl PqNetworkBackend {
                                                                     }
                                                                     // Decode framed message
                                                                     if let Ok(msg) =
-                                                                        wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_FRAME_LEN)
+                                                                        wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_PLAINTEXT_LEN)
                                                                     {
                                                                         if let Err(reason) = try_send_message_event(
                                                                             &message_event_tx_for_task,
@@ -1134,7 +1134,7 @@ impl PqNetworkBackend {
                                 }
                                 // Decode framed message
                                 if let Ok(msg) =
-                                    wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_FRAME_LEN)
+                                    wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_PLAINTEXT_LEN)
                                 {
                                     if let Err(reason) = try_send_message_event(
                                         &message_event_tx_for_task,
@@ -1250,11 +1250,11 @@ impl PqNetworkBackend {
 
     /// Send a message to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        if data.len() > SESSION_MAX_FRAME_LEN {
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
             return Err(format!(
                 "Message exceeds PQ frame limit ({} > {})",
                 data.len(),
-                SESSION_MAX_FRAME_LEN
+                SESSION_MAX_PLAINTEXT_LEN
             ));
         }
 
@@ -1287,10 +1287,10 @@ impl PqNetworkBackend {
 
     /// Broadcast a message to all connected peers via channels
     pub async fn broadcast(&self, data: Vec<u8>) -> Vec<[u8; 32]> {
-        if data.len() > SESSION_MAX_FRAME_LEN {
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
             tracing::error!(
                 size = data.len(),
-                limit = SESSION_MAX_FRAME_LEN,
+                limit = SESSION_MAX_PLAINTEXT_LEN,
                 "Refusing to broadcast message larger than PQ frame limit"
             );
             return Vec::new();
@@ -1422,7 +1422,7 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = match wire::encode(&framed, SESSION_MAX_FRAME_LEN) {
+        let encoded = match wire::encode(&framed, SESSION_MAX_PLAINTEXT_LEN) {
             Ok(e) => e,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize broadcast message");
@@ -1430,11 +1430,11 @@ impl PqNetworkHandle {
             }
         };
 
-        if encoded.len() > SESSION_MAX_FRAME_LEN {
+        if encoded.len() > SESSION_MAX_PLAINTEXT_LEN {
             tracing::error!(
                 protocol = %protocol,
                 size = encoded.len(),
-                limit = SESSION_MAX_FRAME_LEN,
+                limit = SESSION_MAX_PLAINTEXT_LEN,
                 "Refusing to broadcast oversized PQ frame"
             );
             return Vec::new();
@@ -1491,11 +1491,11 @@ impl PqNetworkHandle {
 
     /// Send data to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        if data.len() > SESSION_MAX_FRAME_LEN {
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
             return Err(format!(
                 "Message exceeds PQ frame limit ({} > {})",
                 data.len(),
-                SESSION_MAX_FRAME_LEN
+                SESSION_MAX_PLAINTEXT_LEN
             ));
         }
 
@@ -1548,14 +1548,14 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = wire::encode(&framed, SESSION_MAX_FRAME_LEN)
+        let encoded = wire::encode(&framed, SESSION_MAX_PLAINTEXT_LEN)
             .map_err(|e| format!("Failed to serialize message: {}", e))?;
 
-        if encoded.len() > SESSION_MAX_FRAME_LEN {
+        if encoded.len() > SESSION_MAX_PLAINTEXT_LEN {
             return Err(format!(
                 "Serialized message exceeds PQ frame limit ({} > {})",
                 encoded.len(),
-                SESSION_MAX_FRAME_LEN
+                SESSION_MAX_PLAINTEXT_LEN
             ));
         }
 

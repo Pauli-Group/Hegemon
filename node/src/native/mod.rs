@@ -48,8 +48,7 @@ use protocol_shielded_pool::family::{
 use protocol_shielded_pool::types::{
     BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
     BLOCK_PROOF_BUNDLE_SCHEMA, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
-    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE,
-    RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::{rngs::OsRng, RngCore};
@@ -76,6 +75,7 @@ const HASHES_PER_ROUND: u64 = 16_384;
 const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
 const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
+const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
 const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
@@ -88,6 +88,7 @@ const MAX_NATIVE_DA_CIPHERTEXT_UPLOADS: usize = 1024;
 const MAX_NATIVE_DA_PROOF_UPLOADS: usize = 256;
 const MAX_NATIVE_STAGED_CIPHERTEXTS: usize = 100_000;
 const MAX_NATIVE_STAGED_PROOFS: usize = 10_000;
+const MAX_NATIVE_STAGED_PROOF_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_NATIVE_WALLET_PAGE_LIMIT: u64 = 128;
 const MAX_NATIVE_WALLET_PAGE_LIMIT: u64 = 1024;
 const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
@@ -459,17 +460,27 @@ impl NativeNode {
     fn prepare_work(&self) -> NativeWork {
         let state = self.state.read();
         let best = state.best.clone();
-        let actions = ordered_pending_actions(&state);
-        let (state_root, nullifier_root, extrinsics_root, tx_count) =
-            preview_pending_roots(&state, &actions).unwrap_or_else(|err| {
-                warn!(error = %err, "failed to preview native pending action roots");
-                (
-                    best.state_root,
-                    best.nullifier_root,
-                    empty_extrinsics_root(0),
-                    0,
-                )
-            });
+        let pending_actions = select_mineable_actions(ordered_pending_actions(&state));
+        let (actions, state_root, nullifier_root, extrinsics_root, tx_count) =
+            match preview_pending_roots(&state, &pending_actions) {
+                Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
+                    pending_actions,
+                    state_root,
+                    nullifier_root,
+                    extrinsics_root,
+                    tx_count,
+                ),
+                Err(err) => {
+                    warn!(error = %err, "failed to preview native pending action roots");
+                    (
+                        Vec::new(),
+                        best.state_root,
+                        best.nullifier_root,
+                        actions_extrinsics_root(&[]),
+                        0,
+                    )
+                }
+            };
         let timestamp_ms = current_time_ms().max(best.timestamp_ms.saturating_add(1));
         let height = best.height.saturating_add(1);
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
@@ -539,9 +550,29 @@ impl NativeNode {
         let actions = if work.tx_count == 0 {
             Vec::new()
         } else {
-            ordered_pending_actions(&state)
+            select_mineable_actions(ordered_pending_actions(&state))
         };
-        if work.tx_count != 0 && actions_extrinsics_root(&actions) != work.extrinsics_root {
+        let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
+            match preview_pending_roots(&state, &actions) {
+                Ok(roots) => roots,
+                Err(err) => {
+                    debug!(error = %err, "native mined work no longer matches pending actions");
+                    return Ok(None);
+                }
+            };
+        let preview_kernel_root =
+            consensus::types::kernel_root_from_shielded_root(&preview_state_root);
+        let preview_bridge_messages = bridge_messages_from_actions(&actions, work.height);
+        let preview_message_count = u32::try_from(preview_bridge_messages.len())
+            .map_err(|_| anyhow!("native bridge message count overflow"))?;
+        if preview_tx_count != work.tx_count
+            || preview_state_root != work.state_root
+            || preview_kernel_root != work.kernel_root
+            || preview_nullifier_root != work.nullifier_root
+            || preview_extrinsics_root != work.extrinsics_root
+            || bridge_message_root(&preview_bridge_messages) != work.message_root
+            || preview_message_count != work.message_count
+        {
             return Ok(None);
         }
         if !actions.is_empty() {
@@ -817,7 +848,7 @@ impl NativeNode {
             pending.remove(hash);
         }
         for action in orphaned_actions(&old_chain, &new_action_hashes)? {
-            if action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT {
+            if is_candidate_artifact_action(&action) {
                 pending.entry(action.tx_hash).or_insert(action);
                 continue;
             }
@@ -959,7 +990,7 @@ impl NativeNode {
         self.block_tree
             .get(hash)?
             .map(|bytes| {
-                bincode::deserialize::<NativeBlockMeta>(&bytes).map_err(anyhow::Error::from)
+                bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata")
             })
             .transpose()
     }
@@ -1472,6 +1503,11 @@ impl NativeNode {
     }
 
     fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
+        if action.candidate_artifact.is_some() && !is_candidate_artifact_action(action) {
+            return Err(anyhow!(
+                "candidate artifact payload is only valid on candidate artifact actions"
+            ));
+        }
         if action.family_id == FAMILY_BRIDGE {
             validate_bridge_action_payload(action)?;
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
@@ -1490,29 +1526,12 @@ impl NativeNode {
             }
             return Ok(());
         }
-        if action.family_id == FAMILY_SHIELDED_POOL
-            && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
-        {
+        if is_candidate_artifact_action(action) {
+            validate_candidate_action_payload(action)?;
             return Ok(());
         }
         if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
-            if action.commitments.len() != 1
-                || action.ciphertext_hashes.len() != 1
-                || action.ciphertext_sizes.len() != 1
-            {
-                return Err(anyhow!("coinbase action must contain one output"));
-            }
-            let args: MintCoinbaseArgs =
-                decode_scale_exact(&action.public_args, "coinbase action args")?;
-            if args.reward_bundle.miner_note.amount == 0 {
-                return Err(anyhow!("coinbase amount must be non-zero"));
-            }
-            if args.reward_bundle.miner_note.commitment != action.commitments[0] {
-                return Err(anyhow!("coinbase commitment mismatch"));
-            }
-            if action.commitments[0] == [0u8; 48] {
-                return Err(anyhow!("zero coinbase commitment rejected"));
-            }
+            validate_coinbase_action_payload(action)?;
             return Ok(());
         }
 
@@ -1677,6 +1696,12 @@ impl NativeNode {
                     MAX_NATIVE_STAGED_PROOFS
                 ));
             }
+            validate_staged_proof_byte_budget(
+                &state.staged_proofs,
+                &binding_hash_key,
+                proof.len(),
+                MAX_NATIVE_STAGED_PROOF_BYTES,
+            )?;
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
             self.da_proof_tree
                 .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
@@ -2307,6 +2332,16 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
     let meta = node
         .header_by_hash(&block_hash)?
         .ok_or_else(|| anyhow!("unknown block {}", hex32(&block_hash)))?;
+    let canonical_hash = node
+        .hash_by_height(meta.height)?
+        .ok_or_else(|| anyhow!("missing canonical block at height {}", meta.height))?;
+    if canonical_hash != meta.hash {
+        return Err(anyhow!(
+            "bridge witness block {} at height {} is not canonical",
+            hex32(&meta.hash),
+            meta.height
+        ));
+    }
     let actions = decode_block_actions(&meta)?;
     let messages = bridge_messages_from_actions(&actions, meta.height);
     let message = messages
@@ -2605,7 +2640,7 @@ fn load_best_or_genesis(
     pow_bits: u32,
 ) -> Result<NativeBlockMeta> {
     if let Some(bytes) = meta_tree.get(META_BEST_KEY)? {
-        return bincode::deserialize(&bytes).context("decode native best metadata");
+        return bincode_deserialize_exact(&bytes, "native best metadata");
     }
 
     let genesis = genesis_meta(pow_bits)?;
@@ -2699,9 +2734,31 @@ fn load_staged_sizes(tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
 
 fn load_staged_proofs(tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut entries = BTreeMap::new();
+    let mut total_bytes = 0usize;
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() == 64 {
+            if value.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+                return Err(anyhow!(
+                    "staged proof size {} exceeds native tx-leaf artifact limit {}",
+                    value.len(),
+                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
+                ));
+            }
+            if entries.len() >= MAX_NATIVE_STAGED_PROOFS {
+                return Err(anyhow!(
+                    "staged proof capacity reached: {}",
+                    MAX_NATIVE_STAGED_PROOFS
+                ));
+            }
+            total_bytes = total_bytes.saturating_add(value.len());
+            if total_bytes > MAX_NATIVE_STAGED_PROOF_BYTES {
+                return Err(anyhow!(
+                    "staged proof byte capacity reached: {} > {}",
+                    total_bytes,
+                    MAX_NATIVE_STAGED_PROOF_BYTES
+                ));
+            }
             let mut binding_hash = [0u8; 64];
             binding_hash.copy_from_slice(&key);
             entries.insert(hex64(&binding_hash), value.to_vec());
@@ -2797,7 +2854,7 @@ fn validate_binding_hash(
 }
 
 fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
-    if !is_transfer_action(action.action_id) {
+    if !is_shielded_transfer_action(action) {
         return Err(anyhow!("action is not a shielded transfer"));
     }
     if action.nullifiers.is_empty() {
@@ -2966,15 +3023,24 @@ fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     if artifact.proof_mode != BlockProofMode::RecursiveBlock {
         return Err(anyhow!("native cutover requires recursive block artifacts"));
     }
-    if !matches!(
-        artifact.proof_kind,
-        PoolProofArtifactKind::RecursiveBlockV1 | PoolProofArtifactKind::RecursiveBlockV2
-    ) {
-        return Err(anyhow!("candidate artifact proof kind is not recursive"));
+    if artifact.proof_kind != PoolProofArtifactKind::RecursiveBlockV2 {
+        return Err(anyhow!(
+            "native candidate artifact must use the shipped recursive_block_v2 route"
+        ));
+    }
+    if artifact.verifier_profile != consensus::proof::recursive_block_artifact_verifier_profile() {
+        return Err(anyhow!(
+            "native candidate artifact recursive_block_v2 verifier profile mismatch"
+        ));
     }
     if !artifact.commitment_proof.data.is_empty() {
         return Err(anyhow!(
             "recursive candidate artifact must not carry commitment proof bytes"
+        ));
+    }
+    if artifact.receipt_root.is_some() {
+        return Err(anyhow!(
+            "recursive candidate artifact must not carry receipt-root payload"
         ));
     }
     let Some(recursive) = artifact.recursive_block.as_ref() else {
@@ -2985,17 +3051,63 @@ fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     if recursive.proof.data.is_empty() {
         return Err(anyhow!("candidate artifact recursive proof is empty"));
     }
-    let max_recursive_bytes = match artifact.proof_kind {
-        PoolProofArtifactKind::RecursiveBlockV1 => RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE,
-        PoolProofArtifactKind::RecursiveBlockV2 => RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
-        _ => unreachable!("recursive proof kind checked above"),
-    };
+    let max_recursive_bytes = RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE;
     if recursive.proof.data.len() > max_recursive_bytes {
         return Err(anyhow!(
             "candidate artifact recursive proof size {} exceeds {}",
             recursive.proof.data.len(),
             max_recursive_bytes
         ));
+    }
+    Ok(())
+}
+
+fn validate_candidate_action_payload(action: &PendingAction) -> Result<()> {
+    if !is_candidate_artifact_action(action) {
+        return Err(anyhow!("not a candidate artifact action"));
+    }
+    if !action.nullifiers.is_empty()
+        || !action.commitments.is_empty()
+        || !action.ciphertext_hashes.is_empty()
+        || !action.ciphertext_sizes.is_empty()
+        || action.fee != 0
+        || action.anchor != [0u8; 48]
+    {
+        return Err(anyhow!(
+            "candidate artifact actions must not carry shielded state deltas"
+        ));
+    }
+    let Some(artifact) = action.candidate_artifact.as_ref() else {
+        return Err(anyhow!("candidate artifact action missing payload"));
+    };
+    validate_candidate_artifact(artifact)
+}
+
+fn validate_coinbase_action_payload(action: &PendingAction) -> Result<()> {
+    if !is_coinbase_action(action) {
+        return Err(anyhow!("not a coinbase action"));
+    }
+    if !action.nullifiers.is_empty()
+        || action.commitments.len() != 1
+        || action.ciphertext_hashes.len() != 1
+        || action.ciphertext_sizes.len() != 1
+        || action.fee != 0
+        || action.anchor != [0u8; 48]
+        || action.candidate_artifact.is_some()
+    {
+        return Err(anyhow!(
+            "coinbase action must contain exactly one output and no other state deltas"
+        ));
+    }
+    let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
+    if args.reward_bundle.miner_note.amount == 0 {
+        return Err(anyhow!("coinbase amount must be non-zero"));
+    }
+    if args.reward_bundle.miner_note.commitment != action.commitments[0] {
+        return Err(anyhow!("coinbase commitment mismatch"));
+    }
+    if action.commitments[0] == [0u8; 48] {
+        return Err(anyhow!("zero coinbase commitment rejected"));
     }
     Ok(())
 }
@@ -3035,10 +3147,67 @@ fn validate_mempool_byte_budget(
     Ok(())
 }
 
+fn staged_proof_bytes(proofs: &BTreeMap<String, Vec<u8>>) -> usize {
+    proofs
+        .values()
+        .fold(0usize, |acc, proof| acc.saturating_add(proof.len()))
+}
+
+fn validate_staged_proof_byte_budget(
+    staged: &BTreeMap<String, Vec<u8>>,
+    binding_hash_key: &str,
+    proof_len: usize,
+    max_bytes: usize,
+) -> Result<()> {
+    let existing_len = staged
+        .get(binding_hash_key)
+        .map(Vec::len)
+        .unwrap_or_default();
+    let total = staged_proof_bytes(staged)
+        .saturating_sub(existing_len)
+        .saturating_add(proof_len);
+    if total > max_bytes {
+        return Err(anyhow!(
+            "staged proof byte budget exceeded: {} > {}",
+            total,
+            max_bytes
+        ));
+    }
+    Ok(())
+}
+
 fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
     let mut actions = state.pending_actions.values().cloned().collect::<Vec<_>>();
     actions.sort_by_key(action_order_key);
     actions
+}
+
+fn select_mineable_actions(actions: Vec<PendingAction>) -> Vec<PendingAction> {
+    let transfer_count = actions
+        .iter()
+        .filter(|action| is_shielded_transfer_action(action))
+        .count();
+    let selected_candidate_hash = if transfer_count == 0 {
+        None
+    } else {
+        actions
+            .iter()
+            .find(|action| {
+                is_candidate_artifact_action(action)
+                    && action
+                        .candidate_artifact
+                        .as_ref()
+                        .is_some_and(|artifact| artifact.tx_count as usize == transfer_count)
+            })
+            .map(|action| action.tx_hash)
+    };
+    actions
+        .into_iter()
+        .filter(|action| {
+            !is_candidate_artifact_action(action)
+                || selected_candidate_hash.is_some_and(|hash| hash == action.tx_hash)
+        })
+        .collect()
 }
 
 fn is_transfer_action(action_id: u16) -> bool {
@@ -3054,6 +3223,10 @@ fn is_shielded_transfer_action(action: &PendingAction) -> bool {
 
 fn is_coinbase_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE
+}
+
+fn is_candidate_artifact_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
 }
 
 fn action_order_key(action: &PendingAction) -> [u8; 32] {
@@ -3099,6 +3272,9 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
         || !action.commitments.is_empty()
         || !action.ciphertext_hashes.is_empty()
         || !action.ciphertext_sizes.is_empty()
+        || action.fee != 0
+        || action.anchor != [0u8; 48]
+        || action.candidate_artifact.is_some()
     {
         return Err(anyhow!(
             "bridge actions must not carry shielded state deltas"
@@ -3163,6 +3339,23 @@ fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
     {
         return Err(anyhow!(
             "Hegemon light-client bridge receipt output mismatch"
+        ));
+    }
+    let height_confirmations = output
+        .canonical_tip_height
+        .checked_sub(output.checkpoint_height)
+        .map(|delta| delta.saturating_add(1).min(u32::MAX as u64) as u32)
+        .ok_or_else(|| anyhow!("Hegemon light-client bridge receipt tip precedes message"))?;
+    if output.confirmations_checked > height_confirmations {
+        return Err(anyhow!(
+            "Hegemon light-client bridge receipt overstates confirmations"
+        ));
+    }
+    if output.confirmations_checked < MIN_INBOUND_BRIDGE_CONFIRMATIONS {
+        return Err(anyhow!(
+            "Hegemon light-client bridge receipt underconfirmed: {} < {}",
+            output.confirmations_checked,
+            MIN_INBOUND_BRIDGE_CONFIRMATIONS
         ));
     }
     Ok(())
@@ -3262,6 +3455,11 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         if !seen_actions.insert(action.tx_hash) {
             return Err(anyhow!("duplicate action in block"));
         }
+        if action.candidate_artifact.is_some() && !is_candidate_artifact_action(action) {
+            return Err(anyhow!(
+                "candidate artifact payload is only valid on candidate artifact actions"
+            ));
+        }
         if action.family_id == FAMILY_BRIDGE {
             validate_bridge_action_payload(action)?;
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
@@ -3273,32 +3471,14 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             }
             continue;
         }
-        if action.family_id == FAMILY_SHIELDED_POOL
-            && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
-        {
-            let Some(artifact) = action.candidate_artifact.as_ref() else {
-                return Err(anyhow!("candidate artifact action missing payload"));
-            };
-            validate_candidate_artifact(artifact)?;
+        if is_candidate_artifact_action(action) {
+            validate_candidate_action_payload(action)?;
             continue;
         }
         if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
+            validate_coinbase_action_payload(action)?;
             let args: MintCoinbaseArgs =
                 decode_scale_exact(&action.public_args, "coinbase action args")?;
-            if args.reward_bundle.miner_note.amount == 0 {
-                return Err(anyhow!("coinbase amount must be non-zero"));
-            }
-            if action.commitments.len() != 1
-                || action.commitments[0] != args.reward_bundle.miner_note.commitment
-            {
-                return Err(anyhow!("coinbase commitment mismatch"));
-            }
-            if action.commitments[0] == [0u8; 48] {
-                return Err(anyhow!("zero coinbase commitment rejected"));
-            }
-            if action.ciphertext_hashes.len() != 1 || action.ciphertext_sizes.len() != 1 {
-                return Err(anyhow!("coinbase ciphertext metadata mismatch"));
-            }
             let bytes = encrypted_note_da_bytes(&args.reward_bundle.miner_note.encrypted_note)?;
             if action.ciphertext_hashes[0] != ciphertext_hash_bytes(&bytes) {
                 return Err(anyhow!("coinbase ciphertext hash mismatch"));
@@ -3543,20 +3723,28 @@ fn verify_native_block_artifacts_locked(
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
         .collect::<Vec<_>>();
+    let candidate_artifacts = actions
+        .iter()
+        .filter(|action| is_candidate_artifact_action(action))
+        .filter_map(|action| action.candidate_artifact.as_ref())
+        .collect::<Vec<_>>();
     if transfers.is_empty() {
+        if !candidate_artifacts.is_empty() {
+            return Err(anyhow!(
+                "candidate artifact action requires shielded transfer actions"
+            ));
+        }
         return Ok(());
     }
 
-    let matching_artifacts = actions
-        .iter()
-        .filter_map(|action| action.candidate_artifact.as_ref())
-        .filter(|artifact| artifact.tx_count as usize == transfers.len())
-        .collect::<Vec<_>>();
-    let [artifact] = matching_artifacts.as_slice() else {
+    let [artifact] = candidate_artifacts.as_slice() else {
         return Err(anyhow!(
             "non-empty shielded block requires exactly one matching recursive candidate artifact"
         ));
     };
+    if artifact.tx_count as usize != transfers.len() {
+        return Err(anyhow!("candidate artifact tx_count mismatch"));
+    }
 
     let mut transactions = Vec::with_capacity(transfers.len());
     let mut artifacts = Vec::with_capacity(transfers.len());
@@ -3680,6 +3868,9 @@ fn transfer_proof_and_ciphertexts(
     node: &NativeNode,
     action: &PendingAction,
 ) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+    if !is_shielded_transfer_action(action) {
+        return Err(anyhow!("action is not a shielded transfer"));
+    }
     match action.action_id {
         ACTION_SHIELDED_TRANSFER_INLINE => {
             let args: ShieldedTransferInlineArgs =
@@ -3856,8 +4047,7 @@ fn preview_pending_roots(
         .count();
     if transfer_count > 0 {
         let has_matching_recursive_artifact = actions.iter().any(|action| {
-            action.family_id == FAMILY_SHIELDED_POOL
-                && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
+            is_candidate_artifact_action(action)
                 && action
                     .candidate_artifact
                     .as_ref()
@@ -4614,7 +4804,7 @@ mod tests {
             commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
             proof_mode: BlockProofMode::RecursiveBlock,
             proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
-            verifier_profile: [7u8; 48],
+            verifier_profile: consensus::proof::recursive_block_artifact_verifier_profile(),
             receipt_root: None,
             recursive_block: Some(protocol_shielded_pool::types::RecursiveBlockProofPayload {
                 proof: protocol_shielded_pool::types::StarkProof {
@@ -4945,6 +5135,38 @@ mod tests {
     }
 
     #[test]
+    fn native_metadata_rejects_trailing_bincode_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut block_record = bincode::serialize(&genesis).expect("serialize genesis metadata");
+        block_record.push(0xaa);
+        node.block_tree
+            .insert(genesis.hash.as_slice(), block_record)
+            .expect("corrupt block record");
+
+        let err = node
+            .header_by_hash(&genesis.hash)
+            .expect_err("trailing block metadata bytes must fail");
+        assert!(err.to_string().contains("trailing bytes"));
+
+        let mut best_record = bincode::serialize(&genesis).expect("serialize best metadata");
+        best_record.push(0xbb);
+        node.meta_tree
+            .insert(META_BEST_KEY, best_record)
+            .expect("corrupt best record");
+        drop(node);
+
+        let err = match NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)) {
+            Ok(_) => panic!("trailing best metadata bytes must fail on reload"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
     fn timestamp_rpc_rejects_unbounded_ranges() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
@@ -4978,6 +5200,19 @@ mod tests {
         let err = validate_mempool_byte_budget(&pending, &second, max)
             .expect_err("aggregate byte budget must reject over-limit candidate");
         assert!(err.to_string().contains("mempool byte budget"));
+    }
+
+    #[test]
+    fn staged_proof_byte_budget_rejects_aggregate_overflow() {
+        let mut staged = BTreeMap::new();
+        staged.insert("first".to_string(), vec![0u8; 4]);
+
+        let err = validate_staged_proof_byte_budget(&staged, "second", 2, 5)
+            .expect_err("aggregate staged proof bytes must be capped");
+        assert!(err.to_string().contains("staged proof byte budget"));
+
+        validate_staged_proof_byte_budget(&staged, "first", 5, 5)
+            .expect("replacement should subtract existing proof bytes");
     }
 
     #[test]
@@ -5090,6 +5325,226 @@ mod tests {
     }
 
     #[test]
+    fn transfer_action_validation_requires_shielded_family() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [5u8; 48], [55u8; 48], 0);
+        action.family_id = FAMILY_SHIELDED_POOL.saturating_add(99);
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("non-shielded family must not be accepted as a transfer");
+        assert!(err.to_string().contains("not a shielded transfer"));
+    }
+
+    #[test]
+    fn candidate_artifact_payload_is_candidate_action_scoped() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [6u8; 48], [66u8; 48], 0);
+        action.candidate_artifact = Some(test_candidate_artifact(1));
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("transfer action must not carry candidate artifact payload");
+        assert!(err.to_string().contains("candidate artifact payload"));
+    }
+
+    #[test]
+    fn candidate_artifact_action_carries_no_state_deltas() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut action =
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.candidate_artifact = Some(test_candidate_artifact(1));
+        action.commitments.push([77u8; 48]);
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("candidate artifact action must not carry commitments");
+        assert!(err.to_string().contains("state deltas"));
+    }
+
+    #[test]
+    fn candidate_artifact_rejects_legacy_recursive_v1_route() {
+        let mut artifact = test_candidate_artifact(1);
+        artifact.proof_kind = PoolProofArtifactKind::RecursiveBlockV1;
+
+        let err = validate_candidate_artifact(&artifact)
+            .expect_err("native candidate artifacts must use the shipped v2 route");
+        assert!(err.to_string().contains("recursive_block_v2"));
+    }
+
+    #[test]
+    fn candidate_artifact_requires_shielded_transfers() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut action =
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.candidate_artifact = Some(test_candidate_artifact(1));
+        action.tx_hash = pending_action_hash(&action);
+        validate_block_actions_locked(&state, &[action.clone()])
+            .expect("candidate artifact payload is structurally valid");
+
+        let err = verify_native_block_artifacts_locked(&node, &state, &[action])
+            .expect_err("candidate artifact without transfers must be rejected");
+        assert!(err.to_string().contains("requires shielded transfer"));
+    }
+
+    #[test]
+    fn prepare_work_ignores_candidate_artifact_without_transfers() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let mut action =
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.candidate_artifact = Some(test_candidate_artifact(1));
+        action.tx_hash = pending_action_hash(&action);
+        node.state
+            .write()
+            .pending_actions
+            .insert(action.tx_hash, action);
+
+        let work = node.prepare_work();
+
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+    }
+
+    #[test]
+    fn coinbase_action_carries_no_extra_state_deltas() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [88u8; 48]);
+        let mut action = node
+            .state
+            .read()
+            .pending_actions
+            .values()
+            .next()
+            .cloned()
+            .expect("pending coinbase");
+        action.nullifiers.push([89u8; 48]);
+        action.tx_hash = pending_action_hash(&action);
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("coinbase action must not carry nullifiers");
+        assert!(err.to_string().contains("no other state deltas"));
+    }
+
+    #[test]
+    fn bridge_action_carries_no_state_deltas() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut action = test_outbound_bridge_action(b"bridge fee smuggle");
+        action.fee = 1;
+        action.anchor = [90u8; 48];
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("bridge action must not carry fee or anchor deltas");
+        assert!(err.to_string().contains("state deltas"));
+    }
+
+    #[test]
+    fn prepare_work_drops_actions_after_preview_failure() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_inline_transfer_action(anchor, [4u8; 48], [44u8; 48], 0);
+        let bridge = test_outbound_bridge_action(b"phantom bridge message");
+        {
+            let mut state = node.state.write();
+            state.pending_actions.insert(transfer.tx_hash, transfer);
+            state.pending_actions.insert(bridge.tx_hash, bridge);
+        }
+
+        let work = node.prepare_work();
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+        assert_eq!(work.message_count, 0);
+        assert_eq!(work.message_root, empty_bridge_message_root());
+    }
+
+    #[test]
+    fn mined_empty_block_rejects_phantom_bridge_message_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let state_root = parent.state_root;
+        let kernel_root = parent.kernel_root;
+        let nullifier_root = parent.nullifier_root;
+        let extrinsics_root = actions_extrinsics_root(&[]);
+        let bridge = test_outbound_bridge_action(b"message without action bytes");
+        let bridge_messages = bridge_messages_from_actions(&[bridge], 1);
+        let message_root = bridge_message_root(&bridge_messages);
+        let message_count = u32::try_from(bridge_messages.len()).expect("message count");
+        assert_ne!(message_root, empty_bridge_message_root());
+        let header_history = node
+            .header_hashes_to_hash(parent.hash)
+            .expect("header history");
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
+        let pre_header = native_pow_header_from_parts(
+            1,
+            parent.timestamp_ms.saturating_add(1),
+            parent.hash,
+            pow_bits,
+            [0u8; 32],
+            cumulative_work,
+            &state_root,
+            &kernel_root,
+            &nullifier_root,
+            &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            parent.supply_digest,
+            0,
+        );
+        let work = NativeWork {
+            height: 1,
+            parent_hash: parent.hash,
+            pre_hash: pre_header.pre_hash(),
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
+            tx_count: 0,
+            timestamp_ms: parent.timestamp_ms.saturating_add(1),
+            pow_bits,
+        };
+        let seal = mine_native_round(work.clone(), 0).expect("phantom bridge seal");
+
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("phantom bridge work should be stale");
+        assert!(imported.is_none());
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
     fn bridge_outbound_message_root_and_witness_are_exported() {
         use base64::Engine;
 
@@ -5150,6 +5605,39 @@ mod tests {
             .as_str()
             .expect("canonical output hex")
             .starts_with("0x"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_noncanonical_block_hash() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let genesis = node.best_meta();
+        let side_action = test_outbound_bridge_action(b"side branch bridge payload");
+        let side = mined_child_with_actions(&genesis, 1, pow_bits, 0, vec![side_action]);
+        node.import_announced_block(side.clone())
+            .expect("side bridge block import");
+        assert_eq!(node.best_meta().hash, side.hash);
+
+        let canonical = (1..=256)
+            .find_map(|round| {
+                let candidate = mined_empty_child(&genesis, 1, pow_bits, round);
+                if candidate.hash < side.hash {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            })
+            .expect("find better same-height canonical block");
+        assert!(node
+            .import_announced_block(canonical.clone())
+            .expect("canonical reorg import"));
+        assert_eq!(node.best_meta().hash, canonical.hash);
+
+        let err = export_bridge_witness(&node, json!([hex32(&side.hash), 0]))
+            .expect_err("side-branch bridge witness must be rejected");
+        assert!(err.to_string().contains("is not canonical"));
     }
 
     #[test]
@@ -5232,6 +5720,46 @@ mod tests {
             .validate_and_stage_action(request)
             .expect_err("unregistered RISC Zero verifier must fail");
         assert!(err.to_string().contains("unregistered"));
+    }
+
+    #[test]
+    fn inbound_bridge_rejects_underconfirmed_receipt() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("source");
+        let destination_path = tmp.path().join("destination");
+        fs::create_dir_all(&source_path).expect("source dir");
+        fs::create_dir_all(&destination_path).expect("destination dir");
+        let pow_bits = 0x207f_ffff;
+        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
+            .expect("source node");
+        let destination =
+            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
+                .expect("destination node");
+        let (mut args, _, _) = test_risc0_bridge_inbound_args(&source, b"underconfirmed bridge");
+        let mut receipt_bytes = args.proof_receipt.as_slice();
+        let receipt =
+            RiscZeroBridgeReceiptV1::decode(&mut receipt_bytes).expect("decode RISC0 envelope");
+        let mut output = decode_risc0_bridge_journal(&receipt).expect("decode RISC0 journal");
+        output.canonical_tip_height = output.checkpoint_height;
+        output.canonical_tip_header_hash = output.checkpoint_header_hash;
+        output.canonical_tip_cumulative_work = output.checkpoint_cumulative_work;
+        output.confirmations_checked = 1;
+        args.proof_receipt =
+            test_risc0_bridge_receipt(HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1, &output).encode();
+
+        let err = destination
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_INBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect_err("underconfirmed inbound bridge receipt must fail");
+        assert!(err.to_string().contains("underconfirmed"));
     }
 
     #[test]
@@ -5507,6 +6035,88 @@ mod tests {
         }
     }
 
+    fn mined_child_with_actions(
+        parent: &NativeBlockMeta,
+        height: u64,
+        pow_bits: u32,
+        round: u64,
+        actions: Vec<PendingAction>,
+    ) -> NativeBlockMeta {
+        let parent_state = test_state(parent.clone());
+        let (state_root, nullifier_root, extrinsics_root, tx_count) =
+            preview_pending_roots(&parent_state, &actions).expect("preview action roots");
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let bridge_messages = bridge_messages_from_actions(&actions, height);
+        let message_root = bridge_message_root(&bridge_messages);
+        let message_count = u32::try_from(bridge_messages.len()).expect("message count");
+        let header_history = vec![parent.hash];
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
+        let supply_delta = native_block_supply_delta(&actions, height).expect("supply delta");
+        let pre_header = native_pow_header_from_parts(
+            height,
+            parent.timestamp_ms.saturating_add(1),
+            parent.hash,
+            pow_bits,
+            [0u8; 32],
+            cumulative_work,
+            &state_root,
+            &kernel_root,
+            &nullifier_root,
+            &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            parent.supply_digest.saturating_add(supply_delta),
+            tx_count,
+        );
+        let pre_hash = pre_header.pre_hash();
+        let work = NativeWork {
+            height,
+            parent_hash: parent.hash,
+            pre_hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
+            tx_count,
+            timestamp_ms: parent.timestamp_ms.saturating_add(1),
+            pow_bits,
+        };
+        let seal = mine_native_round(work, round).expect("action child seal");
+        NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            height,
+            hash: seal.work_hash,
+            parent_hash: parent.hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            timestamp_ms: parent.timestamp_ms.saturating_add(1),
+            pow_bits,
+            nonce: seal.nonce,
+            work_hash: seal.work_hash,
+            cumulative_work,
+            supply_digest: parent.supply_digest.saturating_add(supply_delta),
+            tx_count,
+            action_bytes: actions.iter().map(Encode::encode).collect(),
+        }
+    }
+
     fn test_config(
         path: &Path,
         pow_bits: u32,
@@ -5604,6 +6214,54 @@ mod tests {
         };
         action.tx_hash = pending_action_hash(&action);
         action
+    }
+
+    fn test_outbound_bridge_action(payload: &[u8]) -> PendingAction {
+        let args = OutboundBridgeArgsV1 {
+            destination_chain_id: [42u8; 32],
+            app_family_id: FAMILY_BRIDGE,
+            payload: payload.to_vec(),
+        };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_BRIDGE,
+            action_id: ACTION_BRIDGE_OUTBOUND,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn test_candidate_artifact(tx_count: u32) -> CandidateArtifact {
+        CandidateArtifact {
+            version: BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count,
+            tx_statements_commitment: [5u8; 48],
+            da_root: [6u8; 48],
+            da_chunk_count: 1,
+            commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+            proof_mode: BlockProofMode::RecursiveBlock,
+            proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
+            verifier_profile: consensus::proof::recursive_block_artifact_verifier_profile(),
+            receipt_root: None,
+            recursive_block: Some(protocol_shielded_pool::types::RecursiveBlockProofPayload {
+                proof: protocol_shielded_pool::types::StarkProof {
+                    data: vec![8u8; 32],
+                },
+            }),
+        }
     }
 
     fn test_empty_action(family_id: u16, action_id: u16, fee: u64) -> PendingAction {

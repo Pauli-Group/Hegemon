@@ -1425,6 +1425,70 @@ fn ensure_claims_match_verified_artifacts(
     Ok(())
 }
 
+fn validate_proven_batch_binding<BH>(
+    block: &Block<BH>,
+    proven_batch: &crate::types::ProvenBatch,
+    expected_commitment: &[u8; 48],
+    block_artifact: Option<&ProofEnvelope>,
+) -> Result<(), ProofError>
+where
+    BH: HeaderProofExt,
+{
+    if !proven_batch.route().is_compatible_with_mode() {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "proven batch route mode={:?} kind={} is incompatible",
+            proven_batch.mode,
+            proven_batch.proof_kind.label()
+        )));
+    }
+    if proven_batch.tx_count as usize != block.transactions.len() {
+        return Err(ProofError::ProvenBatchBindingMismatch(format!(
+            "proven batch tx_count mismatch (payload {}, expected {})",
+            proven_batch.tx_count,
+            block.transactions.len()
+        )));
+    }
+    if proven_batch.tx_statements_commitment != *expected_commitment {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "proven batch statement commitment mismatch".to_string(),
+        ));
+    }
+    let expected_da_root = da_root(&block.transactions, block.header.da_params())
+        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    if proven_batch.da_root != expected_da_root {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "proven batch DA root mismatch".to_string(),
+        ));
+    }
+    if proven_batch.da_chunk_count == 0 {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "proven batch DA chunk count must be non-zero".to_string(),
+        ));
+    }
+    if let Some(envelope) = block_artifact {
+        if envelope.kind != proven_batch.proof_kind {
+            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+                "block artifact kind {} does not match proven batch kind {}",
+                envelope.kind.label(),
+                proven_batch.proof_kind.label()
+            )));
+        }
+        if envelope.verifier_profile != proven_batch.verifier_profile {
+            return Err(ProofError::ProvenBatchBindingMismatch(
+                "block artifact verifier profile does not match proven batch".to_string(),
+            ));
+        }
+    }
+    if matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock)
+        && proven_batch.receipt_root.is_some()
+    {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "recursive block proven batch must not carry receipt_root payload".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn tx_statement_bindings_from_tx_artifacts(
     transactions: &[crate::types::Transaction],
     artifacts: &[TxValidityArtifact],
@@ -1645,6 +1709,12 @@ impl ProofVerifier for ParallelProofVerifier {
                 ProvenBatchMode::RecursiveBlock => None,
                 ProvenBatchMode::InlineTx => None,
             });
+        validate_proven_batch_binding(
+            block,
+            proven_batch,
+            &expected_commitment,
+            block_artifact.as_ref(),
+        )?;
 
         let aggregation_proof_bytes =
             total_batch_proof_payload_bytes(proven_batch, block_artifact.as_ref());
@@ -2026,6 +2096,141 @@ mod tests {
             DEFAULT_VERSION_BINDING,
             Vec::new(),
         )
+    }
+
+    #[derive(Clone)]
+    struct TestHeader {
+        da_params: crate::types::DaParams,
+        da_root: [u8; 48],
+    }
+
+    impl HeaderProofExt for TestHeader {
+        fn proof_commitment(&self) -> [u8; 48] {
+            [0u8; 48]
+        }
+
+        fn fee_commitment(&self) -> [u8; 48] {
+            [0u8; 48]
+        }
+
+        fn transaction_count(&self) -> u32 {
+            0
+        }
+
+        fn version_commitment(&self) -> [u8; 48] {
+            [0u8; 48]
+        }
+
+        fn da_root(&self) -> [u8; 48] {
+            self.da_root
+        }
+
+        fn da_params(&self) -> crate::types::DaParams {
+            self.da_params
+        }
+
+        fn kernel_root(&self) -> [u8; 48] {
+            [0u8; 48]
+        }
+    }
+
+    fn empty_commitment_block_proof() -> CommitmentBlockProof {
+        let zero = Default::default();
+        let zero6 = [zero; 6];
+        CommitmentBlockProof {
+            proof_bytes: Vec::new(),
+            proof_hash: [0u8; 48],
+            public_inputs: crate::backend_interface::CommitmentBlockPublicInputs {
+                tx_statements_commitment: zero6,
+                starting_state_root: zero6,
+                ending_state_root: zero6,
+                starting_kernel_root: zero6,
+                ending_kernel_root: zero6,
+                nullifier_root: zero6,
+                da_root: zero6,
+                tx_count: 0,
+                perm_alpha: zero,
+                perm_beta: zero,
+                nullifiers: Vec::new(),
+                sorted_nullifiers: Vec::new(),
+            },
+        }
+    }
+
+    fn block_for_proven_batch_binding() -> (Block<TestHeader>, [u8; 48], ProofEnvelope) {
+        let transactions = vec![tx_with_commitments(vec![[1u8; 48]])];
+        let da_params = crate::types::DaParams {
+            chunk_size: 1024,
+            sample_count: 4,
+        };
+        let da_root = da_root(&transactions, da_params).expect("da root");
+        let tx_statements_commitment = [0x44u8; 48];
+        let verifier_profile = backend_recursive_block_profile_v2();
+        let artifact = ProofEnvelope {
+            kind: ProofArtifactKind::RecursiveBlockV2,
+            verifier_profile,
+            artifact_bytes: vec![1, 2, 3],
+        };
+        let block = Block {
+            header: TestHeader { da_params, da_root },
+            transactions,
+            coinbase: None,
+            proven_batch: Some(crate::types::ProvenBatch {
+                version: 2,
+                tx_count: 1,
+                tx_statements_commitment,
+                da_root,
+                da_chunk_count: 1,
+                commitment_proof: empty_commitment_block_proof(),
+                mode: ProvenBatchMode::RecursiveBlock,
+                proof_kind: ProofArtifactKind::RecursiveBlockV2,
+                verifier_profile,
+                receipt_root: None,
+            }),
+            block_artifact: Some(artifact.clone()),
+            tx_validity_claims: None,
+            tx_statements_commitment: Some(tx_statements_commitment),
+            proof_verification_mode: ProofVerificationMode::SelfContainedAggregation,
+        };
+        (block, tx_statements_commitment, artifact)
+    }
+
+    #[test]
+    fn proven_batch_binding_rejects_tx_count_mismatch() {
+        let (mut block, expected_commitment, artifact) = block_for_proven_batch_binding();
+        let mut batch = block.proven_batch.clone().expect("batch");
+        batch.tx_count = 2;
+        block.proven_batch = Some(batch.clone());
+
+        let err =
+            validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
+                .expect_err("tx_count mismatch must fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn proven_batch_binding_rejects_da_root_mismatch() {
+        let (mut block, expected_commitment, artifact) = block_for_proven_batch_binding();
+        let mut batch = block.proven_batch.clone().expect("batch");
+        batch.da_root[0] ^= 0x5a;
+        block.proven_batch = Some(batch.clone());
+
+        let err =
+            validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
+                .expect_err("DA root mismatch must fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn proven_batch_binding_rejects_artifact_route_mismatch() {
+        let (block, expected_commitment, mut artifact) = block_for_proven_batch_binding();
+        let batch = block.proven_batch.clone().expect("batch");
+        artifact.kind = ProofArtifactKind::RecursiveBlockV1;
+
+        let err =
+            validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
+                .expect_err("artifact kind mismatch must fail");
+        assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
     }
 
     #[test]

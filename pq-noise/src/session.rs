@@ -14,6 +14,13 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 /// Keep this comfortably above legitimate sync/artifact payloads while staying
 /// small enough that queue-based backpressure remains effective.
 pub const SESSION_MAX_FRAME_LEN: usize = 8 * 1024 * 1024;
+const SESSION_AEAD_TAG_LEN: usize = 16;
+
+/// Upper bound for plaintext passed into a PQ session.
+///
+/// AES-GCM appends a 16-byte tag, so plaintext must be smaller than the
+/// encrypted frame cap to keep every emitted frame receivable by peers.
+pub const SESSION_MAX_PLAINTEXT_LEN: usize = SESSION_MAX_FRAME_LEN - SESSION_AEAD_TAG_LEN;
 
 /// A secure, encrypted session established after a successful PQ handshake
 pub struct SecureSession<S> {
@@ -85,7 +92,21 @@ where
 
     /// Send an encrypted message
     pub async fn send(&mut self, data: &[u8]) -> Result<()> {
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
+            return Err(PqNoiseError::Session(format!(
+                "session plaintext frame too large: {} > {}",
+                data.len(),
+                SESSION_MAX_PLAINTEXT_LEN
+            )));
+        }
         let encrypted = self.cipher.encrypt(data)?;
+        if encrypted.len() > SESSION_MAX_FRAME_LEN {
+            return Err(PqNoiseError::Session(format!(
+                "encrypted session frame too large: {} > {}",
+                encrypted.len(),
+                SESSION_MAX_FRAME_LEN
+            )));
+        }
         self.bytes_sent += encrypted.len() as u64;
         self.stream
             .send(Bytes::from(encrypted))
@@ -108,7 +129,7 @@ where
 
     /// Send a serializable message
     pub async fn send_message<M: serde::Serialize>(&mut self, message: &M) -> Result<()> {
-        let data = codec::encode_session(message, SESSION_MAX_FRAME_LEN)?;
+        let data = codec::encode_session(message, SESSION_MAX_PLAINTEXT_LEN)?;
         self.send(&data).await
     }
 
@@ -116,7 +137,7 @@ where
     pub async fn recv_message<M: serde::de::DeserializeOwned>(&mut self) -> Result<Option<M>> {
         match self.recv().await? {
             Some(data) => {
-                let message = codec::decode_session(&data, SESSION_MAX_FRAME_LEN)?;
+                let message = codec::decode_session(&data, SESSION_MAX_PLAINTEXT_LEN)?;
                 Ok(Some(message))
             }
             None => Ok(None),
@@ -155,7 +176,25 @@ mod tests {
     use crate::config::PqNoiseConfig;
     use crate::handshake::PqHandshake;
     use crate::types::LocalIdentity;
+    use crypto::traits::{KemKeyPair, KemPublicKey, VerifyKey};
     use tokio::io::duplex;
+
+    fn test_session_keys() -> SessionKeys {
+        SessionKeys {
+            initiator_to_responder: [1u8; 32],
+            responder_to_initiator: [2u8; 32],
+            session_aad: [3u8; 32],
+        }
+    }
+
+    fn test_remote_peer(seed: &[u8]) -> RemotePeer {
+        let identity = LocalIdentity::generate(seed);
+        RemotePeer::from_handshake(
+            &identity.verify_key.to_bytes(),
+            &identity.kem_keypair.public_key().to_bytes(),
+        )
+        .expect("remote peer")
+    }
 
     #[tokio::test]
     async fn test_secure_session_round_trip() {
@@ -225,6 +264,27 @@ mod tests {
         send_result.unwrap();
         let received = recv_result.unwrap().unwrap();
         assert_eq!(received, response.to_vec());
+    }
+
+    #[tokio::test]
+    async fn send_rejects_plaintext_that_would_exceed_frame_cap() {
+        let (stream, _peer_stream) = duplex(64);
+        let mut session = SecureSession::new(
+            stream,
+            test_session_keys(),
+            test_remote_peer(b"oversized-session-peer"),
+            true,
+        )
+        .expect("session");
+        let oversized = vec![0u8; SESSION_MAX_PLAINTEXT_LEN + 1];
+
+        let err = session
+            .send(&oversized)
+            .await
+            .expect_err("oversized plaintext should be rejected");
+
+        assert!(matches!(err, PqNoiseError::Session(_)));
+        assert_eq!(session.bytes_sent(), 0);
     }
 
     #[tokio::test]
