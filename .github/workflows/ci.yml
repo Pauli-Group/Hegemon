@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-lints
     env:
-      PROPTEST_MAX_CASES: 64
+      PROPTEST_CASES: 64
     steps:
       - name: Free disk space
         run: |
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-lints
     env:
-      PROPTEST_MAX_CASES: 64
+      PROPTEST_CASES: 64
       HEGEMON_REDTEAM_MODE: ci
     steps:
       - name: Free disk space

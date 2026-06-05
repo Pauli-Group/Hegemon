@@ -1023,9 +1023,9 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    The expensive `circuits/batch` proving tests are intentionally `#[ignore]` because that auxiliary batch lane is not part of the live InlineTx authoring path; default CI keeps only cheap structural sanity coverage for that crate.
 3. **Manual security harnesses** – run these only when touching the relevant surface:
    - `cargo test -p consensus --test fuzz -- --ignored` (consensus duplicate-nullifier property coverage).
-   - `PROPTEST_MAX_CASES=64 cargo test -p transaction-circuit --test security_fuzz` (transaction witness invariants).
-   - `PROPTEST_MAX_CASES=64 cargo test -p network --test adversarial` (handshake tampering).
-   - `PROPTEST_MAX_CASES=64 cargo test -p wallet --test address_fuzz` (address encode/decode mutations).
+   - `PROPTEST_CASES=64 cargo test -p transaction-circuit --test security_fuzz` (transaction witness invariants).
+   - `PROPTEST_CASES=64 cargo test -p network --test adversarial` (handshake tampering).
+   - `PROPTEST_CASES=64 cargo test -p wallet --test address_fuzz` (address encode/decode mutations).
 4. **Manual performance/profiling harnesses**:
    - `cargo run -p circuits-bench -- --smoke --prove --json` when touching circuit proving/profiling code.
    - `cargo run -p wallet-bench -- --smoke --json` when touching wallet hot paths.

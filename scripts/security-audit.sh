@@ -63,6 +63,33 @@ WARNINGS=0
 echo "=== Step 1: Source Code Pattern Scan ==="
 echo ""
 
+# Some trust-boundary code has to name a forbidden primitive in order to reject
+# it explicitly. Keep those branches auditable without letting real use sites
+# disappear from the report.
+filter_reject_only_matches() {
+    while IFS= read -r match; do
+        [ -z "$match" ] && continue
+        if [[ "$match" =~ ^(.+):([0-9]+):(.*)$ ]]; then
+            local file="${BASH_REMATCH[1]}"
+            local line="${BASH_REMATCH[2]}"
+            local start=$((line > 3 ? line - 3 : 1))
+            local end=$((line + 4))
+            local context
+            context="$(sed -n "${start},${end}p" "$file" 2>/dev/null || true)"
+            local source_line="${BASH_REMATCH[3]}"
+            if printf '%s\n' "$source_line" | grep -Eiq 'not accepted|not allowed|reject|unsupported|forbidden'; then
+                continue
+            fi
+            if printf '%s\n' "$source_line" | grep -Eq '=>[[:space:]]*[{]?' && \
+               printf '%s\n' "$context" | grep -Eiq 'return[[:space:]]+Err|Err[[:space:]]*\(' && \
+               printf '%s\n' "$context" | grep -Eiq 'not accepted|not allowed|reject|unsupported|forbidden'; then
+                continue
+            fi
+        fi
+        printf '%s\n' "$match"
+    done
+}
+
 # Function to check a single pattern
 check_pattern() {
     local pattern="$1"
@@ -71,7 +98,7 @@ check_pattern() {
     printf "Checking for '%s'... " "$pattern"
     
     # Search in Rust files, excluding target/, .git/, comments, test output, and this audit script
-    matches=$(grep -rniE "$pattern" \
+    raw_matches=$(grep -rniE "$pattern" \
         --include="*.rs" --include="*.toml" \
         "$PROJECT_ROOT" 2>/dev/null \
         | grep -v "target/" \
@@ -93,6 +120,7 @@ check_pattern() {
         | grep -v "keywords =" \
         | grep -v "// " \
         || true)
+    matches=$(printf '%s\n' "$raw_matches" | filter_reject_only_matches)
     
     if [ -n "$matches" ]; then
         printf "${RED}❌ FOUND${NC}\n"

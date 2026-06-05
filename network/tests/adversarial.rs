@@ -3,7 +3,12 @@ use proptest::prelude::*;
 use network::{NetworkError, PeerIdentity, establish_secure_channel, wire};
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+    #![proptest_config(ProptestConfig {
+        cases: 48,
+        failure_persistence: None,
+        .. ProptestConfig::default()
+    })]
+    #[test]
     fn tampered_acceptance_is_rejected(initiator_seed in any::<u64>(), responder_seed in any::<u64>()) {
         let initiator = PeerIdentity::generate(&initiator_seed.to_le_bytes());
         let responder = PeerIdentity::generate(&responder_seed.to_le_bytes());

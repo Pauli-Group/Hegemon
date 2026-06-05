@@ -13,7 +13,7 @@ This runbook explains how to run, debug, and report on the adversarial security 
 All commands assume repository root. Use a deterministic proptest cap so local results match CI.
 
 ```bash
-export PROPTEST_MAX_CASES=64
+export PROPTEST_CASES=64
 
 # Merge-blocking hostile proving suite
 HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh

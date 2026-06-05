@@ -11,7 +11,8 @@ if [[ "$MODE" != "ci" && "$MODE" != "full" ]]; then
   exit 2
 fi
 
-export PROPTEST_MAX_CASES="${PROPTEST_MAX_CASES:-64}"
+export PROPTEST_CASES="${PROPTEST_CASES:-${PROPTEST_MAX_CASES:-64}}"
+unset PROPTEST_MAX_CASES
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUTDIR="$ROOT/output/proving-redteam/$TIMESTAMP"
@@ -40,6 +41,7 @@ EOF
       cat <<'EOF'
 cargo test -p hegemon-node proof_da_blob_rejects_duplicate_binding_hash -- --nocapture
 cargo test -p hegemon-node filter_conflicting_shielded_transfers_drops_binding_conflicts_and_keeps_nullifier_overlaps -- --nocapture
+cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo test -p transaction-circuit --test security_fuzz -- --nocapture
   cargo test -p wallet --test address_fuzz -- --nocapture
@@ -50,6 +52,7 @@ EOF
       cat <<'EOF'
 cargo test -p hegemon-node submit_ciphertexts_rejects_ -- --nocapture
 cargo test -p hegemon-node submit_proofs_rejects_ -- --nocapture
+cargo test -p hegemon-node rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode -- --nocapture
 cargo test -p hegemon-node sidecar_ -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo test security_pipeline -- --nocapture
@@ -76,6 +79,13 @@ EOF
       cat <<'EOF'
 cargo test -p wallet test_fast_config_is_clamped_without_explicit_override -- --nocapture
 cargo test -p wallet test_fast_config_requires_explicit_override_to_weaken_floor -- --nocapture
+EOF
+      ;;
+    network-transport-abuse)
+      cat <<'EOF'
+cargo test -p pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
+cargo test -p network --test adversarial -- --nocapture
+cargo test -p network --test handshake duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
 EOF
       ;;
     review-package-parity)
@@ -132,6 +142,7 @@ run_campaign "staged-proof-abuse"
 run_campaign "recursive-block-mismatch"
 run_campaign "receipt-root-tamper"
 run_campaign "prover-configuration-downgrade"
+run_campaign "network-transport-abuse"
 run_campaign "review-package-parity"
 
 overall="pass"

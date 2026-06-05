@@ -1619,7 +1619,8 @@ impl NativeNode {
         let mut results = Vec::with_capacity(ciphertexts.len());
         let mut state = self.state.write();
         for ciphertext in ciphertexts {
-            let raw = parse_bytes_value(ciphertext)?;
+            let raw =
+                parse_bytes_value(ciphertext, MAX_CIPHERTEXT_BYTES, "ciphertext upload item")?;
             if raw.len() > MAX_CIPHERTEXT_BYTES {
                 return Err(anyhow!(
                     "ciphertext size {} exceeds limit {}",
@@ -1675,6 +1676,8 @@ impl NativeNode {
             let proof = parse_bytes_value(
                 item.get("proof")
                     .ok_or_else(|| anyhow!("proof item missing proof"))?,
+                NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                "proof item proof",
             )?;
             if proof.is_empty() {
                 return Err(anyhow!("proof item proof must be non-empty"));
@@ -4482,17 +4485,47 @@ fn encoded_len_limit(decoded_len_limit: usize) -> usize {
     decoded_len_limit.saturating_mul(4).saturating_add(2) / 3 + 4
 }
 
-fn parse_bytes_value(value: &Value) -> Result<Vec<u8>> {
+fn parse_bytes_value(value: &Value, max_decoded_len: usize, label: &str) -> Result<Vec<u8>> {
     let raw = value
         .as_str()
         .ok_or_else(|| anyhow!("expected base64 or 0x-prefixed hex string"))?;
     if let Some(hex) = raw.strip_prefix("0x") {
-        return hex::decode(hex).context("decode hex bytes");
+        if hex.len() > max_decoded_len.saturating_mul(2) {
+            return Err(anyhow!(
+                "{label} hex length {} exceeds decoded limit {}",
+                hex.len(),
+                max_decoded_len
+            ));
+        }
+        let bytes = hex::decode(hex).context("decode hex bytes")?;
+        if bytes.len() > max_decoded_len {
+            return Err(anyhow!(
+                "{label} decoded length {} exceeds limit {}",
+                bytes.len(),
+                max_decoded_len
+            ));
+        }
+        return Ok(bytes);
+    }
+    if raw.len() > encoded_len_limit(max_decoded_len) {
+        return Err(anyhow!(
+            "{label} base64 length {} exceeds decoded limit {}",
+            raw.len(),
+            max_decoded_len
+        ));
     }
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
+    let bytes = base64::engine::general_purpose::STANDARD
         .decode(raw)
-        .context("decode base64 bytes")
+        .context("decode base64 bytes")?;
+    if bytes.len() > max_decoded_len {
+        return Err(anyhow!(
+            "{label} decoded length {} exceeds limit {}",
+            bytes.len(),
+            max_decoded_len
+        ));
+    }
+    Ok(bytes)
 }
 
 fn env_bool(name: &str) -> bool {
@@ -5216,6 +5249,36 @@ mod tests {
     }
 
     #[test]
+    fn rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode() {
+        use base64::Engine;
+
+        let oversized_base64 = "A".repeat(encoded_len_limit(4) + 1);
+        let err = parse_bytes_value(&json!(oversized_base64), 4, "test base64")
+            .expect_err("oversized base64 text should be rejected before decode");
+        assert!(err.to_string().contains("base64 length"));
+
+        let oversized_hex = format!("0x{}", "00".repeat(5));
+        let err = parse_bytes_value(&json!(oversized_hex), 4, "test hex")
+            .expect_err("oversized hex text should be rejected before decode");
+        assert!(err.to_string().contains("hex length"));
+
+        let encoded_five = base64::engine::general_purpose::STANDARD.encode([0u8; 5]);
+        let err = parse_bytes_value(&json!(encoded_five), 4, "test decoded")
+            .expect_err("decoded bytes above cap should be rejected");
+        assert!(err.to_string().contains("decoded length"));
+
+        let encoded_four = base64::engine::general_purpose::STANDARD.encode([7u8; 4]);
+        assert_eq!(
+            parse_bytes_value(&json!(encoded_four), 4, "test exact").expect("exact limit"),
+            vec![7u8; 4]
+        );
+        assert_eq!(
+            parse_bytes_value(&json!("0x01020304"), 4, "test exact hex").expect("exact hex"),
+            vec![1, 2, 3, 4]
+        );
+    }
+
+    #[test]
     fn native_sync_codec_rejects_legacy_or_trailing_bytes() {
         let message = NativeSyncMessage::Request {
             from_height: 1,
@@ -5760,6 +5823,66 @@ mod tests {
             }))
             .expect_err("underconfirmed inbound bridge receipt must fail");
         assert!(err.to_string().contains("underconfirmed"));
+    }
+
+    #[test]
+    fn inbound_bridge_rejects_message_binding_tampering() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source_path = tmp.path().join("source");
+        let destination_path = tmp.path().join("destination");
+        fs::create_dir_all(&source_path).expect("source dir");
+        fs::create_dir_all(&destination_path).expect("destination dir");
+        let pow_bits = 0x207f_ffff;
+        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
+            .expect("source node");
+        let destination =
+            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
+                .expect("destination node");
+        let (args, _, _) = test_risc0_bridge_inbound_args(&source, b"bound bridge payload");
+
+        let request_for = |args: &InboundBridgeArgsV1| {
+            json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_INBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            })
+        };
+
+        let mut bad_nonce = args.clone();
+        bad_nonce.source_message_nonce = bad_nonce.source_message_nonce.wrapping_add(1);
+        let err = destination
+            .validate_and_stage_action(request_for(&bad_nonce))
+            .expect_err("source nonce must bind to message nonce");
+        assert!(err.to_string().contains("replay key does not match"));
+
+        let mut wrong_destination = args.clone();
+        wrong_destination.message.destination_chain_id = [0x55u8; 32];
+        let err = destination
+            .validate_and_stage_action(request_for(&wrong_destination))
+            .expect_err("inbound bridge message must target Hegemon");
+        assert!(err.to_string().contains("not addressed"));
+
+        let mut bad_payload_hash = args.clone();
+        bad_payload_hash.message.payload.push(0x99);
+        let err = destination
+            .validate_and_stage_action(request_for(&bad_payload_hash))
+            .expect_err("payload hash must bind payload bytes");
+        assert!(err.to_string().contains("payload hash mismatch"));
+
+        let mut receipt_replay = args.clone();
+        receipt_replay.message.payload = b"different internally consistent payload".to_vec();
+        receipt_replay.message.payload_hash = bridge_payload_hash(&receipt_replay.message.payload);
+        let err = destination
+            .validate_and_stage_action(request_for(&receipt_replay))
+            .expect_err("receipt must bind the exact bridge message hash");
+        assert!(err.to_string().contains("receipt output mismatch"));
+
+        assert_eq!(destination.state.read().pending_actions.len(), 0);
     }
 
     #[test]

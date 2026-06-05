@@ -38,7 +38,8 @@ run_lint() {
 }
 
 run_test() {
-  export PROPTEST_MAX_CASES="${PROPTEST_MAX_CASES:-64}"
+  export PROPTEST_CASES="${PROPTEST_CASES:-${PROPTEST_MAX_CASES:-64}}"
+  unset PROPTEST_MAX_CASES
 
   cargo test -p synthetic-crypto
   cargo test -p consensus-light-client
