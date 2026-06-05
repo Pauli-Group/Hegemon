@@ -3052,6 +3052,10 @@ fn is_shielded_transfer_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && is_transfer_action(action.action_id)
 }
 
+fn is_coinbase_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE
+}
+
 fn action_order_key(action: &PendingAction) -> [u8; 32] {
     let mut preimage = Vec::new();
     match (action.family_id, action.action_id) {
@@ -3488,7 +3492,7 @@ fn orphaned_actions(
 fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Result<()> {
     let coinbase_actions = actions
         .iter()
-        .filter(|action| action.action_id == ACTION_MINT_COINBASE)
+        .filter(|action| is_coinbase_action(action))
         .collect::<Vec<_>>();
     if coinbase_actions.len() > 1 {
         return Err(anyhow!("block contains multiple coinbase actions"));
@@ -3506,10 +3510,7 @@ fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Resul
 }
 
 fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u128> {
-    if actions
-        .iter()
-        .any(|action| action.action_id == ACTION_MINT_COINBASE)
-    {
+    if actions.iter().any(is_coinbase_action) {
         return expected_coinbase_amount(actions, height).map(u128::from);
     }
     Ok(0)
@@ -3518,12 +3519,7 @@ fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u
 fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u64> {
     let fees = actions
         .iter()
-        .filter(|action| {
-            matches!(
-                action.action_id,
-                ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
-            )
-        })
+        .filter(|action| is_shielded_transfer_action(action))
         .try_fold(0u64, |acc, action| {
             acc.checked_add(action.fee)
                 .ok_or_else(|| anyhow!("block fee total overflow"))
@@ -5608,6 +5604,57 @@ mod tests {
         };
         action.tx_hash = pending_action_hash(&action);
         action
+    }
+
+    fn test_empty_action(family_id: u16, action_id: u16, fee: u64) -> PendingAction {
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id,
+            action_id,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: Vec::new(),
+            fee,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    #[test]
+    fn coinbase_accounting_is_family_scoped() {
+        let height = 9;
+        let subsidy = consensus::reward::block_subsidy(height);
+        let bridge_transfer_id_collision =
+            test_empty_action(FAMILY_BRIDGE, ACTION_SHIELDED_TRANSFER_INLINE, 1_337);
+        assert_eq!(
+            expected_coinbase_amount(&[bridge_transfer_id_collision.clone()], height)
+                .expect("expected coinbase amount"),
+            subsidy
+        );
+        assert_eq!(
+            native_block_supply_delta(&[bridge_transfer_id_collision], height)
+                .expect("supply delta"),
+            0
+        );
+
+        let bridge_coinbase_id_collision =
+            test_empty_action(FAMILY_BRIDGE, ACTION_MINT_COINBASE, 0);
+        validate_coinbase_accounting(&[bridge_coinbase_id_collision.clone()], height)
+            .expect("non-shielded coinbase action id is ignored");
+        assert_eq!(
+            native_block_supply_delta(&[bridge_coinbase_id_collision], height)
+                .expect("supply delta"),
+            0
+        );
     }
 
     fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment: [u8; 48]) {
