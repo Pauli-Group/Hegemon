@@ -109,6 +109,19 @@ async fn main() -> Result<()> {
     )
     .await?;
     println!("destination inbound submission: {inbound_result}");
+    if !inbound_result
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "destination rejected inbound bridge action: {}",
+            inbound_result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error")
+        ));
+    }
     println!("RISC Zero bridge receipt accepted for staging; mine/import a destination block to consume the replay key");
 
     Ok(())

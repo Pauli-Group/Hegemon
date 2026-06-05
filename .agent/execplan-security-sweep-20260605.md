@@ -31,6 +31,10 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
 - [x] (2026-06-05T18:18:00Z) Built the native node locally with `make node`.
 - [x] (2026-06-05T19:08:00Z) Reran `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` after the proptest env cleanup; all eight campaigns passed. Summary is `output/proving-redteam/20260605T173053Z/summary.txt`.
 - [x] (2026-06-05T19:08:00Z) Review and add focused regression tests for proof counterfeiting, bridge replay/message binding, transaction admission, network/PQ Noise, and codec malleability gaps found during code inspection.
+- [x] (2026-06-05T19:42:00Z) Deployed commit `c7159b0b8ae032cc95e9c256416f0a6151e936ee` to `hegemon-dev`; mining, action submission, inclusion, and bridge witness export passed, but the remote Linux PQ audit failed on RISC Zero/Groth16/BN254 symbols in the release binary.
+- [x] (2026-06-05T19:42:00Z) Removed `risc0-zkvm` from the release native node, pruned the RISC Zero/Groth16/Arkworks dependency graph from the root lockfile, and changed inbound RISC Zero bridge receipts to fail closed after syntactic envelope/journal decoding plus message-binding prechecks.
+- [x] (2026-06-05T19:42:00Z) Updated `DESIGN.md`, `METHODS.md`, and `docs/bridge_loopback.md` to state that RISC Zero bridge receipts are offline/experimental only until a PQ-clean verifier is integrated.
+- [x] (2026-06-05T19:42:00Z) Reran focused local validation for the verifier removal: `cargo check -p hegemon-node --no-default-features`, `cargo check -p hegemon-node --example hegemon_loopback_bridge --no-default-features`, bridge-binding and RPC parser regressions, `make node`, full `bash scripts/security-audit.sh`, `bash scripts/dependency-audit-gate.sh`, and CI-mode proving red team. All passed; latest red-team summary is `output/proving-redteam/20260605T191934Z/summary.txt`.
 - [ ] Push or otherwise deploy the fixed branch to `hegemon-dev`, restart the service from a clean release directory, and verify mining plus transaction/action inclusion.
 
 ## Surprises & Discoveries
@@ -55,6 +59,12 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Evidence: `network-transport-abuse.log` from `output/proving-redteam/20260605T163935Z/` printed `proptest: Ignoring unknown env-var PROPTEST_MAX_CASES`; active scripts and docs now use `PROPTEST_CASES`, with compatibility migration and `unset PROPTEST_MAX_CASES` inside scripts.
 - Observation: The exact-current-worktree red-team rerun is clean after the proptest env cleanup.
   Evidence: `output/proving-redteam/20260605T173053Z/summary.txt` shows `overall=pass` and pass results for parser malleability, semantic aliasing, staged proof abuse, recursive block mismatch, receipt-root tamper, prover configuration downgrade, network transport abuse, and review-package parity.
+- Observation: The macOS/local quick audit was insufficient to clear the release-node dependency surface because the Linux release build still linked RISC Zero verifier code and therefore contained Groth16/BN254/Arkworks symbols.
+  Evidence: `hegemon-dev` full `bash scripts/security-audit.sh --quick` failed after deploying `c7159b0b8ae032cc95e9c256416f0a6151e936ee`; the scan matched `ark_groth16`, `ark_bn254`, and `PreparedVerifyingKey` in the release binary through `hegemon-node -> risc0-zkvm -> risc0-groth16`.
+- Observation: Disabling the release-node RISC Zero verifier removes that classical SNARK/curve dependency graph while preserving early bridge message-binding rejection.
+  Evidence: `Cargo.lock` no longer contains `risc0-zkvm`, `risc0-groth16`, `ark-groth16`, `ark-bn254`, or `ark-ec`; `native::tests::inbound_bridge_rejects_message_binding_tampering` now checks nonce, destination, and payload-hash tampering before receipt verification and confirms no pending action is staged.
+- Observation: The current post-fix reports are clear locally.
+  Evidence: full `bash scripts/security-audit.sh` passed with a clean native binary symbol scan; `bash scripts/dependency-audit-gate.sh` printed `dependency audit findings: 9 total, 9 waived, 0 unwaived`; `output/proving-redteam/20260605T191934Z/summary.txt` shows `overall=pass`.
 
 ## Decision Log
 
@@ -63,6 +73,9 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Date/Author: 2026-06-05 / Codex.
 - Decision: Keep `hegemon-dev` as the test target and do not touch `hegemon-ovh`.
   Rationale: The user clarified that `hegemon-dev` is for the new branch and `hegemon-ovh` is the testnet.
+  Date/Author: 2026-06-05 / Codex.
+- Decision: Remove the RISC Zero verifier from the release native node instead of accepting a binary-level PQ-audit waiver.
+  Rationale: The standard `risc0-zkvm` verifier surface links Groth16/BN254 verification code even when the runtime path rejects Groth16 receipts. For the PQ-only release node, fail-closed receipt handling is safer and makes the binary audit meaningful. RISC Zero proving remains useful for offline measurement until a PQ-clean verifier surface exists.
   Date/Author: 2026-06-05 / Codex.
 
 ## Outcomes & Retrospective
@@ -161,6 +174,17 @@ After deeper local fixes, rerun:
     HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
     make node
 
+    cargo check -p hegemon-node --no-default-features
+    cargo check -p hegemon-node --example hegemon_loopback_bridge --no-default-features
+    cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --no-default-features -- --nocapture
+    cargo test -p hegemon-node rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode --no-default-features -- --nocapture
+    make node
+    bash scripts/security-audit.sh
+    bash scripts/dependency-audit-gate.sh
+    HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
+    Summary: output/proving-redteam/20260605T191934Z/summary.txt
+    overall=pass
+
 Deployment steps will be written with exact commit and remote paths once local reports clear.
 
 ## Validation and Acceptance
@@ -199,3 +223,5 @@ Revision note 2026-06-05T16:03:00Z: Recorded network transport abuse campaign co
 Revision note 2026-06-05T17:31:00Z: Recorded the passing eight-campaign CI red-team report and the `PROPTEST_CASES` cleanup across scripts/CI/docs.
 
 Revision note 2026-06-05T19:08:00Z: Recorded local release build, binary-inclusive PQ audit, and the exact-current-worktree red-team pass before deployment.
+
+Revision note 2026-06-05T19:42:00Z: Recorded the remote Linux binary audit failure, the release-node RISC Zero verifier removal, local post-fix clear reports, and the pending final deployment to `hegemon-dev`.

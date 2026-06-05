@@ -3373,26 +3373,17 @@ fn verify_risc0_bridge_receipt(
     }
     let output = decode_risc0_bridge_journal(envelope)
         .map_err(|err| anyhow!("decode RISC Zero bridge journal failed: {err:?}"))?;
-    let receipt: risc0_zkvm::Receipt =
-        bincode_deserialize_exact(&envelope.receipt, "RISC Zero receipt")?;
-    match &receipt.inner {
-        risc0_zkvm::InnerReceipt::Composite(_) | risc0_zkvm::InnerReceipt::Succinct(_) => {}
-        #[cfg(test)]
-        risc0_zkvm::InnerReceipt::Fake(_) => {}
-        risc0_zkvm::InnerReceipt::Groth16(_) => {
-            return Err(anyhow!(
-                "RISC Zero Groth16 receipts are not accepted on the PQ bridge path"
-            ));
-        }
-        _ => return Err(anyhow!("unsupported RISC Zero bridge receipt kind")),
-    }
-    if receipt.journal.bytes != envelope.journal {
-        return Err(anyhow!("RISC Zero bridge journal mismatch"));
-    }
-    receipt
-        .verify(risc0_zkvm::Digest::from(expected_image_id))
-        .map_err(|err| anyhow!("RISC Zero bridge receipt verification failed: {err:?}"))?;
+    verify_risc0_receipt_envelope(envelope, expected_image_id)?;
     Ok(output)
+}
+
+fn verify_risc0_receipt_envelope(
+    _envelope: &RiscZeroBridgeReceiptV1,
+    _expected_image_id: [u8; 32],
+) -> Result<()> {
+    Err(anyhow!(
+        "RISC Zero bridge receipt verification is disabled in the PQ-only native node build"
+    ))
 }
 
 fn bridge_inbound_replay_key_from_action(action: &PendingAction) -> Result<Option<[u8; 48]>> {
@@ -5704,143 +5695,17 @@ mod tests {
     }
 
     #[test]
-    fn inbound_bridge_message_is_consumed_once() {
-        use base64::Engine;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source_path = tmp.path().join("source");
-        let destination_path = tmp.path().join("destination");
-        fs::create_dir_all(&source_path).expect("source dir");
-        fs::create_dir_all(&destination_path).expect("destination dir");
-        let pow_bits = 0x207f_ffff;
-        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
-            .expect("source node");
-        let destination =
-            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
-                .expect("destination node");
-        let (args, message, _) = test_risc0_bridge_inbound_args(&source, b"inbound payload");
-        let request = json!({
-            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-            "family_id": FAMILY_BRIDGE,
-            "action_id": ACTION_BRIDGE_INBOUND,
-            "new_nullifiers": [],
-            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
-        });
-        destination
-            .validate_and_stage_action(request.clone())
-            .expect("stage inbound bridge message");
-        let pending_err = destination
-            .validate_and_stage_action(request.clone())
-            .expect_err("duplicate pending inbound should fail");
-        assert!(pending_err.to_string().contains("already pending"));
-
-        let work = destination.prepare_work();
-        let seal = mine_native_round(work.clone(), 0).expect("inbound seal");
-        destination
-            .import_mined_block(&work, seal)
-            .expect("inbound import")
-            .expect("inbound block");
-        let replay_key = inbound_replay_key(message.source_chain_id, message.message_nonce);
-        assert!(destination
-            .state
-            .read()
-            .consumed_bridge_messages
-            .contains(&replay_key));
-
-        let consumed_err = destination
-            .validate_and_stage_action(request)
-            .expect_err("consumed inbound should fail");
-        assert!(consumed_err.to_string().contains("already consumed"));
-    }
-
-    #[test]
-    fn inbound_bridge_rejects_unregistered_risc0_image_id() {
-        use base64::Engine;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source_path = tmp.path().join("source");
-        let destination_path = tmp.path().join("destination");
-        fs::create_dir_all(&source_path).expect("source dir");
-        fs::create_dir_all(&destination_path).expect("destination dir");
-        let pow_bits = 0x207f_ffff;
-        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
-            .expect("source node");
-        let destination =
-            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
-                .expect("destination node");
-        let (mut args, _, _) = test_risc0_bridge_inbound_args(&source, b"unregistered verifier");
-        args.verifier_program_hash = [0x42u8; 32];
-        let request = json!({
-            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-            "family_id": FAMILY_BRIDGE,
-            "action_id": ACTION_BRIDGE_INBOUND,
-            "new_nullifiers": [],
-            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
-        });
-        let err = destination
-            .validate_and_stage_action(request)
-            .expect_err("unregistered RISC Zero verifier must fail");
-        assert!(err.to_string().contains("unregistered"));
-    }
-
-    #[test]
-    fn inbound_bridge_rejects_underconfirmed_receipt() {
-        use base64::Engine;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source_path = tmp.path().join("source");
-        let destination_path = tmp.path().join("destination");
-        fs::create_dir_all(&source_path).expect("source dir");
-        fs::create_dir_all(&destination_path).expect("destination dir");
-        let pow_bits = 0x207f_ffff;
-        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
-            .expect("source node");
-        let destination =
-            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
-                .expect("destination node");
-        let (mut args, _, _) = test_risc0_bridge_inbound_args(&source, b"underconfirmed bridge");
-        let mut receipt_bytes = args.proof_receipt.as_slice();
-        let receipt =
-            RiscZeroBridgeReceiptV1::decode(&mut receipt_bytes).expect("decode RISC0 envelope");
-        let mut output = decode_risc0_bridge_journal(&receipt).expect("decode RISC0 journal");
-        output.canonical_tip_height = output.checkpoint_height;
-        output.canonical_tip_header_hash = output.checkpoint_header_hash;
-        output.canonical_tip_cumulative_work = output.checkpoint_cumulative_work;
-        output.confirmations_checked = 1;
-        args.proof_receipt =
-            test_risc0_bridge_receipt(HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1, &output).encode();
-
-        let err = destination
-            .validate_and_stage_action(json!({
-                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-                "family_id": FAMILY_BRIDGE,
-                "action_id": ACTION_BRIDGE_INBOUND,
-                "new_nullifiers": [],
-                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
-            }))
-            .expect_err("underconfirmed inbound bridge receipt must fail");
-        assert!(err.to_string().contains("underconfirmed"));
-    }
-
-    #[test]
     fn inbound_bridge_rejects_message_binding_tampering() {
         use base64::Engine;
 
         let tmp = tempfile::tempdir().expect("tempdir");
-        let source_path = tmp.path().join("source");
         let destination_path = tmp.path().join("destination");
-        fs::create_dir_all(&source_path).expect("source dir");
         fs::create_dir_all(&destination_path).expect("destination dir");
         let pow_bits = 0x207f_ffff;
-        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
-            .expect("source node");
         let destination =
             NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
                 .expect("destination node");
-        let (args, _, _) = test_risc0_bridge_inbound_args(&source, b"bound bridge payload");
+        let args = test_disabled_risc0_bridge_inbound_args(b"bound bridge payload");
 
         let request_for = |args: &InboundBridgeArgsV1| {
             json!({
@@ -5874,186 +5739,53 @@ mod tests {
             .expect_err("payload hash must bind payload bytes");
         assert!(err.to_string().contains("payload hash mismatch"));
 
-        let mut receipt_replay = args.clone();
-        receipt_replay.message.payload = b"different internally consistent payload".to_vec();
-        receipt_replay.message.payload_hash = bridge_payload_hash(&receipt_replay.message.payload);
         let err = destination
-            .validate_and_stage_action(request_for(&receipt_replay))
-            .expect_err("receipt must bind the exact bridge message hash");
-        assert!(err.to_string().contains("receipt output mismatch"));
-
+            .validate_and_stage_action(request_for(&args))
+            .expect_err("default native node must not stage RISC Zero bridge receipts");
+        assert!(err.to_string().contains("verification is disabled"));
         assert_eq!(destination.state.read().pending_actions.len(), 0);
     }
 
-    #[test]
-    fn hegemon_to_hegemon_loopback_bridge_example() {
-        use base64::Engine;
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let source_path = tmp.path().join("source");
-        let destination_path = tmp.path().join("destination");
-        fs::create_dir_all(&source_path).expect("source dir");
-        fs::create_dir_all(&destination_path).expect("destination dir");
-        let pow_bits = 0x207f_ffff;
-        let source = NativeNode::open(test_config(&source_path, pow_bits, "unsafe", false))
-            .expect("source node");
-        let destination =
-            NativeNode::open(test_config(&destination_path, pow_bits, "unsafe", false))
-                .expect("destination node");
-
-        let (inbound, source_message, source_block) =
-            test_risc0_bridge_inbound_args(&source, b"hegemon-to-hegemon loopback");
-        let exported = export_bridge_witness(&source, json!([hex32(&source_block.hash), 0]))
-            .expect("export source bridge witness");
-        assert!(exported["canonical"]["long_range_proof"]
-            .as_str()
-            .expect("compact proof hex")
-            .starts_with("0x"));
-        let mut encoded_receipt = inbound.proof_receipt.as_slice();
-        let risc0_receipt =
-            RiscZeroBridgeReceiptV1::decode(&mut encoded_receipt).expect("decode RISC0 envelope");
-        let risc0_output =
-            decode_risc0_bridge_journal(&risc0_receipt).expect("decode RISC0 journal");
-        assert_eq!(risc0_output.message_hash, source_message.message_hash());
-        destination
-            .validate_and_stage_action(json!({
-                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-                "family_id": FAMILY_BRIDGE,
-                "action_id": ACTION_BRIDGE_INBOUND,
-                "new_nullifiers": [],
-                "public_args": base64::engine::general_purpose::STANDARD.encode(inbound.encode()),
-            }))
-            .expect("stage destination inbound bridge action");
-
-        let destination_work = destination.prepare_work();
-        let destination_seal =
-            mine_native_round(destination_work.clone(), 0).expect("destination bridge seal");
-        destination
-            .import_mined_block(&destination_work, destination_seal)
-            .expect("destination bridge import")
-            .expect("destination bridge block");
-
-        let replay_key =
-            inbound_replay_key(source_message.source_chain_id, source_message.message_nonce);
-        assert!(destination
-            .state
-            .read()
-            .consumed_bridge_messages
-            .contains(&replay_key));
-    }
-
-    fn test_risc0_bridge_inbound_args(
-        source: &NativeNode,
-        payload: &[u8],
-    ) -> (InboundBridgeArgsV1, BridgeMessageV1, NativeBlockMeta) {
-        use base64::Engine;
-
-        let outbound = OutboundBridgeArgsV1 {
+    fn test_disabled_risc0_bridge_inbound_args(payload: &[u8]) -> InboundBridgeArgsV1 {
+        let message = BridgeMessageV1 {
+            source_chain_id: HEGEMON_CHAIN_ID_V1,
             destination_chain_id: HEGEMON_CHAIN_ID_V1,
             app_family_id: FAMILY_BRIDGE,
+            message_nonce: 42,
+            source_height: 9,
+            payload_hash: bridge_payload_hash(payload),
             payload: payload.to_vec(),
         };
-        source
-            .validate_and_stage_action(json!({
-                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-                "family_id": FAMILY_BRIDGE,
-                "action_id": ACTION_BRIDGE_OUTBOUND,
-                "new_nullifiers": [],
-                "public_args": base64::engine::general_purpose::STANDARD.encode(outbound.encode()),
-            }))
-            .expect("stage source outbound bridge action");
-
-        let source_work = source.prepare_work();
-        let source_seal = mine_native_round(source_work.clone(), 0).expect("source bridge seal");
-        let source_block = source
-            .import_mined_block(&source_work, source_seal)
-            .expect("source bridge import")
-            .expect("source bridge block");
-        let confirmation_work = source.prepare_work();
-        let confirmation_seal =
-            mine_native_round(confirmation_work.clone(), 0).expect("source confirmation seal");
-        let source_tip = source
-            .import_mined_block(&confirmation_work, confirmation_seal)
-            .expect("source confirmation import")
-            .expect("source confirmation block");
-        let source_parent = source
-            .header_by_hash(&source_block.parent_hash)
-            .expect("parent lookup")
-            .expect("source parent");
-        let source_header = pow_header_from_meta(&source_block);
-        let source_header_hash =
-            verify_pow_header(&checkpoint_from_meta(&source_parent), &source_header)
-                .expect("source header verifies under light client");
-        assert_eq!(source_header_hash, source_block.hash);
-
-        let source_actions = decode_block_actions(&source_block).expect("decode source actions");
-        let source_messages = bridge_messages_from_actions(&source_actions, source_block.height);
-        let source_message_hash = consensus_light_client::verify_message_inclusion(
-            source_block.message_root,
-            &source_messages,
-            0,
-        )
-        .expect("source message inclusion verifies");
-        let source_message = source_messages[0].clone();
-        assert_eq!(source_message_hash, source_message.message_hash());
-
-        let output = bridge_checkpoint_output(
-            &checkpoint_from_meta(&source_block),
-            source_block.message_root,
-            &source_message,
-            1,
-            [0u8; 48],
-        );
-        let compact_output = bridge_checkpoint_output_with_tip(
-            &checkpoint_from_meta(&source_block),
-            &checkpoint_from_meta(&source_tip),
-            source_block.message_root,
-            &source_message,
-            2,
-            [0u8; 48],
-        );
-        let receipt = build_long_range_bridge_proof(
-            source,
-            &source_block,
-            &source_tip,
-            &source_messages,
-            0,
-            compact_output,
-        )
-        .expect("build compact source proof")
-        .expect("source tip confirms message");
-        consensus_light_client::verify_hegemon_long_range_proof(&receipt, 1, [0u8; 48])
-            .expect("compact source proof verifies");
-        assert_eq!(output.message_hash, receipt.output.message_hash);
-        let risc0_image_id = HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1;
-        let risc0_receipt = test_risc0_bridge_receipt(risc0_image_id, &receipt.output);
-        let inbound = InboundBridgeArgsV1 {
-            source_chain_id: source_message.source_chain_id,
-            source_message_nonce: source_message.message_nonce,
-            verifier_program_hash: risc0_image_id,
-            proof_receipt: risc0_receipt.encode(),
-            message: source_message.clone(),
+        let output = BridgeCheckpointOutputV1 {
+            source_chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            checkpoint_height: message.source_height,
+            checkpoint_header_hash: [0x11u8; 32],
+            checkpoint_cumulative_work: [0x22u8; 48],
+            canonical_tip_height: message
+                .source_height
+                .saturating_add(u64::from(MIN_INBOUND_BRIDGE_CONFIRMATIONS))
+                .saturating_sub(1),
+            canonical_tip_header_hash: [0x33u8; 32],
+            canonical_tip_cumulative_work: [0x44u8; 48],
+            message_root: bridge_message_root(std::slice::from_ref(&message)),
+            message_hash: message.message_hash(),
+            message_nonce: message.message_nonce,
+            confirmations_checked: MIN_INBOUND_BRIDGE_CONFIRMATIONS,
+            min_work_checked: [0u8; 48],
         };
-        (inbound, source_message, source_block)
-    }
-
-    fn test_risc0_bridge_receipt(
-        image_id: [u8; 32],
-        output: &BridgeCheckpointOutputV1,
-    ) -> RiscZeroBridgeReceiptV1 {
-        std::env::set_var("RISC0_DEV_MODE", "1");
-        let journal = consensus_light_client::bridge_checkpoint_output_wire_bytes_v1(output);
-        let claim =
-            risc0_zkvm::ReceiptClaim::ok(risc0_zkvm::Digest::from(image_id), journal.clone());
-        let receipt = risc0_zkvm::Receipt::try_from(risc0_zkvm::FakeReceipt::new(claim))
-            .expect("fake RISC Zero receipt");
-        RiscZeroBridgeReceiptV1 {
+        let receipt = RiscZeroBridgeReceiptV1 {
             proof_system_id: consensus_light_client::RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1,
-            image_id,
-            journal,
-            receipt: bincode::serialize(&receipt).expect("encode fake RISC Zero receipt"),
+            image_id: HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+            journal: consensus_light_client::bridge_checkpoint_output_wire_bytes_v1(&output),
+            receipt: vec![0],
+        };
+        InboundBridgeArgsV1 {
+            source_chain_id: message.source_chain_id,
+            source_message_nonce: message.message_nonce,
+            verifier_program_hash: HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+            proof_receipt: receipt.encode(),
+            message,
         }
     }
 

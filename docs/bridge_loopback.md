@@ -1,13 +1,13 @@
 # Hegemon-to-Hegemon Loopback Bridge Example
 
-This is the Hegemon-to-Hegemon zk bridge shape. It exercises both bridge ends with two Hegemon nodes and a RISC Zero prover:
+This is the Hegemon-to-Hegemon zk bridge shape. It exercises outbound witness export and the offline RISC Zero prover. Release native nodes currently reject inbound RISC Zero receipts because the standard `risc0-zkvm` verifier dependency graph links Groth16/BN254 code into the node binary.
 
 1. Source Hegemon node accepts an outbound bridge action.
 2. Source miner commits the ordered `BridgeMessageV1` under `message_root`.
 3. Relayer exports `hegemon_exportBridgeWitness` after at least one confirming source block.
 4. RISC Zero proves the exported compact `HegemonLongRangeProofV1` inside the zkVM and emits `RiscZeroBridgeReceiptV1`.
-5. Example code submits the RISC Zero receipt envelope as the proof receipt.
-6. Destination Hegemon node accepts an inbound bridge action and later consumes the replay key when mined.
+5. Example code can submit the RISC Zero receipt envelope as the proof receipt.
+6. Destination Hegemon validates message-binding preconditions, then rejects staging until a PQ-clean verifier is integrated.
 
 Hegemon remains pure PoW. The bridge receipt proves a light-client statement about Hegemon; it is not fork choice, not finality voting, and not a validator set.
 
@@ -51,9 +51,9 @@ cargo check --manifest-path zk/risc0-bridge/methods/Cargo.toml
 RISC0_SKIP_BUILD_KERNELS=1 cargo check --manifest-path zk/risc0-bridge/prover/Cargo.toml
 ```
 
-Export a bridge witness from the source after the outbound message has a confirming block, prove `canonical.long_range_proof` with `zk/risc0-bridge/prover`, then run the loopback example with the produced `RiscZeroBridgeReceiptV1` hex. If no block hash is supplied, `hegemon_exportBridgeWitness` scans backward up to 4096 blocks from the current canonical tip and selects the latest canonical block containing a bridge message, so relayers do not need to race the miner before the next empty block is produced. Pass the source block hash explicitly for older messages.
+Export a bridge witness from the source after the outbound message has a confirming block, then prove `canonical.long_range_proof` with `zk/risc0-bridge/prover` to measure the offline RISC Zero envelope. If no block hash is supplied, `hegemon_exportBridgeWitness` scans backward up to 4096 blocks from the current canonical tip and selects the latest canonical block containing a bridge message, so relayers do not need to race the miner before the next empty block is produced. Pass the source block hash explicitly for older messages.
 
-Destination Hegemon accepts the Hegemon-to-Hegemon RISC Zero bridge only when the inbound action uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`. This is an allowlist check, not a relayer-controlled verifier registration.
+The inbound action still uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`, but release Hegemon rejects RISC Zero receipt staging after syntactic envelope/journal decoding. Do not treat this document as an enabled bridge runbook until the destination verifier no longer pulls classical SNARK/curve code into `hegemon-node`.
 
 ```bash
 RISC0_SKIP_BUILD_KERNELS=1 cargo run --release \
@@ -62,7 +62,7 @@ RISC0_SKIP_BUILD_KERNELS=1 cargo run --release \
   -- --proof-file /tmp/hegemon-long-range-proof.hex
 ```
 
-For fast local smoke tests, set `HEGEMON_RISC0_RECEIPT_KIND=composite`. Composite receipts are native STARK receipts and are accepted by Hegemon, but they are linear-size. The default `succinct` mode is the size target for production relayers.
+For fast local prover measurements, set `HEGEMON_RISC0_RECEIPT_KIND=composite`. Composite receipts are native STARK receipts but are not accepted by the release Hegemon node while the RISC Zero verifier is disabled. The default `succinct` mode remains the size target for future relayers.
 
 Use the profiler before proving when changing the light-client statement:
 
@@ -73,7 +73,7 @@ RISC0_SKIP_BUILD_KERNELS=1 cargo run \
   -- --proof-file /tmp/hegemon-long-range-proof.hex
 ```
 
-On `hegemon-dev`, a 9951-byte live long-range proof currently executes in 962524 RISC Zero guest cycles. Cached release proving measured 8m37s for a 492158-byte composite receipt envelope and 10m46s for a 224508-byte succinct receipt envelope. Both are native STARK/PQ-path receipts; do not use Groth16/KZG wrapping for the PQ bridge path.
+On `hegemon-dev`, a 9951-byte live long-range proof currently executes in 962524 RISC Zero guest cycles. Cached release proving measured 8m37s for a 492158-byte composite receipt envelope and 10m46s for a 224508-byte succinct receipt envelope. These remain offline measurements; do not use Groth16/KZG wrapping or any verifier stack that links classical curve/SNARK code into the PQ bridge path.
 
 ```bash
 cargo run -p hegemon-node --example hegemon_loopback_bridge -- \
@@ -113,7 +113,7 @@ let compact_proof = witness["canonical"]["long_range_proof"];
 let receipt = prove_hegemon_bridge(compact_proof);
 ```
 
-Destination side:
+Destination side (currently rejected by release nodes after prechecks):
 
 ```rust
 let inbound = InboundBridgeArgsV1 {
@@ -131,4 +131,4 @@ hegemon_submitAction({
 });
 ```
 
-The destination node rejects malformed payload hashes, wrong destination chain IDs, empty receipts, pending duplicates, and already-consumed replay keys.
+The destination node rejects malformed payload hashes, wrong destination chain IDs, empty receipts, pending duplicates, and already-consumed replay keys. With the current PQ-only release build it also rejects syntactically valid RISC Zero receipts before staging any pending action.
