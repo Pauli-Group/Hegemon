@@ -35,6 +35,10 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
 - [x] (2026-06-05T19:42:00Z) Removed `risc0-zkvm` from the release native node, pruned the RISC Zero/Groth16/Arkworks dependency graph from the root lockfile, and changed inbound RISC Zero bridge receipts to fail closed after syntactic envelope/journal decoding plus message-binding prechecks.
 - [x] (2026-06-05T19:42:00Z) Updated `DESIGN.md`, `METHODS.md`, and `docs/bridge_loopback.md` to state that RISC Zero bridge receipts are offline/experimental only until a PQ-clean verifier is integrated.
 - [x] (2026-06-05T19:42:00Z) Reran focused local validation for the verifier removal: `cargo check -p hegemon-node --no-default-features`, `cargo check -p hegemon-node --example hegemon_loopback_bridge --no-default-features`, bridge-binding and RPC parser regressions, `make node`, full `bash scripts/security-audit.sh`, `bash scripts/dependency-audit-gate.sh`, and CI-mode proving red team. All passed; latest red-team summary is `output/proving-redteam/20260605T191934Z/summary.txt`.
+- [x] (2026-06-05T20:35:00Z) Remote Linux PQ audit on the `aab46e89` release binary found classical TLS/ECC symbols from the node dependency graph. The service was not restarted onto that binary.
+- [x] (2026-06-05T20:35:00Z) Removed unused native-node TLS server dependencies, made the loopback example's HTTP client dev-only and TLS-free, and gated wallet JSON-RPC client modules behind `wallet/rpc-client` so `hegemon-node` can link wallet key/address types without client TLS transport code.
+- [x] (2026-06-05T20:35:00Z) Reran `cargo check -p hegemon-node --no-default-features`; it passed, and `cargo tree -p hegemon-node --no-default-features -i ring|rustls|native-tls|aws-lc-rs --edges normal` found no matching packages.
+- [x] (2026-06-05T21:36:18Z) Reran the current-worktree local gates after the TLS dependency split: node/example/wallet checks, bridge regression, `make node`, full `bash scripts/security-audit.sh`, `bash scripts/dependency-audit-gate.sh`, and `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. All passed; latest red-team summary is `output/proving-redteam/20260605T203718Z/summary.txt`.
 - [ ] Push or otherwise deploy the fixed branch to `hegemon-dev`, restart the service from a clean release directory, and verify mining plus transaction/action inclusion.
 
 ## Surprises & Discoveries
@@ -65,6 +69,12 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Evidence: `Cargo.lock` no longer contains `risc0-zkvm`, `risc0-groth16`, `ark-groth16`, `ark-bn254`, or `ark-ec`; `native::tests::inbound_bridge_rejects_message_binding_tampering` now checks nonce, destination, and payload-hash tampering before receipt verification and confirms no pending action is staged.
 - Observation: The current post-fix reports are clear locally.
   Evidence: full `bash scripts/security-audit.sh` passed with a clean native binary symbol scan; `bash scripts/dependency-audit-gate.sh` printed `dependency audit findings: 9 total, 9 waived, 0 unwaived`; `output/proving-redteam/20260605T191934Z/summary.txt` shows `overall=pass`.
+- Observation: The remote Linux audit found another binary-only PQ failure after the RISC Zero verifier graph was removed: TLS support code linked classical curve routines into `hegemon-node`.
+  Evidence: `hegemon-dev` `bash scripts/security-audit.sh` on `/home/ubuntu/hegemon-current-aab46e89/target/release/hegemon-node` reported symbols including `ecdsa_asn1.c`, `p_ed25519_asn1.c`, `p_x25519.c`, and `curve25519.c`; `cargo tree` traced the normal node graph through `axum-server` TLS, direct `reqwest`, and wallet/jsonrpsee client transport.
+- Observation: The release node does not need embedded classical TLS to mine, sync over the PQ service, or expose the local JSON-RPC compatibility surface.
+  Evidence: `node/src/native/mod.rs` already serves RPC through `axum::serve` over a `TcpListener`; `axum-server`/`rcgen` were manifest-only dependencies, the loopback example was the only `reqwest` user, and the node only imports wallet key/address/error types rather than wallet RPC client modules.
+- Observation: The current post-TLS-split reports are clear locally.
+  Evidence: full `bash scripts/security-audit.sh` passed with a clean native binary symbol scan; `bash scripts/dependency-audit-gate.sh` printed `dependency audit findings: 8 total, 8 waived, 0 unwaived`; `output/proving-redteam/20260605T203718Z/summary.txt` shows `overall=pass` for all eight campaigns.
 
 ## Decision Log
 
@@ -76,6 +86,9 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Date/Author: 2026-06-05 / Codex.
 - Decision: Remove the RISC Zero verifier from the release native node instead of accepting a binary-level PQ-audit waiver.
   Rationale: The standard `risc0-zkvm` verifier surface links Groth16/BN254 verification code even when the runtime path rejects Groth16 receipts. For the PQ-only release node, fail-closed receipt handling is safer and makes the binary audit meaningful. RISC Zero proving remains useful for offline measurement until a PQ-clean verifier surface exists.
+  Date/Author: 2026-06-05 / Codex.
+- Decision: Remove embedded classical TLS from the release native node rather than whitelisting TLS library symbols.
+  Rationale: The node's RPC listeners are local/trusted-control-plane HTTP/WebSocket surfaces, while consensus sync uses the Hegemon PQ transport. Remote administrative access should be handled outside `hegemon-node` by a PQ-safe transport or host access policy, so linking classical TLS curve code into the release binary violates the PQ-only audit without buying protocol security.
   Date/Author: 2026-06-05 / Codex.
 
 ## Outcomes & Retrospective
@@ -225,3 +238,7 @@ Revision note 2026-06-05T17:31:00Z: Recorded the passing eight-campaign CI red-t
 Revision note 2026-06-05T19:08:00Z: Recorded local release build, binary-inclusive PQ audit, and the exact-current-worktree red-team pass before deployment.
 
 Revision note 2026-06-05T19:42:00Z: Recorded the remote Linux binary audit failure, the release-node RISC Zero verifier removal, local post-fix clear reports, and the pending final deployment to `hegemon-dev`.
+
+Revision note 2026-06-05T20:35:00Z: Recorded the second remote Linux binary audit failure from embedded TLS dependencies, the release-node no-classical-TLS dependency split, and the passing local node graph check.
+
+Revision note 2026-06-05T21:36:18Z: Recorded the final local clear report after the no-classical-TLS split and the CI-mode red-team summary for the current worktree.

@@ -17,7 +17,7 @@ codec = { workspace = true }
 futures = "0.3"
 bs58 = "0.5"
 hex = "0.4"
-jsonrpsee = { version = "0.24", features = ["ws-client", "client"] }
+jsonrpsee = { version = "0.24", default-features = false, features = ["ws-client", "client"], optional = true }
 rand = { version = "0.8", features = ["std"] }
 rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +45,8 @@ tempfile = "3"
 proptest = "1"
 
 [features]
-default = []
+default = ["rpc-client"]
+rpc-client = ["dep:jsonrpsee"]
 batch-proofs = ["batch-circuit"]
 
 [lints]

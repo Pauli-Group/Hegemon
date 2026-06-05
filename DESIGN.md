@@ -36,6 +36,8 @@ The operator `hegemon-node` binary is native. It starts a fresh native chain, pe
 
 The compatibility contract is JSON-RPC, not legacy storage layout or third-party chain dashboard behavior. Walletd, Electron, smoke scripts, and mining scripts should keep using `hegemon_*`, `da_*`, `archive_*`, `block_*`, plus the narrow compatibility `chain_*`, `system_*`, `state_*`, and `author_pendingExtrinsics` calls. Native state starts from a fresh genesis; no legacy database migration is part of the design.
 
+The release native node intentionally does not embed classical TLS stacks. Its HTTP/WebSocket RPC listeners are plaintext interfaces for loopback or an explicitly trusted operator control plane; deployments that need remote administrative access must put that access behind a separate PQ-safe transport or host-level control, not in-process rustls/OpenSSL code. The wallet RPC client stack remains a wallet feature and is not linked into `hegemon-node`.
+
 ### 0.4 zk bridge posture
 
 Hegemon is still a pure PoW chain. Canonicality is valid-header execution plus greatest fixed-width cumulative work; zkVM receipts, bridge relayers, verifier registrations, and external-chain proofs are not fork-choice inputs. The bridge model is a zk light client over Hegemon, not a new finality layer.

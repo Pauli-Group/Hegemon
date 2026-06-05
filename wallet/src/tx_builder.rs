@@ -11,6 +11,7 @@ use transaction_circuit::StablecoinPolicyBinding;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
+#[cfg(feature = "rpc-client")]
 use crate::node_rpc::NodeRpcClient;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use crate::rpc::TransactionBundle;
@@ -81,6 +82,7 @@ fn submission_proof_material_from_witness(
 /// proof generation if any notes are already spent.
 ///
 /// Returns Ok(nullifiers) if all notes are unspent, or Err with the index of the first spent note.
+#[cfg(feature = "rpc-client")]
 pub async fn precheck_nullifiers(
     store: &WalletStore,
     rpc: &NodeRpcClient,
@@ -92,6 +94,7 @@ pub async fn precheck_nullifiers(
 }
 
 /// Pre-flight check that supports stablecoin issuance/burn bindings.
+#[cfg(feature = "rpc-client")]
 pub async fn precheck_nullifiers_with_binding(
     store: &WalletStore,
     rpc: &NodeRpcClient,

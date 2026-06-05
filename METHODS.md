@@ -187,7 +187,7 @@ lockstep. PoW headers must also bind one registered miner identity: `validator_s
 `signature_aggregate` carries exactly one ML-DSA-65 signature over the header signing hash, and PoW headers with BFT signature
 bitmaps are rejected.
 
-The native `hegemon-node` process starts from a fresh native genesis, persists native block and shielded-state metadata in `sled`, mines PoW development blocks, syncs over the Hegemon PQ service, and keeps the wallet/app JSON-RPC method names stable. New native work must flow through `ConsensusBlock` validation, sled-backed native state, PQ sync, and the same JSON-RPC compatibility surface.
+The native `hegemon-node` process starts from a fresh native genesis, persists native block and shielded-state metadata in `sled`, mines PoW development blocks, syncs over the Hegemon PQ service, and keeps the wallet/app JSON-RPC method names stable. New native work must flow through `ConsensusBlock` validation, sled-backed native state, PQ sync, and the same JSON-RPC compatibility surface. The release node does not link classical TLS client/server stacks: RPC is served as plaintext HTTP/WebSocket for loopback or a trusted operator control plane, and remote administrative access must be protected outside the process by a PQ-safe transport or host-level access policy.
 
 Shielded transfers accumulate one per-block tip bucket:
 `BlockFeeBuckets { miner_fees }`. Each transfer’s public `fee` field is interpreted as an optional miner tip. `fee = 0`

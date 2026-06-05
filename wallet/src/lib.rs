@@ -1,9 +1,12 @@
 pub mod address;
+#[cfg(feature = "rpc-client")]
 pub mod async_sync;
+#[cfg(feature = "rpc-client")]
 pub mod consolidate;
 pub mod disclosure;
 pub mod error;
 pub mod keys;
+#[cfg(feature = "rpc-client")]
 pub mod node_rpc;
 pub mod notes;
 pub mod prover;
@@ -19,12 +22,15 @@ pub mod tx_builder;
 pub mod viewing;
 
 pub use address::ShieldedAddress;
+#[cfg(feature = "rpc-client")]
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
+#[cfg(feature = "rpc-client")]
 pub use consolidate::{execute_consolidation, ConsolidationPlan, MAX_INPUTS};
 pub use error::WalletError;
 pub use keys::{
     ml_dsa_account_id_from_seed, AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey,
 };
+#[cfg(feature = "rpc-client")]
 pub use node_rpc::{BlockingNodeRpcClient, ChainMetadata, NodeRpcClient, NodeRpcConfig};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{
@@ -44,7 +50,9 @@ pub use store::{
 pub use submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 pub use sync::SyncOutcome;
 pub use tx_builder::{
-    build_stablecoin_burn, build_transaction, build_transaction_with_binding, precheck_nullifiers,
-    precheck_nullifiers_with_binding, BuiltTransaction, Recipient,
+    build_stablecoin_burn, build_transaction, build_transaction_with_binding, BuiltTransaction,
+    Recipient,
 };
+#[cfg(feature = "rpc-client")]
+pub use tx_builder::{precheck_nullifiers, precheck_nullifiers_with_binding};
 pub use viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};

@@ -13,7 +13,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ### `crypto/`
 
-- **Keygen misuse**: Attackers might attempt to bias RNGs. We mitigate this by deriving deterministic seeds from SHA-256 transcripts and exposing APIs that accept explicit seeds for reproducible tests.
+- **Keygen misuse**: Attackers might attempt to bias RNGs or turn public transcripts into predictable key material. Production KEM encapsulation and identity/key generation use OS entropy; explicit deterministic seeds are test-only fixtures and must never be derived from public transcripts.
 - **Serialization downgrade**: Incorrect key lengths lead to acceptance of weak keys. All APIs perform length checks and return errors that bubble up to consensus/wallet callers.
 
 ### `circuits/`
