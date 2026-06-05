@@ -152,7 +152,7 @@ check_pattern "bls12" "Pairing-friendly curve (Groth16), quantum-vulnerable" || 
 check_pattern "bn254" "Pairing-friendly curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "jubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "babyjubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "pallas" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "curve25519" "Elliptic curve, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "dalek" "Curve25519 library, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
@@ -203,9 +203,14 @@ echo ""
 NODE_BIN="$PROJECT_ROOT/target/release/hegemon-node"
 if [ -f "$NODE_BIN" ]; then
     echo "Checking: $NODE_BIN"
-    symbol_matches=$(strings "$NODE_BIN" 2>/dev/null \
-        | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|pallas|vesta" \
-        || true)
+    symbol_matches=$(
+        strings "$NODE_BIN" 2>/dev/null \
+            | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub" \
+            || true
+        strings "$NODE_BIN" 2>/dev/null \
+            | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)" \
+            || true
+    )
     if [ -n "$symbol_matches" ]; then
         echo -e "${RED}❌ FOUND${NC}"
         echo "$symbol_matches" | head -10 | sed 's/^/    /'

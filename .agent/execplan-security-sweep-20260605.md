@@ -39,6 +39,7 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
 - [x] (2026-06-05T20:35:00Z) Removed unused native-node TLS server dependencies, made the loopback example's HTTP client dev-only and TLS-free, and gated wallet JSON-RPC client modules behind `wallet/rpc-client` so `hegemon-node` can link wallet key/address types without client TLS transport code.
 - [x] (2026-06-05T20:35:00Z) Reran `cargo check -p hegemon-node --no-default-features`; it passed, and `cargo tree -p hegemon-node --no-default-features -i ring|rustls|native-tls|aws-lc-rs --edges normal` found no matching packages.
 - [x] (2026-06-05T21:36:18Z) Reran the current-worktree local gates after the TLS dependency split: node/example/wallet checks, bridge regression, `make node`, full `bash scripts/security-audit.sh`, `bash scripts/dependency-audit-gate.sh`, and `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. All passed; latest red-team summary is `output/proving-redteam/20260605T203718Z/summary.txt`.
+- [x] (2026-06-05T21:40:46Z) Remote Linux PQ audit on `b65defef` confirmed the TLS/ECC symbols were gone, but surfaced a scanner false positive where the unbounded binary `vesta` pattern matched Rust `NativeState` symbols. The binary scan now uses token boundaries for Pallas/Vesta just like the source scan, while hard forbidden crypto names remain substring matches; local `bash scripts/security-audit.sh --quick` passed.
 - [ ] Push or otherwise deploy the fixed branch to `hegemon-dev`, restart the service from a clean release directory, and verify mining plus transaction/action inclusion.
 
 ## Surprises & Discoveries
@@ -75,6 +76,8 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Evidence: `node/src/native/mod.rs` already serves RPC through `axum::serve` over a `TcpListener`; `axum-server`/`rcgen` were manifest-only dependencies, the loopback example was the only `reqwest` user, and the node only imports wallet key/address/error types rather than wallet RPC client modules.
 - Observation: The current post-TLS-split reports are clear locally.
   Evidence: full `bash scripts/security-audit.sh` passed with a clean native binary symbol scan; `bash scripts/dependency-audit-gate.sh` printed `dependency audit findings: 8 total, 8 waived, 0 unwaived`; `output/proving-redteam/20260605T203718Z/summary.txt` shows `overall=pass` for all eight campaigns.
+- Observation: The binary scanner needed the same Pallas/Vesta token-boundary handling as the source scanner.
+  Evidence: the Linux binary scan after the TLS split found only `_ZN...NativeState...` symbols; manual `strings` checks showed the match came from `vesta` inside `NativeState`, not from curve/TLS code.
 
 ## Decision Log
 
@@ -242,3 +245,5 @@ Revision note 2026-06-05T19:42:00Z: Recorded the remote Linux binary audit failu
 Revision note 2026-06-05T20:35:00Z: Recorded the second remote Linux binary audit failure from embedded TLS dependencies, the release-node no-classical-TLS dependency split, and the passing local node graph check.
 
 Revision note 2026-06-05T21:36:18Z: Recorded the final local clear report after the no-classical-TLS split and the CI-mode red-team summary for the current worktree.
+
+Revision note 2026-06-05T21:40:46Z: Recorded the Linux `NativeState`/Vesta binary-scan false positive and the boundary-matched scanner fix.
