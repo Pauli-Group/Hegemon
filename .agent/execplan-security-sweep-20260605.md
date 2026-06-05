@@ -40,7 +40,7 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
 - [x] (2026-06-05T20:35:00Z) Reran `cargo check -p hegemon-node --no-default-features`; it passed, and `cargo tree -p hegemon-node --no-default-features -i ring|rustls|native-tls|aws-lc-rs --edges normal` found no matching packages.
 - [x] (2026-06-05T21:36:18Z) Reran the current-worktree local gates after the TLS dependency split: node/example/wallet checks, bridge regression, `make node`, full `bash scripts/security-audit.sh`, `bash scripts/dependency-audit-gate.sh`, and `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. All passed; latest red-team summary is `output/proving-redteam/20260605T203718Z/summary.txt`.
 - [x] (2026-06-05T21:40:46Z) Remote Linux PQ audit on `b65defef` confirmed the TLS/ECC symbols were gone, but surfaced a scanner false positive where the unbounded binary `vesta` pattern matched Rust `NativeState` symbols. The binary scan now uses token boundaries for Pallas/Vesta just like the source scan, while hard forbidden crypto names remain substring matches; local `bash scripts/security-audit.sh --quick` passed.
-- [ ] Push or otherwise deploy the fixed branch to `hegemon-dev`, restart the service from a clean release directory, and verify mining plus transaction/action inclusion.
+- [x] (2026-06-05T21:46:31Z) Deployed commit `cd39ed554481e440f29d857f06993155d07564e8` to `hegemon-dev` from `/home/ubuntu/hegemon-current-cd39ed55`; remote release build, full PQ audit, node dependency graph check, chrony health, mining, action inclusion, pending-clear, and bridge witness export all passed.
 
 ## Surprises & Discoveries
 
@@ -78,6 +78,12 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
   Evidence: full `bash scripts/security-audit.sh` passed with a clean native binary symbol scan; `bash scripts/dependency-audit-gate.sh` printed `dependency audit findings: 8 total, 8 waived, 0 unwaived`; `output/proving-redteam/20260605T203718Z/summary.txt` shows `overall=pass` for all eight campaigns.
 - Observation: The binary scanner needed the same Pallas/Vesta token-boundary handling as the source scanner.
   Evidence: the Linux binary scan after the TLS split found only `_ZN...NativeState...` symbols; manual `strings` checks showed the match came from `vesta` inside `NativeState`, not from curve/TLS code.
+- Observation: The final `hegemon-dev` deployment is healthy and mining on the fixed release binary.
+  Evidence: `systemctl show hegemon-node` reported `ActiveState=active`, `SubState=running`, `WorkingDirectory=/home/ubuntu/hegemon-current-cd39ed55`, and `MainPID=602861`; RPC health reported `isSyncing=false`, `peers=0`, `shouldHavePeers=false`; mining advanced from height `396437` to `396438` immediately after restart and later reported `is_mining=true`, `blocks_found=15`, and height `396451`.
+- Observation: A real dev action was accepted, mined, and exported through the bridge witness path after deployment.
+  Evidence: `hegemon_submitAction` accepted transaction `0x65e1fef244321da5a574e787bb00c66be3e8d3e2f2df5d165f68306b9b670728`; witness export found the message at source height `396442` with `pending_count=0`, `long_range_proof_bytes_hex_len=30664`, and message hash `0x7fef93f4cb982b8a59a573d97d3b183d044fb1ce3906926a961e6ea527bbf10316ca46d68e4c5ed3dc4b891666fde5cf`.
+- Observation: The remote VPS has a clean PQ release audit but does not have `cargo-audit` installed for the dependency gate.
+  Evidence: `ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-cd39ed55 && bash scripts/security-audit.sh'` passed with a clean release binary symbol scan; `bash scripts/dependency-audit-gate.sh` on the VPS failed only because `cargo-audit` is missing. The same commit passed the dependency gate locally with `8 total, 8 waived, 0 unwaived`.
 
 ## Decision Log
 
@@ -96,7 +102,9 @@ The goal is to keep attacking Hegemon’s current 0.10.0 branch until the reposi
 
 ## Outcomes & Retrospective
 
-No outcome yet. This section will be updated when the current sweep either clears all reports or records a remaining blocker.
+The 2026-06-05 sweep cleared the active local reports and deployed the fixed 0.10.0 branch to `hegemon-dev`. The largest findings were binary-level rather than pure source-level: the release node linked classical Groth16/BN254 verification through RISC Zero and then classical TLS/ECC routines through unused or client-only dependencies. Both surfaces were removed from the release node instead of waived. RISC Zero bridge receipt verification now fails closed in the release node after syntactic envelope/journal and message-binding prechecks, and the node dependency graph no longer links `ring`, `rustls`, `native-tls`, or `aws-lc-rs` in normal no-default-feature builds.
+
+The remaining tracked risks are explicit rather than hidden: RISC Zero Hegemon-to-Hegemon receipts are disabled until a PQ-clean verifier is integrated, and the dependency audit still relies on eight waivers including unmaintained trust-boundary codec exposure that should be migrated to a bounded canonical codec. The remote VPS should also install `cargo-audit` if operators want to rerun the dependency gate directly on `hegemon-dev`; the local gate for the deployed commit passed.
 
 ## Context and Orientation
 
@@ -201,7 +209,44 @@ After deeper local fixes, rerun:
     Summary: output/proving-redteam/20260605T191934Z/summary.txt
     overall=pass
 
-Deployment steps will be written with exact commit and remote paths once local reports clear.
+Final current-worktree reports:
+
+    cargo check -p hegemon-node --no-default-features
+    cargo check -p hegemon-node --example hegemon_loopback_bridge --no-default-features
+    cargo check -p wallet
+    cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --no-default-features -- --nocapture
+    make node
+    bash scripts/security-audit.sh
+    bash scripts/dependency-audit-gate.sh
+    HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
+    Summary: output/proving-redteam/20260605T203718Z/summary.txt
+    overall=pass
+
+Final `hegemon-dev` evidence for `cd39ed554481e440f29d857f06993155d07564e8`:
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-cd39ed55 && make node'
+    Finished `release` profile target(s)
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-cd39ed55 && bash scripts/security-audit.sh'
+    AUDIT PASSED
+    No forbidden ECC symbols
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-cd39ed55 && cargo tree -p hegemon-node --no-default-features -i ring -i rustls -i native-tls -i aws-lc-rs --edges normal'
+    no matching packages found
+
+    chronyc tracking
+    Leap status     : Normal
+
+    hegemon_latestBlock / hegemon_miningStatus
+    height advanced from 396437 to 396438; blocks_found advanced from 1 to 2; is_mining=true
+
+    hegemon_submitAction
+    accepted tx hash 0x65e1fef244321da5a574e787bb00c66be3e8d3e2f2df5d165f68306b9b670728
+
+    bridge witness export
+    source height 396442; pending_count=0; long_range_proof_bytes_hex_len=30664
+
+Deployment is complete on `hegemon-dev` for the fixed release path recorded above.
 
 ## Validation and Acceptance
 
@@ -247,3 +292,5 @@ Revision note 2026-06-05T20:35:00Z: Recorded the second remote Linux binary audi
 Revision note 2026-06-05T21:36:18Z: Recorded the final local clear report after the no-classical-TLS split and the CI-mode red-team summary for the current worktree.
 
 Revision note 2026-06-05T21:40:46Z: Recorded the Linux `NativeState`/Vesta binary-scan false positive and the boundary-matched scanner fix.
+
+Revision note 2026-06-05T21:46:31Z: Recorded the final `hegemon-dev` deployment, remote PQ audit, mining/action/witness smoke evidence, and remaining explicit residual risks.
