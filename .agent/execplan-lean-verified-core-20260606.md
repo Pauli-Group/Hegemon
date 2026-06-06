@@ -71,7 +71,8 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T22:16:00Z) Validated branch tip `3c8b31e7` on `hegemon-dev`: the expanded formal-core gate passed with transaction Merkle-path conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403507`, mining advanced from height `403508` to `403510`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403513`.
 - [x] (2026-06-06T22:48:00Z) Added a Lean transaction public-input shape kernel proving representative accept/reject facts for fixed vector widths, boolean flags, inactive-field zeroing, active nullifier/commitment nonzero checks, nonempty transaction admission, balance-slot ordering, and stablecoin asset membership.
 - [x] (2026-06-06T22:48:00Z) Added `gen_public_input_vectors`, a `transaction-circuit` conformance test for generated public-input shape examples, and wired that test into `scripts/check_formal_core.sh` plus the formal inventory, claims ledger, blueprint DAG, and docs.
-- [x] (2026-06-06T22:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 16 claims, 14 production-eligible claims, 16 blueprint nodes, and 38 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
+- [x] (2026-06-06T22:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 16 claims, 14 production-eligible claims, 16 blueprint nodes, and 38 falsification cases.
+- [x] (2026-06-06T22:56:00Z) Validated branch tip `1692cccd` on `hegemon-dev`: the expanded formal-core gate passed with transaction public-input shape conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403694`, mining advanced from height `403694` to `403695`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403698`.
 
 ## Surprises & Discoveries
 
@@ -182,6 +183,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now checks ten Lean-to-Rust conformance surfaces.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding transaction public-input shape, ran bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, light-client Work48, consensus proof-policy, consensus/native supply accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape generated vector checks, and reported `claims = 16`, `production_eligible = 14`, `nodes = 16`, and `falsification_cases = 38`.
+
+- Observation: `hegemon-dev` can run the transaction public-input shape proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `1692cccd` built 57 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape conformance, and reported `claims = 16`, `production_eligible = 14`, `nodes = 16`, and `falsification_cases = 38`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403694`; a 25-second height sample advanced from `403694` to `403695`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403698`.
 
 ## Decision Log
 
@@ -352,6 +356,8 @@ Revision note 2026-06-06T18:44:00Z: Added shared Lean byte helpers, a shielded n
 Revision note 2026-06-06T18:50:00Z: Recorded `hegemon-dev` validation for commit `0e6e6030`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
 
 Revision note 2026-06-06T22:48:00Z: Added the transaction public-input shape Lean kernel, generated conformance vectors, production `TransactionPublicInputsP3::validate` vector test, formal-core integration, formal inventory, claims/blueprint updates, and local validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-06T22:56:00Z: Recorded `hegemon-dev` validation for commit `1692cccd`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
 
 Revision note 2026-06-06T19:24:00Z: Added Lean fork-choice ordering theorems, generated consensus conformance vectors, a shared production fork-choice helper used by PoW consensus and native import, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
 
