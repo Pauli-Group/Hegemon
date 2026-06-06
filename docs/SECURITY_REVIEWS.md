@@ -117,16 +117,24 @@ That default gate requires `review_state = candidate_under_review`, `maturity_la
 
 ## 3. Formal verification & continuous security testing
 
-- Formal specs live under `circuits/formal/` and `consensus/spec/formal/`. Run them with either [TLC](https://github.com/tlaplus/tlaplus) or [Apalache](https://apalache.informal.systems/):
+- The mandatory release-facing formal gate is:
+
+  ```bash
+  bash scripts/check_formal_core.sh
+  ```
+
+  It validates `config/formal-security-claims.json`, checks the formal inventory, verifies independent bridge message/replay vectors in `testdata/formal_core_vectors/`, and reruns the existing native backend reference vectors in `testdata/native_backend_vectors/`.
+- Formal specs live under `circuits/formal/` and `consensus/spec/formal/`. Run them with either [TLC](https://github.com/tlaplus/tlaplus) or [Apalache](https://apalache.informal.systems/) when a spec changes:
   ```bash
   # Example: verify MASP balance preservation
   cd circuits/formal
   tlc -deadlock transaction_balance.tla -config transaction_balance.cfg
 
-  # Example: check PoW gossip safety invariants up to 5 rounds
+  # Example: check the PoW fork-choice invariant
   cd consensus/spec/formal
-  apalache-mc check --max-steps=10 --inv=NoDoubleCommit hotstuff_safety.tla
+  apalache-mc check --max-steps=20 --inv=ForkChoiceInvariant pow_longest_chain.tla
   ```
+- If TLC/Apalache are installed locally, `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh` also asks the wrapper to run those model-checker commands. The default CI gate checks the model inventory and reference vectors without assuming those external binaries exist.
 - Continuous security testing harnesses:
   - `circuits/transaction/tests/security_fuzz.rs` – property-based witness validation (balance slots, nullifiers, input/output bounds).
   - `network/tests/adversarial.rs` – tampered handshake transcripts and miner-share control messages must be rejected deterministically.
@@ -135,6 +143,7 @@ That default gate requires `review_state = candidate_under_review`, `maturity_la
 - The proving attack ledger lives in [docs/crypto/proving_attack_matrix.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/proving_attack_matrix.md).
 - `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` is the merge-blocking hostile proving suite.
 - `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` is the heavier release-hardening pass and adds fuzz/adversarial suites that are too expensive for every PR.
+- CI job `formal-core` runs `bash scripts/check_formal_core.sh`; release job `security-gates` runs the same gate before publishing binaries.
 - CI job `security-adversarial` (see `.github/workflows/ci.yml`) runs the `ci` red-team suite on every push/PR. Failures block merges until triaged via `runbooks/security_testing.md`.
 - CI job `dependency-audit` and release job `security-gates` run `./scripts/dependency-audit-gate.sh`; every cargo-audit finding must either be removed or listed in `config/dependency-audit-waivers.json` with expiry, package/version, reason, and tracking id.
 
@@ -253,6 +262,7 @@ Keep the log chronological; when closing a finding, link the merge commit and up
 ## 5. Local checklist
 
 1. Read `DESIGN.md`, `METHODS.md`, and this file before any cryptographic, miner-identity, or network change.
-2. If modifying circuits or hashes, update `circuits/formal/README.md` and rerun TLC; paste the summary output into the PR description.
-3. If touching consensus logic, rerun `consensus/spec/formal` checks plus the network adversarial test with PoW-specific seeds.
-4. Before tagging a release, run `./runbooks/security_testing.md` steps to collect fresh artifacts for miners, pool maintainers, and auditors.
+2. Run `bash scripts/check_formal_core.sh` before opening security-sensitive PRs.
+3. If modifying circuits or hashes, update `circuits/formal/README.md` and rerun TLC/Apalache when available; paste the summary output into the PR description.
+4. If touching consensus logic, rerun `consensus/spec/formal` checks plus the network adversarial test with PoW-specific seeds.
+5. Before tagging a release, run `./runbooks/security_testing.md` steps to collect fresh artifacts for miners, pool maintainers, and auditors.

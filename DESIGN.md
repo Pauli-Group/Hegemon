@@ -222,7 +222,7 @@ None of these tricks negate the inherent bandwidth hit of transparent proofs, bu
 
 ### 2.5 Formal verification and adversarial pipelines
 
-The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. Both the formal model and the fuzz harness are wired into the `security-adversarial` CI job, so contributors get immediate feedback when the balance/tag logic drifts.
+The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache when those tools are available, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. The release-facing formal gate is `scripts/check_formal_core.sh`: it checks the formal model inventory, validates the machine-readable claims ledger in `config/formal-security-claims.json`, verifies independent bridge message/replay vectors, and reruns the native backend reference vectors. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. The fuzz harness remains in the `security-adversarial` CI job, while the formal inventory and reference-vector checks run in the dedicated `formal-core` CI job.
 
 ### 2.6 Aggregation mode (native product lane)
 
@@ -571,7 +571,7 @@ These scaffolds exist to keep the design’s PQ security assumptions observable.
 ## 8. Security assurance program
 
 - **Cryptanalysis & audits** – `docs/SECURITY_REVIEWS.md` defines how we commission lattice/hash reviews and third-party audits. Design-impacting findings must be mirrored in the sections above plus `METHODS.md`, and every mitigation PR links back to the finding ID logged there.
-- **Formal verification** – TLA+ specs under `circuits/formal/` (transaction balance) and `consensus/spec/formal/` (HotStuff safety/liveness) are now part of the release checklist. Any modification to witness layouts, balance tags, or consensus phases must update the corresponding spec and README.
+- **Formal verification** – TLA+ specs under `circuits/formal/` (transaction balance) and `consensus/spec/formal/` (PoW fork choice/finality) plus `config/formal-security-claims.json` are part of the release checklist. Any modification to witness layouts, balance tags, bridge message semantics, proof-artifact byte grammar, or consensus phases must update the corresponding spec/vector/claim file and README.
 - **Continuous adversarial testing** – The `security-adversarial` CI job runs the new property-based tests for transaction validation, network handshakes, wallet address encoding, and the root-level adversarial flow in `tests/security_pipeline.rs`. Operators follow `runbooks/security_testing.md` when the job fails, capturing artifacts for auditors before re-running.
 
 Together these loops ensure PQ parameter choices, circuit semantics, and miner logic stay observable and auditable as the system evolves.

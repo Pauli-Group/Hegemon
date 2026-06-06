@@ -39,6 +39,23 @@ jobs:
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 
+  formal-core:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "formal-core"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Formal-core release gate
+        run: bash scripts/check_formal_core.sh
+
   core-tests:
     runs-on: ubuntu-latest
     needs: rust-lints
@@ -156,6 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - dependency-audit
+      - formal-core
       - core-tests
       - native-path-tests
       - security-adversarial

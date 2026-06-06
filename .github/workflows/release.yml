@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
@@ -29,6 +32,12 @@ jobs:
 
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
+
+      - name: Formal-core release gate
+        run: bash scripts/check_formal_core.sh
+
+      - name: Native backend review package verification
+        run: ./scripts/verify_native_backend_review_package.sh
 
       - name: Native backend release posture gate
         run: ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
