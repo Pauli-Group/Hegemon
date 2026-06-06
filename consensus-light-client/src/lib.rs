@@ -1585,7 +1585,39 @@ fn double_sha256(bytes: &[u8]) -> Hash32 {
 mod tests {
     use super::*;
     use codec::Encode;
+    use num_bigint::BigUint;
     use protocol_kernel::bridge::bridge_payload_hash;
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPowVectorFile {
+        schema_version: u32,
+        pow_admission_cases: Vec<LeanPowAdmissionCase>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPowAdmissionCase {
+        name: String,
+        parent_height: u64,
+        header_height: u64,
+        expected_pow_bits: u32,
+        pow_bits: u32,
+        parent_timestamp_ms: u64,
+        median_time_past_ms: u64,
+        now_ms: u64,
+        header_timestamp_ms: u64,
+        work_hash_value: String,
+        parent_work: String,
+        claimed_cumulative_work: String,
+        expected_target: Option<String>,
+        expected_block_work: Option<String>,
+        expected_cumulative_work: Option<String>,
+        expected_result: String,
+    }
 
     fn checkpoint(pow_bits: u32) -> TrustedCheckpointV1 {
         TrustedCheckpointV1 {
@@ -1653,6 +1685,138 @@ mod tests {
         assert_ne!(work, zero_work());
         let cumulative = cumulative_work_after(&zero_work(), pow_bits).unwrap();
         assert_eq!(cumulative, work);
+    }
+
+    #[test]
+    fn lean_generated_pow_admission_vectors_match_light_client() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_POW_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_POW_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean PoW vectors");
+        let vectors: LeanPowVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.pow_admission_cases.is_empty(),
+            "Lean PoW admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.pow_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_pow_case_light_client(case);
+        }
+    }
+
+    fn verify_lean_pow_case_light_client(case: &LeanPowAdmissionCase) {
+        let expected_target = case.expected_target.as_deref().map(work32_from_decimal);
+        let expected_block_work = case.expected_block_work.as_deref().map(work48_from_decimal);
+        match compact_to_target(case.pow_bits) {
+            Ok(target) => {
+                assert_eq!(
+                    Some(target),
+                    expected_target,
+                    "{} compact target drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(block_work_from_bits(case.pow_bits).expect("block work")),
+                    expected_block_work,
+                    "{} block work drifted from Lean spec",
+                    case.name
+                );
+                if matches!(
+                    case.expected_result.as_str(),
+                    "accepted" | "insufficient_work"
+                ) {
+                    assert_eq!(
+                        hash_meets_target(
+                            &work32_from_decimal(&case.work_hash_value),
+                            case.pow_bits
+                        )
+                        .expect("hash target check"),
+                        case.expected_result == "accepted",
+                        "{} hash target comparison drifted from Lean spec",
+                        case.name
+                    );
+                }
+            }
+            Err(_) => {
+                assert_eq!(
+                    None, expected_target,
+                    "{} light client rejected a target Lean accepted",
+                    case.name
+                );
+                assert_eq!(None, expected_block_work);
+                return;
+            }
+        }
+
+        let parent_work = work48_from_decimal(&case.parent_work);
+        let claimed = work48_from_decimal(&case.claimed_cumulative_work);
+        let expected_cumulative = case
+            .expected_cumulative_work
+            .as_deref()
+            .map(work48_from_decimal);
+        match cumulative_work_after(&parent_work, case.pow_bits) {
+            Ok(cumulative) => {
+                assert_eq!(
+                    Some(cumulative),
+                    expected_cumulative,
+                    "{} cumulative work drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(err) => {
+                assert_eq!(
+                    err,
+                    LightClientError::CumulativeWorkOverflow,
+                    "{} unexpected cumulative work error",
+                    case.name
+                );
+                assert_eq!(None, expected_cumulative);
+            }
+        }
+
+        let verification = verify_cumulative_work(&parent_work, case.pow_bits, &claimed);
+        match case.expected_result.as_str() {
+            "accepted" => assert_eq!(verification, Ok(()), "{}", case.name),
+            "cumulative_work_mismatch" => assert_eq!(
+                verification,
+                Err(LightClientError::CumulativeWorkMismatch),
+                "{}",
+                case.name
+            ),
+            "cumulative_work_overflow" => assert_eq!(
+                verification,
+                Err(LightClientError::CumulativeWorkOverflow),
+                "{}",
+                case.name
+            ),
+            _ => {}
+        }
+    }
+
+    fn work32_from_decimal(raw: &str) -> Hash32 {
+        let value = parse_biguint(raw).to_bytes_be();
+        assert!(value.len() <= 32, "decimal value must fit 32 bytes");
+        let mut out = [0u8; 32];
+        out[32 - value.len()..].copy_from_slice(&value);
+        out
+    }
+
+    fn work48_from_decimal(raw: &str) -> Work48 {
+        let value = parse_biguint(raw).to_bytes_be();
+        assert!(value.len() <= 48, "decimal value must fit 48 bytes");
+        let mut out = [0u8; 48];
+        out[48 - value.len()..].copy_from_slice(&value);
+        out
+    }
+
+    fn parse_biguint(raw: &str) -> BigUint {
+        raw.parse::<BigUint>()
+            .expect("Lean PoW vector value must be a decimal integer")
     }
 
     #[test]

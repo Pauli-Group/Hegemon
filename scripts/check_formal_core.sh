@@ -29,16 +29,18 @@ printf '\n[4/11] Verifying Lean-generated Rust conformance vectors\n'
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_SHIELDED_VECTORS="$(mktemp)"
 LEAN_CONSENSUS_VECTORS="$(mktemp)"
+LEAN_POW_VECTORS="$(mktemp)"
 LEAN_PROOF_POLICY_VECTORS="$(mktemp)"
 LEAN_SUPPLY_VECTORS="$(mktemp)"
 LEAN_ACTION_ORDER_VECTORS="$(mktemp)"
 LEAN_TRANSACTION_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS"' EXIT
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
   lake exe gen_shielded_vectors > "$LEAN_SHIELDED_VECTORS"
   lake exe gen_consensus_vectors > "$LEAN_CONSENSUS_VECTORS"
+  lake exe gen_pow_vectors > "$LEAN_POW_VECTORS"
   lake exe gen_proof_policy_vectors > "$LEAN_PROOF_POLICY_VECTORS"
   lake exe gen_supply_vectors > "$LEAN_SUPPLY_VECTORS"
   lake exe gen_action_order_vectors > "$LEAN_ACTION_ORDER_VECTORS"
@@ -50,6 +52,10 @@ HEGEMON_LEAN_SHIELDED_VECTORS="$LEAN_SHIELDED_VECTORS" \
   cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture
 HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
   cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture
+HEGEMON_LEAN_POW_VECTORS="$LEAN_POW_VECTORS" \
+  cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture
+HEGEMON_LEAN_POW_VECTORS="$LEAN_POW_VECTORS" \
+  cargo test -p consensus-light-client lean_generated_pow_admission_vectors_match_light_client -- --nocapture
 HEGEMON_LEAN_PROOF_POLICY_VECTORS="$LEAN_PROOF_POLICY_VECTORS" \
   cargo test -p consensus lean_generated_proof_policy_vectors_match_production -- --nocapture
 HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \

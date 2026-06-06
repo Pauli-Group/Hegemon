@@ -9,6 +9,11 @@ codec = { workspace = true }
 protocol-kernel = { path = "../protocol/kernel", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 
+[dev-dependencies]
+num-bigint = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [features]
 default = ["std"]
 std = [

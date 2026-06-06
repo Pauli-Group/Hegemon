@@ -16,6 +16,9 @@ lean_exe gen_shielded_vectors where
 lean_exe gen_consensus_vectors where
   root := `Hegemon.Consensus.GenerateVectors
 
+lean_exe gen_pow_vectors where
+  root := `Hegemon.Consensus.GeneratePowVectors
+
 lean_exe gen_proof_policy_vectors where
   root := `Hegemon.Consensus.GenerateProofPolicyVectors
 

@@ -116,7 +116,7 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "assumptions": [
-        "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not target arithmetic or header hashing.",
+        "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not PoW admission arithmetic or header hashing.",
         "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import.",
         "The theorem covers deterministic two-tip fork-choice ordering, not every network partition, timestamp edge case, or long-range adversarial mining schedule."
       ],
@@ -129,6 +129,34 @@
         "consensus/spec/formal/pow_longest_chain.tla",
         "consensus/spec/formal/pow_longest_chain.cfg",
         "consensus/spec/formal/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.pow-admission",
+      "component": "PoW header admission arithmetic",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean PoW admission kernel proves compact-target rejection, strict timestamp admission, hash-threshold rejection, and fixed-width cumulative-work behavior; generated Lean vectors are checked against consensus admission and light-client Work48 helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents arithmetic over already-computed PoW hash values; it does not prove header serialization or hash-function implementation equivalence.",
+        "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
+        "The theorem covers executable target/timestamp/work admission semantics, not difficulty-retarget economics, network orphan policy, header hashing, or long-range adversarial mining schedules."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],

@@ -783,8 +783,11 @@ name = "consensus-light-client"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "num-bigint",
  "parity-scale-codec",
  "protocol-kernel",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
 ]
 

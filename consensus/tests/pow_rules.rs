@@ -8,7 +8,7 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::proof::HashVerifier;
 use consensus::{CommitmentTreeState, ConsensusError, NullifierSet, PowConsensus, Transaction};
 
-const ALWAYS_VALID_TEST_POW_BITS: u32 = 0x3f00_ffff;
+const ALWAYS_VALID_TEST_POW_BITS: u32 = 0x20ff_ffff;
 
 fn base_pow_params<'a>(
     miner: &'a TestValidator,

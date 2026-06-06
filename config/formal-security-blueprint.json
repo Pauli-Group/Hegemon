@@ -240,7 +240,59 @@
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove target arithmetic, header hashing, every network partition, timestamp edge case, or long-range adversarial mining schedule."
+      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, header hashing, every network partition, timestamp edge case, or long-range adversarial mining schedule."
+    },
+    {
+      "id": "consensus.pow-admission",
+      "claim_id": "consensus.pow-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean PoW admission transition, a block candidate is rejected when height, pow_bits, timestamp, compact target, hash threshold, claimed cumulative Work48, or Work48 overflow violate the specified arithmetic policy; otherwise the expected cumulative work is accepted.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for PoW target, timestamp, hash-threshold, and Work48 cumulative-work admission semantics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-pow-admission-theorem",
+          "description": "Removing or weakening the PoW admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-pow-conformance",
+          "description": "Changing production consensus or light-client PoW arithmetic away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "pow-rule-regressions",
+          "description": "Existing PoW rule tests must continue rejecting target, timestamp, miner-identity, and signature violations.",
+          "gate": "cargo test -p consensus --test pow_rules -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove header serialization, hash-function implementation equivalence, retarget economics, network orphan policy, or long-range finality."
     },
     {
       "id": "consensus.self-contained-proof-policy",
@@ -347,7 +399,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove target arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
+      "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove PoW admission arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
     },
     {
       "id": "native.block-action-ordering",

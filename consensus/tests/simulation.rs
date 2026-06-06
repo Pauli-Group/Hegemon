@@ -90,7 +90,7 @@ async fn bft_consensus_liveness_and_slashing() {
 fn pow_chain_accepts_valid_work() {
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
-    let pow_bits = 0x3f00ffff; // extremely easy target
+    let pow_bits = 0x20ff_ffff; // largest valid 256-bit test target
     let genesis_tree = CommitmentTreeState::default();
     let mut consensus = PowConsensus::with_genesis_pow_bits(
         vec![miner.validator.public_key().clone()],

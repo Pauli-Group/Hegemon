@@ -60,6 +60,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T21:05:00Z) Added `gen_proof_policy_vectors` and a consensus conformance test that checks generated Lean proof-policy examples against the production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier`.
 - [x] (2026-06-06T21:05:00Z) Ran `bash scripts/check_lean_formal.sh`, `HEGEMON_LEAN_PROOF_POLICY_VECTORS=<generated-json> cargo test -p consensus lean_generated_proof_policy_vectors_match_production -- --nocapture`, `cargo test -p consensus --test self_contained_mode -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 13 claims, 11 production-eligible claims, 13 blueprint nodes, and 29 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
 - [x] (2026-06-06T21:17:00Z) Validated branch tip `cc446317` on `hegemon-dev`: the expanded formal-core gate passed with consensus proof-policy conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403167`, mining advanced from height `403168` to `403170`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403173`.
+- [x] (2026-06-06T21:48:00Z) Added a Lean consensus PoW-admission kernel proving compact-target rejection, strict timestamp admission, hash-threshold rejection, fixed-width Work48 addition, and executable admission accept/reject facts.
+- [x] (2026-06-06T21:48:00Z) Added `gen_pow_vectors`, consensus conformance against the production `evaluate_pow_admission` helper used by `PowConsensus`, and light-client conformance against compact-target, hash-threshold, and Work48 cumulative-work helpers.
+- [x] (2026-06-06T21:48:00Z) Hardened `PowConsensus` to reject timestamps equal to the parent timestamp and compact targets with exponents over 32, replacing the old private ad hoc admission checks with the shared helper.
+- [x] (2026-06-06T21:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused PoW generated-vector tests, `cargo test -p consensus --test pow_rules --test simulation --test pq_runtime_compat -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 14 claims, 12 production-eligible claims, 14 blueprint nodes, and 32 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
 
 ## Surprises & Discoveries
 
@@ -150,6 +154,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the consensus proof-policy proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `cc446317` passed with consensus proof-policy conformance and reported `claims = 13`, `production_eligible = 11`, `nodes = 13`, and `falsification_cases = 29`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403167`; a 25-second height sample advanced from `403168` to `403170`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403173`.
 
+- Observation: The consensus PoW admission claim now has a Lean-backed executable arithmetic slice.
+  Evidence: `formal/lean/Hegemon/Consensus/PowRules.lean` proves compact-target zero-mantissa and exponent-over-32 rejection, strict timestamp parent/median/future-skew rejection, Work48 checked addition, height/pow_bits/insufficient-work rejection, and valid admission acceptance; `formal/lean/Hegemon/Consensus/GeneratePowVectors.lean` emits 11 examples; `consensus/src/pow.rs` checks those vectors against `evaluate_pow_admission`, and `consensus-light-client/src/lib.rs` checks compact-target, hash-threshold, and Work48 cumulative-work helpers against the same vectors.
+
+- Observation: The expanded formal-core gate now checks eight Lean-to-Rust conformance surfaces.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding consensus PoW admission, ran bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, consensus proof-policy, consensus/native supply accounting, native action-ordering, and transaction-balance generated vector checks, and reported `claims = 14`, `production_eligible = 12`, `nodes = 14`, and `falsification_cases = 32`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -190,6 +200,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize the self-contained proof payload policy before deeper recursive proof-system soundness.
   Rationale: The shipped product path depends on fail-closed proof availability and route-shape checks before any expensive cryptographic verification. Proving and vector-checking that executable admission table makes the consensus path less ambiguous now, while recursive proof soundness, tx leaf proof soundness, DA derivation, and native backend security remain separate larger proof obligations.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize PoW admission arithmetic before deeper bridge/light-client proof composition.
+  Rationale: Compact target expansion, timestamp admission, hash-threshold comparison, and fixed-width cumulative-work checks are production-critical header validity rules and are explicitly reused by native import and bridge verification. Proving and vector-checking those arithmetic boundaries removes a stale formal gap before attempting full header serialization, retarget economics, or long-range finality proofs.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -335,3 +349,5 @@ Revision note 2026-06-06T21:00:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T21:05:00Z: Added the Lean consensus proof-policy kernel, generated proof-policy vectors, a production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier`, a consensus conformance test, formal metadata/docs updates, and local validation. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-06T21:17:00Z: Recorded `hegemon-dev` validation for commit `cc446317`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-06T21:48:00Z: Added the Lean consensus PoW-admission kernel, generated PoW vectors, consensus/light-client Rust conformance tests, strict consensus timestamp/compact-target hardening, metadata/docs updates, and local validation. Remote `hegemon-dev` validation is still pending.

@@ -10,7 +10,7 @@ use consensus::proof::HashVerifier;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::{SigningKey, VerifyKey};
 
-const EASY_POW_BITS: u32 = 0x3f00ffff;
+const EASY_POW_BITS: u32 = 0x20ff_ffff;
 
 #[test]
 fn runtime_signatures_verify_pow_blocks() {

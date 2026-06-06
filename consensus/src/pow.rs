@@ -40,6 +40,95 @@ struct PowNode {
     supply_digest: SupplyDigest,
 }
 
+struct PowAdmissionInput<'a> {
+    parent_height: u64,
+    header_height: u64,
+    expected_pow_bits: u32,
+    pow_bits: u32,
+    parent_timestamp_ms: u64,
+    median_time_past_ms: u64,
+    now_ms: u64,
+    header_timestamp_ms: u64,
+    work_hash: &'a [u8; 32],
+    parent_work: &'a BigUint,
+}
+
+struct PowAdmission {
+    cumulative_work: BigUint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PowAdmissionRejection {
+    HeightMismatch,
+    PowBitsMismatch,
+    TimestampNotAdvanced,
+    TimestampNotAfterMedian,
+    TimestampFutureSkew,
+    InvalidCompactTarget,
+    InsufficientWork,
+}
+
+#[cfg(test)]
+impl PowAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::HeightMismatch => "height_mismatch",
+            Self::PowBitsMismatch => "pow_bits_mismatch",
+            Self::TimestampNotAdvanced => "timestamp_not_advanced",
+            Self::TimestampNotAfterMedian => "timestamp_not_after_median",
+            Self::TimestampFutureSkew => "timestamp_future_skew",
+            Self::InvalidCompactTarget => "invalid_compact_target",
+            Self::InsufficientWork => "insufficient_work",
+        }
+    }
+}
+
+fn evaluate_pow_admission(
+    input: PowAdmissionInput<'_>,
+) -> Result<PowAdmission, PowAdmissionRejection> {
+    if input.header_height != input.parent_height.saturating_add(1) {
+        return Err(PowAdmissionRejection::HeightMismatch);
+    }
+    if input.pow_bits != input.expected_pow_bits {
+        return Err(PowAdmissionRejection::PowBitsMismatch);
+    }
+    if input.header_timestamp_ms <= input.parent_timestamp_ms {
+        return Err(PowAdmissionRejection::TimestampNotAdvanced);
+    }
+    if input.header_timestamp_ms <= input.median_time_past_ms {
+        return Err(PowAdmissionRejection::TimestampNotAfterMedian);
+    }
+    let future_limit = input.now_ms.saturating_add(MAX_FUTURE_SKEW_MS);
+    if input.header_timestamp_ms > future_limit {
+        return Err(PowAdmissionRejection::TimestampFutureSkew);
+    }
+
+    let target = compact_to_target(input.pow_bits)
+        .map_err(|_| PowAdmissionRejection::InvalidCompactTarget)?;
+    let header_hash = BigUint::from_bytes_be(input.work_hash);
+    if header_hash > target {
+        return Err(PowAdmissionRejection::InsufficientWork);
+    }
+    let block_work = target_to_work(&target);
+    Ok(PowAdmission {
+        cumulative_work: input.parent_work + block_work,
+    })
+}
+
+fn pow_admission_rejection_to_error(rejection: PowAdmissionRejection) -> ConsensusError {
+    match rejection {
+        PowAdmissionRejection::HeightMismatch => ConsensusError::ForkChoice("height mismatch"),
+        PowAdmissionRejection::PowBitsMismatch => ConsensusError::Pow("unexpected pow bits".into()),
+        PowAdmissionRejection::TimestampNotAdvanced
+        | PowAdmissionRejection::TimestampNotAfterMedian
+        | PowAdmissionRejection::TimestampFutureSkew => ConsensusError::Timestamp,
+        PowAdmissionRejection::InvalidCompactTarget => {
+            ConsensusError::Pow("invalid compact target".into())
+        }
+        PowAdmissionRejection::InsufficientWork => ConsensusError::Pow("insufficient work".into()),
+    }
+}
+
 impl PowNode {
     fn better_than(&self, other: &PowNode, self_hash: &[u8; 32], other_hash: &[u8; 32]) -> bool {
         fork_choice_prefers_candidate(
@@ -179,24 +268,9 @@ impl<V: ProofVerifier> PowConsensus<V> {
             .nodes
             .get(&parent_hash)
             .ok_or(ConsensusError::ForkChoice("unknown parent"))?;
-        if block.header.height != parent_node.height + 1 {
-            return Err(ConsensusError::ForkChoice("height mismatch"));
-        }
         let expected_bits = self.expected_pow_bits(parent_hash, block.header.height)?;
-        if pow.pow_bits != expected_bits {
-            return Err(ConsensusError::Pow("unexpected pow bits".into()));
-        }
-        if block.header.timestamp_ms < parent_node.timestamp_ms {
-            return Err(ConsensusError::Timestamp);
-        }
         let median = self.median_time_past(parent_hash);
-        if block.header.timestamp_ms <= median {
-            return Err(ConsensusError::Timestamp);
-        }
-        let future_limit = current_time_ms().saturating_add(MAX_FUTURE_SKEW_MS);
-        if block.header.timestamp_ms > future_limit {
-            return Err(ConsensusError::Timestamp);
-        }
+        let now_ms = current_time_ms();
 
         let coinbase = block
             .coinbase
@@ -247,12 +321,21 @@ impl<V: ProofVerifier> PowConsensus<V> {
             return Err(ConsensusError::InvalidHeader("nullifier root mismatch"));
         }
 
-        let header_hash = BigUint::from_bytes_be(&block.header.hash()?);
-        let target = compact_to_target(pow.pow_bits)?;
-        if header_hash > target {
-            return Err(ConsensusError::Pow("insufficient work".into()));
-        }
-        let cumulative_work = parent_node.work.clone() + target_to_work(&target);
+        let block_hash = block.header.hash()?;
+        let pow_admission = evaluate_pow_admission(PowAdmissionInput {
+            parent_height: parent_node.height,
+            header_height: block.header.height,
+            expected_pow_bits: expected_bits,
+            pow_bits: pow.pow_bits,
+            parent_timestamp_ms: parent_node.timestamp_ms,
+            median_time_past_ms: median,
+            now_ms,
+            header_timestamp_ms: block.header.timestamp_ms,
+            work_hash: &block_hash,
+            parent_work: &parent_node.work,
+        })
+        .map_err(pow_admission_rejection_to_error)?;
+        let cumulative_work = pow_admission.cumulative_work;
 
         let commitment_tree = self
             .verifier
@@ -266,7 +349,6 @@ impl<V: ProofVerifier> PowConsensus<V> {
             return Err(ConsensusError::InvalidHeader("kernel root mismatch"));
         }
 
-        let block_hash = block.header.hash()?;
         let node = PowNode {
             height: block.header.height,
             work: cumulative_work.clone(),
@@ -432,8 +514,8 @@ impl<V: ProofVerifier> PowConsensus<V> {
 fn compact_to_target(bits: u32) -> Result<BigUint, ConsensusError> {
     let exponent = bits >> 24;
     let mantissa = bits & 0x00ff_ffff;
-    if mantissa == 0 {
-        return Err(ConsensusError::Pow("zero mantissa".into()));
+    if mantissa == 0 || exponent > 32 {
+        return Err(ConsensusError::Pow("invalid compact target".into()));
     }
     let mut target = BigUint::from(mantissa);
     if exponent > 3 {
@@ -491,5 +573,163 @@ fn current_time_ms() -> u64 {
             }
         }
         Err(_) => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPowVectorFile {
+        schema_version: u32,
+        pow_admission_cases: Vec<LeanPowAdmissionCase>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPowAdmissionCase {
+        name: String,
+        parent_height: u64,
+        header_height: u64,
+        expected_pow_bits: u32,
+        pow_bits: u32,
+        parent_timestamp_ms: u64,
+        median_time_past_ms: u64,
+        now_ms: u64,
+        header_timestamp_ms: u64,
+        work_hash_value: String,
+        parent_work: String,
+        claimed_cumulative_work: String,
+        expected_target: Option<String>,
+        expected_block_work: Option<String>,
+        expected_cumulative_work: Option<String>,
+        expected_result: String,
+    }
+
+    #[test]
+    fn lean_generated_pow_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_POW_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_POW_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean PoW vectors");
+        let vectors: LeanPowVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.pow_admission_cases.is_empty(),
+            "Lean PoW admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        let mut checked_admission_cases = 0usize;
+        for case in &vectors.pow_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_compact_target_and_work(case);
+            if matches!(
+                case.expected_result.as_str(),
+                "cumulative_work_mismatch" | "cumulative_work_overflow"
+            ) {
+                continue;
+            }
+            checked_admission_cases += 1;
+            verify_pow_admission_case(case);
+        }
+        assert!(
+            checked_admission_cases >= 8,
+            "consensus PoW admission gate covered too few Lean cases"
+        );
+    }
+
+    fn verify_compact_target_and_work(case: &LeanPowAdmissionCase) {
+        let expected_target = case.expected_target.as_deref().map(parse_biguint);
+        let expected_block_work = case.expected_block_work.as_deref().map(parse_biguint);
+        match compact_to_target(case.pow_bits) {
+            Ok(target) => {
+                assert_eq!(
+                    Some(target.clone()),
+                    expected_target,
+                    "{} compact target drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(target_to_work(&target)),
+                    expected_block_work,
+                    "{} target work drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(_) => {
+                assert_eq!(
+                    None, expected_target,
+                    "{} production rejected a target Lean accepted",
+                    case.name
+                );
+                assert_eq!(None, expected_block_work);
+            }
+        }
+    }
+
+    fn verify_pow_admission_case(case: &LeanPowAdmissionCase) {
+        let work_hash = biguint_to_hash32(&parse_biguint(&case.work_hash_value));
+        let parent_work = parse_biguint(&case.parent_work);
+        let result = evaluate_pow_admission(PowAdmissionInput {
+            parent_height: case.parent_height,
+            header_height: case.header_height,
+            expected_pow_bits: case.expected_pow_bits,
+            pow_bits: case.pow_bits,
+            parent_timestamp_ms: case.parent_timestamp_ms,
+            median_time_past_ms: case.median_time_past_ms,
+            now_ms: case.now_ms,
+            header_timestamp_ms: case.header_timestamp_ms,
+            work_hash: &work_hash,
+            parent_work: &parent_work,
+        });
+        match result {
+            Ok(admission) => {
+                assert_eq!(
+                    "accepted", case.expected_result,
+                    "{} production accepted a case Lean rejected",
+                    case.name
+                );
+                let expected = case
+                    .expected_cumulative_work
+                    .as_deref()
+                    .map(parse_biguint)
+                    .expect("accepted Lean case must include cumulative work");
+                assert_eq!(
+                    admission.cumulative_work, expected,
+                    "{} cumulative work drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => assert_eq!(
+                rejection.label(),
+                case.expected_result,
+                "{} production rejection drifted from Lean spec",
+                case.name
+            ),
+        }
+    }
+
+    fn parse_biguint(raw: &str) -> BigUint {
+        raw.parse::<BigUint>()
+            .expect("Lean PoW vector value must be a decimal integer")
+    }
+
+    fn biguint_to_hash32(value: &BigUint) -> [u8; 32] {
+        let bytes = value.to_bytes_be();
+        assert!(
+            bytes.len() <= 32,
+            "Lean work_hash_value must fit a 32-byte hash"
+        );
+        let mut out = [0u8; 32];
+        out[32 - bytes.len()..].copy_from_slice(&bytes);
+        out
     }
 }
