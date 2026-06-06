@@ -3284,17 +3284,6 @@ fn transfer_key_extends_canonical_order(
     previous_transfer_key.is_none_or(|previous| transfer_key >= previous)
 }
 
-fn transfer_keys_are_canonical_order(keys: &[[u8; 32]]) -> bool {
-    let mut previous: Option<[u8; 32]> = None;
-    for key in keys {
-        if !transfer_key_extends_canonical_order(previous.as_ref(), key) {
-            return false;
-        }
-        previous = Some(*key);
-    }
-    true
-}
-
 fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
     if action.family_id != FAMILY_BRIDGE {
         return Err(anyhow!("not a bridge action"));
@@ -5506,11 +5495,22 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            transfer_keys_are_canonical_order(&transfer_keys),
+            lean_transfer_keys_are_canonical_order(&transfer_keys),
             case.expected_valid,
             "{} native transfer-order predicate drifted from Lean spec",
             case.name
         );
+    }
+
+    fn lean_transfer_keys_are_canonical_order(keys: &[[u8; 32]]) -> bool {
+        let mut previous: Option<[u8; 32]> = None;
+        for key in keys {
+            if !transfer_key_extends_canonical_order(previous.as_ref(), key) {
+                return false;
+            }
+            previous = Some(*key);
+        }
+        true
     }
 
     #[test]
