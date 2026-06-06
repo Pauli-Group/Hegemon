@@ -60,7 +60,7 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "assumptions": [
-        "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitments, Merkle membership, ciphertext hashes, or hash-derived nullifiers.",
+        "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitment hashing, Merkle hash-function security, ciphertext hashes, or hash-derived nullifiers.",
         "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, and slot overflow cases.",
         "The theorem covers executable balance-slot and validation semantics, not full AIR/proof-system soundness or every witness/public-input field."
       ],
@@ -76,6 +76,34 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "formal.transaction-merkle-membership",
+      "component": "shielded transaction input membership",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean Merkle-path kernel proves executable path-depth, position-bit orientation, computed-root acceptance, and wrong-root/length rejection facts, and generated Lean vectors are checked against the production MerklePath fold helper used by transaction membership verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean Digest model and generated vectors use an abstract mock node combiner to prove and check Merkle path control flow; Poseidon2 merkle_node collision resistance and implementation equivalence are separate cryptographic assumptions.",
+        "The SmallWood native membership precheck rejects paths whose sibling length differs from MERKLE_TREE_DEPTH before calling MerklePath::verify.",
+        "The theorem covers path folding, position-bit orientation, depth admission, and root equality semantics, not note commitment hashing, nullifier derivation, ciphertext hashing, or full AIR/proof-system soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_MERKLE_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_merkle_path_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

@@ -61,6 +61,52 @@ impl Default for MerklePath {
 }
 
 impl MerklePath {
+    /// Fold this authentication path from leaf to root with the supplied node combiner.
+    pub fn root_with<F>(
+        &self,
+        leaf_hash: crate::hashing_pq::HashFelt,
+        position: u64,
+        mut node: F,
+    ) -> crate::hashing_pq::HashFelt
+    where
+        F: FnMut(
+            crate::hashing_pq::HashFelt,
+            crate::hashing_pq::HashFelt,
+        ) -> crate::hashing_pq::HashFelt,
+    {
+        let mut current = leaf_hash;
+        let mut pos = position;
+
+        for sibling in &self.siblings {
+            current = if pos & 1 == 0 {
+                node(current, *sibling)
+            } else {
+                node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+
+        current
+    }
+
+    /// Verify this path with an explicit depth and node combiner.
+    pub fn verify_with_depth_and_node<F>(
+        &self,
+        depth: usize,
+        leaf_hash: crate::hashing_pq::HashFelt,
+        position: u64,
+        root: crate::hashing_pq::HashFelt,
+        node: F,
+    ) -> bool
+    where
+        F: FnMut(
+            crate::hashing_pq::HashFelt,
+            crate::hashing_pq::HashFelt,
+        ) -> crate::hashing_pq::HashFelt,
+    {
+        self.siblings.len() == depth && self.root_with(leaf_hash, position, node) == root
+    }
+
     /// Verify this path connects leaf_hash at position to the given root.
     pub fn verify(
         &self,
@@ -68,19 +114,7 @@ impl MerklePath {
         position: u64,
         root: crate::hashing_pq::HashFelt,
     ) -> bool {
-        let mut current = leaf_hash;
-        let mut pos = position;
-
-        for sibling in &self.siblings {
-            current = if pos & 1 == 0 {
-                merkle_node(current, *sibling)
-            } else {
-                merkle_node(*sibling, current)
-            };
-            pos >>= 1;
-        }
-
-        current == root
+        self.root_with(leaf_hash, position, merkle_node) == root
     }
 }
 
@@ -188,4 +222,131 @@ pub(crate) mod serde_bytes32 {
     }
 
     use serde::Deserialize;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hashing_pq::{Felt, HashFelt};
+    use p3_field::{PrimeCharacteristicRing, PrimeField64};
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMerkleVectorFile {
+        schema_version: u32,
+        merkle_path_cases: Vec<LeanMerkleCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMerkleCase {
+        name: String,
+        depth: usize,
+        leaf: u64,
+        position: u64,
+        siblings: Vec<u64>,
+        expected_fold_root: u64,
+        provided_root: u64,
+        expected_valid: bool,
+    }
+
+    #[test]
+    fn lean_generated_merkle_path_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_MERKLE_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_MERKLE_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean Merkle vectors");
+        let vectors: LeanMerkleVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean Merkle vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.merkle_path_cases.is_empty(),
+            "Lean Merkle path cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.merkle_path_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_merkle_case(case);
+        }
+    }
+
+    #[test]
+    fn merkle_path_explicit_depth_rejects_short_authentication_path() {
+        let leaf = digest_from_u64(1);
+        let path = MerklePath {
+            siblings: vec![digest_from_u64(2)],
+        };
+        let root = path.root_with(leaf, 0, merkle_node);
+
+        assert!(path.verify(leaf, 0, root));
+        assert!(!path.verify_with_depth_and_node(2, leaf, 0, root, merkle_node));
+    }
+
+    #[test]
+    fn merkle_path_position_bit_orientation_changes_root() {
+        let leaf = digest_from_u64(10);
+        let path = MerklePath {
+            siblings: vec![digest_from_u64(20), digest_from_u64(30)],
+        };
+
+        let position_zero_root = path.root_with(leaf, 0, mock_merkle_node);
+        let position_one_root = path.root_with(leaf, 1, mock_merkle_node);
+
+        assert_ne!(position_zero_root, position_one_root);
+        assert!(path.verify_with_depth_and_node(2, leaf, 0, position_zero_root, mock_merkle_node));
+        assert!(!path.verify_with_depth_and_node(2, leaf, 1, position_zero_root, mock_merkle_node));
+    }
+
+    fn verify_lean_merkle_case(case: &LeanMerkleCase) {
+        let path = MerklePath {
+            siblings: case.siblings.iter().copied().map(digest_from_u64).collect(),
+        };
+        let leaf = digest_from_u64(case.leaf);
+        let actual_fold_root = path.root_with(leaf, case.position, mock_merkle_node);
+        assert_eq!(
+            digest_to_u64(actual_fold_root),
+            case.expected_fold_root,
+            "{} production Merkle path fold drifted from Lean spec",
+            case.name
+        );
+
+        let provided_root = digest_from_u64(case.provided_root);
+        assert_eq!(
+            path.verify_with_depth_and_node(
+                case.depth,
+                leaf,
+                case.position,
+                provided_root,
+                mock_merkle_node
+            ),
+            case.expected_valid,
+            "{} production Merkle path admission drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn mock_merkle_node(left: HashFelt, right: HashFelt) -> HashFelt {
+        let left = digest_to_u64(left) as u128;
+        let right = digest_to_u64(right) as u128;
+        let value = (left * 1_315_423_911u128 + right * 2_654_435_761u128 + 97)
+            % 18_446_744_069_414_584_321u128;
+        digest_from_u64(value as u64)
+    }
+
+    fn digest_from_u64(value: u64) -> HashFelt {
+        let mut digest = [Felt::ZERO; 6];
+        digest[0] = Felt::from_u64(value);
+        digest
+    }
+
+    fn digest_to_u64(digest: HashFelt) -> u64 {
+        assert!(
+            digest[1..].iter().all(|limb| *limb == Felt::ZERO),
+            "mock Lean Merkle digest uses only limb zero"
+        );
+        digest[0].as_canonical_u64()
+    }
 }

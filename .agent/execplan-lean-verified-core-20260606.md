@@ -65,6 +65,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T21:48:00Z) Hardened `PowConsensus` to reject timestamps equal to the parent timestamp and compact targets with exponents over 32, replacing the old private ad hoc admission checks with the shared helper.
 - [x] (2026-06-06T21:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused PoW generated-vector tests, `cargo test -p consensus --test pow_rules --test simulation --test pq_runtime_compat -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 14 claims, 12 production-eligible claims, 14 blueprint nodes, and 32 falsification cases.
 - [x] (2026-06-06T21:49:00Z) Validated branch tip `ee20c66e` on `hegemon-dev`: the expanded formal-core gate passed with consensus PoW-admission and light-client Work48 conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403348`, mining advanced from height `403350` to `403353`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403359`.
+- [x] (2026-06-06T22:09:00Z) Added a Lean transaction Merkle-path kernel proving empty-path behavior, even/odd position-bit orientation, computed-root acceptance, wrong-length rejection, and wrong-root rejection for executable path folding.
+- [x] (2026-06-06T22:09:00Z) Added `gen_merkle_vectors`, a `transaction-circuit` conformance test for generated Merkle path examples, and a production `MerklePath::root_with` helper used by `MerklePath::verify` so the vector test and production path share the same fold logic.
+- [x] (2026-06-06T22:09:00Z) Ran `bash scripts/check_lean_formal.sh`, `cargo test -p transaction-circuit merkle -- --nocapture`, focused `HEGEMON_LEAN_MERKLE_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_merkle_path_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 15 claims, 13 production-eligible claims, 15 blueprint nodes, and 35 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
 
 ## Surprises & Discoveries
 
@@ -164,6 +167,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the consensus PoW-admission proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `ee20c66e` built 47 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, and transaction-balance conformance, and reported `claims = 14`, `production_eligible = 12`, `nodes = 14`, and `falsification_cases = 32`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403348`; a 25-second height sample advanced from `403350` to `403353`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403359`.
 
+- Observation: The transaction Merkle-membership claim now has a Lean-backed executable path-control slice.
+  Evidence: `formal/lean/Hegemon/Transaction/MerklePath.lean` proves empty-path behavior, even/odd orientation, computed-root acceptance, wrong-length rejection, and wrong-root rejection. `formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean` emits seven examples, and the formal-core gate checks them against production `MerklePath::root_with` and `verify_with_depth_and_node`. Local `bash scripts/check_formal_core.sh` passed after adding the claim, reporting `claims = 15`, `production_eligible = 13`, `nodes = 15`, and `falsification_cases = 35`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -208,6 +214,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize PoW admission arithmetic before deeper bridge/light-client proof composition.
   Rationale: Compact target expansion, timestamp admission, hash-threshold comparison, and fixed-width cumulative-work checks are production-critical header validity rules and are explicitly reused by native import and bridge verification. Proving and vector-checking those arithmetic boundaries removes a stale formal gap before attempting full header serialization, retarget economics, or long-range finality proofs.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize transaction Merkle path control flow before Poseidon2 hash equivalence.
+  Rationale: Input membership is a direct anti-counterfeiting rule in the shielded spend statement. The executable path-depth and left/right orientation logic can be proved and forced through Rust conformance now, while Poseidon2 collision resistance and implementation equivalence remain explicit cryptographic assumptions for a later proof/refinement pass.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective

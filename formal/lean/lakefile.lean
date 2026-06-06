@@ -30,3 +30,6 @@ lean_exe gen_action_order_vectors where
 
 lean_exe gen_transaction_vectors where
   root := `Hegemon.Transaction.GenerateVectors
+
+lean_exe gen_merkle_vectors where
+  root := `Hegemon.Transaction.GenerateMerkleVectors

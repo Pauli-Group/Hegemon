@@ -132,7 +132,59 @@
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks executable balance-slot and validation semantics only. It does not prove note commitment correctness, Merkle membership, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
+      "scope_boundary": "This node proves and vector-checks executable balance-slot and validation semantics only. It does not prove note commitment hashing, Merkle hash-function security, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
+    },
+    {
+      "id": "formal.transaction-merkle-membership",
+      "claim_id": "formal.transaction-merkle-membership",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean Merkle-path transition, path folding uses position-bit orientation at every level, accepts the computed root when the sibling depth matches, and rejects mismatched depths or roots.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.foldPath_empty`, `Hegemon.Transaction.foldPath_even_step`, `Hegemon.Transaction.foldPath_odd_step`, `Hegemon.Transaction.verifyPath_accepts_computed_root`, `Hegemon.Transaction.verifyPath_rejects_wrong_length`, and `Hegemon.Transaction.verifyPath_rejects_wrong_root` prove the executable Merkle path control-flow facts. `gen_merkle_vectors` emits Lean-derived empty, left/right orientation, high-position, wrong-root, and wrong-length examples. The formal-core gate checks those vectors against the production `MerklePath::root_with` and `MerklePath::verify_with_depth_and_node` helpers, while `MerklePath::verify` delegates to the same fold helper with the real Poseidon2 `merkle_node` combiner.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for Merkle path fold, position-bit orientation, explicit-depth admission, and root equality semantics. Poseidon2 hash security/equivalence remains outside this claim."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-merkle-path-theorem",
+          "description": "Removing or weakening the Merkle path orientation/depth/root theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-merkle-conformance",
+          "description": "Changing production Merkle path folding, depth admission, or root comparison away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-membership-regression",
+          "description": "Changing SmallWood native membership validation away from explicit MERKLE_TREE_DEPTH gating or MerklePath::verify must be caught by transaction-circuit regression coverage.",
+          "gate": "cargo test -p transaction-circuit merkle -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks Merkle path control flow only. It does not prove Poseidon2 merkle_node cryptographic security, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "shielded.nullifier-state",
