@@ -25,6 +25,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T18:17:00Z) Added the Lean executable `gen_bridge_vectors` and a `protocol-kernel` conformance test that checks generated Lean bridge encoding/replay examples against production helpers when `HEGEMON_LEAN_BRIDGE_VECTORS` is set.
 - [x] (2026-06-06T18:17:00Z) Moved native bridge duplicate-replay validation to the shared `protocol-kernel::InboundReplayState` helper, so node staging and block-validation paths use the helper checked by Lean-generated vectors.
 - [x] (2026-06-06T18:30:00Z) Validated branch tip `972b6933` on `hegemon-dev`: the 11-step formal-core gate passed, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402479` to `402481`, and `scripts/test-node.sh wallet-send` passed.
+- [x] (2026-06-06T18:44:00Z) Added shared Lean byte helpers plus a shielded nullifier-state kernel proving zero rejection, duplicate pending rejection, and spent-nullifier rejection.
+- [x] (2026-06-06T18:44:00Z) Added `gen_shielded_vectors` and a `protocol-shielded-pool` conformance test that checks generated Lean nullifier stage/import examples against production `NullifierState` when `HEGEMON_LEAN_SHIELDED_VECTORS` is set.
+- [x] (2026-06-06T18:44:00Z) Moved native nullifier staging, block validation, state replay/import, and author preview checks to the shared `protocol-shielded-pool::NullifierState` helper.
 
 ## Surprises & Discoveries
 
@@ -49,6 +52,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the new proof/conformance gate and the rebuilt node stays healthy.
   Evidence: Remote `bash scripts/check_formal_core.sh` passed all 11 steps at `972b6933`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed against `http://127.0.0.1:9944`; a 25-second height sample advanced from `402479` to `402481`; `scripts/test-node.sh wallet-send` passed.
 
+- Observation: The second Lean-backed production slice now covers native shielded nullifier state.
+  Evidence: Local `bash scripts/check_lean_formal.sh` built `Hegemon.Shielded.Nullifier` and `gen_shielded_vectors`; local `HEGEMON_LEAN_SHIELDED_VECTORS=<generated-json> cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture` passed; local `cargo test -p hegemon-node submit_action_stages_and_imports_shielded_transfer --lib --no-default-features -- --nocapture` passed after the native node switched to the shared helper.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -65,6 +71,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Add Lean-generated conformance vectors before attempting a larger proof-system theorem.
   Rationale: The active goal requires release Rust to be forced toward the Lean kernel. Generated bridge encoding and replay-state examples are a narrow but concrete differential gate, and they expose production drift faster than another prose claim.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize shielded nullifier state before full MASP balance.
+  Rationale: Nullifier uniqueness is the production anti-double-spend invariant and is small enough to prove exactly in Lean today. Full per-asset balance conservation and AIR/proof-system soundness remain larger follow-on kernels.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -176,3 +186,5 @@ Revision note 2026-06-06T07:08:00Z: Recorded successful `hegemon-dev` validation
 Revision note 2026-06-06T18:17:00Z: Added Lean bridge encoding, two-phase replay theorems, generated Lean conformance vectors, a production `InboundReplayState` helper, and a protocol-kernel conformance test wired into the formal-core gate. Remote validation is still pending for this revision.
 
 Revision note 2026-06-06T18:30:00Z: Recorded `hegemon-dev` validation for commit `972b6933`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
+
+Revision note 2026-06-06T18:44:00Z: Added shared Lean byte helpers, a shielded nullifier-state Lean kernel, generated shielded conformance vectors, a production `NullifierState` helper, and native-node use of that helper. Remote validation is still pending for this revision.

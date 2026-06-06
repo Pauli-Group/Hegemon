@@ -74,6 +74,33 @@
       "residual_risks": []
     },
     {
+      "id": "shielded.nullifier-state",
+      "component": "shielded nullifier anti-double-spend state",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean nullifier-state kernel proves zero, pending, and spent nullifier rejection, and generated Lean vectors are checked against the production protocol-shielded-pool helper used by the native node.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean Nullifier equality model represents equality of canonical 48-byte nullifiers.",
+        "Generated Lean conformance vectors cover protocol-shielded-pool NullifierState stage/import behavior.",
+        "The theorem covers native nullifier set state transitions, not full transaction balance conservation or AIR/proof soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Shielded/Nullifier.lean",
+        "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
+        "protocol/shielded-pool/src/nullifier.rs",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "formal.pow-fork-choice",
       "component": "native PoW consensus",
       "claim_class": "formal_model",

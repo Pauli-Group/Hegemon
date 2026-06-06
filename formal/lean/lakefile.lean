@@ -9,3 +9,6 @@ lean_lib Hegemon where
 
 lean_exe gen_bridge_vectors where
   root := `Hegemon.Bridge.GenerateVectors
+
+lean_exe gen_shielded_vectors where
+  root := `Hegemon.Shielded.GenerateVectors

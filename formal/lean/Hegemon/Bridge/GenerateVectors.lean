@@ -1,38 +1,8 @@
 import Hegemon.Bridge.Encoding
 import Hegemon.Bridge.Replay
 
+open Hegemon
 open Hegemon.Bridge
-
-def hexDigit (value : Nat) : Char :=
-  match value with
-  | 0 => '0'
-  | 1 => '1'
-  | 2 => '2'
-  | 3 => '3'
-  | 4 => '4'
-  | 5 => '5'
-  | 6 => '6'
-  | 7 => '7'
-  | 8 => '8'
-  | 9 => '9'
-  | 10 => 'a'
-  | 11 => 'b'
-  | 12 => 'c'
-  | 13 => 'd'
-  | 14 => 'e'
-  | _ => 'f'
-
-def byteHex (value : Nat) : String :=
-  String.singleton (hexDigit ((byte value) / 16)) ++ String.singleton (hexDigit ((byte value) % 16))
-
-def hexBytes (bytes : List Byte) : String :=
-  "0x" ++ String.join (bytes.map byteHex)
-
-def asciiBytes (value : String) : List Byte :=
-  value.toList.map fun char => byte char.toNat
-
-def patternedBytes (length seed : Nat) : List Byte :=
-  (List.range length).map fun index => byte (seed + index * 17)
 
 def sourceChainA : List Byte :=
   patternedBytes 32 0x23

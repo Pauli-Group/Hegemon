@@ -52,6 +52,7 @@ use protocol_shielded_pool::types::{
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
+use protocol_shielded_pool::{NullifierReject, NullifierState};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -893,6 +894,7 @@ impl NativeNode {
     ) -> Result<()> {
         let mut bridge_replay_state =
             InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+        let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
         for action in actions {
             let start_index = state.commitment_tree.leaf_count();
             let ciphertexts = canonical_ciphertexts_for_action(&self.da_ciphertext_tree, action)?;
@@ -915,9 +917,10 @@ impl NativeNode {
             )?;
 
             for nullifier in &action.nullifiers {
-                if !state.nullifiers.insert(*nullifier) {
-                    return Err(anyhow!("duplicate nullifier during block import"));
-                }
+                nullifier_state
+                    .import_one(*nullifier)
+                    .map_err(|_| anyhow!("duplicate nullifier during block import"))?;
+                state.nullifiers.insert(*nullifier);
                 self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
             }
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
@@ -1543,23 +1546,22 @@ impl NativeNode {
             return Err(anyhow!("unknown shielded anchor"));
         }
 
-        let mut seen = BTreeSet::new();
+        let mut nullifier_state = shielded_nullifier_state_for_mempool(&state);
+        let mut action_seen = BTreeSet::new();
         for nullifier in &action.nullifiers {
-            if *nullifier == [0u8; 48] {
-                return Err(anyhow!("zero nullifier rejected"));
-            }
-            if !seen.insert(*nullifier) {
-                return Err(anyhow!("duplicate nullifier in action"));
-            }
-            if state.nullifiers.contains(nullifier) {
-                return Err(anyhow!("nullifier already spent"));
-            }
-            if state
-                .pending_actions
-                .values()
-                .any(|pending| pending.nullifiers.contains(nullifier))
-            {
-                return Err(anyhow!("nullifier already pending"));
+            let duplicate_in_action = !action_seen.insert(*nullifier);
+            match nullifier_state.stage(*nullifier) {
+                Ok(()) => {}
+                Err(NullifierReject::Zero) => return Err(anyhow!("zero nullifier rejected")),
+                Err(NullifierReject::AlreadySpent) => {
+                    return Err(anyhow!("nullifier already spent"));
+                }
+                Err(NullifierReject::AlreadyPending) if duplicate_in_action => {
+                    return Err(anyhow!("duplicate nullifier in action"));
+                }
+                Err(NullifierReject::AlreadyPending) => {
+                    return Err(anyhow!("nullifier already pending"));
+                }
             }
         }
 
@@ -3414,6 +3416,16 @@ fn inbound_replay_state_for_mempool(state: &NativeState) -> Result<InboundReplay
     ))
 }
 
+fn shielded_nullifier_state_for_mempool(state: &NativeState) -> NullifierState {
+    let mut pending = BTreeSet::new();
+    for action in state.pending_actions.values() {
+        for nullifier in &action.nullifiers {
+            pending.insert(*nullifier);
+        }
+    }
+    NullifierState::new(state.nullifiers.clone(), pending)
+}
+
 fn bridge_messages_from_actions(
     actions: &[PendingAction],
     source_height: u64,
@@ -3454,10 +3466,10 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
 }
 
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
-    let mut seen_nullifiers = BTreeSet::new();
     let mut seen_actions = BTreeSet::new();
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
         if action.tx_hash != pending_action_hash(action) {
@@ -3511,11 +3523,14 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             return Err(anyhow!("block action references unknown anchor"));
         }
         for nullifier in &action.nullifiers {
-            if *nullifier == [0u8; 48] {
-                return Err(anyhow!("zero nullifier in block action"));
-            }
-            if state.nullifiers.contains(nullifier) || !seen_nullifiers.insert(*nullifier) {
-                return Err(anyhow!("duplicate nullifier in block action"));
+            match nullifier_state.import_one(*nullifier) {
+                Ok(()) => {}
+                Err(NullifierReject::Zero) => {
+                    return Err(anyhow!("zero nullifier in block action"));
+                }
+                Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
+                    return Err(anyhow!("duplicate nullifier in block action"));
+                }
             }
         }
         for commitment in &action.commitments {
@@ -3535,6 +3550,7 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
 fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     for action in actions {
         for commitment in &action.commitments {
             state
@@ -3543,9 +3559,10 @@ fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -
                 .map_err(|err| anyhow!("append native commitment failed: {err}"))?;
         }
         for nullifier in &action.nullifiers {
-            if !state.nullifiers.insert(*nullifier) {
-                return Err(anyhow!("duplicate nullifier during replay"));
-            }
+            nullifier_state
+                .import_one(*nullifier)
+                .map_err(|_| anyhow!("duplicate nullifier during replay"))?;
+            state.nullifiers.insert(*nullifier);
         }
         if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
             bridge_replay_state
@@ -4074,15 +4091,17 @@ fn preview_pending_roots(
 
     let mut tree = state.commitment_tree.clone();
     let mut nullifiers = state.nullifiers.clone();
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     for action in actions {
         for commitment in &action.commitments {
             tree.append(*commitment)
                 .map_err(|err| anyhow!("preview commitment append failed: {err}"))?;
         }
         for nullifier in &action.nullifiers {
-            if !nullifiers.insert(*nullifier) {
-                return Err(anyhow!("preview duplicate nullifier"));
-            }
+            nullifier_state
+                .import_one(*nullifier)
+                .map_err(|_| anyhow!("preview duplicate nullifier"))?;
+            nullifiers.insert(*nullifier);
         }
     }
     Ok((

@@ -1,22 +1,7 @@
+import Hegemon.Bytes
+
 namespace Hegemon
 namespace Bridge
-
-abbrev Byte := Nat
-
-def byte (value : Nat) : Byte :=
-  value % 256
-
-def littleEndianBytes (width value : Nat) : List Byte :=
-  (List.range width).map fun index => byte (value / (256 ^ index))
-
-def u16le (value : Nat) : List Byte :=
-  littleEndianBytes 2 value
-
-def u64le (value : Nat) : List Byte :=
-  littleEndianBytes 8 value
-
-def u128le (value : Nat) : List Byte :=
-  littleEndianBytes 16 value
 
 def scaleCompactBigWidth (value : Nat) : Nat :=
   if value < 2 ^ 32 then

@@ -114,6 +114,52 @@
       "scope_boundary": "This node does not prove equivalence between the TLA+ abstraction and every Rust witness or AIR constraint."
     },
     {
+      "id": "shielded.nullifier-state",
+      "claim_id": "shielded.nullifier-state",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean nullifier-state transition, zero nullifiers cannot be staged or imported, successful staging prevents staging the same nullifier again, and successful import prevents both re-importing and re-staging the same nullifier.",
+      "informal_argument": "The Lean theorems `Hegemon.Shielded.stage_rejects_zero`, `Hegemon.Shielded.import_rejects_zero`, `Hegemon.Shielded.stage_prevents_duplicate_pending`, `Hegemon.Shielded.import_prevents_reimport`, and `Hegemon.Shielded.import_prevents_restaging` prove the anti-double-spend state behavior over the executable nullifier kernel. `gen_shielded_vectors` emits Lean-derived nullifier examples, and the formal-core gate runs the production `protocol-shielded-pool` conformance test against them. The native node uses that shared helper for mempool staging, block validation, state replay, and author preview.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Shielded/Nullifier.lean",
+        "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
+        "protocol/shielded-pool/src/nullifier.rs",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Shielded/Nullifier.lean",
+        "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
+        "protocol/shielded-pool/src/nullifier.rs",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-shielded-pool nullifier stage/import behavior."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-nullifier-theorem",
+          "description": "Removing or weakening the nullifier-state theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-rust-conformance",
+          "description": "Changing production nullifier stage/import behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node does not prove full transaction balance conservation, note commitment correctness, or proof-system soundness."
+    },
+    {
       "id": "formal.pow-fork-choice",
       "claim_id": "formal.pow-fork-choice",
       "kind": "target_claim",
