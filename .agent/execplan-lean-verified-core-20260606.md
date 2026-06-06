@@ -55,6 +55,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T20:45:00Z) Ran `bash scripts/check_lean_formal.sh`, `HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture`, and `cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture`; all passed locally. Full local formal-core and `hegemon-dev` validation are still pending for this revision.
 - [x] (2026-06-06T20:50:00Z) Reran the full local `bash scripts/check_formal_core.sh`; it passed with native action-ordering conformance, 12 claims, 10 production-eligible claims, 12 blueprint nodes, and 26 falsification cases.
 - [x] (2026-06-06T20:55:00Z) Fixed the action-ordering conformance test to fold over the production `transfer_key_extends_canonical_order` helper instead of leaving a release-dead helper in `node/src/native/mod.rs`; reran the focused generated-vector test, native order regression, release `hegemon-node` build, and full local formal-core gate successfully.
+- [x] (2026-06-06T21:00:00Z) Validated branch tip `778fcfc5` on `hegemon-dev`: the expanded 11-step formal-core gate passed with native action-ordering conformance, `make node` rebuilt the release binary without the earlier `hegemon-node` dead-code warning, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403040`, mining advanced from height `403041` to `403044`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403048`.
 
 ## Surprises & Discoveries
 
@@ -132,6 +133,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The remote release build exposed a dead-code warning before service restart, and the warning was removed before accepting the slice.
   Evidence: `make node` on `hegemon-dev` at `4936dccb` warned that `transfer_keys_are_canonical_order` was unused in release. The conformance test now uses `lean_transfer_keys_are_canonical_order` inside the test module, which folds over the production `transfer_key_extends_canonical_order` helper. Local `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release` completed without that `hegemon-node` warning.
+
+- Observation: `hegemon-dev` can run the native action-ordering proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `778fcfc5` passed all 11 steps, including `lean_generated_action_order_vectors_match_production`, and reported `claims = 12`, `production_eligible = 10`, `nodes = 12`, and `falsification_cases = 26`; remote `make node` completed without the earlier `hegemon-node` warning; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403040`; a 25-second height sample advanced from `403041` to `403044`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403048`.
 
 ## Decision Log
 
@@ -308,3 +312,5 @@ Revision note 2026-06-06T20:45:00Z: Added the Lean native action-ordering kernel
 Revision note 2026-06-06T20:50:00Z: Recorded passing full local formal-core validation for the native action-ordering revision. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-06T20:55:00Z: Removed the release-dead native action-ordering conformance helper, corrected the blueprint wording to name the production helper actually used by block import, and reran focused local tests, release build, and full formal-core validation. Remote `hegemon-dev` validation is still pending.
+
+Revision note 2026-06-06T21:00:00Z: Recorded `hegemon-dev` validation for commit `778fcfc5`, including full formal-core, release rebuild without the earlier `hegemon-node` warning, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
