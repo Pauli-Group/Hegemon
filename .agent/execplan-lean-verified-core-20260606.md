@@ -77,6 +77,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T23:28:00Z) Added `gen_public_input_binding_vectors`, a `transaction-circuit` conformance test for generated binding examples against production `transaction_public_inputs_p3_from_parts`, and wired that test into `scripts/check_formal_core.sh`, `scripts/check_lean_formal.sh`, the formal inventory, claims ledger, blueprint DAG, and docs.
 - [x] (2026-06-06T23:28:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production -- --nocapture`, and `bash scripts/check_formal_core.sh`; all passed locally. The full formal-core gate reported 17 claims, 15 production-eligible claims, 17 blueprint nodes, and 41 falsification cases.
 - [x] (2026-06-06T23:31:00Z) Ran `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; it passed locally after the public-input binding slice.
+- [x] (2026-06-06T23:39:00Z) Validated branch tip `b28e2fc8` on `hegemon-dev`: the expanded formal-core gate passed with transaction public-input binding conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403885`, mining advanced from height `403887` to `403889`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403892`.
 
 ## Surprises & Discoveries
 
@@ -196,6 +197,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now includes transaction public-input binding conformance in the release-facing proof surface.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding transaction public-input binding, ran the generated binding vectors alongside bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, light-client Work48, consensus proof-policy, consensus/native supply accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape checks, and reported `claims = 17`, `production_eligible = 15`, `nodes = 17`, and `falsification_cases = 41`.
+
+- Observation: `hegemon-dev` can run the transaction public-input binding proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `b28e2fc8` built 62 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, and transaction public-input binding conformance, and reported `claims = 17`, `production_eligible = 15`, `nodes = 17`, and `falsification_cases = 41`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403885`; a 25-second height sample advanced from `403887` to `403889`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403892`.
 
 ## Decision Log
 
