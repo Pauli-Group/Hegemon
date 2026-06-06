@@ -30,6 +30,9 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      - name: Install Lean toolchain manager
+        run: curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 

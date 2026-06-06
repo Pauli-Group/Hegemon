@@ -188,6 +188,39 @@
       "scope_boundary": "This node covers canonical vector derivations; it does not prove every bridge light-client proof system or external-chain covenant."
     },
     {
+      "id": "bridge.inbound-replay-state",
+      "claim_id": "bridge.inbound-replay-state",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean replay-state transition, if accepting a replay key succeeds and returns a next state, then accepting the same replay key from that next state returns `none`.",
+      "informal_argument": "The Lean theorem `Hegemon.Bridge.accept_prevents_duplicate` proves the no-duplicate-acceptance property over the executable replay-state kernel. This is the first machine-checked theorem in the formal-core gate and is deliberately scoped to replay-state safety, not hash security or Rust implementation equivalence.",
+      "depends_on": [
+        "bridge.message-root-replay",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/Replay.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/Replay.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as a real Lean theorem for replay-state safety only. Rust conformance remains a follow-up requirement."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-replay-theorem",
+          "description": "Removing or weakening the `accept_prevents_duplicate` theorem or its proof must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        }
+      ],
+      "scope_boundary": "This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, or Rust implementation equivalence."
+    },
+    {
       "id": "proof.native-backend-vectors",
       "claim_id": "proof.native-backend-vectors",
       "kind": "target_claim",
@@ -226,7 +259,8 @@
       "informal_argument": "RISC Zero bridge receipts remain offline experimental artifacts because the verifier path can pull classical Groth16/BN254 code into the binary. The safer release behavior is to parse and bind-check enough to reject malformed messages, then reject receipt acceptance.",
       "depends_on": [
         "release.pq-binary",
-        "bridge.message-root-replay"
+        "bridge.message-root-replay",
+        "bridge.inbound-replay-state"
       ],
       "implementation_paths": [
         "node/src/native/mod.rs"

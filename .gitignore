@@ -17,6 +17,7 @@ scripts/__pycache__/
 .dashboard-service-venv/
 .venv/
 tmp/
+formal/lean/.lake/
 
 # Testnet deployment artifacts (regenerate with scripts)
 .env.testnet
@@ -37,7 +38,7 @@ balances.json
 report.json
 cert.pem
 api.token
-hegemon
+/hegemon
 wallet.store
 wallet.pass
 key.pem

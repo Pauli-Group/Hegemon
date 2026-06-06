@@ -28,7 +28,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 - `rust-lints`: runs the lean formatting/lint gate through `./scripts/check-core.sh lint`.
 - `dependency-audit`: runs `./scripts/dependency-audit-gate.sh`; unwaived advisories or yanked crates block release build.
-- `formal-core`: runs `bash scripts/check_formal_core.sh`; the gate validates the formal/security claims ledger, blueprint DAG, formal model inventory, independent bridge vectors, and native backend reference vectors. Claim changes must update both `config/formal-security-claims.json` and `config/formal-security-blueprint.json` so status, dependencies, target review, implementation bindings, falsification cases, and residual risks stay synchronized.
+- `formal-core`: runs `bash scripts/check_formal_core.sh`; the gate builds the pinned Lean proof kernel, validates the formal/security claims ledger, blueprint DAG, formal model inventory, independent bridge vectors, and native backend reference vectors. Claim changes must update both `config/formal-security-claims.json` and `config/formal-security-blueprint.json` so status, dependencies, target review, implementation bindings, Lean theorem evidence, falsification cases, and residual risks stay synchronized.
 - `core-tests`: runs the fast shipping-path Rust tests through `./scripts/check-core.sh test`.
 - `security-adversarial`: runs `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`, including hostile proving regressions plus review-package parity checks.
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.

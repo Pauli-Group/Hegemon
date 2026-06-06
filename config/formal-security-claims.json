@@ -118,6 +118,28 @@
       "residual_risks": []
     },
     {
+      "id": "bridge.inbound-replay-state",
+      "component": "protocol bridge inbound replay state",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean replay-state kernel proves that a successfully accepted inbound replay key cannot be accepted again from the resulting state.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean ReplayKey equality model represents equality of canonical inbound replay keys.",
+        "Rust conformance to the Lean replay-state kernel is not complete until generated vectors and implementation-differential tests are added."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/Replay.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "proof.native-backend-vectors",
       "component": "native tx leaf and receipt root artifacts",
       "claim_class": "canonical_codec",

@@ -53,6 +53,8 @@ jobs:
           shared-key: "formal-core"
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
+      - name: Install Lean toolchain manager
+        run: curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
       - name: Formal-core release gate
         run: bash scripts/check_formal_core.sh
 

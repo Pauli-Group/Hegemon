@@ -20,6 +20,7 @@ const CLAIM_CLASSES: &[&str] = &[
     "proof_verifier_boundary",
     "fail_closed_runtime",
     "cryptographic_assumption",
+    "lean_theorem",
 ];
 const CONJECTURAL_MODELS: &[&str] = &["conjectural_research", "heuristic_only"];
 const BLUEPRINT_NODE_KINDS: &[&str] = &["target_claim", "supporting_claim", "residual_risk"];
@@ -282,6 +283,11 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "consensus/spec/formal/README.md",
         "consensus/spec/formal/pow_longest_chain.tla",
         "consensus/spec/formal/pow_longest_chain.cfg",
+        "formal/lean/README.md",
+        "formal/lean/lean-toolchain",
+        "formal/lean/lakefile.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Bridge/Replay.lean",
         "config/formal-security-claims.json",
         "testdata/formal_core_vectors/bridge_messages.json",
         "config/formal-security-blueprint.json",
