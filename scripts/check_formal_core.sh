@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORMAL_MANIFEST="$ROOT/scripts/hegemon_formal_core/Cargo.toml"
+if [ -d "${HOME:-}/.cargo/bin" ]; then
+  export PATH="${HOME}/.cargo/bin:$PATH"
+fi
 
 run_formal_core() {
   cargo run --quiet --manifest-path "$FORMAL_MANIFEST" -- "$@"

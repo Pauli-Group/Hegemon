@@ -35,6 +35,9 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - Observation: Strict parsing and path hygiene needed to be added to the existing checker as well as to the new blueprint structs.
   Evidence: The new checker uses `#[serde(deny_unknown_fields)]` on ledger/vector/blueprint structs and rejects absolute paths, empty paths, and parent-directory components before checking path existence.
 
+- Observation: `hegemon-dev` had `cargo-audit` installed but not visible to non-interactive SSH shells.
+  Evidence: `/home/ubuntu/.cargo/bin/cargo-audit` existed, but `bash scripts/check_formal_core.sh` failed with `cargo-audit is not installed` because the SSH PATH did not include `/home/ubuntu/.cargo/bin`.
+
 ## Decision Log
 
 - Decision: Add a separate blueprint file instead of overloading the claims ledger schema in place.
@@ -51,6 +54,10 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 
 - Decision: Require every claims-ledger evidence path to appear in either the blueprint node's implementation paths or evidence paths.
   Rationale: This turns the blueprint into a real cross-check instead of a parallel prose file. If the ledger points at evidence that the blueprint does not cover, the gate fails as claim/blueprint drift.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Prepend `$HOME/.cargo/bin` inside `scripts/check_formal_core.sh` when that directory exists.
+  Rationale: CI and VPS validation should find Cargo-installed tools in non-interactive shells without requiring global symlinks. The script still fails clearly if `cargo-audit` is genuinely missing.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -182,3 +189,5 @@ The checker must remain standalone and must not depend on production protocol cr
 Revision note 2026-06-06T05:52:34Z: Created this plan after reviewing the existing formal-core branch and deciding to add a JSON blueprint DAG as the next enforceable formal-assurance layer.
 
 Revision note 2026-06-06T06:13:00Z: Recorded the implemented blueprint DAG file, checker command, shell-gate wiring, documentation updates, focused regression tests, and passing local formal-core validation.
+
+Revision note 2026-06-06T06:19:00Z: Recorded the `hegemon-dev` non-interactive PATH discovery and the shell wrapper fix that makes Cargo-installed audit tools visible.
