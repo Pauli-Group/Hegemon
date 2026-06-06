@@ -28,6 +28,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T18:44:00Z) Added shared Lean byte helpers plus a shielded nullifier-state kernel proving zero rejection, duplicate pending rejection, and spent-nullifier rejection.
 - [x] (2026-06-06T18:44:00Z) Added `gen_shielded_vectors` and a `protocol-shielded-pool` conformance test that checks generated Lean nullifier stage/import examples against production `NullifierState` when `HEGEMON_LEAN_SHIELDED_VECTORS` is set.
 - [x] (2026-06-06T18:44:00Z) Moved native nullifier staging, block validation, state replay/import, and author preview checks to the shared `protocol-shielded-pool::NullifierState` helper.
+- [x] (2026-06-06T18:50:00Z) Validated branch tip `0e6e6030` on `hegemon-dev`: the expanded 11-step formal-core gate passed with 10 claims and both generated conformance tests, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402561` to `402564`, and `scripts/test-node.sh wallet-send` passed.
 
 ## Surprises & Discoveries
 
@@ -54,6 +55,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The second Lean-backed production slice now covers native shielded nullifier state.
   Evidence: Local `bash scripts/check_lean_formal.sh` built `Hegemon.Shielded.Nullifier` and `gen_shielded_vectors`; local `HEGEMON_LEAN_SHIELDED_VECTORS=<generated-json> cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture` passed; local `cargo test -p hegemon-node submit_action_stages_and_imports_shielded_transfer --lib --no-default-features -- --nocapture` passed after the native node switched to the shared helper.
+
+- Observation: `hegemon-dev` can run the nullifier proof/conformance gate and the rebuilt node continues mining.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `0e6e6030` reported `claims = 10`, `production_eligible = 8`, `falsification_cases = 16`, and both generated Rust conformance tests passed; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed; a 25-second height sample advanced from `402561` to `402564`; `scripts/test-node.sh wallet-send` passed.
 
 ## Decision Log
 
@@ -188,3 +192,5 @@ Revision note 2026-06-06T18:17:00Z: Added Lean bridge encoding, two-phase replay
 Revision note 2026-06-06T18:30:00Z: Recorded `hegemon-dev` validation for commit `972b6933`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
 
 Revision note 2026-06-06T18:44:00Z: Added shared Lean byte helpers, a shielded nullifier-state Lean kernel, generated shielded conformance vectors, a production `NullifierState` helper, and native-node use of that helper. Remote validation is still pending for this revision.
+
+Revision note 2026-06-06T18:50:00Z: Recorded `hegemon-dev` validation for commit `0e6e6030`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
