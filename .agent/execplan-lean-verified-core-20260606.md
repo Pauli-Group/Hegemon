@@ -63,7 +63,8 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T21:48:00Z) Added a Lean consensus PoW-admission kernel proving compact-target rejection, strict timestamp admission, hash-threshold rejection, fixed-width Work48 addition, and executable admission accept/reject facts.
 - [x] (2026-06-06T21:48:00Z) Added `gen_pow_vectors`, consensus conformance against the production `evaluate_pow_admission` helper used by `PowConsensus`, and light-client conformance against compact-target, hash-threshold, and Work48 cumulative-work helpers.
 - [x] (2026-06-06T21:48:00Z) Hardened `PowConsensus` to reject timestamps equal to the parent timestamp and compact targets with exponents over 32, replacing the old private ad hoc admission checks with the shared helper.
-- [x] (2026-06-06T21:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused PoW generated-vector tests, `cargo test -p consensus --test pow_rules --test simulation --test pq_runtime_compat -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 14 claims, 12 production-eligible claims, 14 blueprint nodes, and 32 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
+- [x] (2026-06-06T21:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused PoW generated-vector tests, `cargo test -p consensus --test pow_rules --test simulation --test pq_runtime_compat -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 14 claims, 12 production-eligible claims, 14 blueprint nodes, and 32 falsification cases.
+- [x] (2026-06-06T21:49:00Z) Validated branch tip `ee20c66e` on `hegemon-dev`: the expanded formal-core gate passed with consensus PoW-admission and light-client Work48 conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403348`, mining advanced from height `403350` to `403353`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403359`.
 
 ## Surprises & Discoveries
 
@@ -159,6 +160,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now checks eight Lean-to-Rust conformance surfaces.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding consensus PoW admission, ran bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, consensus proof-policy, consensus/native supply accounting, native action-ordering, and transaction-balance generated vector checks, and reported `claims = 14`, `production_eligible = 12`, `nodes = 14`, and `falsification_cases = 32`.
+
+- Observation: `hegemon-dev` can run the consensus PoW-admission proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `ee20c66e` built 47 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, and transaction-balance conformance, and reported `claims = 14`, `production_eligible = 12`, `nodes = 14`, and `falsification_cases = 32`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403348`; a 25-second height sample advanced from `403350` to `403353`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403359`.
 
 ## Decision Log
 
