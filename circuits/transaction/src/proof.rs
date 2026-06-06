@@ -767,7 +767,7 @@ pub(crate) fn verify_balance_slots(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::public_inputs::TransactionPublicInputs;
+    use crate::public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs};
     use crate::SmallwoodCandidateProof;
     use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
     use std::collections::BTreeSet;
@@ -793,6 +793,45 @@ mod tests {
         stablecoin_enabled: u64,
         stablecoin_asset: u64,
         stablecoin_issuance_sign: u64,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPublicInputBindingVectorFile {
+        schema_version: u32,
+        public_input_binding_cases: Vec<LeanPublicInputBindingCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPublicInputBindingCase {
+        name: String,
+        public_merkle_root: u64,
+        serialized_merkle_root: u64,
+        public_fee: u64,
+        serialized_fee: u64,
+        public_value_balance: i64,
+        serialized_value_balance_sign: u8,
+        serialized_value_balance_magnitude: u64,
+        public_balance_slot_assets: Vec<u64>,
+        serialized_balance_slot_assets: Vec<u64>,
+        public_stablecoin_enabled: u8,
+        serialized_stablecoin_enabled: u8,
+        public_stablecoin_asset: u64,
+        serialized_stablecoin_asset: u64,
+        public_stablecoin_policy_version: u32,
+        serialized_stablecoin_policy_version: u32,
+        public_stablecoin_issuance_delta: i64,
+        serialized_stablecoin_issuance_sign: u8,
+        serialized_stablecoin_issuance_magnitude: u64,
+        public_stablecoin_policy_hash: u64,
+        serialized_stablecoin_policy_hash: u64,
+        public_stablecoin_oracle_commitment: u64,
+        serialized_stablecoin_oracle_commitment: u64,
+        public_stablecoin_attestation_commitment: u64,
+        serialized_stablecoin_attestation_commitment: u64,
+        expected_bound_balance_slot_assets: Vec<u64>,
         expected_valid: bool,
     }
 
@@ -902,6 +941,157 @@ mod tests {
     fn hash6(value: u64) -> [Goldilocks; 6] {
         let mut out = [Goldilocks::ZERO; 6];
         out[0] = felt(value);
+        out
+    }
+
+    #[test]
+    fn lean_generated_public_input_binding_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean public input binding vectors");
+        let vectors: LeanPublicInputBindingVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean public input binding vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.public_input_binding_cases.is_empty(),
+            "Lean public input binding cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.public_input_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            let public_inputs = public_inputs_from_binding_case(case);
+            let serialized = serialized_inputs_from_binding_case(case);
+            let actual = transaction_public_inputs_p3_from_parts(&public_inputs, &serialized);
+            assert_eq!(
+                actual.is_ok(),
+                case.expected_valid,
+                "{} production public/serialized binding drifted from Lean spec: {actual:?}",
+                case.name
+            );
+            if case.expected_valid {
+                let p3 = actual.expect("valid binding produces P3 inputs");
+                p3.validate()
+                    .expect("valid binding case is verifier-admissible");
+                assert_eq!(
+                    canonical_felts(&p3.balance_slot_assets),
+                    case.expected_bound_balance_slot_assets,
+                    "{} bound balance slot assets changed",
+                    case.name
+                );
+                assert_eq!(p3.merkle_root, hash6(case.serialized_merkle_root));
+                assert_eq!(p3.fee.as_canonical_u64(), case.serialized_fee);
+                assert_eq!(
+                    p3.value_balance_sign.as_canonical_u64(),
+                    u64::from(case.serialized_value_balance_sign)
+                );
+                assert_eq!(
+                    p3.value_balance_magnitude.as_canonical_u64(),
+                    case.serialized_value_balance_magnitude
+                );
+                assert_eq!(
+                    p3.stablecoin_enabled.as_canonical_u64(),
+                    u64::from(case.serialized_stablecoin_enabled)
+                );
+                assert_eq!(
+                    p3.stablecoin_asset.as_canonical_u64(),
+                    case.serialized_stablecoin_asset
+                );
+                assert_eq!(
+                    p3.stablecoin_policy_version.as_canonical_u64(),
+                    u64::from(case.serialized_stablecoin_policy_version)
+                );
+                assert_eq!(
+                    p3.stablecoin_issuance_sign.as_canonical_u64(),
+                    u64::from(case.serialized_stablecoin_issuance_sign)
+                );
+                assert_eq!(
+                    p3.stablecoin_issuance_magnitude.as_canonical_u64(),
+                    case.serialized_stablecoin_issuance_magnitude
+                );
+                assert_eq!(
+                    p3.stablecoin_policy_hash,
+                    hash6(case.serialized_stablecoin_policy_hash)
+                );
+                assert_eq!(
+                    p3.stablecoin_oracle_commitment,
+                    hash6(case.serialized_stablecoin_oracle_commitment)
+                );
+                assert_eq!(
+                    p3.stablecoin_attestation_commitment,
+                    hash6(case.serialized_stablecoin_attestation_commitment)
+                );
+            }
+        }
+    }
+
+    fn public_inputs_from_binding_case(
+        case: &LeanPublicInputBindingCase,
+    ) -> TransactionPublicInputs {
+        TransactionPublicInputs {
+            merkle_root: bytes48(case.public_merkle_root),
+            nullifiers: vec![bytes48(11), bytes48(0)],
+            commitments: vec![bytes48(22), bytes48(0)],
+            ciphertext_hashes: vec![bytes48(33), bytes48(0)],
+            balance_slots: case
+                .public_balance_slot_assets
+                .iter()
+                .copied()
+                .map(|asset_id| BalanceSlot { asset_id, delta: 0 })
+                .collect(),
+            native_fee: case.public_fee,
+            value_balance: i128::from(case.public_value_balance),
+            stablecoin: StablecoinPolicyBinding {
+                enabled: case.public_stablecoin_enabled != 0,
+                asset_id: case.public_stablecoin_asset,
+                policy_hash: bytes48(case.public_stablecoin_policy_hash),
+                oracle_commitment: bytes48(case.public_stablecoin_oracle_commitment),
+                attestation_commitment: bytes48(case.public_stablecoin_attestation_commitment),
+                issuance_delta: i128::from(case.public_stablecoin_issuance_delta),
+                policy_version: case.public_stablecoin_policy_version,
+            },
+            balance_tag: [0u8; 48],
+            circuit_version: LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit,
+            crypto_suite: LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto,
+        }
+    }
+
+    fn serialized_inputs_from_binding_case(
+        case: &LeanPublicInputBindingCase,
+    ) -> SerializedStarkInputs {
+        SerializedStarkInputs {
+            input_flags: vec![1, 0],
+            output_flags: vec![1, 0],
+            fee: case.serialized_fee,
+            value_balance_sign: case.serialized_value_balance_sign,
+            value_balance_magnitude: case.serialized_value_balance_magnitude,
+            merkle_root: bytes48(case.serialized_merkle_root),
+            balance_slot_asset_ids: case.serialized_balance_slot_assets.clone(),
+            stablecoin_enabled: case.serialized_stablecoin_enabled,
+            stablecoin_asset_id: case.serialized_stablecoin_asset,
+            stablecoin_policy_version: case.serialized_stablecoin_policy_version,
+            stablecoin_issuance_sign: case.serialized_stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude: case.serialized_stablecoin_issuance_magnitude,
+            stablecoin_policy_hash: bytes48(case.serialized_stablecoin_policy_hash),
+            stablecoin_oracle_commitment: bytes48(case.serialized_stablecoin_oracle_commitment),
+            stablecoin_attestation_commitment: bytes48(
+                case.serialized_stablecoin_attestation_commitment,
+            ),
+        }
+    }
+
+    fn canonical_felts(values: &[Goldilocks]) -> Vec<u64> {
+        values.iter().map(Goldilocks::as_canonical_u64).collect()
+    }
+
+    fn bytes48(value: u64) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        out[0..8].copy_from_slice(&value.to_be_bytes());
         out
     }
 

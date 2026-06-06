@@ -237,7 +237,61 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks verifier-facing public-input shape admission only. It does not prove Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, statement-hash binding, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+      "scope_boundary": "This node proves and vector-checks verifier-facing public-input shape admission only. It does not prove Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, statement-hash byte ordering, cryptographic digest binding, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+    },
+    {
+      "id": "formal.transaction-public-input-binding",
+      "claim_id": "formal.transaction-public-input-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean transaction public/serialized input binding predicate, the public transaction fields and serialized STARK public-input fields must agree on merkle root, fee, signed value balance, balance-slot assets, and stablecoin binding payload before verifier-facing TransactionPublicInputsP3 construction succeeds.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.PublicInputBinding.bindPublicInputs_accepts_valid`, `Hegemon.Transaction.PublicInputBinding.validBinding_accepts_stablecoin`, `Hegemon.Transaction.PublicInputBinding.validBinding_accepts_omitted_balance_assets`, and the companion rejection theorems prove representative binding accept/reject facts over the executable predicate. `gen_public_input_binding_vectors` emits Lean-derived valid, omitted-balance-assets fallback, merkle-root mismatch, fee mismatch, signed value-balance mismatch, balance-slot asset mismatch/count mismatch, and stablecoin payload mismatch examples. The formal-core gate checks those vectors against production `transaction_public_inputs_p3_from_parts` through the `transaction-circuit` test.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "formal.transaction-merkle-membership",
+        "formal.transaction-public-input-shape",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction-core/src/p3_air.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction-core/src/p3_air.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the public TransactionPublicInputs / SerializedStarkInputs binding seam. Cryptographic statement-hash byte ordering and proof-system soundness remain outside this claim."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-public-input-binding-theorem",
+          "description": "Removing or weakening the public-input binding theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-public-input-binding-conformance",
+          "description": "Changing production public/serialized input binding away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-public-input-binding-gate",
+          "description": "The release formal-core wrapper must generate public-input binding vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks public/serialized input field binding before verifier public-input construction only. It does not prove Poseidon2 or BLAKE3 implementation equivalence, transaction statement-hash byte ordering, note commitment hashing, nullifier derivation, ciphertext hashing, STARK or SmallWood proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "shielded.nullifier-state",

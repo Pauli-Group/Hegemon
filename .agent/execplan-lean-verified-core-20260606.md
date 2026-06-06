@@ -73,6 +73,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T22:48:00Z) Added `gen_public_input_vectors`, a `transaction-circuit` conformance test for generated public-input shape examples, and wired that test into `scripts/check_formal_core.sh` plus the formal inventory, claims ledger, blueprint DAG, and docs.
 - [x] (2026-06-06T22:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 16 claims, 14 production-eligible claims, 16 blueprint nodes, and 38 falsification cases.
 - [x] (2026-06-06T22:56:00Z) Validated branch tip `1692cccd` on `hegemon-dev`: the expanded formal-core gate passed with transaction public-input shape conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403694`, mining advanced from height `403694` to `403695`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403698`.
+- [x] (2026-06-06T23:28:00Z) Added a Lean transaction public-input binding kernel proving representative accept/reject facts for public/serialized agreement on merkle root, fee, signed value balance, balance-slot assets, stablecoin policy, oracle, and attestation payload before `TransactionPublicInputsP3` construction.
+- [x] (2026-06-06T23:28:00Z) Added `gen_public_input_binding_vectors`, a `transaction-circuit` conformance test for generated binding examples against production `transaction_public_inputs_p3_from_parts`, and wired that test into `scripts/check_formal_core.sh`, `scripts/check_lean_formal.sh`, the formal inventory, claims ledger, blueprint DAG, and docs.
+- [x] (2026-06-06T23:28:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production -- --nocapture`, and `bash scripts/check_formal_core.sh`; all passed locally. The full formal-core gate reported 17 claims, 15 production-eligible claims, 17 blueprint nodes, and 41 falsification cases.
+- [x] (2026-06-06T23:31:00Z) Ran `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; it passed locally after the public-input binding slice.
 
 ## Surprises & Discoveries
 
@@ -187,6 +191,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the transaction public-input shape proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `1692cccd` built 57 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape conformance, and reported `claims = 16`, `production_eligible = 14`, `nodes = 16`, and `falsification_cases = 38`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403694`; a 25-second height sample advanced from `403694` to `403695`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403698`.
 
+- Observation: The transaction public/serialized input binding seam now has Lean-backed executable evidence.
+  Evidence: `formal/lean/Hegemon/Transaction/PublicInputBinding.lean` proves valid, stablecoin, omitted-balance-asset fallback, merkle-root mismatch, fee mismatch, signed value-balance mismatch, balance-slot asset mismatch, and stablecoin payload mismatch facts; `formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean` emits 17 examples; `circuits/transaction/src/proof.rs` checks those vectors against production `transaction_public_inputs_p3_from_parts`.
+
+- Observation: The expanded formal-core gate now includes transaction public-input binding conformance in the release-facing proof surface.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding transaction public-input binding, ran the generated binding vectors alongside bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, light-client Work48, consensus proof-policy, consensus/native supply accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape checks, and reported `claims = 17`, `production_eligible = 15`, `nodes = 17`, and `falsification_cases = 41`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -239,6 +249,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize verifier-facing transaction public-input shape before statement-hash binding or proof-system soundness.
   Rationale: `TransactionPublicInputsP3::validate` is a concrete verifier boundary where malformed flags, inactive nonzero padding, active zero fields, noncanonical balance slots, or missing stablecoin assets can create counterfeit-style admission bugs before deeper cryptographic verification. Proving and vector-checking that executable shape gate tightens the admission surface now, while statement-hash binding, Poseidon2 equivalence, and STARK/SmallWood soundness remain explicit follow-on proof obligations.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize public/serialized transaction input binding before statement-hash byte-order and digest-equivalence proofs.
+  Rationale: `transaction_public_inputs_p3_from_parts` is the constructor boundary that combines declared public transaction fields with serialized STARK public-input fields. Proving and vector-checking merkle-root, fee, signed value-balance, balance-slot asset, stablecoin policy, oracle, and attestation agreement removes a concrete counterfeit-style seam now, while statement-hash byte ordering, Poseidon2/BLAKE3 equivalence, and proof-system soundness remain explicit follow-on obligations.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective

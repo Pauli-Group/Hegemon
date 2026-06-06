@@ -10,3 +10,4 @@ import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance
 import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs
+import Hegemon.Transaction.PublicInputBinding

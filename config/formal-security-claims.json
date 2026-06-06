@@ -119,7 +119,7 @@
       "assumptions": [
         "The Lean Digest model and generated vectors use abstract one-limb nonzero/zero digests; they do not prove Poseidon2, note commitment, nullifier, or ciphertext hash derivation security.",
         "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership.",
-        "The theorem covers public-input shape admission, not statement-hash binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
+        "The theorem covers public-input shape admission, not statement-hash byte ordering, cryptographic digest binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/PublicInputs.lean",
@@ -132,6 +132,34 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "formal.transaction-public-input-binding",
+      "component": "transaction public/serialized input binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean public-input binding kernel proves executable accept/reject facts for the verifier seam that combines TransactionPublicInputs with SerializedStarkInputs before constructing TransactionPublicInputsP3, and generated Lean vectors are checked against production transaction_public_inputs_p3_from_parts.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats 48-byte commitments as abstract digest identifiers; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
+        "Generated Lean conformance vectors cover merkle-root, fee, signed value-balance, balance-slot asset list, stablecoin enable/asset/version/issuance/hash/oracle/attestation binding, and the legacy empty serialized balance-slot fallback.",
+        "The theorem covers the public/serialized binding predicate used before verifier public-input construction, not transaction statement-hash byte ordering, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction-core/src/p3_air.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

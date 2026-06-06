@@ -36,3 +36,6 @@ lean_exe gen_merkle_vectors where
 
 lean_exe gen_public_input_vectors where
   root := `Hegemon.Transaction.GeneratePublicInputVectors
+
+lean_exe gen_public_input_binding_vectors where
+  root := `Hegemon.Transaction.GeneratePublicInputBindingVectors
