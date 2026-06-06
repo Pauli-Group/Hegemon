@@ -333,3 +333,177 @@ fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
         && binding.issuance_delta == 0
         && binding.policy_version == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use crate::public_inputs::BalanceSlot;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTransactionVectorFile {
+        schema_version: u32,
+        balance_cases: Vec<LeanBalanceCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBalanceCase {
+        name: String,
+        inputs: Vec<LeanNote>,
+        outputs: Vec<LeanNote>,
+        fee: u64,
+        value_balance: String,
+        stablecoin_enabled: bool,
+        stablecoin_asset_id: u64,
+        stablecoin_issuance_delta: String,
+        stablecoin_policy_version: u32,
+        expected_slots: Option<Vec<LeanBalanceSlot>>,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNote {
+        asset_id: u64,
+        value: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBalanceSlot {
+        asset_id: u64,
+        delta: String,
+    }
+
+    #[test]
+    fn lean_generated_balance_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_TRANSACTION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_TRANSACTION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean transaction vectors");
+        let vectors: LeanTransactionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean transaction vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.balance_cases.is_empty(),
+            "Lean transaction balance cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.balance_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_balance_case(case);
+        }
+    }
+
+    fn verify_lean_balance_case(case: &LeanBalanceCase) {
+        let witness = witness_from_lean_case(case);
+        match (witness.balance_slots(), &case.expected_slots) {
+            (Ok(actual), Some(expected)) => {
+                let expected = expected
+                    .iter()
+                    .map(|slot| BalanceSlot {
+                        asset_id: slot.asset_id,
+                        delta: parse_i128(&slot.delta),
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    actual, expected,
+                    "{} production balance slots drifted from Lean spec",
+                    case.name
+                );
+            }
+            (Err(_), None) => {}
+            (Ok(actual), None) => {
+                panic!(
+                    "{} produced balance slots {actual:?}, but Lean expected overflow",
+                    case.name
+                );
+            }
+            (Err(err), Some(expected)) => {
+                panic!(
+                    "{} failed to produce balance slots ({err}), but Lean expected {expected:?}",
+                    case.name
+                );
+            }
+        }
+
+        assert_eq!(
+            witness.validate().is_ok(),
+            case.expected_valid,
+            "{} production balance validation drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn witness_from_lean_case(case: &LeanBalanceCase) -> TransactionWitness {
+        TransactionWitness {
+            inputs: case
+                .inputs
+                .iter()
+                .enumerate()
+                .map(|(idx, note)| InputNoteWitness {
+                    note: note_data(note, idx, true),
+                    position: idx as u64,
+                    rho_seed: patterned_bytes32(0x70, idx),
+                    merkle_path: MerklePath::default(),
+                })
+                .collect(),
+            outputs: case
+                .outputs
+                .iter()
+                .enumerate()
+                .map(|(idx, note)| OutputNoteWitness {
+                    note: note_data(note, idx, false),
+                })
+                .collect(),
+            ciphertext_hashes: vec![[0u8; 48]; case.outputs.len()],
+            sk_spend: patterned_bytes32(0x90, 0),
+            merkle_root: [0u8; 48],
+            fee: case.fee,
+            value_balance: parse_i128(&case.value_balance),
+            stablecoin: StablecoinPolicyBinding {
+                enabled: case.stablecoin_enabled,
+                asset_id: case.stablecoin_asset_id,
+                policy_hash: [0u8; 48],
+                oracle_commitment: [0u8; 48],
+                attestation_commitment: [0u8; 48],
+                issuance_delta: parse_i128(&case.stablecoin_issuance_delta),
+                policy_version: case.stablecoin_policy_version,
+            },
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn note_data(note: &LeanNote, idx: usize, input: bool) -> NoteData {
+        let base = if input { 0x10 } else { 0x40 };
+        NoteData {
+            value: note.value,
+            asset_id: note.asset_id,
+            pk_recipient: patterned_bytes32(base, idx),
+            pk_auth: patterned_bytes32(base + 1, idx),
+            rho: patterned_bytes32(base + 2, idx),
+            r: patterned_bytes32(base + 3, idx),
+        }
+    }
+
+    fn patterned_bytes32(seed: u8, idx: usize) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (offset, byte) in out.iter_mut().enumerate() {
+            *byte = seed
+                .wrapping_add(idx as u8)
+                .wrapping_add((offset as u8).wrapping_mul(17));
+        }
+        out
+    }
+
+    fn parse_i128(raw: &str) -> i128 {
+        raw.parse::<i128>().expect("Lean signed integer")
+    }
+}

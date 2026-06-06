@@ -29,12 +29,14 @@ printf '\n[4/11] Verifying Lean-generated Rust conformance vectors\n'
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_SHIELDED_VECTORS="$(mktemp)"
 LEAN_CONSENSUS_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS"' EXIT
+LEAN_TRANSACTION_VECTORS="$(mktemp)"
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_TRANSACTION_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
   lake exe gen_shielded_vectors > "$LEAN_SHIELDED_VECTORS"
   lake exe gen_consensus_vectors > "$LEAN_CONSENSUS_VECTORS"
+  lake exe gen_transaction_vectors > "$LEAN_TRANSACTION_VECTORS"
 )
 HEGEMON_LEAN_BRIDGE_VECTORS="$LEAN_BRIDGE_VECTORS" \
   cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture
@@ -42,6 +44,8 @@ HEGEMON_LEAN_SHIELDED_VECTORS="$LEAN_SHIELDED_VECTORS" \
   cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture
 HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
   cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture
+HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
+  cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 
 printf '\n[5/11] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then

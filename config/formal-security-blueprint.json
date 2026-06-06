@@ -80,26 +80,47 @@
       "id": "formal.transaction-balance",
       "claim_id": "formal.transaction-balance",
       "kind": "target_claim",
-      "formal_statement": "The transaction formal model names and checks bounded executions of nullifier uniqueness and per-asset balance conservation invariants for the abstract shielded transaction state.",
-      "informal_argument": "The TLA+ model captures the invariant shape that implementation changes must preserve. The formal-core inventory requires the model and config to exist and names the invariants so they cannot disappear silently from release review.",
+      "formal_statement": "For the executable Lean transaction-balance transition, a valid balance witness must have concrete balance slots, the native slot delta must equal `fee - value_balance`, and the stablecoin/non-native slot rules must hold.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.validBalance_has_slots`, `Hegemon.Transaction.validBalance_rejects_slot_overflow`, `Hegemon.Transaction.validBalance_native_delta`, and `Hegemon.Transaction.validBalance_stablecoin_rules` prove core facts about the executable balance kernel. `gen_transaction_vectors` emits Lean-derived native-fee, value-balance, non-native conservation, counterfeit rejection, stablecoin issuance, stablecoin mismatch, native-asset stablecoin rejection, and balance-slot overflow examples. The formal-core gate runs production `transaction-circuit` conformance against `TransactionWitness::balance_slots` and `TransactionWitness::validate`. The existing TLA+ model remains bounded abstraction evidence for the larger transaction balance/nullifier invariant shape.",
       "depends_on": [
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
+        "circuits/transaction/src/witness.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
         "circuits/formal/transaction_balance.tla",
         "circuits/formal/transaction_balance.cfg"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
+        "circuits/transaction/src/witness.rs",
         "circuits/formal/README.md",
-        "METHODS.md"
+        "circuits/formal/transaction_balance.tla",
+        "circuits/formal/transaction_balance.cfg",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "The target is accepted as a bounded abstraction, not as a Rust refinement proof."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for TransactionWitness balance-slot and balance-validation behavior, with the TLA+ model retained as bounded abstraction evidence."
       },
       "falsification_cases": [
+        {
+          "id": "lean-balance-theorem",
+          "description": "Removing or weakening the transaction-balance theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-rust-conformance",
+          "description": "Changing production balance-slot or balance-validation behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
         {
           "id": "invariant-name-required",
           "description": "Removing `BalanceInvariant` or `NullifierUniqueness` from the model must fail the formal inventory check.",
@@ -111,7 +132,7 @@
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node does not prove equivalence between the TLA+ abstraction and every Rust witness or AIR constraint."
+      "scope_boundary": "This node proves and vector-checks executable balance-slot and validation semantics only. It does not prove note commitment correctness, Merkle membership, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "shielded.nullifier-state",

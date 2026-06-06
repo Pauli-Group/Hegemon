@@ -36,6 +36,11 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T19:33:00Z) Ran the full local `bash scripts/check_formal_core.sh`; it passed with the new consensus conformance step, 10 claims, 8 production-eligible claims, and 18 falsification cases.
 - [x] (2026-06-06T19:33:00Z) Ran focused production tests: `cargo test -p consensus --test pow_rules --test simulation -- --nocapture` and `cargo test -p hegemon-node bridge_witness_rejects_noncanonical_block_hash --lib --no-default-features -- --nocapture`; both passed.
 - [x] (2026-06-06T19:42:00Z) Validated branch tip `aab28185` on `hegemon-dev`: the expanded 11-step formal-core gate passed with consensus fork-choice conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402670` to `402673`, and `scripts/test-node.sh wallet-send` passed.
+- [x] (2026-06-06T20:03:00Z) Added a Lean transaction-balance kernel proving valid balances have concrete slots, slot overflow is rejected, native delta equals `fee - value_balance`, and stablecoin/non-native rules are extracted from executable validation.
+- [x] (2026-06-06T20:03:00Z) Added `gen_transaction_vectors` and a `transaction-circuit` conformance test that checks generated Lean balance examples against production `TransactionWitness::balance_slots` and `TransactionWitness::validate` when `HEGEMON_LEAN_TRANSACTION_VECTORS` is set.
+- [x] (2026-06-06T20:03:00Z) Ran `bash scripts/check_lean_formal.sh` and `HEGEMON_LEAN_TRANSACTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture`; both passed locally.
+- [x] (2026-06-06T20:13:00Z) Ran the full local `bash scripts/check_formal_core.sh`; it passed with the new transaction-balance conformance step, 10 claims, 8 production-eligible claims, and 20 falsification cases.
+- [x] (2026-06-06T20:13:00Z) Ran `cargo test -p transaction-circuit --test transaction verification_fails_for_bad_balance -- --nocapture`; it passed. The heavier `smallwood_candidate_verification_fails_for_enabled_stablecoin_binding_mutation` run was stopped after several minutes without output and is not counted as evidence for this revision.
 
 ## Surprises & Discoveries
 
@@ -78,6 +83,15 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the fork-choice proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `aab28185` passed all 11 steps, including `lean_generated_fork_choice_vectors_match_production`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `402668`; a 25-second height sample advanced from `402670` to `402673`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `402675`.
 
+- Observation: The transaction-balance claim now has a Lean-backed executable validation slice.
+  Evidence: `formal/lean/Hegemon/Transaction/Balance.lean` proves `validBalance_has_slots`, `validBalance_rejects_slot_overflow`, `validBalance_native_delta`, and `validBalance_stablecoin_rules`; `formal/lean/Hegemon/Transaction/GenerateVectors.lean` emits valid and invalid native/non-native/stablecoin/overflow examples; `circuits/transaction/src/witness.rs` checks those vectors against production `TransactionWitness::balance_slots` and `TransactionWitness::validate`.
+
+- Observation: The transaction-balance theorem scope is still narrower than full proof-system soundness.
+  Evidence: `config/formal-security-claims.json` scopes `formal.transaction-balance` to executable balance-slot and validation semantics and explicitly excludes note commitments, Merkle membership, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, and complete Rust refinement.
+
+- Observation: The expanded formal-core gate now checks four Lean-to-Rust conformance surfaces.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed, ran bridge replay, shielded nullifier, consensus fork-choice, and transaction-balance generated vector checks, and reported `claims = 10`, `production_eligible = 8`, and `falsification_cases = 20`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -102,6 +116,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize deterministic PoW fork-choice ordering before target arithmetic or network finality.
   Rationale: Greatest-work selection is a production-critical consensus rule and the actual implementation already had a small work/height/hash comparator. Proving that ordering and forcing the Rust helper to match is useful now, while full target arithmetic, timestamp behavior, scheduler assumptions, and long-range network finality remain larger kernels.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize `TransactionWitness` balance-slot validation before full AIR/proof-system semantics.
+  Rationale: The exported transaction-balance claim was still model-only. The `TransactionWitness::balance_slots` and `validate` methods are a concrete production boundary for native fee accounting, non-native conservation, stablecoin issuance, and slot overflow. Proving and vector-checking that executable kernel makes the claim materially stronger while keeping note commitments, Merkle paths, nullifier derivation, and STARK soundness as explicit follow-on work.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -223,3 +241,7 @@ Revision note 2026-06-06T19:24:00Z: Added Lean fork-choice ordering theorems, ge
 Revision note 2026-06-06T19:33:00Z: Recorded passing full local formal-core validation plus focused consensus/native tests for the fork-choice helper revision. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-06T19:42:00Z: Recorded `hegemon-dev` validation for commit `aab28185`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
+
+Revision note 2026-06-06T20:03:00Z: Added Lean transaction-balance theorems, generated transaction conformance vectors, a production `TransactionWitness` vector test, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
+
+Revision note 2026-06-06T20:13:00Z: Recorded passing full local formal-core validation for the transaction-balance revision plus the focused bad-balance verifier regression. Remote `hegemon-dev` validation is still pending.

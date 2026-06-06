@@ -54,21 +54,28 @@
     {
       "id": "formal.transaction-balance",
       "component": "shielded transaction semantics",
-      "claim_class": "formal_model",
-      "summary": "The formal transaction model names the balance and nullifier invariants that any transaction witness change must preserve.",
-      "status": "model_checked",
-      "proof_model": "bounded_tla_model",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, and generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "assumptions": [
-        "The TLA model is a bounded abstraction, not a proof of Rust implementation equivalence.",
-        "Developers update the model when public inputs, balance slots, or nullifier semantics change."
+        "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitments, Merkle membership, ciphertext hashes, or hash-derived nullifiers.",
+        "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, and slot overflow cases.",
+        "The theorem covers executable balance-slot and validation semantics, not full AIR/proof-system soundness or every witness/public-input field."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
+        "circuits/transaction/src/witness.rs",
         "circuits/formal/transaction_balance.tla",
         "circuits/formal/transaction_balance.cfg",
-        "circuits/formal/README.md"
+        "circuits/formal/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
