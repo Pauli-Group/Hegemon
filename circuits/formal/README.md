@@ -2,7 +2,9 @@
 
 This directory holds model-checking artifacts for the transaction STARK. They complement the Rust tests under `circuits/transaction/tests/` and the guidance in `docs/SECURITY_REVIEWS.md`.
 
-The release-facing wrapper is `bash scripts/check_formal_core.sh` from the repository root. That wrapper checks that this model is present, validates the machine-readable claims ledger, verifies independent bridge vectors, and reruns the native backend reference vectors. Set `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1` if local TLC/Apalache binaries are installed and you want the wrapper to run the model checkers too.
+The release-facing wrapper is `bash scripts/check_formal_core.sh` from the repository root. That wrapper checks that this model is present, validates the machine-readable claims ledger, validates the blueprint DAG, verifies independent bridge vectors, and reruns the native backend reference vectors. Set `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1` if local TLC/Apalache binaries are installed and you want the wrapper to run the model checkers too.
+
+The blueprint DAG node for this model records the target review, implementation bindings, dependency edges, and falsification cases for the transaction-balance claim. It is a release review map, not a proof that the Rust implementation refines this TLA+ abstraction. Keep that boundary explicit when updating the model or citing it in PRs.
 
 ## Files
 

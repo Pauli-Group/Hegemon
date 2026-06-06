@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_for_branch": "codex/formal-verification-core",
+  "generated_for_branch": "codex/formal-blueprint-dag",
   "claims": [
     {
       "id": "release.pq-binary",

@@ -4,7 +4,9 @@ The HotStuff TLC/Apalache artifacts have been replaced with PoW-oriented models 
 `consensus/spec/consensus_protocol.md`. The goal is to mechanically check that the longest-chain rule always points to the
 highest-work branch and that probabilistic finality holds under the assumed hash-rate bound (≤30%).
 
-`pow_longest_chain.tla` is the active release-facing consensus model. The older `hotstuff_safety.tla` files are retained only as legacy archive material while the native product line is PoW-only; do not cite them as current release evidence. The repository-level wrapper is `bash scripts/check_formal_core.sh`, which checks that the active PoW model is present and can optionally run installed TLC/Apalache binaries when `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1` is set.
+`pow_longest_chain.tla` is the active release-facing consensus model. The older `hotstuff_safety.tla` files are retained only as legacy archive material while the native product line is PoW-only; do not cite them as current release evidence. The repository-level wrapper is `bash scripts/check_formal_core.sh`, which checks that the active PoW model is present, validates the blueprint DAG, and can optionally run installed TLC/Apalache binaries when `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1` is set.
+
+The blueprint DAG node for this model records target review, dependency edges, implementation bindings, and falsification cases for the PoW fork-choice claim. It is a release review map, not a complete network-scheduler proof or a Rust refinement proof.
 
 ## Files
 

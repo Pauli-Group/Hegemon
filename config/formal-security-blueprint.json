@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "generated_for_branch": "codex/formal-blueprint-dag",
+  "methodology": {
+    "name": "hegemon-formal-blueprint-dag-v1",
+    "summary": "LeanMarathon-inspired formal-security blueprint: every release claim is a reviewed graph node with implementation bindings, evidence, dependencies, and cheap falsification cases.",
+    "source_of_record": "config/formal-security-claims.json",
+    "gate": "bash scripts/check_formal_core.sh"
+  },
+  "nodes": [
+    {
+      "id": "release.dependency-waivers",
+      "claim_id": "release.dependency-waivers",
+      "kind": "supporting_claim",
+      "formal_statement": "Every cargo-audit advisory or yanked crate that remains in release code or the formal-core checker lockfile is represented by an explicit non-expired waiver entry with policy metadata.",
+      "informal_argument": "The dependency audit gate parses cargo-audit output and the waiver file, counts waived and unwaived findings, and fails if an advisory is not accounted for. The formal-core checker crate is audited separately so the assurance tooling does not bypass the same dependency discipline.",
+      "depends_on": [],
+      "implementation_paths": [
+        "scripts/dependency-audit-gate.sh",
+        "scripts/check_formal_core.sh"
+      ],
+      "evidence_paths": [
+        "config/dependency-audit-waivers.json",
+        "docs/DEPENDENCY_AUDITS.md",
+        "scripts/hegemon_formal_core/Cargo.lock"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The claim is deliberately operational: it proves review coverage for known dependency findings, not absence of future advisories."
+      },
+      "falsification_cases": [
+        {
+          "id": "unwaived-advisory",
+          "description": "A cargo-audit finding with no matching waiver must fail the dependency gate.",
+          "gate": "bash scripts/dependency-audit-gate.sh"
+        },
+        {
+          "id": "formal-core-lock-audit",
+          "description": "The formal-core checker lockfile is audited independently from the root workspace lockfile.",
+          "gate": "cd scripts/hegemon_formal_core && cargo audit --color never"
+        }
+      ],
+      "scope_boundary": "This node does not claim dependency freshness; it claims enforced waiver accounting for known cargo-audit findings."
+    },
+    {
+      "id": "release.pq-binary",
+      "claim_id": "release.pq-binary",
+      "kind": "target_claim",
+      "formal_statement": "The release `hegemon-node` binary is rejected by the release gate if forbidden classical curve, pairing, RSA, or trusted-setup verifier surfaces are detected in the linked artifact or dependency surface scanned by the policy.",
+      "informal_argument": "The binary primitive audit is the release-facing check for the design rule that the native node must stay PQ-clean. It is paired with dependency waiver accounting so both the linked symbols and known package advisories are visible before release.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "scripts/security-audit.sh",
+        "scripts/check_formal_core.sh"
+      ],
+      "evidence_paths": [
+        "DESIGN.md",
+        "METHODS.md"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The claim is scoped to the audited release node binary and the current forbidden-primitive pattern set."
+      },
+      "falsification_cases": [
+        {
+          "id": "forbidden-symbol-scan",
+          "description": "Forbidden ECC/pairing/RSA/trusted-setup symbols or dependencies must fail the security audit.",
+          "gate": "bash scripts/security-audit.sh"
+        }
+      ],
+      "scope_boundary": "This node does not prove that every transitive crate is PQ-secure; it enforces the current release binary primitive policy."
+    },
+    {
+      "id": "formal.transaction-balance",
+      "claim_id": "formal.transaction-balance",
+      "kind": "target_claim",
+      "formal_statement": "The transaction formal model names and checks bounded executions of nullifier uniqueness and per-asset balance conservation invariants for the abstract shielded transaction state.",
+      "informal_argument": "The TLA+ model captures the invariant shape that implementation changes must preserve. The formal-core inventory requires the model and config to exist and names the invariants so they cannot disappear silently from release review.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "circuits/formal/transaction_balance.tla",
+        "circuits/formal/transaction_balance.cfg"
+      ],
+      "evidence_paths": [
+        "circuits/formal/README.md",
+        "METHODS.md"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The target is accepted as a bounded abstraction, not as a Rust refinement proof."
+      },
+      "falsification_cases": [
+        {
+          "id": "invariant-name-required",
+          "description": "Removing `BalanceInvariant` or `NullifierUniqueness` from the model must fail the formal inventory check.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "optional-model-checker",
+          "description": "When local model checkers are installed, the wrapper can run TLC/Apalache against the transaction model.",
+          "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node does not prove equivalence between the TLA+ abstraction and every Rust witness or AIR constraint."
+    },
+    {
+      "id": "formal.pow-fork-choice",
+      "claim_id": "formal.pow-fork-choice",
+      "kind": "target_claim",
+      "formal_statement": "The PoW formal model names and checks bounded executions of aggregate-work fork-choice and finality invariants for the abstract native consensus state.",
+      "informal_argument": "The PoW model is the release-review anchor for the native greatest-work rule. The inventory check requires the model files and key invariant names, while optional TLC/Apalache runs exercise bounded state spaces when installed.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "consensus/spec/formal/pow_longest_chain.tla",
+        "consensus/spec/formal/pow_longest_chain.cfg"
+      ],
+      "evidence_paths": [
+        "consensus/spec/formal/README.md",
+        "DESIGN.md"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The target is accepted as an aggregate-work abstraction, not as a full network scheduler proof."
+      },
+      "falsification_cases": [
+        {
+          "id": "invariant-name-required",
+          "description": "Removing `ForkChoiceInvariant` or `FinalityInvariant` from the model must fail the formal inventory check.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "optional-model-checker",
+          "description": "When local model checkers are installed, the wrapper can run TLC/Apalache against the PoW model.",
+          "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node does not model every network partition, timestamp edge case, or long-range adversarial mining schedule."
+    },
+    {
+      "id": "bridge.message-root-replay",
+      "claim_id": "bridge.message-root-replay",
+      "kind": "target_claim",
+      "formal_statement": "For committed BridgeMessageV1 vectors, the independent checker recomputes the payload hash, canonical message hash, single-message root, and inbound replay key from the public fields without importing production bridge helpers.",
+      "informal_argument": "The bridge reference vectors bind the byte grammar and replay-key derivation most likely to create counterfeit or replayable bridge messages. The checker intentionally reimplements the encoding and BLAKE3 XOF-48 derivations so production helper drift is caught.",
+      "depends_on": [
+        "formal.pow-fork-choice",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "protocol/kernel/src/bridge.rs"
+      ],
+      "evidence_paths": [
+        "testdata/formal_core_vectors/bridge_messages.json"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The target is accepted for current single-message vectors and replay-key derivation; larger Merkle batches need additional vectors."
+      },
+      "falsification_cases": [
+        {
+          "id": "payload-hash-tamper",
+          "description": "Changing payload bytes or expected payload hash must fail vector verification.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- verify-bridge-vectors testdata/formal_core_vectors/bridge_messages.json"
+        },
+        {
+          "id": "replay-key-domain",
+          "description": "Replay keys must differ across source chain ids and nonces.",
+          "gate": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml replay_key_binds_nonce_and_chain"
+        }
+      ],
+      "scope_boundary": "This node covers canonical vector derivations; it does not prove every bridge light-client proof system or external-chain covenant."
+    },
+    {
+      "id": "proof.native-backend-vectors",
+      "claim_id": "proof.native-backend-vectors",
+      "kind": "target_claim",
+      "formal_statement": "The native backend reference-vector verifier accepts committed valid tx-leaf and receipt-root vectors and rejects malformed companions for spec digest, parameter fingerprint, proof digest, STARK proof, and trailing-byte failures.",
+      "informal_argument": "Native proof artifacts are a trust boundary. The reference verifier is run by the formal-core gate to ensure canonical decoding and key binding checks keep rejecting known invalid variants.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "tools/native-backend-ref/src/lib.rs",
+        "scripts/verify_native_backend_review_package.sh"
+      ],
+      "evidence_paths": [
+        "testdata/native_backend_vectors/bundle.json"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "The target is accepted as a vector and byte-grammar claim, not as a cryptographic proof of the candidate backend."
+      },
+      "falsification_cases": [
+        {
+          "id": "invalid-native-vectors",
+          "description": "The vector bundle includes invalid cases that must continue to be rejected by the reference verifier.",
+          "gate": "cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors"
+        }
+      ],
+      "scope_boundary": "This node does not certify the lattice backend's security assumptions; it checks artifact canonicality and known invalid-vector rejection."
+    },
+    {
+      "id": "proof.risc0-release-disabled",
+      "claim_id": "proof.risc0-release-disabled",
+      "kind": "residual_risk",
+      "formal_statement": "The release node must fail closed for inbound RISC Zero bridge receipts after syntactic and message-binding prechecks until a PQ-clean verifier is available.",
+      "informal_argument": "RISC Zero bridge receipts remain offline experimental artifacts because the verifier path can pull classical Groth16/BN254 code into the binary. The safer release behavior is to parse and bind-check enough to reject malformed messages, then reject receipt acceptance.",
+      "depends_on": [
+        "release.pq-binary",
+        "bridge.message-root-replay"
+      ],
+      "implementation_paths": [
+        "node/src/native/mod.rs"
+      ],
+      "evidence_paths": [
+        "docs/bridge_loopback.md",
+        "DESIGN.md"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as a fail-closed residual-risk node; it is not production-eligible bridge receipt acceptance."
+      },
+      "falsification_cases": [
+        {
+          "id": "binding-tamper-reject",
+          "description": "Inbound bridge message-binding tampering must be rejected by node tests.",
+          "gate": "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node explicitly does not permit inbound RISC Zero receipt acceptance on the release node."
+    },
+    {
+      "id": "crypto.native-backend-candidate",
+      "claim_id": "crypto.native-backend-candidate",
+      "kind": "residual_risk",
+      "formal_statement": "The active native lattice backend remains labeled candidate-under-review and structural-candidate unless an accepted external-review artifact deliberately changes the release posture.",
+      "informal_argument": "The repo contains theorem-grade prose, reference vectors, and a reproducible review package, but it does not yet contain machine-checked Lean proofs or accepted external-review artifacts for production cryptographic acceptance. The posture script keeps the candidate label in force.",
+      "depends_on": [
+        "proof.native-backend-vectors",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "scripts/check_native_backend_release_posture.sh",
+        "audits/native-backend-128b/KNOWN_GAPS.md"
+      ],
+      "evidence_paths": [
+        "docs/crypto/native_backend_security_analysis.md",
+        "docs/crypto/native_backend_formal_theorems.md"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as an explicit residual-risk node. The release checker must keep this non-production posture visible."
+      },
+      "falsification_cases": [
+        {
+          "id": "release-posture-candidate",
+          "description": "The native backend posture script must report candidate-under-review and structural-candidate for the current package.",
+          "gate": "bash scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
+        }
+      ],
+      "scope_boundary": "This node does not claim the native backend is production-ready cryptography."
+    }
+  ]
+}

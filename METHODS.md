@@ -1041,7 +1041,7 @@ Document benchmark outputs in pull requests when you intentionally run those man
 | Job | Purpose |
 | --- | --- |
 | `rust-lints` | Runs `./scripts/check-core.sh lint` for the curated default lint gate. |
-| `formal-core` | Runs `bash scripts/check_formal_core.sh`, which checks the formal model inventory, claims ledger, bridge reference vectors, and native backend reference vectors. |
+| `formal-core` | Runs `bash scripts/check_formal_core.sh`, which checks the formal model inventory, claims ledger, blueprint DAG, bridge reference vectors, and native backend reference vectors. |
 | `core-tests` | Runs `./scripts/check-core.sh test` for the fast shipping-path Rust suite. |
 | `release-build` | Runs `./scripts/check-core.sh build` so the release native node builds cleanly. |
 
@@ -1063,7 +1063,9 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 ### Security assurance workflow
 
 - Follow `docs/SECURITY_REVIEWS.md` whenever commissioning cryptanalysis or third-party audits. Every finding recorded there must reference the code path touched plus the mitigation PR.
-- `bash scripts/check_formal_core.sh` is the mandatory formal-core gate for release branches. It validates `config/formal-security-claims.json`, checks the formal inventory, verifies independent bridge message/replay vectors, and reruns the native backend reference vectors.
+- `bash scripts/check_formal_core.sh` is the mandatory formal-core gate for release branches. It validates `config/formal-security-claims.json`, validates the blueprint DAG in `config/formal-security-blueprint.json`, checks the formal inventory, verifies independent bridge message/replay vectors, and reruns the native backend reference vectors. The claims ledger is the source of record for formal-security claim status, production eligibility, gates, and residual risks. The blueprint DAG is a JSON review map for that ledger, not a Lean proof file: it makes dependencies, target review, implementation bindings, cheap falsification cases, and scope boundaries machine-checkable.
+- Every production-eligible blueprint node must name at least one cheap falsification case, such as an invalid vector, negative unit test, counterexample config, or checker case that would fail quickly if the claim were false. Target-review acceptance means the statement and evidence target have been reviewed for CI gating; it is not external cryptographic acceptance, and it does not change any ledger residual risk.
+- A local pass is preflight evidence. Branch acceptance requires the CI `formal-core` job to run `bash scripts/check_formal_core.sh` and report the blueprint-DAG step passed. Passing `formal-core` is release-gate evidence, not a proof of the full Rust implementation and not a replacement for TLC/Apalache runs, external cryptanalysis, or checked-in acceptance artifacts.
 - `circuits/formal/README.md` and `consensus/spec/formal/README.md` explain how to run the TLA+ models. Include the TLC/Apalache output summary in PR descriptions when those specs change; set `HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1` before running `scripts/check_formal_core.sh` if local TLC/Apalache binaries are installed and you want the wrapper to run them too.
 - `runbooks/security_testing.md` documents how to rerun the `security-adversarial` job locally, capture artifacts, and notify auditors if a regression appears on CI. Treat it as mandatory reading before release tagging.
 - Run `./scripts/dependency-audit-gate.sh` for dependency advisories; CI and release builds fail on any unwaived finding. Use `./scripts/dependency-audit.sh --record` only to append a human-readable snapshot after updating `config/dependency-audit-waivers.json`.
