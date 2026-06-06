@@ -25,7 +25,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
 
 (
   cd "$LEAN_ROOT"
-  lake build Hegemon gen_bridge_vectors gen_shielded_vectors gen_consensus_vectors gen_supply_vectors gen_transaction_vectors
+  lake build Hegemon gen_bridge_vectors gen_shielded_vectors gen_consensus_vectors gen_supply_vectors gen_action_order_vectors gen_transaction_vectors
   lake env lean Hegemon/Bytes.lean
   lake env lean Hegemon/Bridge/Encoding.lean
   lake env lean Hegemon/Bridge/Replay.lean
@@ -34,6 +34,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Consensus/GenerateVectors.lean
   lake env lean Hegemon/Consensus/Supply.lean
   lake env lean Hegemon/Consensus/GenerateSupplyVectors.lean
+  lake env lean Hegemon/Native/ActionOrder.lean
+  lake env lean Hegemon/Native/GenerateActionOrderVectors.lean
   lake env lean Hegemon/Shielded/Nullifier.lean
   lake env lean Hegemon/Shielded/GenerateVectors.lean
   lake env lean Hegemon/Transaction/Balance.lean

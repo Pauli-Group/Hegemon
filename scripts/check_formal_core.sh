@@ -30,14 +30,16 @@ LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_SHIELDED_VECTORS="$(mktemp)"
 LEAN_CONSENSUS_VECTORS="$(mktemp)"
 LEAN_SUPPLY_VECTORS="$(mktemp)"
+LEAN_ACTION_ORDER_VECTORS="$(mktemp)"
 LEAN_TRANSACTION_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_TRANSACTION_VECTORS"' EXIT
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
   lake exe gen_shielded_vectors > "$LEAN_SHIELDED_VECTORS"
   lake exe gen_consensus_vectors > "$LEAN_CONSENSUS_VECTORS"
   lake exe gen_supply_vectors > "$LEAN_SUPPLY_VECTORS"
+  lake exe gen_action_order_vectors > "$LEAN_ACTION_ORDER_VECTORS"
   lake exe gen_transaction_vectors > "$LEAN_TRANSACTION_VECTORS"
 )
 HEGEMON_LEAN_BRIDGE_VECTORS="$LEAN_BRIDGE_VECTORS" \
@@ -50,6 +52,8 @@ HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
   cargo test -p consensus lean_generated_supply_vectors_match_production -- --nocapture
 HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
   cargo test -p hegemon-node lean_generated_native_supply_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_ACTION_ORDER_VECTORS="$LEAN_ACTION_ORDER_VECTORS" \
+  cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 

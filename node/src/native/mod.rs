@@ -3277,6 +3277,24 @@ fn action_order_key(action: &PendingAction) -> [u8; 32] {
     crypto::hashes::blake2_256(&preimage)
 }
 
+fn transfer_key_extends_canonical_order(
+    previous_transfer_key: Option<&[u8; 32]>,
+    transfer_key: &[u8; 32],
+) -> bool {
+    previous_transfer_key.is_none_or(|previous| transfer_key >= previous)
+}
+
+fn transfer_keys_are_canonical_order(keys: &[[u8; 32]]) -> bool {
+    let mut previous: Option<[u8; 32]> = None;
+    for key in keys {
+        if !transfer_key_extends_canonical_order(previous.as_ref(), key) {
+            return false;
+        }
+        previous = Some(*key);
+    }
+    true
+}
+
 fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
     if action.family_id != FAMILY_BRIDGE {
         return Err(anyhow!("not a bridge action"));
@@ -3518,12 +3536,10 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         }
         validate_transfer_action_payload(action)?;
         let transfer_key = action_order_key(action);
-        if let Some(previous) = previous_transfer_key {
-            if transfer_key < previous {
-                return Err(anyhow!(
-                    "shielded transfer actions are not in canonical order"
-                ));
-            }
+        if !transfer_key_extends_canonical_order(previous_transfer_key.as_ref(), &transfer_key) {
+            return Err(anyhow!(
+                "shielded transfer actions are not in canonical order"
+            ));
         }
         previous_transfer_key = Some(transfer_key);
         if !state.commitment_tree.contains_root(&action.anchor) {
@@ -4806,6 +4822,28 @@ mod tests {
         expected_supply: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionOrderVectorFile {
+        schema_version: u32,
+        action_order_cases: Vec<LeanActionOrderCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionOrderCase {
+        name: String,
+        actions: Vec<LeanOrderedAction>,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanOrderedAction {
+        is_transfer: bool,
+        key: String,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -5432,6 +5470,47 @@ mod tests {
                 .expect_err("reversed actions should fail ordering");
             assert!(err.to_string().contains("canonical order"));
         }
+    }
+
+    #[test]
+    fn lean_generated_action_order_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_ORDER_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_ORDER_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean action-order vectors");
+        let vectors: LeanActionOrderVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action-order vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_order_cases.is_empty(),
+            "Lean action-order cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_order_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_order_case(case);
+        }
+    }
+
+    fn verify_lean_action_order_case(case: &LeanActionOrderCase) {
+        let transfer_keys = case
+            .actions
+            .iter()
+            .filter(|action| action.is_transfer)
+            .map(|action| {
+                parse_hash32(&action.key).expect("Lean action-order key must be 32-byte hex")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transfer_keys_are_canonical_order(&transfer_keys),
+            case.expected_valid,
+            "{} native transfer-order predicate drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]

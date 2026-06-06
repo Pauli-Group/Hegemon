@@ -168,6 +168,32 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-action-ordering",
+      "component": "native shielded block action ordering",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-ordering kernel proves that native shielded transfer order is the nondecreasing lexicographic order of computed transfer keys while non-transfer actions are ignored; generated Lean vectors are checked against the production native order predicate used by block import.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats transfer order keys as already-computed canonical 32-byte values and does not prove BLAKE2 key derivation from binding hashes and nullifiers.",
+        "Generated Lean conformance vectors cover empty blocks, single transfers, ascending keys, equal keys, descending rejection, tail inversion rejection, and ignored non-transfer actions.",
+        "The theorem covers the executable transfer-key ordering predicate, not full block action payload validation, tx leaf proof soundness, or action_order_key hash-function equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionOrder.lean",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.message-root-replay",
       "component": "protocol bridge messages",
       "claim_class": "reference_vector",

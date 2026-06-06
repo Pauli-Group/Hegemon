@@ -49,6 +49,11 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T20:35:00Z) Reran the full local `bash scripts/check_formal_core.sh`; it passed with supply-accounting conformance, 11 claims, 9 production-eligible claims, 11 blueprint nodes, and 23 falsification cases.
 - [x] (2026-06-06T20:35:00Z) Ran focused supply regressions after the native checked-ordering fix: `cargo test -p hegemon-node supply --lib --no-default-features -- --nocapture`, `cargo test -p hegemon-node coinbase --lib --no-default-features -- --nocapture`, `cargo test -p consensus supply_digest -- --nocapture`, and `cargo test -p consensus total_minted -- --nocapture`; all passed.
 - [x] (2026-06-06T20:40:00Z) Validated branch tip `9df3a4e1` on `hegemon-dev`: the expanded 11-step formal-core gate passed with supply-accounting conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `402926`, mining advanced from height `402928` to `402930`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `402932`.
+- [x] (2026-06-06T20:45:00Z) Added a Lean native action-ordering kernel proving empty/single/equal/ascending/descending and non-transfer-ignored cases for the computed transfer-key subsequence.
+- [x] (2026-06-06T20:45:00Z) Added `gen_action_order_vectors` and a native-node conformance test that checks generated Lean action-ordering examples against the production `transfer_keys_are_canonical_order` helper when `HEGEMON_LEAN_ACTION_ORDER_VECTORS` is set.
+- [x] (2026-06-06T20:45:00Z) Routed full native block-action validation through the shared transfer-key order predicate, preserving the existing regression that rejects noncanonical shielded transfer order in `validate_block_actions_locked`.
+- [x] (2026-06-06T20:45:00Z) Ran `bash scripts/check_lean_formal.sh`, `HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture`, and `cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture`; all passed locally. Full local formal-core and `hegemon-dev` validation are still pending for this revision.
+- [x] (2026-06-06T20:50:00Z) Reran the full local `bash scripts/check_formal_core.sh`; it passed with native action-ordering conformance, 12 claims, 10 production-eligible claims, 12 blueprint nodes, and 26 falsification cases.
 
 ## Surprises & Discoveries
 
@@ -115,6 +120,15 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the supply-accounting proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `9df3a4e1` passed all 11 steps, including `lean_generated_supply_vectors_match_production` and `lean_generated_native_supply_vectors_match_production`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `402926`; a 25-second height sample advanced from `402928` to `402930`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `402932`.
 
+- Observation: The native block action-ordering claim now has a Lean-backed executable predicate over computed transfer keys.
+  Evidence: `formal/lean/Hegemon/Native/ActionOrder.lean` proves empty, single, equal-key, ordered-pair, descending-pair, and non-transfer-ignored facts; `formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean` emits eight examples; `node/src/native/mod.rs` checks those vectors against `transfer_keys_are_canonical_order` and uses `transfer_key_extends_canonical_order` inside full block-action validation.
+
+- Observation: The action-ordering theorem scope is intentionally narrower than hash-function equivalence.
+  Evidence: `config/formal-security-claims.json` and `config/formal-security-blueprint.json` explicitly exclude BLAKE2 action-order key derivation, full block action payload validation, transaction leaf proof soundness, DA ordering, and complete native-node equivalence from `native.block-action-ordering`.
+
+- Observation: The expanded formal-core gate now checks six Lean-to-Rust conformance surfaces.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding native action-ordering, ran bridge replay, shielded nullifier, consensus fork-choice, consensus/native supply accounting, native action-ordering, and transaction-balance generated vector checks, and reported `claims = 12`, `production_eligible = 10`, `nodes = 12`, and `falsification_cases = 26`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -147,6 +161,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize supply-digest and coinbase accounting before deeper proof-system soundness work.
   Rationale: Supply advancement is a production-critical consensus validity rule and native-node import boundary. The code already had consensus checked arithmetic, but native metadata paths used saturating addition. A Lean executable kernel plus generated vectors makes underflow/overflow/no-coinbase behavior explicit and forces both consensus and native Rust to conform.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize native block transfer ordering over already computed action-order keys before attempting verified BLAKE2 key derivation.
+  Rationale: The production validity rule rejects a block when the shielded transfer-key subsequence is not nondecreasing. Proving and conformance-checking that predicate tightens the block import surface immediately, while BLAKE2 implementation equivalence and full action payload validation remain separate proof/refinement work.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -280,3 +298,7 @@ Revision note 2026-06-06T20:30:00Z: Added the Lean supply-accounting kernel, gen
 Revision note 2026-06-06T20:35:00Z: Recorded passing full local formal-core validation and focused consensus/native supply regressions for the supply-accounting revision. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-06T20:40:00Z: Recorded `hegemon-dev` validation for commit `9df3a4e1`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-06T20:45:00Z: Added the Lean native action-ordering kernel, generated action-ordering vectors, native Rust conformance test, block validation helper routing, metadata/docs updates, and focused local validation. Full local formal-core and `hegemon-dev` validation are still pending for this revision.
+
+Revision note 2026-06-06T20:50:00Z: Recorded passing full local formal-core validation for the native action-ordering revision. Remote `hegemon-dev` validation is still pending.

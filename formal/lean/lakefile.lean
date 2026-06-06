@@ -19,5 +19,8 @@ lean_exe gen_consensus_vectors where
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 
+lean_exe gen_action_order_vectors where
+  root := `Hegemon.Native.GenerateActionOrderVectors
+
 lean_exe gen_transaction_vectors where
   root := `Hegemon.Transaction.GenerateVectors

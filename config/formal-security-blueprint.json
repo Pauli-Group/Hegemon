@@ -299,6 +299,56 @@
       "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove target arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
     },
     {
+      "id": "native.block-action-ordering",
+      "claim_id": "native.block-action-ordering",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-ordering transition, the transfer-key subsequence of a native block is canonical exactly when it is nondecreasing in lexicographic byte order, and non-transfer actions do not affect that predicate.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.empty_canonical`, `Hegemon.Native.single_transfer_canonical`, `Hegemon.Native.non_transfer_ignored`, `Hegemon.Native.ordered_pair_accepts`, `Hegemon.Native.descending_pair_rejects`, and `Hegemon.Native.equal_pair_accepts` prove core facts about the executable order predicate. `gen_action_order_vectors` emits Lean-derived empty, single, ascending, equal-key, descending, tail-inversion, non-transfer-interleaved, and non-transfer-only examples. The formal-core gate checks those vectors against the production `transfer_keys_are_canonical_order` helper used by native block import, while the existing native regression still validates full block actions through `validate_block_actions_locked`.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionOrder.lean",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionOrder.lean",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate. Scope is ordering of already-computed transfer keys."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-order-theorem",
+          "description": "Removing or weakening the action-ordering theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-order-conformance",
+          "description": "Changing the production transfer-key ordering predicate away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-block-action-order-regression",
+          "description": "Full native block-action validation must continue rejecting reversed shielded transfer actions.",
+          "gate": "cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate only. It does not prove BLAKE2 action-order key derivation, full block action payload validation, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+    },
+    {
       "id": "bridge.message-root-replay",
       "claim_id": "bridge.message-root-replay",
       "kind": "target_claim",
