@@ -463,7 +463,8 @@ impl NativeNode {
         let state = self.state.read();
         let best = state.best.clone();
         let pending_actions = select_mineable_actions(ordered_pending_actions(&state));
-        let (actions, state_root, nullifier_root, extrinsics_root, tx_count) =
+        let height = best.height.saturating_add(1);
+        let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
             match preview_pending_roots(&state, &pending_actions) {
                 Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
                     pending_actions,
@@ -484,7 +485,19 @@ impl NativeNode {
                 }
             };
         let timestamp_ms = current_time_ms().max(best.timestamp_ms.saturating_add(1));
-        let height = best.height.saturating_add(1);
+        let supply_digest = match advance_native_supply_digest(best.supply_digest, &actions, height)
+        {
+            Ok(supply_digest) => supply_digest,
+            Err(err) => {
+                warn!(error = %err, "dropping native pending actions with invalid supply accounting");
+                actions = Vec::new();
+                state_root = best.state_root;
+                nullifier_root = best.nullifier_root;
+                extrinsics_root = actions_extrinsics_root(&[]);
+                tx_count = 0;
+                best.supply_digest
+            }
+        };
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let bridge_messages = bridge_messages_from_actions(&actions, height);
         let message_root = bridge_message_root(&bridge_messages);
@@ -497,9 +510,6 @@ impl NativeNode {
         let header_mmr_len = header_history.len() as u64;
         let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
             .unwrap_or(best.cumulative_work);
-        let supply_digest = best
-            .supply_digest
-            .saturating_add(native_block_supply_delta(&actions, height).unwrap_or_default());
         let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
@@ -577,6 +587,8 @@ impl NativeNode {
         {
             return Ok(None);
         }
+        let supply_digest =
+            advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
         if !actions.is_empty() {
             validate_block_actions_locked(&state, &actions)?;
             validate_coinbase_accounting(&actions, work.height)?;
@@ -589,8 +601,6 @@ impl NativeNode {
             return Err(anyhow!("native pending action preview mismatch"));
         }
 
-        let previous_supply = state.best.supply_digest;
-        let supply_delta = native_block_supply_delta(&actions, work.height)?;
         let meta = NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
@@ -610,7 +620,7 @@ impl NativeNode {
             nonce: seal.nonce,
             work_hash: seal.work_hash,
             cumulative_work: work.cumulative_work,
-            supply_digest: previous_supply.saturating_add(supply_delta),
+            supply_digest,
             tx_count: work.tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
         };
@@ -686,9 +696,8 @@ impl NativeNode {
             validate_coinbase_accounting(&actions, meta.height)?;
             verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
         }
-        let expected_supply = parent
-            .supply_digest
-            .saturating_add(native_block_supply_delta(&actions, meta.height)?);
+        let expected_supply =
+            advance_native_supply_digest(parent.supply_digest, &actions, meta.height)?;
         if meta.supply_digest != expected_supply {
             return Err(anyhow!("announced block supply digest mismatch"));
         }
@@ -805,10 +814,8 @@ impl NativeNode {
                 return Err(anyhow!("native replay state transition mismatch"));
             }
             validate_coinbase_accounting(&actions, meta.height)?;
-            let expected_supply = state
-                .best
-                .supply_digest
-                .saturating_add(native_block_supply_delta(&actions, meta.height)?);
+            let expected_supply =
+                advance_native_supply_digest(state.best.supply_digest, &actions, meta.height)?;
             if meta.supply_digest != expected_supply {
                 return Err(anyhow!("native replay supply digest mismatch"));
             }
@@ -3725,6 +3732,17 @@ fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u
     Ok(0)
 }
 
+fn advance_native_supply_digest(
+    parent_supply: u128,
+    actions: &[PendingAction],
+    height: u64,
+) -> Result<u128> {
+    let delta = native_block_supply_delta(actions, height)?;
+    parent_supply
+        .checked_add(delta)
+        .ok_or_else(|| anyhow!("native supply digest overflow"))
+}
+
 fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u64> {
     let fees = actions
         .iter()
@@ -4767,6 +4785,26 @@ async fn shutdown_signal(node: Arc<NativeNode>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSupplyVectorFile {
+        schema_version: u32,
+        consensus_supply_cases: Vec<serde_json::Value>,
+        native_supply_cases: Vec<LeanNativeSupplyCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeSupplyCase {
+        name: String,
+        parent_supply: String,
+        height: u64,
+        fee_total: u64,
+        has_coinbase: bool,
+        expected_delta: Option<String>,
+        expected_supply: Option<String>,
+    }
 
     #[test]
     fn native_genesis_is_stable() {
@@ -5944,7 +5982,8 @@ mod tests {
         let header_mmr_len = header_history.len() as u64;
         let cumulative_work =
             cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
-        let supply_delta = native_block_supply_delta(&actions, height).expect("supply delta");
+        let supply_digest = advance_native_supply_digest(parent.supply_digest, &actions, height)
+            .expect("supply digest");
         let pre_header = native_pow_header_from_parts(
             height,
             parent.timestamp_ms.saturating_add(1),
@@ -5960,7 +5999,7 @@ mod tests {
             message_count,
             &header_mmr_root,
             header_mmr_len,
-            parent.supply_digest.saturating_add(supply_delta),
+            supply_digest,
             tx_count,
         );
         let pre_hash = pre_header.pre_hash();
@@ -6001,7 +6040,7 @@ mod tests {
             nonce: seal.nonce,
             work_hash: seal.work_hash,
             cumulative_work,
-            supply_digest: parent.supply_digest.saturating_add(supply_delta),
+            supply_digest,
             tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
         }
@@ -6177,6 +6216,46 @@ mod tests {
         action
     }
 
+    fn test_coinbase_action(amount: u64) -> PendingAction {
+        let note = protocol_shielded_pool::types::EncryptedNote {
+            ciphertext: [11u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+            kem_ciphertext: vec![12u8; 32],
+        };
+        let commitment = [13u8; 48];
+        let args = MintCoinbaseArgs {
+            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle {
+                miner_note: protocol_shielded_pool::types::CoinbaseNoteData {
+                    commitment,
+                    encrypted_note: note,
+                    recipient_address: [14u8;
+                        protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
+                    amount,
+                    public_seed: [15u8; 32],
+                },
+            },
+        };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_MINT_COINBASE,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: vec![commitment],
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
     #[test]
     fn coinbase_accounting_is_family_scoped() {
         let height = 9;
@@ -6203,6 +6282,90 @@ mod tests {
                 .expect("supply delta"),
             0
         );
+    }
+
+    #[test]
+    fn native_supply_digest_rejects_overflow() {
+        let height = 1;
+        let subsidy = consensus::reward::block_subsidy(height) as u128;
+        let parent = u128::MAX - subsidy + 1;
+        let actions = vec![test_coinbase_action(subsidy as u64)];
+        assert!(
+            advance_native_supply_digest(parent, &actions, height).is_err(),
+            "native supply digest overflow must reject instead of saturating"
+        );
+    }
+
+    #[test]
+    fn lean_generated_native_supply_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SUPPLY_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_SUPPLY_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean supply vectors");
+        let vectors: LeanSupplyVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.consensus_supply_cases.is_empty(),
+            "Lean consensus supply cases must not be empty"
+        );
+        assert!(
+            !vectors.native_supply_cases.is_empty(),
+            "Lean native supply cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.native_supply_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_native_supply_case(case);
+        }
+    }
+
+    fn verify_lean_native_supply_case(case: &LeanNativeSupplyCase) {
+        let parent_supply = parse_u128(&case.parent_supply);
+        let expected_delta = case.expected_delta.as_deref().map(parse_u128);
+        let expected_supply = case.expected_supply.as_deref().map(parse_u128);
+        let mut actions = Vec::new();
+        if case.fee_total > 0 {
+            actions.push(test_empty_action(
+                FAMILY_SHIELDED_POOL,
+                ACTION_SHIELDED_TRANSFER_INLINE,
+                case.fee_total,
+            ));
+        }
+        if case.has_coinbase {
+            let amount = expected_delta
+                .expect("Lean native coinbase case must expose a checked reward amount");
+            let amount = u64::try_from(amount).expect("Lean native reward amount fits u64");
+            actions.push(test_coinbase_action(amount));
+        }
+
+        validate_coinbase_accounting(&actions, case.height)
+            .expect("Lean native supply case should have valid coinbase accounting");
+        assert_eq!(
+            native_block_supply_delta(&actions, case.height)
+                .ok()
+                .as_ref()
+                .map(u128::to_string),
+            expected_delta.as_ref().map(u128::to_string),
+            "{} native supply delta drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            advance_native_supply_digest(parent_supply, &actions, case.height)
+                .ok()
+                .as_ref()
+                .map(u128::to_string),
+            expected_supply.as_ref().map(u128::to_string),
+            "{} native checked supply digest drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn parse_u128(raw: &str) -> u128 {
+        raw.parse::<u128>()
+            .expect("Lean supply value must be a decimal u128")
     }
 
     fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment: [u8; 48]) {

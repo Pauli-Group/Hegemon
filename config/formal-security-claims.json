@@ -139,6 +139,35 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.supply-digest-accounting",
+      "component": "PoW supply and coinbase accounting",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean supply-accounting kernel proves checked native supply-digest increase/decrease, no-coinbase native no-op behavior, and native overflow rejection; generated Lean vectors are checked against consensus CoinbaseData/update_supply_digest and native-node coinbase supply helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean supply model represents 128-bit supply_digest arithmetic as Nat values bounded by u128::MAX and native coinbase fee totals as u64-bounded amounts.",
+        "Generated Lean vectors cover consensus minted + fees - burns behavior, burn underflow, supply overflow, no-coinbase native no-op blocks, coinbase fee inclusion, and native supply overflow rejection.",
+        "The theorem covers executable supply accounting and checked Rust conformance, not full proof-system soundness, monetary policy economics, or every wallet-side reward construction path."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
+        "consensus/src/reward.rs",
+        "consensus/src/types.rs",
+        "consensus/src/pow.rs",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.message-root-replay",
       "component": "protocol bridge messages",
       "claim_class": "reference_vector",

@@ -110,6 +110,29 @@ pub fn update_supply_digest(parent: SupplyDigest, delta: i128) -> Option<SupplyD
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{CoinbaseData, CoinbaseSource};
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSupplyVectorFile {
+        schema_version: u32,
+        consensus_supply_cases: Vec<LeanConsensusSupplyCase>,
+        native_supply_cases: Vec<serde_json::Value>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanConsensusSupplyCase {
+        name: String,
+        parent_supply: String,
+        minted: u64,
+        fees: String,
+        burns: u64,
+        expected_net_delta: String,
+        expected_supply: Option<String>,
+    }
 
     #[test]
     fn halving_schedule_matches_expectations() {
@@ -148,5 +171,72 @@ mod tests {
 
         assert!(total <= MAX_SUPPLY as u128);
         assert!(total >= (MAX_SUPPLY as u128) - (COIN as u128));
+    }
+
+    #[test]
+    fn lean_generated_supply_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SUPPLY_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_SUPPLY_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean supply vectors");
+        let vectors: LeanSupplyVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.consensus_supply_cases.is_empty(),
+            "Lean consensus supply cases must not be empty"
+        );
+        assert!(
+            !vectors.native_supply_cases.is_empty(),
+            "Lean native supply cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.consensus_supply_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_consensus_supply_case(case);
+        }
+    }
+
+    fn verify_lean_consensus_supply_case(case: &LeanConsensusSupplyCase) {
+        let parent_supply = parse_u128(&case.parent_supply);
+        let fees = parse_i64(&case.fees);
+        let expected_net_delta = parse_i128(&case.expected_net_delta);
+        let expected_supply = case.expected_supply.as_deref().map(parse_u128);
+        let coinbase = CoinbaseData {
+            minted: case.minted,
+            fees,
+            burns: case.burns,
+            source: CoinbaseSource::BalanceTag([0u8; 48]),
+        };
+
+        assert_eq!(
+            coinbase.net_native_delta(),
+            expected_net_delta,
+            "{} production coinbase native delta drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            update_supply_digest(parent_supply, coinbase.net_native_delta()),
+            expected_supply,
+            "{} production supply digest update drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn parse_u128(raw: &str) -> u128 {
+        raw.parse::<u128>()
+            .expect("Lean supply value must be a decimal u128")
+    }
+
+    fn parse_i128(raw: &str) -> i128 {
+        raw.parse::<i128>()
+            .expect("Lean delta value must be a decimal i128")
+    }
+
+    fn parse_i64(raw: &str) -> i64 {
+        raw.parse::<i64>()
+            .expect("Lean fee value must be a decimal i64")
     }
 }
