@@ -23,7 +23,8 @@ After this change, a contributor can run `bash scripts/check_formal_core.sh` fro
 - [x] (2026-06-06T04:24:00Z) Ran `cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml`; it passed with 2 tests.
 - [x] (2026-06-06T05:20:47Z) Ran `bash scripts/check_formal_core.sh`; it passed as an 8-step gate, including standalone checker dependency audit, 2 bridge vectors, and 11 native backend vectors.
 - [x] (2026-06-06T05:20:47Z) Ran local formal-core, Rust, dependency, PQ, native review package, release posture, and CI-mode red-team gates. All passed.
-- [ ] Deploy the branch to `hegemon-dev` and verify mining, action inclusion, and bridge witness export.
+- [x] (2026-06-06T05:35:41Z) Committed and pushed `codex/formal-verification-core` to origin.
+- [x] (2026-06-06T05:35:41Z) Deployed commit `c2988b23` to `hegemon-dev`, built with `make setup && make node`, ran remote formal/security gates, restarted systemd from `/home/ubuntu/hegemon-current-c2988b23`, and verified mining plus outbound bridge action inclusion and witness export.
 
 ## Surprises & Discoveries
 
@@ -67,9 +68,9 @@ After this change, a contributor can run `bash scripts/check_formal_core.sh` fro
 
 ## Outcomes & Retrospective
 
-Local source validation is complete. The branch now has a machine-readable formal-security claims ledger, a standalone independent bridge-vector checker, a mandatory checker dependency audit, CI/release wiring, corrected formal/security docs, and a passing CI-mode proving red-team report.
+Local and `hegemon-dev` validation are complete. The branch now has a machine-readable formal-security claims ledger, a standalone independent bridge-vector checker, a mandatory checker dependency audit, CI/release wiring, corrected formal/security docs, a refreshed native backend review package, a passing CI-mode proving red-team report, and a live `hegemon-dev` deployment.
 
-Deployment to `hegemon-dev` remains pending.
+The deployed node is running from `/home/ubuntu/hegemon-current-c2988b23` with `HEGEMON_MINE=1`, one mining thread, RPC on `127.0.0.1:9944`, P2P on `0.0.0.0:30333`, and NTP synchronized. The unit backup is `/home/ubuntu/hegemon-devnet/deploy-backups/hegemon-node.service.20260606T053252Z`.
 
 ## Context and Orientation
 
@@ -162,6 +163,47 @@ Observed highlights:
     overall=pass
     summary=/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260606T043025Z/summary.txt
 
+Clean native review package regeneration:
+
+    bash scripts/package_native_backend_review.sh
+    sha256=24c7abe2de542426f638cc8f131ea7434ecce20870aef59798d46f77b17ba34e
+
+    tar -xOzf audits/native-backend-128b/native-backend-128b-review-package.tar.gz native-backend-128b-review-package/code_fingerprint.json
+    head_commit=9b43cbbbafd90834424c0e1a54c32bf54e35c649
+    dirty=false
+
+Remote `hegemon-dev` evidence:
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; make setup; make node'
+    Finished `release` profile [optimized] target(s) in 1m 55s
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/check_formal_core.sh'
+    === Hegemon formal-core gate passed ===
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/dependency-audit-gate.sh'
+    dependency audit findings: 8 total, 8 waived, 0 unwaived
+
+    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/security-audit.sh --quick'
+    AUDIT PASSED
+
+    ssh hegemon-dev 'systemctl show -p MainPID -p ActiveState -p SubState hegemon-node.service'
+    MainPID=634215
+    ActiveState=active
+    SubState=running
+
+    hegemon_miningStatus after smoke
+    block_height=398791
+    blocks_found=9
+    is_mining=true
+    threads=1
+
+    outbound bridge smoke
+    tx_hash=0x958bce14a26beeb1f3fe85348a7d0216a7fcc06c20c2fc91279448237012ebe9
+    included_height=398788
+    included_hash=0x00005727c205db8bebdcec39cbd57d8713e91d1219b2a571550495794502bc14
+    pending_after=[]
+    witness_payload=0x666f726d616c2d636f72652d6465762d736d6f6b652d31373830373234303933
+
 ## Validation and Acceptance
 
 The branch is accepted when:
@@ -202,3 +244,5 @@ Revision note 2026-06-06T04:05:25Z: Created the plan after branching and reading
 Revision note 2026-06-06T04:24:00Z: Recorded the implemented standalone formal-core checker, claims ledger, bridge vectors, CI/release wiring, doc corrections, subagent findings, and passing initial formal-core commands.
 
 Revision note 2026-06-06T05:20:47Z: Recorded the mandatory formal-core checker dependency audit, local release/security gate results, CI-mode red-team pass, and review-package artifact handling.
+
+Revision note 2026-06-06T05:35:41Z: Recorded the clean native review package regeneration, pushed commits, `hegemon-dev` deployment, remote gates, mining status, action inclusion, and bridge witness smoke evidence.
