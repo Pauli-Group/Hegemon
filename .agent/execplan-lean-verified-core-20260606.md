@@ -41,6 +41,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T20:03:00Z) Ran `bash scripts/check_lean_formal.sh` and `HEGEMON_LEAN_TRANSACTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture`; both passed locally.
 - [x] (2026-06-06T20:13:00Z) Ran the full local `bash scripts/check_formal_core.sh`; it passed with the new transaction-balance conformance step, 10 claims, 8 production-eligible claims, and 20 falsification cases.
 - [x] (2026-06-06T20:13:00Z) Ran `cargo test -p transaction-circuit --test transaction verification_fails_for_bad_balance -- --nocapture`; it passed. The heavier `smallwood_candidate_verification_fails_for_enabled_stablecoin_binding_mutation` run was stopped after several minutes without output and is not counted as evidence for this revision.
+- [x] (2026-06-06T20:25:00Z) Validated branch tip `01cbd6f6` on `hegemon-dev`: the expanded 11-step formal-core gate passed with transaction-balance conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402776` to `402777`, and `scripts/test-node.sh wallet-send` passed.
 
 ## Surprises & Discoveries
 
@@ -91,6 +92,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now checks four Lean-to-Rust conformance surfaces.
   Evidence: Local `bash scripts/check_formal_core.sh` passed, ran bridge replay, shielded nullifier, consensus fork-choice, and transaction-balance generated vector checks, and reported `claims = 10`, `production_eligible = 8`, and `falsification_cases = 20`.
+
+- Observation: `hegemon-dev` can run the transaction-balance proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `01cbd6f6` passed all 11 steps, including `lean_generated_balance_vectors_match_production`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `402775`; a 25-second height sample advanced from `402776` to `402777`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `402777`.
 
 ## Decision Log
 
@@ -245,3 +249,5 @@ Revision note 2026-06-06T19:42:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T20:03:00Z: Added Lean transaction-balance theorems, generated transaction conformance vectors, a production `TransactionWitness` vector test, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
 
 Revision note 2026-06-06T20:13:00Z: Recorded passing full local formal-core validation for the transaction-balance revision plus the focused bad-balance verifier regression. Remote `hegemon-dev` validation is still pending.
+
+Revision note 2026-06-06T20:25:00Z: Recorded `hegemon-dev` validation for commit `01cbd6f6`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
