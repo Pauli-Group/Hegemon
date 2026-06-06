@@ -24,6 +24,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T18:17:00Z) Extended the Lean bridge kernel with canonical `BridgeMessageV1` byte encoding, two-phase inbound replay staging/import transitions, and theorems `stage_prevents_duplicate_pending`, `import_prevents_reimport`, and `import_prevents_restaging`.
 - [x] (2026-06-06T18:17:00Z) Added the Lean executable `gen_bridge_vectors` and a `protocol-kernel` conformance test that checks generated Lean bridge encoding/replay examples against production helpers when `HEGEMON_LEAN_BRIDGE_VECTORS` is set.
 - [x] (2026-06-06T18:17:00Z) Moved native bridge duplicate-replay validation to the shared `protocol-kernel::InboundReplayState` helper, so node staging and block-validation paths use the helper checked by Lean-generated vectors.
+- [x] (2026-06-06T18:30:00Z) Validated branch tip `972b6933` on `hegemon-dev`: the 11-step formal-core gate passed, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402479` to `402481`, and `scripts/test-node.sh wallet-send` passed.
 
 ## Surprises & Discoveries
 
@@ -44,6 +45,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: Generated Lean vectors can now be checked against production Rust helpers.
   Evidence: `lake exe gen_bridge_vectors` emits two bridge encoding examples and four replay-state examples; the formal-core gate runs `HEGEMON_LEAN_BRIDGE_VECTORS=<generated-json> cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture`.
+
+- Observation: `hegemon-dev` can run the new proof/conformance gate and the rebuilt node stays healthy.
+  Evidence: Remote `bash scripts/check_formal_core.sh` passed all 11 steps at `972b6933`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed against `http://127.0.0.1:9944`; a 25-second height sample advanced from `402479` to `402481`; `scripts/test-node.sh wallet-send` passed.
 
 ## Decision Log
 
@@ -170,3 +174,5 @@ Revision note 2026-06-06T06:58:00Z: Recorded the first pinned Lean project, repl
 Revision note 2026-06-06T07:08:00Z: Recorded successful `hegemon-dev` validation of the pinned Lean theorem gate at commit `326a1c7d`.
 
 Revision note 2026-06-06T18:17:00Z: Added Lean bridge encoding, two-phase replay theorems, generated Lean conformance vectors, a production `InboundReplayState` helper, and a protocol-kernel conformance test wired into the formal-core gate. Remote validation is still pending for this revision.
+
+Revision note 2026-06-06T18:30:00Z: Recorded `hegemon-dev` validation for commit `972b6933`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
