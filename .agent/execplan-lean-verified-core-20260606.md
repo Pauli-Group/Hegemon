@@ -69,6 +69,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T22:09:00Z) Added `gen_merkle_vectors`, a `transaction-circuit` conformance test for generated Merkle path examples, and a production `MerklePath::root_with` helper used by `MerklePath::verify` so the vector test and production path share the same fold logic.
 - [x] (2026-06-06T22:09:00Z) Ran `bash scripts/check_lean_formal.sh`, `cargo test -p transaction-circuit merkle -- --nocapture`, focused `HEGEMON_LEAN_MERKLE_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_merkle_path_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 15 claims, 13 production-eligible claims, 15 blueprint nodes, and 35 falsification cases.
 - [x] (2026-06-06T22:16:00Z) Validated branch tip `3c8b31e7` on `hegemon-dev`: the expanded formal-core gate passed with transaction Merkle-path conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403507`, mining advanced from height `403508` to `403510`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403513`.
+- [x] (2026-06-06T22:48:00Z) Added a Lean transaction public-input shape kernel proving representative accept/reject facts for fixed vector widths, boolean flags, inactive-field zeroing, active nullifier/commitment nonzero checks, nonempty transaction admission, balance-slot ordering, and stablecoin asset membership.
+- [x] (2026-06-06T22:48:00Z) Added `gen_public_input_vectors`, a `transaction-circuit` conformance test for generated public-input shape examples, and wired that test into `scripts/check_formal_core.sh` plus the formal inventory, claims ledger, blueprint DAG, and docs.
+- [x] (2026-06-06T22:48:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 16 claims, 14 production-eligible claims, 16 blueprint nodes, and 38 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
 
 ## Surprises & Discoveries
 
@@ -174,6 +177,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the transaction Merkle-path proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `3c8b31e7` built 52 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, and transaction Merkle-path conformance, and reported `claims = 15`, `production_eligible = 13`, `nodes = 15`, and `falsification_cases = 35`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403507`; a 25-second height sample advanced from `403508` to `403510`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403513`.
 
+- Observation: The transaction verifier public-input shape claim now has a Lean-backed executable admission slice.
+  Evidence: `formal/lean/Hegemon/Transaction/PublicInputs.lean` proves representative accept/reject facts for malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering failures, and stablecoin asset membership; `formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean` emits 18 examples; `circuits/transaction/src/proof.rs` checks those vectors against production `TransactionPublicInputsP3::validate`.
+
+- Observation: The expanded formal-core gate now checks ten Lean-to-Rust conformance surfaces.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding transaction public-input shape, ran bridge replay, shielded nullifier, consensus fork-choice, consensus PoW-admission, light-client Work48, consensus proof-policy, consensus/native supply accounting, native action-ordering, transaction-balance, transaction Merkle-path, and transaction public-input shape generated vector checks, and reported `claims = 16`, `production_eligible = 14`, `nodes = 16`, and `falsification_cases = 38`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -222,6 +231,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize transaction Merkle path control flow before Poseidon2 hash equivalence.
   Rationale: Input membership is a direct anti-counterfeiting rule in the shielded spend statement. The executable path-depth and left/right orientation logic can be proved and forced through Rust conformance now, while Poseidon2 collision resistance and implementation equivalence remain explicit cryptographic assumptions for a later proof/refinement pass.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize verifier-facing transaction public-input shape before statement-hash binding or proof-system soundness.
+  Rationale: `TransactionPublicInputsP3::validate` is a concrete verifier boundary where malformed flags, inactive nonzero padding, active zero fields, noncanonical balance slots, or missing stablecoin assets can create counterfeit-style admission bugs before deeper cryptographic verification. Proving and vector-checking that executable shape gate tightens the admission surface now, while statement-hash binding, Poseidon2 equivalence, and STARK/SmallWood soundness remain explicit follow-on proof obligations.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -337,6 +350,8 @@ Revision note 2026-06-06T18:30:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T18:44:00Z: Added shared Lean byte helpers, a shielded nullifier-state Lean kernel, generated shielded conformance vectors, a production `NullifierState` helper, and native-node use of that helper. Remote validation is still pending for this revision.
 
 Revision note 2026-06-06T18:50:00Z: Recorded `hegemon-dev` validation for commit `0e6e6030`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
+
+Revision note 2026-06-06T22:48:00Z: Added the transaction public-input shape Lean kernel, generated conformance vectors, production `TransactionPublicInputsP3::validate` vector test, formal-core integration, formal inventory, claims/blueprint updates, and local validation. Remote `hegemon-dev` validation is still pending for this revision.
 
 Revision note 2026-06-06T19:24:00Z: Added Lean fork-choice ordering theorems, generated consensus conformance vectors, a shared production fork-choice helper used by PoW consensus and native import, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
 

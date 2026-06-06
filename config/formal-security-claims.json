@@ -109,6 +109,34 @@
       "residual_risks": []
     },
     {
+      "id": "formal.transaction-public-input-shape",
+      "component": "transaction verifier public-input shape",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean Digest model and generated vectors use abstract one-limb nonzero/zero digests; they do not prove Poseidon2, note commitment, nullifier, or ciphertext hash derivation security.",
+        "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership.",
+        "The theorem covers public-input shape admission, not statement-hash binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputs.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean",
+        "circuits/transaction-core/src/p3_air.rs",
+        "circuits/transaction/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "shielded.nullifier-state",
       "component": "shielded nullifier anti-double-spend state",
       "claim_class": "lean_theorem",

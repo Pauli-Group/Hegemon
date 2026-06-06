@@ -187,6 +187,59 @@
       "scope_boundary": "This node proves and vector-checks Merkle path control flow only. It does not prove Poseidon2 merkle_node cryptographic security, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
     },
     {
+      "id": "formal.transaction-public-input-shape",
+      "claim_id": "formal.transaction-public-input-shape",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean transaction public-input shape predicate, fixed-width vectors, boolean flags, inactive-field zeroing, active nullifier/commitment nonzero checks, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset membership must hold before verifier-facing public inputs are accepted.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.PublicInputs.validPublicInputShape_accepts_valid`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_bad_input_flag`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_inactive_input_nonzero`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_active_input_zero`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_inactive_output_nonzero_commitment`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_empty_transaction`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_bad_slot_zero`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_padding_not_suffix`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_duplicate_asset`, `Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_stablecoin_missing_asset`, and `Hegemon.Transaction.PublicInputs.validPublicInputShape_accepts_stablecoin_present` prove representative public-input shape acceptance and rejection facts over the executable predicate. `gen_public_input_vectors` emits Lean-derived malformed flag, inactive nonzero, active zero, empty transaction, balance-slot ordering, and stablecoin-membership examples. The formal-core gate checks those vectors against production `TransactionPublicInputsP3::validate` through the `transaction-circuit` test.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "formal.transaction-merkle-membership",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputs.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean",
+        "circuits/transaction-core/src/p3_air.rs",
+        "circuits/transaction/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/PublicInputs.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean",
+        "circuits/transaction-core/src/p3_air.rs",
+        "circuits/transaction/src/proof.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the TransactionPublicInputsP3 verifier-admission shape. Statement-hash binding and proof-system soundness remain outside this claim."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-public-input-shape-theorem",
+          "description": "Removing or weakening the public-input shape theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-public-input-conformance",
+          "description": "Changing production TransactionPublicInputsP3 shape validation away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PUBLIC_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-public-input-gate",
+          "description": "The release formal-core wrapper must generate public-input vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks verifier-facing public-input shape admission only. It does not prove Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, statement-hash binding, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+    },
+    {
       "id": "shielded.nullifier-state",
       "claim_id": "shielded.nullifier-state",
       "kind": "target_claim",

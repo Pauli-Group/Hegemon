@@ -770,6 +770,31 @@ mod tests {
     use crate::public_inputs::TransactionPublicInputs;
     use crate::SmallwoodCandidateProof;
     use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPublicInputVectorFile {
+        schema_version: u32,
+        public_input_shape_cases: Vec<LeanPublicInputShapeCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPublicInputShapeCase {
+        name: String,
+        input_flags: Vec<u64>,
+        output_flags: Vec<u64>,
+        nullifiers: Vec<u64>,
+        commitments: Vec<u64>,
+        ciphertext_hashes: Vec<u64>,
+        balance_slot_assets: Vec<u64>,
+        value_balance_sign: u64,
+        stablecoin_enabled: u64,
+        stablecoin_asset: u64,
+        stablecoin_issuance_sign: u64,
+        expected_valid: bool,
+    }
 
     fn dummy_serialized_inputs() -> SerializedStarkInputs {
         SerializedStarkInputs {
@@ -804,6 +829,80 @@ mod tests {
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(dummy_serialized_inputs()),
         }
+    }
+
+    #[test]
+    fn lean_generated_public_input_shape_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PUBLIC_INPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PUBLIC_INPUT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean public input vectors");
+        let vectors: LeanPublicInputVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean public input vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.public_input_shape_cases.is_empty(),
+            "Lean public input shape cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.public_input_shape_cases {
+            assert!(names.insert(case.name.clone()));
+            let actual = public_inputs_p3_from_lean_case(case).validate().is_ok();
+            assert_eq!(
+                actual, case.expected_valid,
+                "{} production public input shape validation drifted from Lean spec",
+                case.name
+            );
+        }
+    }
+
+    fn public_inputs_p3_from_lean_case(
+        case: &LeanPublicInputShapeCase,
+    ) -> TransactionPublicInputsP3 {
+        assert_eq!(
+            case.balance_slot_assets.len(),
+            BALANCE_SLOTS,
+            "Lean balance slot vector is fixed-width for Rust P3"
+        );
+        TransactionPublicInputsP3 {
+            input_flags: case.input_flags.iter().copied().map(felt).collect(),
+            output_flags: case.output_flags.iter().copied().map(felt).collect(),
+            nullifiers: case.nullifiers.iter().copied().map(hash6).collect(),
+            commitments: case.commitments.iter().copied().map(hash6).collect(),
+            ciphertext_hashes: case.ciphertext_hashes.iter().copied().map(hash6).collect(),
+            fee: Goldilocks::ZERO,
+            value_balance_sign: felt(case.value_balance_sign),
+            value_balance_magnitude: Goldilocks::ZERO,
+            merkle_root: hash6(0),
+            balance_slot_assets: [
+                felt(case.balance_slot_assets[0]),
+                felt(case.balance_slot_assets[1]),
+                felt(case.balance_slot_assets[2]),
+                felt(case.balance_slot_assets[3]),
+            ],
+            stablecoin_enabled: felt(case.stablecoin_enabled),
+            stablecoin_asset: felt(case.stablecoin_asset),
+            stablecoin_policy_version: Goldilocks::ZERO,
+            stablecoin_issuance_sign: felt(case.stablecoin_issuance_sign),
+            stablecoin_issuance_magnitude: Goldilocks::ZERO,
+            stablecoin_policy_hash: hash6(0),
+            stablecoin_oracle_commitment: hash6(0),
+            stablecoin_attestation_commitment: hash6(0),
+        }
+    }
+
+    fn felt(value: u64) -> Goldilocks {
+        Goldilocks::from_u64(value)
+    }
+
+    fn hash6(value: u64) -> [Goldilocks; 6] {
+        let mut out = [Goldilocks::ZERO; 6];
+        out[0] = felt(value);
+        out
     }
 
     fn dummy_smallwood_proof(arithmetization: SmallwoodArithmetization) -> TransactionProof {

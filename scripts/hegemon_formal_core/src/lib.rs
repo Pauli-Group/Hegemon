@@ -307,6 +307,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
         "formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean",
+        "formal/lean/Hegemon/Transaction/PublicInputs.lean",
+        "formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean",
         "config/formal-security-claims.json",
         "testdata/formal_core_vectors/bridge_messages.json",
         "config/formal-security-blueprint.json",
