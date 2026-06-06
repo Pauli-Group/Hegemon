@@ -20,7 +20,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T06:58:00Z) Wired the Lean gate into `scripts/check_formal_core.sh` as a mandatory step 3 of 10.
 - [x] (2026-06-06T06:58:00Z) Updated documentation and formal-security metadata so `bridge.inbound-replay-state` points at the named Lean theorem evidence.
 - [x] (2026-06-06T06:58:00Z) Installed local `elan`, ran `bash scripts/check_lean_formal.sh`, and ran `bash scripts/check_formal_core.sh`; both passed locally.
-- [ ] Validate the same branch tip on `hegemon-dev`.
+- [x] (2026-06-06T07:08:00Z) Validated branch tip `326a1c7d` on `hegemon-dev`; the full 10-step formal-core gate passed after installing elan and downloading the pinned Lean `v4.30.0` toolchain.
 
 ## Surprises & Discoveries
 
@@ -35,6 +35,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The first actual Lean theorem is now part of the same formal-core gate as the JSON/vector checks.
   Evidence: `bash scripts/check_formal_core.sh` reported `[3/10] Checking Lean formal proof kernel`, `Build completed successfully (4 jobs)`, then `claims = 9`, `production_eligible = 7`, `nodes = 9`, and `production_nodes = 7`.
+
+- Observation: The same Lean theorem gate works on `hegemon-dev` from a fresh Lean toolchain install.
+  Evidence: Remote validation at commit `326a1c7d` downloaded Lean `v4.30.0`, built `Hegemon.Bridge.Replay`, built `Hegemon`, and completed the full `bash scripts/check_formal_core.sh` gate.
 
 ## Decision Log
 
@@ -153,3 +156,5 @@ In `formal/lean/Hegemon/Bridge/Replay.lean`, define:
 Revision note 2026-06-06T06:43:00Z: Created this plan after confirming the repo has no Lean project and the local environment has no Lean tooling installed.
 
 Revision note 2026-06-06T06:58:00Z: Recorded the first pinned Lean project, replay-state theorem, Lean shell gate, formal-core integration, metadata/doc updates, and passing local validation.
+
+Revision note 2026-06-06T07:08:00Z: Recorded successful `hegemon-dev` validation of the pinned Lean theorem gate at commit `326a1c7d`.
