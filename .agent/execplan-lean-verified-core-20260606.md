@@ -35,6 +35,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T19:24:00Z) Ran `bash scripts/check_lean_formal.sh` and `HEGEMON_LEAN_CONSENSUS_VECTORS=<generated-json> cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture`; both passed locally.
 - [x] (2026-06-06T19:33:00Z) Ran the full local `bash scripts/check_formal_core.sh`; it passed with the new consensus conformance step, 10 claims, 8 production-eligible claims, and 18 falsification cases.
 - [x] (2026-06-06T19:33:00Z) Ran focused production tests: `cargo test -p consensus --test pow_rules --test simulation -- --nocapture` and `cargo test -p hegemon-node bridge_witness_rejects_noncanonical_block_hash --lib --no-default-features -- --nocapture`; both passed.
+- [x] (2026-06-06T19:42:00Z) Validated branch tip `aab28185` on `hegemon-dev`: the expanded 11-step formal-core gate passed with consensus fork-choice conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402670` to `402673`, and `scripts/test-node.sh wallet-send` passed.
 
 ## Surprises & Discoveries
 
@@ -73,6 +74,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate still accepts the full claims/blueprint set.
   Evidence: Local `bash scripts/check_formal_core.sh` passed, reported `claims = 10`, `production_eligible = 8`, `falsification_cases = 18`, and ran `lean_generated_fork_choice_vectors_match_production` successfully.
+
+- Observation: `hegemon-dev` can run the fork-choice proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `aab28185` passed all 11 steps, including `lean_generated_fork_choice_vectors_match_production`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `402668`; a 25-second height sample advanced from `402670` to `402673`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `402675`.
 
 ## Decision Log
 
@@ -217,3 +221,5 @@ Revision note 2026-06-06T18:50:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T19:24:00Z: Added Lean fork-choice ordering theorems, generated consensus conformance vectors, a shared production fork-choice helper used by PoW consensus and native import, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
 
 Revision note 2026-06-06T19:33:00Z: Recorded passing full local formal-core validation plus focused consensus/native tests for the fork-choice helper revision. Remote `hegemon-dev` validation is still pending.
+
+Revision note 2026-06-06T19:42:00Z: Recorded `hegemon-dev` validation for commit `aab28185`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
