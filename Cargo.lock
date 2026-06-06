@@ -3386,10 +3386,13 @@ name = "protocol-kernel"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "hex",
  "parity-scale-codec",
  "protocol-shielded-pool",
  "protocol-versioning",
  "scale-info",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

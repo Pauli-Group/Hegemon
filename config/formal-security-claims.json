@@ -121,16 +121,21 @@
       "id": "bridge.inbound-replay-state",
       "component": "protocol bridge inbound replay state",
       "claim_class": "lean_theorem",
-      "summary": "The Lean replay-state kernel proves that a successfully accepted inbound replay key cannot be accepted again from the resulting state.",
+      "summary": "The Lean replay-state kernel proves duplicate rejection for inbound replay staging and import, and generated Lean vectors are checked against the production protocol-kernel replay helper.",
       "status": "enforced",
-      "proof_model": "lean4_theorem_no_sorry",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "assumptions": [
         "The Lean ReplayKey equality model represents equality of canonical inbound replay keys.",
-        "Rust conformance to the Lean replay-state kernel is not complete until generated vectors and implementation-differential tests are added."
+        "Generated Lean conformance vectors cover protocol-kernel BridgeMessageV1 byte encoding and InboundReplayState stage/import behavior.",
+        "The theorem does not prove BLAKE3 replay-key derivation or full native-node implementation equivalence beyond the node's use of the protocol-kernel replay helper."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/Encoding.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
+        "protocol/kernel/src/bridge.rs",
+        "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "gates": [

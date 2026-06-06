@@ -37,8 +37,9 @@ use parking_lot::{Mutex, RwLock};
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
-    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND,
-    ACTION_BRIDGE_OUTBOUND, ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
+    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject, InboundReplayState,
+    OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
+    ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
 };
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
@@ -890,6 +891,8 @@ impl NativeNode {
         state: &mut NativeState,
         actions: &[PendingAction],
     ) -> Result<()> {
+        let mut bridge_replay_state =
+            InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
         for action in actions {
             let start_index = state.commitment_tree.leaf_count();
             let ciphertexts = canonical_ciphertexts_for_action(&self.da_ciphertext_tree, action)?;
@@ -918,11 +921,10 @@ impl NativeNode {
                 self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
             }
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                if !state.consumed_bridge_messages.insert(replay_key) {
-                    return Err(anyhow!(
-                        "duplicate inbound bridge message during block import"
-                    ));
-                }
+                bridge_replay_state
+                    .import_one(replay_key)
+                    .map_err(|_| anyhow!("duplicate inbound bridge message during block import"))?;
+                state.consumed_bridge_messages.insert(replay_key);
                 self.bridge_inbound_tree
                     .insert(replay_key.as_slice(), b"1")?;
             }
@@ -1512,16 +1514,15 @@ impl NativeNode {
             validate_bridge_action_payload(action)?;
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
                 let state = self.state.read();
-                if state.consumed_bridge_messages.contains(&replay_key) {
-                    return Err(anyhow!("inbound bridge message already consumed"));
-                }
-                if state.pending_actions.values().any(|pending| {
-                    bridge_inbound_replay_key_from_action(pending)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|key| key == replay_key)
-                }) {
-                    return Err(anyhow!("inbound bridge message already pending"));
+                let mut replay_state = inbound_replay_state_for_mempool(&state)?;
+                match replay_state.stage(replay_key) {
+                    Ok(()) => {}
+                    Err(InboundReplayReject::AlreadyConsumed) => {
+                        return Err(anyhow!("inbound bridge message already consumed"));
+                    }
+                    Err(InboundReplayReject::AlreadyPending) => {
+                        return Err(anyhow!("inbound bridge message already pending"));
+                    }
                 }
             }
             return Ok(());
@@ -3398,6 +3399,21 @@ fn bridge_inbound_replay_key_from_action(action: &PendingAction) -> Result<Optio
     )))
 }
 
+fn inbound_replay_state_for_mempool(state: &NativeState) -> Result<InboundReplayState> {
+    let mut pending = BTreeSet::new();
+    for action in state.pending_actions.values() {
+        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+            if !pending.insert(replay_key) {
+                return Err(anyhow!("duplicate inbound bridge message already pending"));
+            }
+        }
+    }
+    Ok(InboundReplayState::new(
+        state.consumed_bridge_messages.clone(),
+        pending,
+    ))
+}
+
 fn bridge_messages_from_actions(
     actions: &[PendingAction],
     source_height: u64,
@@ -3439,8 +3455,9 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
 
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
     let mut seen_nullifiers = BTreeSet::new();
-    let mut seen_bridge_messages = BTreeSet::new();
     let mut seen_actions = BTreeSet::new();
+    let mut bridge_replay_state =
+        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
         if action.tx_hash != pending_action_hash(action) {
@@ -3457,11 +3474,9 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         if action.family_id == FAMILY_BRIDGE {
             validate_bridge_action_payload(action)?;
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                if state.consumed_bridge_messages.contains(&replay_key)
-                    || !seen_bridge_messages.insert(replay_key)
-                {
-                    return Err(anyhow!("duplicate inbound bridge message in block"));
-                }
+                bridge_replay_state
+                    .import_one(replay_key)
+                    .map_err(|_| anyhow!("duplicate inbound bridge message in block"))?;
             }
             continue;
         }
@@ -3518,6 +3533,8 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
 }
 
 fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
+    let mut bridge_replay_state =
+        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     for action in actions {
         for commitment in &action.commitments {
             state
@@ -3531,9 +3548,10 @@ fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -
             }
         }
         if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-            if !state.consumed_bridge_messages.insert(replay_key) {
-                return Err(anyhow!("duplicate inbound bridge message during replay"));
-            }
+            bridge_replay_state
+                .import_one(replay_key)
+                .map_err(|_| anyhow!("duplicate inbound bridge message during replay"))?;
+            state.consumed_bridge_messages.insert(replay_key);
         }
         state.pending_actions.remove(&action.tx_hash);
     }

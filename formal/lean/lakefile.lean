@@ -6,3 +6,6 @@ package hegemon_formal where
 
 lean_lib Hegemon where
   roots := #[`Hegemon]
+
+lean_exe gen_bridge_vectors where
+  root := `Hegemon.Bridge.GenerateVectors

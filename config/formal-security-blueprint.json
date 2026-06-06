@@ -191,34 +191,47 @@
       "id": "bridge.inbound-replay-state",
       "claim_id": "bridge.inbound-replay-state",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean replay-state transition, if accepting a replay key succeeds and returns a next state, then accepting the same replay key from that next state returns `none`.",
-      "informal_argument": "The Lean theorem `Hegemon.Bridge.accept_prevents_duplicate` proves the no-duplicate-acceptance property over the executable replay-state kernel. This is the first machine-checked theorem in the formal-core gate and is deliberately scoped to replay-state safety, not hash security or Rust implementation equivalence.",
+      "formal_statement": "For the executable Lean replay-state transition, successful staging prevents staging the same key again, and successful import prevents both re-importing and re-staging the same key.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.stage_prevents_duplicate_pending`, `Hegemon.Bridge.import_prevents_reimport`, and `Hegemon.Bridge.import_prevents_restaging` prove the no-duplicate properties over the executable replay-state kernel. `gen_bridge_vectors` emits Lean-derived bridge encoding and replay examples, and the formal-core gate runs the production `protocol-kernel` conformance test against them.",
       "depends_on": [
         "bridge.message-root-replay",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/Encoding.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
+        "protocol/kernel/src/bridge.rs",
+        "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/Encoding.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
+        "protocol/kernel/src/bridge.rs",
+        "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as a real Lean theorem for replay-state safety only. Rust conformance remains a follow-up requirement."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-kernel bridge encoding and replay helper behavior."
       },
       "falsification_cases": [
         {
           "id": "lean-replay-theorem",
-          "description": "Removing or weakening the `accept_prevents_duplicate` theorem or its proof must fail the Lean formal gate.",
+          "description": "Removing or weakening the replay-state theorems or their proofs must fail the Lean formal gate.",
           "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-rust-conformance",
+          "description": "Changing production bridge encoding or replay helper behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, or Rust implementation equivalence."
+      "scope_boundary": "This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, or full native-node equivalence beyond the node's use of the protocol-kernel replay helper."
     },
     {
       "id": "proof.native-backend-vectors",
