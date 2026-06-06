@@ -4,6 +4,7 @@ mod batch_proof;
 pub mod bft;
 pub mod commitment_tree;
 pub mod error;
+pub mod fork_choice;
 pub mod header;
 pub mod import;
 pub mod nullifier;

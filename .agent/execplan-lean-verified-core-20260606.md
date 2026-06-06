@@ -29,6 +29,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T18:44:00Z) Added `gen_shielded_vectors` and a `protocol-shielded-pool` conformance test that checks generated Lean nullifier stage/import examples against production `NullifierState` when `HEGEMON_LEAN_SHIELDED_VECTORS` is set.
 - [x] (2026-06-06T18:44:00Z) Moved native nullifier staging, block validation, state replay/import, and author preview checks to the shared `protocol-shielded-pool::NullifierState` helper.
 - [x] (2026-06-06T18:50:00Z) Validated branch tip `0e6e6030` on `hegemon-dev`: the expanded 11-step formal-core gate passed with 10 claims and both generated conformance tests, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed, mining advanced from height `402561` to `402564`, and `scripts/test-node.sh wallet-send` passed.
+- [x] (2026-06-06T19:24:00Z) Added a Lean consensus fork-choice kernel proving deterministic two-tip ordering by work, height, then hash.
+- [x] (2026-06-06T19:24:00Z) Added `gen_consensus_vectors` and a `consensus` conformance test that checks generated Lean fork-choice examples against the production `consensus::fork_choice` helper when `HEGEMON_LEAN_CONSENSUS_VECTORS` is set.
+- [x] (2026-06-06T19:24:00Z) Routed `PowConsensus` and native announced-block import through the shared fork-choice helper.
+- [x] (2026-06-06T19:24:00Z) Ran `bash scripts/check_lean_formal.sh` and `HEGEMON_LEAN_CONSENSUS_VECTORS=<generated-json> cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture`; both passed locally.
+- [x] (2026-06-06T19:33:00Z) Ran the full local `bash scripts/check_formal_core.sh`; it passed with the new consensus conformance step, 10 claims, 8 production-eligible claims, and 18 falsification cases.
+- [x] (2026-06-06T19:33:00Z) Ran focused production tests: `cargo test -p consensus --test pow_rules --test simulation -- --nocapture` and `cargo test -p hegemon-node bridge_witness_rejects_noncanonical_block_hash --lib --no-default-features -- --nocapture`; both passed.
 
 ## Surprises & Discoveries
 
@@ -59,6 +65,15 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the nullifier proof/conformance gate and the rebuilt node continues mining.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `0e6e6030` reported `claims = 10`, `production_eligible = 8`, `falsification_cases = 16`, and both generated Rust conformance tests passed; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed; a 25-second height sample advanced from `402561` to `402564`; `scripts/test-node.sh wallet-send` passed.
 
+- Observation: The PoW fork-choice claim now has a Lean-backed deterministic ordering slice.
+  Evidence: `formal/lean/Hegemon/Consensus/ForkChoice.lean` proves higher work wins, lower work loses, equal-work height tie-breaks, equal-work/height hash tie-breaks, and same-tip non-selection; `consensus/src/fork_choice.rs` checks `gen_consensus_vectors` output against production Rust; `consensus/src/pow.rs` and `node/src/native/mod.rs` call the shared helper.
+
+- Observation: The new consensus theorem scope is deliberately smaller than full finality.
+  Evidence: `config/formal-security-claims.json` scopes `formal.pow-fork-choice` to deterministic two-tip ordering and retains `consensus/spec/formal/pow_longest_chain.tla` as bounded aggregate-work/finality model evidence.
+
+- Observation: The expanded formal-core gate still accepts the full claims/blueprint set.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed, reported `claims = 10`, `production_eligible = 8`, `falsification_cases = 18`, and ran `lean_generated_fork_choice_vectors_match_production` successfully.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -79,6 +94,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize shielded nullifier state before full MASP balance.
   Rationale: Nullifier uniqueness is the production anti-double-spend invariant and is small enough to prove exactly in Lean today. Full per-asset balance conservation and AIR/proof-system soundness remain larger follow-on kernels.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize deterministic PoW fork-choice ordering before target arithmetic or network finality.
+  Rationale: Greatest-work selection is a production-critical consensus rule and the actual implementation already had a small work/height/hash comparator. Proving that ordering and forcing the Rust helper to match is useful now, while full target arithmetic, timestamp behavior, scheduler assumptions, and long-range network finality remain larger kernels.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -194,3 +213,7 @@ Revision note 2026-06-06T18:30:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T18:44:00Z: Added shared Lean byte helpers, a shielded nullifier-state Lean kernel, generated shielded conformance vectors, a production `NullifierState` helper, and native-node use of that helper. Remote validation is still pending for this revision.
 
 Revision note 2026-06-06T18:50:00Z: Recorded `hegemon-dev` validation for commit `0e6e6030`, including formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, and wallet submission compatibility.
+
+Revision note 2026-06-06T19:24:00Z: Added Lean fork-choice ordering theorems, generated consensus conformance vectors, a shared production fork-choice helper used by PoW consensus and native import, and local Lean/generated-vector validation. Full local gate and `hegemon-dev` validation are still pending for this revision.
+
+Revision note 2026-06-06T19:33:00Z: Recorded passing full local formal-core validation plus focused consensus/native tests for the fork-choice helper revision. Remote `hegemon-dev` validation is still pending.

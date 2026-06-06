@@ -103,21 +103,30 @@
     {
       "id": "formal.pow-fork-choice",
       "component": "native PoW consensus",
-      "claim_class": "formal_model",
-      "summary": "The formal PoW model names the fork-choice and finality invariants used by release review.",
-      "status": "model_checked",
-      "proof_model": "bounded_tla_model",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean fork-choice kernel proves deterministic work, height, and hash tie-break ordering, and generated Lean vectors are checked against the production helper used by PoW consensus and native block import.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "assumptions": [
-        "The current PoW model is an aggregate-work abstraction, not a full network scheduler or reorg tree.",
-        "Consensus changes update the formal model and release-review notes together."
+        "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not target arithmetic or header hashing.",
+        "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import.",
+        "The theorem covers deterministic two-tip fork-choice ordering, not every network partition, timestamp edge case, or long-range adversarial mining schedule."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ForkChoice.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
+        "consensus/src/fork_choice.rs",
+        "consensus/src/pow.rs",
+        "node/src/native/mod.rs",
         "consensus/spec/formal/pow_longest_chain.tla",
         "consensus/spec/formal/pow_longest_chain.cfg",
-        "consensus/spec/formal/README.md"
+        "consensus/spec/formal/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

@@ -12,3 +12,6 @@ lean_exe gen_bridge_vectors where
 
 lean_exe gen_shielded_vectors where
   root := `Hegemon.Shielded.GenerateVectors
+
+lean_exe gen_consensus_vectors where
+  root := `Hegemon.Consensus.GenerateVectors

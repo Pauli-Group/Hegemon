@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::bft::ConsensusUpdate;
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ConsensusError;
+use crate::fork_choice::fork_choice_prefers_candidate;
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
 use crate::proof_interface::{ProofVerifier, verify_commitments};
@@ -41,13 +42,13 @@ struct PowNode {
 
 impl PowNode {
     fn better_than(&self, other: &PowNode, self_hash: &[u8; 32], other_hash: &[u8; 32]) -> bool {
-        if self.work != other.work {
-            return self.work > other.work;
-        }
-        if self.height != other.height {
-            return self.height > other.height;
-        }
-        self_hash < other_hash
+        fork_choice_prefers_candidate(
+            self.work.cmp(&other.work),
+            self.height,
+            other.height,
+            self_hash,
+            other_hash,
+        )
     }
 }
 

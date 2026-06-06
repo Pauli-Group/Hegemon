@@ -163,26 +163,51 @@
       "id": "formal.pow-fork-choice",
       "claim_id": "formal.pow-fork-choice",
       "kind": "target_claim",
-      "formal_statement": "The PoW formal model names and checks bounded executions of aggregate-work fork-choice and finality invariants for the abstract native consensus state.",
-      "informal_argument": "The PoW model is the release-review anchor for the native greatest-work rule. The inventory check requires the model files and key invariant names, while optional TLC/Apalache runs exercise bounded state spaces when installed.",
+      "formal_statement": "For the executable Lean fork-choice transition, a candidate tip is selected over the current tip exactly when it has greater work, or equal work with greater height, or equal work and height with a lexicographically lower hash.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.higher_work_wins`, `Hegemon.Consensus.lower_work_loses`, `Hegemon.Consensus.equal_work_higher_height_wins`, `Hegemon.Consensus.equal_work_lower_height_loses`, `Hegemon.Consensus.equal_work_height_uses_hash_order`, and `Hegemon.Consensus.same_tip_not_better` prove deterministic two-tip ordering over the executable fork-choice kernel. `gen_consensus_vectors` emits Lean-derived fork-choice examples, and the formal-core gate runs the production `consensus::fork_choice` conformance test against them. `PowConsensus` and native block import both call that helper. The existing TLA+ model remains the bounded aggregate-work/finality abstraction.",
       "depends_on": [
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/ForkChoice.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
+        "consensus/src/fork_choice.rs",
+        "consensus/src/pow.rs",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
         "consensus/spec/formal/pow_longest_chain.tla",
         "consensus/spec/formal/pow_longest_chain.cfg"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ForkChoice.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
+        "consensus/src/fork_choice.rs",
+        "consensus/src/pow.rs",
+        "node/src/native/mod.rs",
         "consensus/spec/formal/README.md",
-        "DESIGN.md"
+        "consensus/spec/formal/pow_longest_chain.tla",
+        "consensus/spec/formal/pow_longest_chain.cfg",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "The target is accepted as an aggregate-work abstraction, not as a full network scheduler proof."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the deterministic fork-choice ordering helper, with the TLA+ finality model retained as bounded abstraction evidence."
       },
       "falsification_cases": [
+        {
+          "id": "lean-fork-choice-theorem",
+          "description": "Removing or weakening the fork-choice ordering theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-rust-conformance",
+          "description": "Changing production fork-choice ordering away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
         {
           "id": "invariant-name-required",
           "description": "Removing `ForkChoiceInvariant` or `FinalityInvariant` from the model must fail the formal inventory check.",
@@ -194,7 +219,7 @@
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node does not model every network partition, timestamp edge case, or long-range adversarial mining schedule."
+      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove target arithmetic, header hashing, every network partition, timestamp edge case, or long-range adversarial mining schedule."
     },
     {
       "id": "bridge.message-root-replay",

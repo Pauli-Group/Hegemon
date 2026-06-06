@@ -46,6 +46,7 @@ zstd = { version = "0.13", default-features = false }
 [dev-dependencies]
 network = { path = "../network" }
 proptest = "1"
+serde_json = "1"
 state-merkle = { path = "../state/merkle" }
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
 

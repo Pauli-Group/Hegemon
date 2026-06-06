@@ -291,6 +291,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bridge/Encoding.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
         "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
+        "formal/lean/Hegemon/Consensus/ForkChoice.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
         "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
         "config/formal-security-claims.json",

@@ -19,7 +19,7 @@ use consensus::{
 use consensus_light_client::{
     bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
     canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
-    cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
+    compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
     flyclient_sample_indices, hash_meets_target, header_mmr_opening_from_hashes,
     header_mmr_root_from_hashes, pow_hash_from_pre_hash, verify_pow_header,
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
@@ -4250,15 +4250,13 @@ fn native_seal_meets_target(work_hash: &[u8; 32], pow_bits: u32) -> bool {
 }
 
 fn native_meta_better_than(candidate: &NativeBlockMeta, current: &NativeBlockMeta) -> bool {
-    match candidate.cumulative_work.cmp(&current.cumulative_work) {
-        std::cmp::Ordering::Greater => return true,
-        std::cmp::Ordering::Less => return false,
-        std::cmp::Ordering::Equal => {}
-    }
-    if candidate.height != current.height {
-        return candidate.height > current.height;
-    }
-    candidate.hash < current.hash
+    consensus::fork_choice::fork_choice_prefers_candidate(
+        compare_work(&candidate.cumulative_work, &current.cumulative_work),
+        candidate.height,
+        current.height,
+        &candidate.hash,
+        &current.hash,
+    )
 }
 
 fn resolve_base_path(cli: &NativeCli) -> Result<PathBuf> {
