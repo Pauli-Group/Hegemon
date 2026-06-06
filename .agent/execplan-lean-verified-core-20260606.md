@@ -56,6 +56,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-06T20:50:00Z) Reran the full local `bash scripts/check_formal_core.sh`; it passed with native action-ordering conformance, 12 claims, 10 production-eligible claims, 12 blueprint nodes, and 26 falsification cases.
 - [x] (2026-06-06T20:55:00Z) Fixed the action-ordering conformance test to fold over the production `transfer_key_extends_canonical_order` helper instead of leaving a release-dead helper in `node/src/native/mod.rs`; reran the focused generated-vector test, native order regression, release `hegemon-node` build, and full local formal-core gate successfully.
 - [x] (2026-06-06T21:00:00Z) Validated branch tip `778fcfc5` on `hegemon-dev`: the expanded 11-step formal-core gate passed with native action-ordering conformance, `make node` rebuilt the release binary without the earlier `hegemon-node` dead-code warning, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `403040`, mining advanced from height `403041` to `403044`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `403048`.
+- [x] (2026-06-06T21:05:00Z) Added a Lean consensus proof-policy kernel proving empty-block proof-payload rejection, non-empty self-contained proof-shape requirements, legacy InlineRequired rejection, recursive commitment-proof-byte rejection, recursive block-artifact requirements, and complete recursive-block acceptance.
+- [x] (2026-06-06T21:05:00Z) Added `gen_proof_policy_vectors` and a consensus conformance test that checks generated Lean proof-policy examples against the production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier`.
+- [x] (2026-06-06T21:05:00Z) Ran `bash scripts/check_lean_formal.sh`, `HEGEMON_LEAN_PROOF_POLICY_VECTORS=<generated-json> cargo test -p consensus lean_generated_proof_policy_vectors_match_production -- --nocapture`, `cargo test -p consensus --test self_contained_mode -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 13 claims, 11 production-eligible claims, 13 blueprint nodes, and 29 falsification cases. Remote `hegemon-dev` validation is still pending for this revision.
 
 ## Surprises & Discoveries
 
@@ -137,6 +140,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the native action-ordering proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `778fcfc5` passed all 11 steps, including `lean_generated_action_order_vectors_match_production`, and reported `claims = 12`, `production_eligible = 10`, `nodes = 12`, and `falsification_cases = 26`; remote `make node` completed without the earlier `hegemon-node` warning; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `403040`; a 25-second height sample advanced from `403041` to `403044`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `403048`.
 
+- Observation: The self-contained block proof policy now has a Lean-backed executable admission slice.
+  Evidence: `formal/lean/Hegemon/Consensus/ProofPolicy.lean` proves empty-block, non-empty artifact, legacy mode, missing proven-batch, recursive commitment-proof-byte, recursive block-artifact, and complete recursive-block facts; `formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean` emits 15 examples; `consensus/src/proof.rs` checks those vectors against `evaluate_block_proof_policy`, and `ParallelProofVerifier` calls that helper before heavy artifact verification.
+
+- Observation: The expanded formal-core gate now checks seven Lean-to-Rust conformance surfaces.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding consensus proof policy, ran bridge replay, shielded nullifier, consensus fork-choice, consensus proof-policy, consensus/native supply accounting, native action-ordering, and transaction-balance generated vector checks, and reported `claims = 13`, `production_eligible = 11`, `nodes = 13`, and `falsification_cases = 29`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -173,6 +182,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize native block transfer ordering over already computed action-order keys before attempting verified BLAKE2 key derivation.
   Rationale: The production validity rule rejects a block when the shielded transfer-key subsequence is not nondecreasing. Proving and conformance-checking that predicate tightens the block import surface immediately, while BLAKE2 implementation equivalence and full action payload validation remain separate proof/refinement work.
+  Date/Author: 2026-06-06 / Codex.
+
+- Decision: Mechanize the self-contained proof payload policy before deeper recursive proof-system soundness.
+  Rationale: The shipped product path depends on fail-closed proof availability and route-shape checks before any expensive cryptographic verification. Proving and vector-checking that executable admission table makes the consensus path less ambiguous now, while recursive proof soundness, tx leaf proof soundness, DA derivation, and native backend security remain separate larger proof obligations.
   Date/Author: 2026-06-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -314,3 +327,5 @@ Revision note 2026-06-06T20:50:00Z: Recorded passing full local formal-core vali
 Revision note 2026-06-06T20:55:00Z: Removed the release-dead native action-ordering conformance helper, corrected the blueprint wording to name the production helper actually used by block import, and reran focused local tests, release build, and full formal-core validation. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-06T21:00:00Z: Recorded `hegemon-dev` validation for commit `778fcfc5`, including full formal-core, release rebuild without the earlier `hegemon-node` warning, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-06T21:05:00Z: Added the Lean consensus proof-policy kernel, generated proof-policy vectors, a production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier`, a consensus conformance test, formal metadata/docs updates, and local validation. Remote `hegemon-dev` validation is still pending.

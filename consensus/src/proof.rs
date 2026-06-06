@@ -49,6 +49,152 @@ pub struct CommitmentNullifierLists {
 
 const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BlockProofPolicyInput {
+    tx_count: usize,
+    verification_mode: ProofVerificationMode,
+    has_proven_batch: bool,
+    proven_batch_mode: ProvenBatchMode,
+    commitment_proof_bytes: usize,
+    has_block_artifact: bool,
+    has_receipt_root: bool,
+    has_tx_validity_artifacts: bool,
+    tx_validity_artifact_count: usize,
+    has_tx_validity_claims: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockProofPolicyRejection {
+    EmptyBlockCarriesProof,
+    MissingTransactionProofs,
+    TransactionProofCountMismatch,
+    UnsupportedInlineRequired,
+    MissingProvenBatch,
+    MissingTransactionValidityClaims,
+    LegacyInlineBatch,
+    RecursiveBlockCommitmentProofBytes,
+    RecursiveBlockReceiptRootPayload,
+    MissingRecursiveBlockArtifact,
+    MissingReceiptRootPayload,
+}
+
+impl BlockProofPolicyRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::EmptyBlockCarriesProof => "empty_block_carries_proof",
+            Self::MissingTransactionProofs => "missing_transaction_proofs",
+            Self::TransactionProofCountMismatch => "transaction_proof_count_mismatch",
+            Self::UnsupportedInlineRequired => "unsupported_inline_required",
+            Self::MissingProvenBatch => "missing_proven_batch",
+            Self::MissingTransactionValidityClaims => "missing_transaction_validity_claims",
+            Self::LegacyInlineBatch => "legacy_inline_batch",
+            Self::RecursiveBlockCommitmentProofBytes => "recursive_block_commitment_proof_bytes",
+            Self::RecursiveBlockReceiptRootPayload => "recursive_block_receipt_root_payload",
+            Self::MissingRecursiveBlockArtifact => "missing_recursive_block_artifact",
+            Self::MissingReceiptRootPayload => "missing_receipt_root_payload",
+        }
+    }
+}
+
+fn evaluate_block_proof_policy(
+    input: BlockProofPolicyInput,
+) -> Result<(), BlockProofPolicyRejection> {
+    if input.tx_count == 0 {
+        if input.has_proven_batch
+            || input.has_block_artifact
+            || input.has_tx_validity_artifacts
+            || input.has_tx_validity_claims
+        {
+            return Err(BlockProofPolicyRejection::EmptyBlockCarriesProof);
+        }
+        return Ok(());
+    }
+    if !input.has_tx_validity_artifacts {
+        return Err(BlockProofPolicyRejection::MissingTransactionProofs);
+    }
+    if input.tx_validity_artifact_count != input.tx_count {
+        return Err(BlockProofPolicyRejection::TransactionProofCountMismatch);
+    }
+    if input.verification_mode == ProofVerificationMode::InlineRequired {
+        return Err(BlockProofPolicyRejection::UnsupportedInlineRequired);
+    }
+    if !input.has_proven_batch {
+        return Err(BlockProofPolicyRejection::MissingProvenBatch);
+    }
+    if !input.has_tx_validity_claims {
+        return Err(BlockProofPolicyRejection::MissingTransactionValidityClaims);
+    }
+    match input.proven_batch_mode {
+        ProvenBatchMode::InlineTx => Err(BlockProofPolicyRejection::LegacyInlineBatch),
+        ProvenBatchMode::ReceiptRoot => {
+            if input.has_receipt_root {
+                Ok(())
+            } else {
+                Err(BlockProofPolicyRejection::MissingReceiptRootPayload)
+            }
+        }
+        ProvenBatchMode::RecursiveBlock => {
+            if input.commitment_proof_bytes != 0 {
+                Err(BlockProofPolicyRejection::RecursiveBlockCommitmentProofBytes)
+            } else if input.has_receipt_root {
+                Err(BlockProofPolicyRejection::RecursiveBlockReceiptRootPayload)
+            } else if input.has_block_artifact {
+                Ok(())
+            } else {
+                Err(BlockProofPolicyRejection::MissingRecursiveBlockArtifact)
+            }
+        }
+    }
+}
+
+fn proof_policy_rejection_to_error(
+    rejection: BlockProofPolicyRejection,
+    input: BlockProofPolicyInput,
+) -> ProofError {
+    match rejection {
+        BlockProofPolicyRejection::EmptyBlockCarriesProof => ProofError::CommitmentProofEmptyBlock,
+        BlockProofPolicyRejection::MissingTransactionProofs => ProofError::MissingTransactionProofs,
+        BlockProofPolicyRejection::TransactionProofCountMismatch => {
+            ProofError::TransactionProofCountMismatch {
+                expected: input.tx_count,
+                observed: input.tx_validity_artifact_count,
+            }
+        }
+        BlockProofPolicyRejection::UnsupportedInlineRequired => ProofError::UnsupportedProofArtifact(
+            "legacy InlineRequired block verification is no longer supported on the product path"
+                .to_string(),
+        ),
+        BlockProofPolicyRejection::MissingProvenBatch => {
+            ProofError::MissingProvenBatchForSelfContained
+        }
+        BlockProofPolicyRejection::MissingTransactionValidityClaims => {
+            ProofError::MissingTransactionValidityClaims
+        }
+        BlockProofPolicyRejection::LegacyInlineBatch => ProofError::UnsupportedProofArtifact(
+            "legacy InlineTx proven batches are no longer supported on the product path".to_string(),
+        ),
+        BlockProofPolicyRejection::RecursiveBlockCommitmentProofBytes => {
+            ProofError::UnsupportedProofArtifact(
+                "recursive block product lane forbids commitment proof bytes".to_string(),
+            )
+        }
+        BlockProofPolicyRejection::RecursiveBlockReceiptRootPayload => {
+            ProofError::ProvenBatchBindingMismatch(
+                "recursive block proven batch must not carry receipt_root payload".to_string(),
+            )
+        }
+        BlockProofPolicyRejection::MissingRecursiveBlockArtifact => {
+            ProofError::MissingAggregationProofForSelfContainedMode
+        }
+        BlockProofPolicyRejection::MissingReceiptRootPayload => {
+            ProofError::ProvenBatchBindingMismatch(
+                "missing receipt_root payload for ReceiptRoot mode".to_string(),
+            )
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
     receipt: TxValidityReceipt,
@@ -1560,23 +1706,39 @@ impl ProofVerifier for ParallelProofVerifier {
             .flat_map(|tx| tx.ciphertexts.iter())
             .map(|ct| ct.len())
             .sum();
-
-        if block.transactions.is_empty() {
-            if block.proven_batch.is_some()
-                || backend_inputs
-                    .and_then(BlockBackendInputs::tx_validity_artifacts)
-                    .is_some()
-                || block.tx_validity_claims.is_some()
-                || block.block_artifact.is_some()
-            {
-                return Err(ProofError::CommitmentProofEmptyBlock);
-            }
-            return apply_commitments(parent_commitment_tree, &block.transactions);
-        }
-
         let verification_mode = block.proof_verification_mode;
         let tx_validity_artifacts =
             backend_inputs.and_then(BlockBackendInputs::tx_validity_artifacts);
+        let policy_input = BlockProofPolicyInput {
+            tx_count,
+            verification_mode,
+            has_proven_batch: block.proven_batch.is_some(),
+            proven_batch_mode: block
+                .proven_batch
+                .as_ref()
+                .map(|batch| batch.mode)
+                .unwrap_or(ProvenBatchMode::RecursiveBlock),
+            commitment_proof_bytes,
+            has_block_artifact: block.block_artifact.is_some(),
+            has_receipt_root: block
+                .proven_batch
+                .as_ref()
+                .and_then(|batch| batch.receipt_root.as_ref())
+                .is_some(),
+            has_tx_validity_artifacts: tx_validity_artifacts.is_some(),
+            tx_validity_artifact_count: tx_validity_artifacts
+                .map(|artifacts| artifacts.len())
+                .unwrap_or(0),
+            has_tx_validity_claims: block.tx_validity_claims.is_some(),
+        };
+        if let Err(rejection) = evaluate_block_proof_policy(policy_input) {
+            return Err(proof_policy_rejection_to_error(rejection, policy_input));
+        }
+
+        if block.transactions.is_empty() {
+            return apply_commitments(parent_commitment_tree, &block.transactions);
+        }
+
         let tx_proof_bytes_total: usize = tx_validity_artifacts
             .map(|artifacts| {
                 artifacts
@@ -2052,6 +2214,7 @@ fn verify_and_apply_tree_transition_without_anchors(
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
+    use serde::Deserialize;
     use std::sync::Mutex as StdMutex;
 
     static TEST_ENV_LOCK: StdMutex<()> = StdMutex::new(());
@@ -2059,6 +2222,31 @@ mod tests {
     struct EnvGuard {
         previous_verify_mode: Option<String>,
         _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofPolicyVectorFile {
+        schema_version: u32,
+        proof_policy_cases: Vec<LeanProofPolicyCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofPolicyCase {
+        name: String,
+        tx_count: usize,
+        verification_mode: String,
+        has_proven_batch: bool,
+        batch_mode: String,
+        commitment_proof_bytes: usize,
+        has_block_artifact: bool,
+        has_receipt_root: bool,
+        has_tx_validity_artifacts: bool,
+        tx_validity_artifact_count: usize,
+        has_tx_validity_claims: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     impl Drop for EnvGuard {
@@ -2193,6 +2381,76 @@ mod tests {
             proof_verification_mode: ProofVerificationMode::SelfContainedAggregation,
         };
         (block, tx_statements_commitment, artifact)
+    }
+
+    #[test]
+    fn lean_generated_proof_policy_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PROOF_POLICY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PROOF_POLICY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean proof-policy vectors");
+        let vectors: LeanProofPolicyVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean proof-policy vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.proof_policy_cases.is_empty(),
+            "Lean proof-policy cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.proof_policy_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_policy_case(case);
+        }
+    }
+
+    fn verify_lean_proof_policy_case(case: &LeanProofPolicyCase) {
+        let input = BlockProofPolicyInput {
+            tx_count: case.tx_count,
+            verification_mode: parse_lean_verification_mode(&case.verification_mode),
+            has_proven_batch: case.has_proven_batch,
+            proven_batch_mode: parse_lean_batch_mode(&case.batch_mode),
+            commitment_proof_bytes: case.commitment_proof_bytes,
+            has_block_artifact: case.has_block_artifact,
+            has_receipt_root: case.has_receipt_root,
+            has_tx_validity_artifacts: case.has_tx_validity_artifacts,
+            tx_validity_artifact_count: case.tx_validity_artifact_count,
+            has_tx_validity_claims: case.has_tx_validity_claims,
+        };
+        let result = evaluate_block_proof_policy(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} proof policy validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} proof policy rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn parse_lean_verification_mode(value: &str) -> ProofVerificationMode {
+        match value {
+            "inline_required" => ProofVerificationMode::InlineRequired,
+            "self_contained" => ProofVerificationMode::SelfContainedAggregation,
+            other => panic!("unknown Lean proof verification mode {other}"),
+        }
+    }
+
+    fn parse_lean_batch_mode(value: &str) -> ProvenBatchMode {
+        match value {
+            "inline_tx" => ProvenBatchMode::InlineTx,
+            "receipt_root" => ProvenBatchMode::ReceiptRoot,
+            "recursive_block" => ProvenBatchMode::RecursiveBlock,
+            other => panic!("unknown Lean proven batch mode {other}"),
+        }
     }
 
     #[test]

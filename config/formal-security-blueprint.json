@@ -243,6 +243,57 @@
       "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove target arithmetic, header hashing, every network partition, timestamp edge case, or long-range adversarial mining schedule."
     },
     {
+      "id": "consensus.self-contained-proof-policy",
+      "claim_id": "consensus.self-contained-proof-policy",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean proof-policy transition, empty blocks must not carry proof payloads; non-empty product-path blocks must use self-contained aggregation with transaction artifacts, transaction validity claims, a proven batch, and a route-compatible aggregation payload; recursive blocks must not carry legacy commitment-proof bytes or receipt-root payloads and must carry a block artifact.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.empty_clean_accepts`, `Hegemon.Consensus.empty_with_payload_rejects`, `Hegemon.Consensus.nonempty_requires_tx_artifacts`, `Hegemon.Consensus.nonempty_rejects_tx_artifact_count_mismatch`, `Hegemon.Consensus.nonempty_rejects_inline_required`, `Hegemon.Consensus.nonempty_requires_proven_batch`, `Hegemon.Consensus.recursive_rejects_commitment_proof_bytes`, `Hegemon.Consensus.recursive_requires_block_artifact`, and `Hegemon.Consensus.recursive_complete_accepts` prove core facts about the executable proof-policy decision table. `gen_proof_policy_vectors` emits Lean-derived accept/reject examples for empty blocks, missing transaction artifacts, count mismatch, legacy InlineRequired, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof bytes, recursive receipt-root payloads, missing recursive artifacts, complete recursive blocks, and receipt-root payload requirements. The formal-core gate checks those vectors against the production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier` before heavy proof verification.",
+      "depends_on": [
+        "formal.pow-fork-choice",
+        "formal.transaction-balance",
+        "proof.native-backend-vectors",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-06",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the consensus proof payload shape enforced before heavy artifact verification."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-proof-policy-theorem",
+          "description": "Removing or weakening the proof-policy theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-proof-policy-conformance",
+          "description": "Changing the production proof-policy helper away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "self-contained-mode-regressions",
+          "description": "Existing self-contained proof mode tests must continue rejecting missing or malformed aggregation payloads.",
+          "gate": "cargo test -p consensus --test self_contained_mode -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks proof payload shape/admission only. It does not prove recursive proof cryptographic soundness, tx leaf proof soundness, DA root derivation, receipt-root security, native backend security, or complete block-state equivalence."
+    },
+    {
       "id": "consensus.supply-digest-accounting",
       "claim_id": "consensus.supply-digest-accounting",
       "kind": "target_claim",

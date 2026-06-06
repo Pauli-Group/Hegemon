@@ -2,6 +2,7 @@ import Hegemon.Bytes
 import Hegemon.Bridge.Encoding
 import Hegemon.Bridge.Replay
 import Hegemon.Consensus.ForkChoice
+import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.Supply
 import Hegemon.Native.ActionOrder
 import Hegemon.Shielded.Nullifier

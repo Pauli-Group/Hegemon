@@ -139,6 +139,32 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.self-contained-proof-policy",
+      "component": "block proof availability policy",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean proof-policy kernel proves the shipped non-empty block proof payload shape: self-contained mode, transaction artifacts, transaction validity claims, a proven batch, recursive blocks with no legacy commitment-proof bytes or receipt-root payload, and a required block artifact; generated Lean vectors are checked against the production consensus verifier helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the consensus proof payload availability and route-shape decision before cryptographic artifact verification.",
+        "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, missing recursive block artifacts, and receipt-root payload requirements.",
+        "The theorem covers executable proof policy admission semantics, not recursive proof cryptographic soundness, transaction leaf proof soundness, DA root derivation, or native backend security."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.supply-digest-accounting",
       "component": "PoW supply and coinbase accounting",
       "claim_class": "lean_theorem",
