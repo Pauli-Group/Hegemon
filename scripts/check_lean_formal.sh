@@ -28,6 +28,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake build Hegemon gen_bridge_vectors gen_shielded_vectors gen_consensus_vectors gen_pow_vectors gen_proof_policy_vectors gen_supply_vectors gen_action_order_vectors gen_native_tx_leaf_artifact_vectors gen_native_receipt_root_vectors gen_transaction_vectors gen_merkle_vectors gen_public_input_vectors gen_public_input_binding_vectors gen_statement_hash_vectors
   lake env lean Hegemon/Bytes.lean
   lake env lean Hegemon/Bridge/Encoding.lean
+  lake env lean Hegemon/Bridge/MessageRoot.lean
   lake env lean Hegemon/Bridge/Replay.lean
   lake env lean Hegemon/Bridge/GenerateVectors.lean
   lake env lean Hegemon/Consensus/ForkChoice.lean

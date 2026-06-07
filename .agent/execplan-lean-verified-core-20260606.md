@@ -90,6 +90,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T01:55:00Z) Added `gen_native_receipt_root_vectors`, a production `validate_native_receipt_root_artifact_structure_with_params` gate used by both native receipt-root verifier entry points before backend fold verification, a `superneo-hegemon` conformance test for Lean-generated receipt-root vectors, and a formal claim/blueprint node for the native receipt-root wire/schedule gate.
 - [x] (2026-06-07T02:05:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 20 claims, 18 production-eligible claims, 20 blueprint nodes, 44 edges, and 48 falsification cases. An exploratory broad `cargo test -p superneo-hegemon native_receipt_root_ -- --nocapture` run was interrupted after the heavier native fixture path ran too long and is not counted as validation evidence for this revision.
 - [x] (2026-06-07T02:06:00Z) Validated branch tip `25dd5365` on `hegemon-dev`: the expanded formal-core gate passed with native receipt-root parser/schedule conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404526`, mining advanced from height `404538` to `404539` in a polling check, `scripts/test-node.sh wallet-send` passed, NTP was synchronized, and final service check was active at height `404545`.
+- [x] (2026-06-07T02:31:00Z) Added a Lean bridge message-root transcript kernel proving representative accept/reject facts for exact root-preimage domain/count/hash length-prefix bytes, invalid hash-length rejection, ordered-pair transcript construction, reversed-pair transcript distinction, and count-prefix binding.
+- [x] (2026-06-07T02:31:00Z) Extended `gen_bridge_vectors` and the production `protocol-kernel` conformance test with bridge message-root transcript cases, exposed `bridge_message_root_preimage_v1_from_hashes`, routed `bridge_message_root` through the shared helper, and hardened the helper against silent `u32` count truncation.
+- [x] (2026-06-07T02:31:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_BRIDGE_VECTORS=<generated-json> cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture`, `cargo test -p protocol-kernel -- --nocapture`, `jq empty config/formal-security-claims.json config/formal-security-blueprint.json`, `git diff --check`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate built 79 Lean jobs, checked bridge message-root/replay conformance, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 49`.
 
 ## Surprises & Discoveries
 
@@ -243,6 +246,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Discovery: Fixed-window PoW sampling is weak evidence on `hegemon-dev`.
   Evidence: After the `25dd5365` restart, a 25-second sample stayed at height `404529`, while logs showed active PoW imports before and after the window and a polling-based check advanced from `404538` to `404539` in 14 seconds. Future runtime validation should prefer a bounded polling check over a fixed sleep.
 
+- Observation: The bridge message-root transcript grammar now has Lean-backed executable evidence.
+  Evidence: `formal/lean/Hegemon/Bridge/MessageRoot.lean` proves empty/single/pair validity, short/long hash rejection, exact empty/single/ordered-pair transcript construction, reversed-pair distinction, and count-prefix binding; `formal/lean/Hegemon/Bridge/GenerateVectors.lean` emits transcript bytes; `protocol/kernel/src/bridge.rs` checks those vectors against `bridge_message_root_preimage_v1_from_hashes`, and `bridge_message_root` hashes that shared preimage helper.
+
+- Observation: The expanded formal-core gate now includes bridge message-root transcript conformance.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding bridge message-root transcript gating, ran `lean_generated_bridge_vectors_match_production`, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 49`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -311,6 +320,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize native receipt-root wire parsing and structural fold-schedule gating before cryptographic fold soundness.
   Rationale: The receipt-root verifier already rejects malformed folds through backend proof comparison, but exact non-empty leaf agreement, `fold_count = leaf_count - 1`, challenge count, and parent-row dimensions are cheap validity rules that can fail before expensive fold verification. Mechanizing those rules reduces parser/schedule drift and leaves transcript challenge derivation, lattice fold proof soundness, and commitment security as explicit follow-on obligations.
+  Date/Author: 2026-06-07 / Codex.
+
+- Decision: Mechanize bridge message-root transcript binding before bridge light-client proof soundness.
+  Rationale: The native header commits `message_root` and `message_count`, and outbound bridge witnesses depend on that byte grammar before any external verifier sees the proof. Proving and vector-checking the exact transcript domain, count, per-hash length prefixes, and ordering closes a concrete counterfeit-style root-construction seam now, while BLAKE3 security, BLAKE3 implementation equivalence, and full bridge light-client proof soundness remain explicit follow-on obligations.
   Date/Author: 2026-06-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -474,3 +487,5 @@ Revision note 2026-06-07T01:10:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-07T02:05:00Z: Added the Lean native receipt-root parser/schedule kernel, generated receipt-root vectors, production structural validator before backend fold verification, superneo-hegemon conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
 
 Revision note 2026-06-07T02:06:00Z: Recorded `hegemon-dev` validation for commit `25dd5365`, including full formal-core, release rebuild, service restart, smoke RPC checks, NTP synchronization, polling-based mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-07T02:31:00Z: Added the Lean bridge message-root transcript kernel, generated transcript vectors, production root preimage helper, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.

@@ -134,18 +134,32 @@ pub fn empty_bridge_message_root() -> MessageRoot {
 }
 
 pub fn bridge_message_root(messages: &[BridgeMessageV1]) -> MessageRoot {
+    let hashes = messages
+        .iter()
+        .map(BridgeMessageV1::message_hash)
+        .collect::<Vec<_>>();
+    bridge_message_root_from_hashes(&hashes)
+}
+
+pub fn bridge_message_root_from_hashes(message_hashes: &[MessageHash]) -> MessageRoot {
+    let preimage = bridge_message_root_preimage_v1_from_hashes(message_hashes);
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"hegemon.bridge.message-root-v1");
-    let count = (messages.len() as u32).to_le_bytes();
-    hasher.update(&(count.len() as u32).to_le_bytes());
-    hasher.update(&count);
-    for message in messages {
-        let hash = message.message_hash();
-        hasher.update(&(hash.len() as u32).to_le_bytes());
-        hasher.update(&hash);
-    }
+    hasher.update(&preimage);
     let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
+    out
+}
+
+pub fn bridge_message_root_preimage_v1_from_hashes(message_hashes: &[MessageHash]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + 8 + message_hashes.len().saturating_mul(52));
+    out.extend_from_slice(b"hegemon.bridge.message-root-v1");
+    let count = u32::try_from(message_hashes.len())
+        .expect("bridge message count exceeds u32::MAX")
+        .to_le_bytes();
+    push_len_prefixed_bytes(&mut out, &count);
+    for hash in message_hashes {
+        push_len_prefixed_bytes(&mut out, hash);
+    }
     out
 }
 
@@ -166,6 +180,11 @@ fn hash48_with_domain(domain: &[u8], chunks: &[&[u8]]) -> MessageHash {
     let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
     out
+}
+
+fn push_len_prefixed_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytes);
 }
 
 fn push_scale_compact_len(out: &mut Vec<u8>, value: u64) {
@@ -254,6 +273,7 @@ mod tests {
     struct LeanBridgeVectorFile {
         schema_version: u32,
         bridge_encoding_cases: Vec<LeanBridgeEncodingCase>,
+        message_root_cases: Vec<LeanBridgeMessageRootCase>,
         replay_cases: Vec<LeanReplayCase>,
     }
 
@@ -269,6 +289,15 @@ mod tests {
         payload_hash: String,
         payload_hex: String,
         expected_encoded_hex: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMessageRootCase {
+        name: String,
+        message_hashes: Vec<String>,
+        expected_valid: bool,
+        expected_transcript_hex: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -299,6 +328,10 @@ mod tests {
             "Lean bridge encoding cases must not be empty"
         );
         assert!(
+            !vectors.message_root_cases.is_empty(),
+            "Lean bridge message-root cases must not be empty"
+        );
+        assert!(
             !vectors.replay_cases.is_empty(),
             "Lean replay cases must not be empty"
         );
@@ -307,6 +340,10 @@ mod tests {
         for case in &vectors.bridge_encoding_cases {
             assert!(names.insert(format!("encoding:{}", case.name)));
             verify_lean_bridge_encoding_case(case);
+        }
+        for case in &vectors.message_root_cases {
+            assert!(names.insert(format!("message-root:{}", case.name)));
+            verify_lean_bridge_message_root_case(case);
         }
         for case in &vectors.replay_cases {
             assert!(names.insert(format!("replay:{}", case.name)));
@@ -335,6 +372,29 @@ mod tests {
             "{} production bridge encoding drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_bridge_message_root_case(case: &LeanBridgeMessageRootCase) {
+        let hashes = case
+            .message_hashes
+            .iter()
+            .map(|hash| parse_hash48_result(hash))
+            .collect::<Result<Vec<_>, _>>();
+        assert_eq!(
+            hashes.is_ok(),
+            case.expected_valid,
+            "{} message-root validity drifted from Lean spec",
+            case.name
+        );
+        if let Ok(hashes) = hashes {
+            let expected_transcript = parse_hex_vec(&case.expected_transcript_hex);
+            assert_eq!(
+                bridge_message_root_preimage_v1_from_hashes(&hashes),
+                expected_transcript,
+                "{} bridge message-root transcript drifted from Lean spec",
+                case.name
+            );
+        }
     }
 
     fn verify_lean_replay_case(case: &LeanReplayCase) {
@@ -405,11 +465,17 @@ mod tests {
     }
 
     fn parse_hash48(value: &str) -> MessageHash {
+        parse_hash48_result(value).expect("expected 48-byte hash")
+    }
+
+    fn parse_hash48_result(value: &str) -> Result<MessageHash, String> {
         let bytes = parse_hex_vec(value);
-        assert_eq!(bytes.len(), 48, "expected 48-byte hash");
+        if bytes.len() != 48 {
+            return Err(format!("expected 48-byte hash, got {}", bytes.len()));
+        }
         let mut out = [0u8; 48];
         out.copy_from_slice(&bytes);
-        out
+        Ok(out)
     }
 
     fn parse_hex_vec(value: &str) -> Vec<u8> {

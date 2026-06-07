@@ -1,5 +1,6 @@
 import Hegemon.Bytes
 import Hegemon.Bridge.Encoding
+import Hegemon.Bridge.MessageRoot
 import Hegemon.Bridge.Replay
 import Hegemon.Consensus.ForkChoice
 import Hegemon.Consensus.PowRules

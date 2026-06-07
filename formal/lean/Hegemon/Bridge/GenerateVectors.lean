@@ -1,4 +1,5 @@
 import Hegemon.Bridge.Encoding
+import Hegemon.Bridge.MessageRoot
 import Hegemon.Bridge.Replay
 
 open Hegemon
@@ -47,6 +48,14 @@ def keyB : ReplayKey :=
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
 
+def commaJoin : List String -> String
+  | [] => ""
+  | [item] => item
+  | item :: rest => item ++ ", " ++ commaJoin rest
+
+def hexArrayJson (values : List (List Byte)) : String :=
+  "[" ++ commaJoin (values.map fun value => "\"" ++ hexBytes value ++ "\"") ++ "]"
+
 def stageResult (state : ReplayState) (key : ReplayKey) : Bool :=
   match state.stage key with
   | some _ => true
@@ -82,6 +91,14 @@ def bridgeCaseJson (name : String) (message : BridgeMessageV1) : String :=
     ++ "      \"expected_encoded_hex\": \"" ++ hexBytes message.encode ++ "\"\n"
     ++ "    }"
 
+def messageRootCaseJson (name : String) (hashes : List (List Byte)) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"message_hashes\": " ++ hexArrayJson hashes ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (MessageRoot.validInput hashes) ++ ",\n"
+    ++ "      \"expected_transcript_hex\": \"" ++ hexBytes (MessageRoot.transcriptFromHashes hashes) ++ "\"\n"
+    ++ "    }"
+
 def replayCaseJson (name : String) (state : ReplayState) (key : ReplayKey) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -100,6 +117,14 @@ def vectorJson : String :=
     ++ "  \"bridge_encoding_cases\": [\n"
     ++ bridgeCaseJson "lean-self-loop-encoding" messageCaseA ++ ",\n"
     ++ bridgeCaseJson "lean-cross-chain-encoding" messageCaseB ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"message_root_cases\": [\n"
+    ++ messageRootCaseJson "empty-root-transcript" [] ++ ",\n"
+    ++ messageRootCaseJson "single-root-transcript" [MessageRoot.hashA] ++ ",\n"
+    ++ messageRootCaseJson "ordered-pair-root-transcript" [MessageRoot.hashA, MessageRoot.hashB] ++ ",\n"
+    ++ messageRootCaseJson "reversed-pair-root-transcript" [MessageRoot.hashB, MessageRoot.hashA] ++ ",\n"
+    ++ messageRootCaseJson "short-hash-rejected" [MessageRoot.shortHash] ++ ",\n"
+    ++ messageRootCaseJson "long-hash-rejected" [MessageRoot.longHash] ++ "\n"
     ++ "  ],\n"
     ++ "  \"replay_cases\": [\n"
     ++ replayCaseJson "empty-stage-import" ReplayState.empty keyA ++ ",\n"

@@ -669,26 +669,35 @@
       "id": "bridge.message-root-replay",
       "claim_id": "bridge.message-root-replay",
       "kind": "target_claim",
-      "formal_statement": "For committed BridgeMessageV1 vectors, the independent checker recomputes the payload hash, canonical message hash, single-message root, and inbound replay key from the public fields without importing production bridge helpers.",
-      "informal_argument": "The bridge reference vectors bind the byte grammar and replay-key derivation most likely to create counterfeit or replayable bridge messages. The checker intentionally reimplements the encoding and BLAKE3 XOF-48 derivations so production helper drift is caught.",
+      "formal_statement": "For the executable Lean message-root transcript function, valid 48-byte message hashes are encoded as domain || len(count-bytes) || count || len(hash) || hash..., invalid hash lengths are rejected before the Rust root helper can be called, and ordered pairs produce different transcripts when reversed.",
+      "informal_argument": "The Lean `Hegemon.Bridge.MessageRoot` kernel fixes the byte grammar that feeds bridge `message_root` hashing. `gen_bridge_vectors` emits empty, single, ordered-pair, reversed-pair, and invalid hash-length cases, and the production `protocol-kernel` conformance test checks the Rust root preimage helper against those Lean bytes. The independent bridge reference vectors continue to rederive the BLAKE3 XOF-48 payload hash, canonical message hash, single-message root, and inbound replay key without importing production bridge helpers.",
       "depends_on": [
         "formal.pow-fork-choice",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/MessageRoot.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
         "scripts/hegemon_formal_core/src/lib.rs",
         "protocol/kernel/src/bridge.rs"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/MessageRoot.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
         "testdata/formal_core_vectors/bridge_messages.json"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "The target is accepted for current single-message vectors and replay-key derivation; larger Merkle batches need additional vectors."
+        "notes": "The target is accepted for Lean-backed transcript grammar and independent BLAKE3 reference vectors. Larger bridge light-client and external-chain proof systems remain out of scope."
       },
       "falsification_cases": [
+        {
+          "id": "message-root-transcript-drift",
+          "description": "Changing the Rust bridge message-root transcript domain, count bytes, length prefixes, or ordered hash sequence must fail the Lean-generated conformance test.",
+          "gate": "HEGEMON_LEAN_BRIDGE_VECTORS=<generated-json> cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture"
+        },
         {
           "id": "payload-hash-tamper",
           "description": "Changing payload bytes or expected payload hash must fail vector verification.",
@@ -700,7 +709,7 @@
           "gate": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml replay_key_binds_nonce_and_chain"
         }
       ],
-      "scope_boundary": "This node covers canonical vector derivations; it does not prove every bridge light-client proof system or external-chain covenant."
+      "scope_boundary": "This node covers bridge message-root transcript grammar, canonical vector derivations, and replay-key vector checks. It does not prove BLAKE3 cryptographic security or implementation equivalence, every bridge light-client proof system, or external-chain covenant behavior."
     },
     {
       "id": "bridge.inbound-replay-state",

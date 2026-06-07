@@ -417,21 +417,27 @@
     {
       "id": "bridge.message-root-replay",
       "component": "protocol bridge messages",
-      "claim_class": "reference_vector",
-      "summary": "Bridge payload hashes, message hashes, single-message roots, and inbound replay keys are independently vector-checked.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean message-root kernel proves the bridge message-root transcript grammar and generated vectors check that production Rust hashes the same transcript; independent reference vectors still rederive payload hashes, message hashes, single-message roots, and inbound replay keys.",
       "status": "enforced",
-      "proof_model": "independent_reference_vectors",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_independent_reference_vectors",
       "production_eligible": true,
       "assumptions": [
+        "The Lean MessageRoot model covers the byte transcript that is fed into BLAKE3 XOF-48, not BLAKE3 collision resistance or implementation equivalence.",
+        "Generated Lean conformance vectors cover empty, single-message, ordered pair, reversed pair, and invalid hash-length message-root transcript cases against protocol-kernel helpers.",
         "The reference checker does not import protocol-kernel bridge helpers.",
         "The vector set is updated when bridge wire semantics intentionally change."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/MessageRoot.lean",
+        "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
         "testdata/formal_core_vectors/bridge_messages.json",
         "scripts/hegemon_formal_core/src/lib.rs",
         "protocol/kernel/src/bridge.rs"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_VECTORS=<generated-json> cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
