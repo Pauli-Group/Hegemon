@@ -721,6 +721,62 @@ impl NativeResourceBudgetAdmissionRejection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSidecarRequestCountAdmissionInput {
+    item_count: usize,
+    max_items: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSidecarCapacityAdmissionInput {
+    staged_count: usize,
+    max_staged_count: usize,
+    replaces_existing: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeProofSidecarMetadataAdmissionInput {
+    binding_hash_present: bool,
+    binding_hash_valid: bool,
+    proof_present: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeProofSidecarDecodedAdmissionInput {
+    proof_bytes: usize,
+    max_proof_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSidecarUploadAdmissionRejection {
+    TooManyCiphertexts,
+    TooManyProofs,
+    StagedCiphertextCapacityReached,
+    StagedProofCapacityReached,
+    ProofBindingHashMissing,
+    InvalidBindingHash,
+    ProofMissing,
+    ProofEmpty,
+    ProofTooLarge,
+}
+
+impl NativeSidecarUploadAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::TooManyCiphertexts => "too_many_ciphertexts",
+            Self::TooManyProofs => "too_many_proofs",
+            Self::StagedCiphertextCapacityReached => "staged_ciphertext_capacity_reached",
+            Self::StagedProofCapacityReached => "staged_proof_capacity_reached",
+            Self::ProofBindingHashMissing => "proof_binding_hash_missing",
+            Self::InvalidBindingHash => "invalid_binding_hash",
+            Self::ProofMissing => "proof_missing",
+            Self::ProofEmpty => "proof_empty",
+            Self::ProofTooLarge => "proof_too_large",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct SubmitActionRpcRequest {
     binding_circuit: u16,
@@ -2055,13 +2111,13 @@ impl NativeNode {
             .get("ciphertexts")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("da_submitCiphertexts requires ciphertexts array"))?;
-        if ciphertexts.len() > MAX_NATIVE_DA_CIPHERTEXT_UPLOADS {
-            return Err(anyhow!(
-                "too many ciphertexts in one request: {} > {}",
-                ciphertexts.len(),
-                MAX_NATIVE_DA_CIPHERTEXT_UPLOADS
-            ));
-        }
+        evaluate_native_ciphertext_sidecar_request_admission(
+            NativeSidecarRequestCountAdmissionInput {
+                item_count: ciphertexts.len(),
+                max_items: MAX_NATIVE_DA_CIPHERTEXT_UPLOADS,
+            },
+        )
+        .map_err(native_sidecar_upload_admission_error)?;
         let mut results = Vec::with_capacity(ciphertexts.len());
         let mut state = self.state.write();
         for ciphertext in ciphertexts {
@@ -2076,14 +2132,14 @@ impl NativeNode {
             }
             let hash = ciphertext_hash_bytes(&raw);
             let hash_hex = hex48(&hash);
-            if !state.staged_ciphertexts.contains_key(&hash_hex)
-                && state.staged_ciphertexts.len() >= MAX_NATIVE_STAGED_CIPHERTEXTS
-            {
-                return Err(anyhow!(
-                    "staged ciphertext capacity reached: {}",
-                    MAX_NATIVE_STAGED_CIPHERTEXTS
-                ));
-            }
+            evaluate_native_ciphertext_sidecar_capacity_admission(
+                NativeSidecarCapacityAdmissionInput {
+                    staged_count: state.staged_ciphertexts.len(),
+                    max_staged_count: MAX_NATIVE_STAGED_CIPHERTEXTS,
+                    replaces_existing: state.staged_ciphertexts.contains_key(&hash_hex),
+                },
+            )
+            .map_err(native_sidecar_upload_admission_error)?;
             let size = u32::try_from(raw.len()).unwrap_or(u32::MAX);
             self.da_ciphertext_tree.insert(hash.as_slice(), raw)?;
             state.staged_ciphertexts.insert(hash_hex.clone(), size);
@@ -2101,50 +2157,48 @@ impl NativeNode {
             .get("proofs")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("da_submitProofs requires proofs array"))?;
-        if proofs.len() > MAX_NATIVE_DA_PROOF_UPLOADS {
-            return Err(anyhow!(
-                "too many proofs in one request: {} > {}",
-                proofs.len(),
-                MAX_NATIVE_DA_PROOF_UPLOADS
-            ));
-        }
+        evaluate_native_proof_sidecar_request_admission(NativeSidecarRequestCountAdmissionInput {
+            item_count: proofs.len(),
+            max_items: MAX_NATIVE_DA_PROOF_UPLOADS,
+        })
+        .map_err(native_sidecar_upload_admission_error)?;
         let mut results = Vec::with_capacity(proofs.len());
         let mut state = self.state.write();
         for item in proofs {
-            let binding_hash = item
-                .get("binding_hash")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("proof item missing binding_hash"))?
-                .to_string();
-            let binding_hash_bytes =
-                parse_hex64(&binding_hash).ok_or_else(|| anyhow!("invalid binding_hash hex"))?;
+            let binding_hash_value = item.get("binding_hash").and_then(Value::as_str);
+            let binding_hash_bytes = binding_hash_value.and_then(parse_hex64);
+            let proof_value = item.get("proof");
+            evaluate_native_proof_sidecar_metadata_admission(
+                NativeProofSidecarMetadataAdmissionInput {
+                    binding_hash_present: binding_hash_value.is_some(),
+                    binding_hash_valid: binding_hash_bytes.is_some(),
+                    proof_present: proof_value.is_some(),
+                },
+            )
+            .map_err(native_sidecar_upload_admission_error)?;
+            let binding_hash = binding_hash_value.expect("validated binding_hash presence");
+            let binding_hash_bytes = binding_hash_bytes.expect("validated binding_hash hex shape");
             let binding_hash_key = hex64(&binding_hash_bytes);
             let proof = parse_bytes_value(
-                item.get("proof")
-                    .ok_or_else(|| anyhow!("proof item missing proof"))?,
+                proof_value.expect("validated proof presence"),
                 NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
                 "proof item proof",
             )?;
-            if proof.is_empty() {
-                return Err(anyhow!("proof item proof must be non-empty"));
-            }
-            if proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
-                return Err(anyhow!(
-                    "proof size {} exceeds native tx-leaf artifact limit {}",
-                    proof.len(),
-                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
-                ));
-            }
+            evaluate_native_proof_sidecar_decoded_admission(
+                NativeProofSidecarDecodedAdmissionInput {
+                    proof_bytes: proof.len(),
+                    max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                },
+            )
+            .map_err(native_sidecar_upload_admission_error)?;
             let proof_hash = hash48_with_parts(&[b"da-proof-v1", binding_hash.as_bytes(), &proof]);
             let proof_hash_hex = hex48(&proof_hash);
-            if !state.staged_proofs.contains_key(&binding_hash_key)
-                && state.staged_proofs.len() >= MAX_NATIVE_STAGED_PROOFS
-            {
-                return Err(anyhow!(
-                    "staged proof capacity reached: {}",
-                    MAX_NATIVE_STAGED_PROOFS
-                ));
-            }
+            evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
+                staged_count: state.staged_proofs.len(),
+                max_staged_count: MAX_NATIVE_STAGED_PROOFS,
+                replaces_existing: state.staged_proofs.contains_key(&binding_hash_key),
+            })
+            .map_err(native_sidecar_upload_admission_error)?;
             validate_staged_proof_byte_budget(
                 &state.staged_proofs,
                 &binding_hash_key,
@@ -3187,19 +3241,19 @@ fn load_staged_proofs(tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() == 64 {
-            if value.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
-                return Err(anyhow!(
-                    "staged proof size {} exceeds native tx-leaf artifact limit {}",
-                    value.len(),
-                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
-                ));
-            }
-            if entries.len() >= MAX_NATIVE_STAGED_PROOFS {
-                return Err(anyhow!(
-                    "staged proof capacity reached: {}",
-                    MAX_NATIVE_STAGED_PROOFS
-                ));
-            }
+            evaluate_native_proof_sidecar_decoded_admission(
+                NativeProofSidecarDecodedAdmissionInput {
+                    proof_bytes: value.len(),
+                    max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                },
+            )
+            .map_err(native_sidecar_upload_admission_error)?;
+            evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
+                staged_count: entries.len(),
+                max_staged_count: MAX_NATIVE_STAGED_PROOFS,
+                replaces_existing: false,
+            })
+            .map_err(native_sidecar_upload_admission_error)?;
             total_bytes = total_bytes.saturating_add(value.len());
             if total_bytes > MAX_NATIVE_STAGED_PROOF_BYTES {
                 return Err(anyhow!(
@@ -3942,6 +3996,113 @@ fn native_resource_budget_admission_error(
             current_bytes,
             candidate_bytes,
             max_bytes
+        ),
+    }
+}
+
+fn evaluate_native_ciphertext_sidecar_request_admission(
+    input: NativeSidecarRequestCountAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if input.item_count > input.max_items {
+        Err(NativeSidecarUploadAdmissionRejection::TooManyCiphertexts)
+    } else {
+        Ok(())
+    }
+}
+
+fn evaluate_native_proof_sidecar_request_admission(
+    input: NativeSidecarRequestCountAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if input.item_count > input.max_items {
+        Err(NativeSidecarUploadAdmissionRejection::TooManyProofs)
+    } else {
+        Ok(())
+    }
+}
+
+fn evaluate_native_ciphertext_sidecar_capacity_admission(
+    input: NativeSidecarCapacityAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if !input.replaces_existing && input.staged_count >= input.max_staged_count {
+        Err(NativeSidecarUploadAdmissionRejection::StagedCiphertextCapacityReached)
+    } else {
+        Ok(())
+    }
+}
+
+fn evaluate_native_proof_sidecar_capacity_admission(
+    input: NativeSidecarCapacityAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if !input.replaces_existing && input.staged_count >= input.max_staged_count {
+        Err(NativeSidecarUploadAdmissionRejection::StagedProofCapacityReached)
+    } else {
+        Ok(())
+    }
+}
+
+fn evaluate_native_proof_sidecar_metadata_admission(
+    input: NativeProofSidecarMetadataAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if !input.binding_hash_present {
+        Err(NativeSidecarUploadAdmissionRejection::ProofBindingHashMissing)
+    } else if !input.binding_hash_valid {
+        Err(NativeSidecarUploadAdmissionRejection::InvalidBindingHash)
+    } else if !input.proof_present {
+        Err(NativeSidecarUploadAdmissionRejection::ProofMissing)
+    } else {
+        Ok(())
+    }
+}
+
+fn evaluate_native_proof_sidecar_decoded_admission(
+    input: NativeProofSidecarDecodedAdmissionInput,
+) -> Result<(), NativeSidecarUploadAdmissionRejection> {
+    if input.proof_bytes == 0 {
+        Err(NativeSidecarUploadAdmissionRejection::ProofEmpty)
+    } else if input.proof_bytes > input.max_proof_bytes {
+        Err(NativeSidecarUploadAdmissionRejection::ProofTooLarge)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_sidecar_upload_admission_error(
+    rejection: NativeSidecarUploadAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeSidecarUploadAdmissionRejection::TooManyCiphertexts => anyhow!(
+            "too many ciphertexts in one request: exceeds {}",
+            MAX_NATIVE_DA_CIPHERTEXT_UPLOADS
+        ),
+        NativeSidecarUploadAdmissionRejection::TooManyProofs => anyhow!(
+            "too many proofs in one request: exceeds {}",
+            MAX_NATIVE_DA_PROOF_UPLOADS
+        ),
+        NativeSidecarUploadAdmissionRejection::StagedCiphertextCapacityReached => anyhow!(
+            "staged ciphertext capacity reached: {}",
+            MAX_NATIVE_STAGED_CIPHERTEXTS
+        ),
+        NativeSidecarUploadAdmissionRejection::StagedProofCapacityReached => {
+            anyhow!(
+                "staged proof capacity reached: {}",
+                MAX_NATIVE_STAGED_PROOFS
+            )
+        }
+        NativeSidecarUploadAdmissionRejection::ProofBindingHashMissing => {
+            anyhow!("proof item missing binding_hash")
+        }
+        NativeSidecarUploadAdmissionRejection::InvalidBindingHash => {
+            anyhow!("invalid binding_hash hex")
+        }
+        NativeSidecarUploadAdmissionRejection::ProofMissing => {
+            anyhow!("proof item missing proof")
+        }
+        NativeSidecarUploadAdmissionRejection::ProofEmpty => {
+            anyhow!("proof item proof must be non-empty")
+        }
+        NativeSidecarUploadAdmissionRejection::ProofTooLarge => anyhow!(
+            "proof size exceeds native tx-leaf artifact limit {}",
+            NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
         ),
     }
 }
@@ -6285,6 +6446,60 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSidecarUploadAdmissionVectorFile {
+        schema_version: u32,
+        request_count_cases: Vec<LeanSidecarRequestCountCase>,
+        capacity_cases: Vec<LeanSidecarCapacityCase>,
+        proof_metadata_cases: Vec<LeanProofSidecarMetadataCase>,
+        proof_decoded_cases: Vec<LeanProofSidecarDecodedCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSidecarRequestCountCase {
+        name: String,
+        kind: String,
+        item_count: usize,
+        max_items: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSidecarCapacityCase {
+        name: String,
+        kind: String,
+        staged_count: usize,
+        max_staged_count: usize,
+        replaces_existing: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofSidecarMetadataCase {
+        name: String,
+        binding_hash_present: bool,
+        binding_hash_valid: bool,
+        proof_present: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofSidecarDecodedCase {
+        name: String,
+        proof_bytes: usize,
+        max_proof_bytes: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -6853,6 +7068,138 @@ mod tests {
 
         validate_staged_proof_byte_budget(&staged, "first", 5, 5)
             .expect("replacement should subtract existing proof bytes");
+    }
+
+    #[test]
+    fn sidecar_upload_capacity_replacement_accepts_full_staging() {
+        evaluate_native_ciphertext_sidecar_capacity_admission(
+            NativeSidecarCapacityAdmissionInput {
+                staged_count: 4,
+                max_staged_count: 4,
+                replaces_existing: true,
+            },
+        )
+        .expect("ciphertext replacement at capacity should be accepted");
+        evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
+            staged_count: 4,
+            max_staged_count: 4,
+            replaces_existing: true,
+        })
+        .expect("proof replacement at capacity should be accepted");
+
+        let ciphertext_err = evaluate_native_ciphertext_sidecar_capacity_admission(
+            NativeSidecarCapacityAdmissionInput {
+                staged_count: 4,
+                max_staged_count: 4,
+                replaces_existing: false,
+            },
+        )
+        .expect_err("new ciphertext at capacity must reject");
+        assert_eq!(
+            ciphertext_err,
+            NativeSidecarUploadAdmissionRejection::StagedCiphertextCapacityReached
+        );
+
+        let proof_err =
+            evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
+                staged_count: 4,
+                max_staged_count: 4,
+                replaces_existing: false,
+            })
+            .expect_err("new proof at capacity must reject");
+        assert_eq!(
+            proof_err,
+            NativeSidecarUploadAdmissionRejection::StagedProofCapacityReached
+        );
+    }
+
+    #[test]
+    fn submit_ciphertexts_rejects_too_many_uploads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let ciphertexts = vec![json!(""); MAX_NATIVE_DA_CIPHERTEXT_UPLOADS + 1];
+        let err = node
+            .submit_ciphertexts(json!({ "ciphertexts": ciphertexts }))
+            .expect_err("too many ciphertext uploads must reject before decode");
+        assert!(err.to_string().contains("too many ciphertexts"));
+    }
+
+    #[test]
+    fn submit_proofs_rejects_too_many_uploads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let proofs = vec![json!({}); MAX_NATIVE_DA_PROOF_UPLOADS + 1];
+        let err = node
+            .submit_proofs(json!({ "proofs": proofs }))
+            .expect_err("too many proof uploads must reject before item decode");
+        assert!(err.to_string().contains("too many proofs"));
+    }
+
+    #[test]
+    fn submit_proofs_rejects_invalid_metadata_and_empty_proof() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let err = node
+            .submit_proofs(json!({ "proofs": [{ "proof": "AA==" }] }))
+            .expect_err("missing binding hash must reject first");
+        assert!(err.to_string().contains("missing binding_hash"));
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{ "binding_hash": "0x12", "proof": "AA==" }]
+            }))
+            .expect_err("invalid binding hash must reject before proof parsing");
+        assert!(err.to_string().contains("invalid binding_hash"));
+
+        let valid_binding_hash = format!("0x{}", "11".repeat(64));
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{ "binding_hash": valid_binding_hash, "proof": "" }]
+            }))
+            .expect_err("empty proof must reject after metadata admission");
+        assert!(err.to_string().contains("must be non-empty"));
+    }
+
+    #[test]
+    fn submit_sidecars_accepts_valid_uploads_and_replacements() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+
+        let ciphertexts = node
+            .submit_ciphertexts(json!({ "ciphertexts": ["0x010203"] }))
+            .expect("valid ciphertext sidecar should stage");
+        let ciphertexts = ciphertexts
+            .as_array()
+            .expect("ciphertext result should be array");
+        assert_eq!(ciphertexts.len(), 1);
+        assert_eq!(ciphertexts[0]["size"].as_u64(), Some(3));
+        assert!(ciphertexts[0]["hash"].as_str().unwrap().starts_with("0x"));
+
+        let binding_hash = format!("0x{}", "11".repeat(64));
+        let proofs = node
+            .submit_proofs(json!({
+                "proofs": [{ "binding_hash": binding_hash, "proof": "0x010203" }]
+            }))
+            .expect("valid proof sidecar should stage");
+        let proofs = proofs.as_array().expect("proof result should be array");
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(proofs[0]["size"].as_u64(), Some(3));
+        assert!(proofs[0]["proof_hash"].as_str().unwrap().starts_with("0x"));
+
+        let replacement_binding_hash = format!("0x{}", "11".repeat(64));
+        node.submit_proofs(json!({
+            "proofs": [{ "binding_hash": replacement_binding_hash, "proof": "0x01020304" }]
+        }))
+        .expect("same binding hash replacement should be accepted");
+
+        let state = node.state.read();
+        assert_eq!(state.staged_ciphertexts.len(), 1);
+        assert_eq!(state.staged_proofs.len(), 1);
+        assert_eq!(state.staged_proofs.values().next().unwrap().len(), 4);
     }
 
     #[test]
@@ -7633,6 +7980,150 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native staged-proof budget admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_sidecar_upload_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean sidecar upload admission vectors");
+        let vectors: LeanSidecarUploadAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean sidecar upload admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.request_count_cases.is_empty(),
+            "Lean sidecar request-count cases must not be empty"
+        );
+        assert!(
+            !vectors.capacity_cases.is_empty(),
+            "Lean sidecar capacity cases must not be empty"
+        );
+        assert!(
+            !vectors.proof_metadata_cases.is_empty(),
+            "Lean proof sidecar metadata cases must not be empty"
+        );
+        assert!(
+            !vectors.proof_decoded_cases.is_empty(),
+            "Lean proof sidecar decoded cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.request_count_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sidecar_request_count_case(case);
+        }
+        for case in &vectors.capacity_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sidecar_capacity_case(case);
+        }
+        for case in &vectors.proof_metadata_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_sidecar_metadata_case(case);
+        }
+        for case in &vectors.proof_decoded_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_sidecar_decoded_case(case);
+        }
+    }
+
+    fn verify_lean_sidecar_request_count_case(case: &LeanSidecarRequestCountCase) {
+        let input = NativeSidecarRequestCountAdmissionInput {
+            item_count: case.item_count,
+            max_items: case.max_items,
+        };
+        let actual = match case.kind.as_str() {
+            "ciphertexts" => evaluate_native_ciphertext_sidecar_request_admission(input),
+            "proofs" => evaluate_native_proof_sidecar_request_admission(input),
+            other => panic!("{} unknown request-count kind {other}", case.name),
+        };
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sidecar request-count validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native sidecar request-count rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_sidecar_capacity_case(case: &LeanSidecarCapacityCase) {
+        let input = NativeSidecarCapacityAdmissionInput {
+            staged_count: case.staged_count,
+            max_staged_count: case.max_staged_count,
+            replaces_existing: case.replaces_existing,
+        };
+        let actual = match case.kind.as_str() {
+            "ciphertext" => evaluate_native_ciphertext_sidecar_capacity_admission(input),
+            "proof" => evaluate_native_proof_sidecar_capacity_admission(input),
+            other => panic!("{} unknown capacity kind {other}", case.name),
+        };
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sidecar capacity validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native sidecar capacity rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_proof_sidecar_metadata_case(case: &LeanProofSidecarMetadataCase) {
+        let input = NativeProofSidecarMetadataAdmissionInput {
+            binding_hash_present: case.binding_hash_present,
+            binding_hash_valid: case.binding_hash_valid,
+            proof_present: case.proof_present,
+        };
+        let actual = evaluate_native_proof_sidecar_metadata_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native proof sidecar metadata validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native proof sidecar metadata rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_proof_sidecar_decoded_case(case: &LeanProofSidecarDecodedCase) {
+        assert_eq!(
+            case.max_proof_bytes, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            "{} Lean proof sidecar cap must match the production native tx-leaf cap",
+            case.name
+        );
+        let input = NativeProofSidecarDecodedAdmissionInput {
+            proof_bytes: case.proof_bytes,
+            max_proof_bytes: case.max_proof_bytes,
+        };
+        let actual = evaluate_native_proof_sidecar_decoded_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native proof sidecar decoded validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native proof sidecar decoded rejection drifted from Lean spec",
             case.name
         );
     }

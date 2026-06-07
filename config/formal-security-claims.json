@@ -897,6 +897,36 @@
       "residual_risks": []
     },
     {
+      "id": "native.sidecar-upload-admission",
+      "component": "native DA sidecar upload admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native sidecar upload admission kernel proves deterministic request-count, staged-capacity, proof metadata, and decoded proof-byte admission for da_submitCiphertexts and da_submitProofs; generated Lean vectors are checked against the production native helpers used by the unsafe DA staging RPCs and startup proof reload.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents decoded upload-admission predicates after JSON field discovery and bounded byte parsing, with binding-hash presence/shape, proof-field presence, and decoded proof byte length represented as explicit inputs.",
+        "Generated Lean conformance vectors cover empty/exact/over-limit ciphertext and proof request counts, new-vs-replacement staged ciphertext and proof capacity, proof binding-hash missing/invalid precedence, missing proof fields, empty proofs, exact proof-cap acceptance, and oversized decoded proof rejection.",
+        "The theorem covers executable native sidecar upload admission only. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash cryptographic security or implementation equivalence, sled durability, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node sidecar_upload --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node submit_ciphertexts_rejects_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node submit_proofs_rejects_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.candidate-artifact-admission",
       "component": "native candidate artifact admission",
       "claim_class": "lean_theorem",
