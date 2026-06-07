@@ -498,6 +498,41 @@ impl NativeTransferPayloadAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCoinbaseActionPayloadAdmissionInput {
+    amount_nonzero: bool,
+    commitment_matches: bool,
+    commitment_nonzero: bool,
+    ciphertext_bytes: usize,
+    max_ciphertext_bytes: usize,
+    ciphertext_hash_matches: bool,
+    ciphertext_size_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCoinbaseActionPayloadAdmissionRejection {
+    AmountZero,
+    CommitmentMismatch,
+    CommitmentZero,
+    CiphertextTooLarge,
+    CiphertextHashMismatch,
+    CiphertextSizeMismatch,
+}
+
+impl NativeCoinbaseActionPayloadAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::AmountZero => "amount_zero",
+            Self::CommitmentMismatch => "commitment_mismatch",
+            Self::CommitmentZero => "commitment_zero",
+            Self::CiphertextTooLarge => "ciphertext_too_large",
+            Self::CiphertextHashMismatch => "ciphertext_hash_mismatch",
+            Self::CiphertextSizeMismatch => "ciphertext_size_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCandidateArtifactAdmissionInput {
     state_deltas_absent: bool,
     artifact_present: bool,
@@ -1831,14 +1866,10 @@ impl NativeNode {
             (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
                 let args: MintCoinbaseArgs =
                     decode_scale_exact(&public_args, "coinbase action args")?;
-                if args.reward_bundle.miner_note.amount == 0 {
-                    return Err(anyhow!("coinbase amount must be non-zero"));
-                }
                 let note = &args.reward_bundle.miner_note.encrypted_note;
-                let mut bytes =
-                    Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
-                bytes.extend_from_slice(&note.ciphertext);
-                bytes.extend_from_slice(&note.kem_ciphertext);
+                let (ciphertext_bytes, ciphertext_metadata) = coinbase_ciphertext_metadata(note);
+                let (ciphertext_hash, ciphertext_size) =
+                    ciphertext_metadata.unwrap_or((NATIVE_EMPTY_DIGEST48, u32::MAX));
                 PendingAction {
                     tx_hash: [0u8; 32],
                     binding,
@@ -1847,8 +1878,10 @@ impl NativeNode {
                     anchor: [0u8; 48],
                     nullifiers: Vec::new(),
                     commitments: vec![args.reward_bundle.miner_note.commitment],
-                    ciphertext_hashes: vec![ciphertext_hash_bytes(&bytes)],
-                    ciphertext_sizes: vec![u32::try_from(bytes.len()).unwrap_or(u32::MAX)],
+                    ciphertext_hashes: vec![ciphertext_hash],
+                    ciphertext_sizes: vec![
+                        u32::try_from(ciphertext_bytes).unwrap_or(ciphertext_size)
+                    ],
                     public_args,
                     fee: 0,
                     candidate_artifact: None,
@@ -3655,6 +3688,76 @@ fn native_candidate_artifact_admission_error(
     }
 }
 
+fn coinbase_ciphertext_metadata(
+    note: &protocol_shielded_pool::types::EncryptedNote,
+) -> (usize, Option<([u8; 48], u32)>) {
+    let total_len = note
+        .ciphertext
+        .len()
+        .saturating_add(note.kem_ciphertext.len());
+    if total_len > MAX_CIPHERTEXT_BYTES {
+        return (total_len, None);
+    }
+    let mut bytes = Vec::with_capacity(total_len);
+    bytes.extend_from_slice(&note.ciphertext);
+    bytes.extend_from_slice(&note.kem_ciphertext);
+    (
+        total_len,
+        Some((
+            ciphertext_hash_bytes(&bytes),
+            u32::try_from(total_len).unwrap_or(u32::MAX),
+        )),
+    )
+}
+
+fn evaluate_native_coinbase_action_payload_admission(
+    input: NativeCoinbaseActionPayloadAdmissionInput,
+) -> Result<(), NativeCoinbaseActionPayloadAdmissionRejection> {
+    if !input.amount_nonzero {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::AmountZero)
+    } else if !input.commitment_matches {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::CommitmentMismatch)
+    } else if !input.commitment_nonzero {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::CommitmentZero)
+    } else if input.ciphertext_bytes > input.max_ciphertext_bytes {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::CiphertextTooLarge)
+    } else if !input.ciphertext_hash_matches {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::CiphertextHashMismatch)
+    } else if !input.ciphertext_size_matches {
+        Err(NativeCoinbaseActionPayloadAdmissionRejection::CiphertextSizeMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_coinbase_action_payload_admission_error(
+    input: NativeCoinbaseActionPayloadAdmissionInput,
+    rejection: NativeCoinbaseActionPayloadAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCoinbaseActionPayloadAdmissionRejection::AmountZero => {
+            anyhow!("coinbase amount must be non-zero")
+        }
+        NativeCoinbaseActionPayloadAdmissionRejection::CommitmentMismatch => {
+            anyhow!("coinbase commitment mismatch")
+        }
+        NativeCoinbaseActionPayloadAdmissionRejection::CommitmentZero => {
+            anyhow!("zero coinbase commitment rejected")
+        }
+        NativeCoinbaseActionPayloadAdmissionRejection::CiphertextTooLarge => anyhow!(
+            "coinbase ciphertext size {} exceeds limit {}",
+            input.ciphertext_bytes,
+            input.max_ciphertext_bytes
+        ),
+        NativeCoinbaseActionPayloadAdmissionRejection::CiphertextHashMismatch => {
+            anyhow!("coinbase ciphertext hash mismatch")
+        }
+        NativeCoinbaseActionPayloadAdmissionRejection::CiphertextSizeMismatch => {
+            anyhow!("coinbase ciphertext size mismatch")
+        }
+    }
+}
+
 fn validate_coinbase_action_payload(action: &PendingAction) -> Result<()> {
     if !is_coinbase_action(action) {
         return Err(anyhow!("not a coinbase action"));
@@ -3672,16 +3775,27 @@ fn validate_coinbase_action_payload(action: &PendingAction) -> Result<()> {
         ));
     }
     let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
-    if args.reward_bundle.miner_note.amount == 0 {
-        return Err(anyhow!("coinbase amount must be non-zero"));
-    }
-    if args.reward_bundle.miner_note.commitment != action.commitments[0] {
-        return Err(anyhow!("coinbase commitment mismatch"));
-    }
-    if action.commitments[0] == [0u8; 48] {
-        return Err(anyhow!("zero coinbase commitment rejected"));
-    }
-    Ok(())
+    let note = &args.reward_bundle.miner_note.encrypted_note;
+    let (ciphertext_bytes, ciphertext_metadata) = coinbase_ciphertext_metadata(note);
+    let input = NativeCoinbaseActionPayloadAdmissionInput {
+        amount_nonzero: args.reward_bundle.miner_note.amount != 0,
+        commitment_matches: action.commitments.first()
+            == Some(&args.reward_bundle.miner_note.commitment),
+        commitment_nonzero: action
+            .commitments
+            .first()
+            .is_some_and(|commitment| *commitment != [0u8; 48]),
+        ciphertext_bytes,
+        max_ciphertext_bytes: MAX_CIPHERTEXT_BYTES,
+        ciphertext_hash_matches: ciphertext_metadata
+            .as_ref()
+            .is_some_and(|(hash, _)| action.ciphertext_hashes.first() == Some(hash)),
+        ciphertext_size_matches: ciphertext_metadata
+            .as_ref()
+            .is_some_and(|(_, size)| action.ciphertext_sizes.first() == Some(size)),
+    };
+    evaluate_native_coinbase_action_payload_admission(input)
+        .map_err(|rejection| native_coinbase_action_payload_admission_error(input, rejection))
 }
 
 fn pending_action_hash(action: &PendingAction) -> [u8; 32] {
@@ -4411,15 +4525,6 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             }
             NativeActionScopeAdmissionRoute::Coinbase => {
                 validate_coinbase_action_payload(action)?;
-                let args: MintCoinbaseArgs =
-                    decode_scale_exact(&action.public_args, "coinbase action args")?;
-                let bytes = encrypted_note_da_bytes(&args.reward_bundle.miner_note.encrypted_note)?;
-                if action.ciphertext_hashes[0] != ciphertext_hash_bytes(&bytes) {
-                    return Err(anyhow!("coinbase ciphertext hash mismatch"));
-                }
-                if action.ciphertext_sizes[0] != u32::try_from(bytes.len()).unwrap_or(u32::MAX) {
-                    return Err(anyhow!("coinbase ciphertext size mismatch"));
-                }
             }
             NativeActionScopeAdmissionRoute::Transfer => {
                 validate_transfer_action_payload(action)?;
@@ -6041,6 +6146,28 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseActionPayloadAdmissionVectorFile {
+        schema_version: u32,
+        coinbase_action_payload_admission_cases: Vec<LeanCoinbaseActionPayloadAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseActionPayloadAdmissionCase {
+        name: String,
+        amount_nonzero: bool,
+        commitment_matches: bool,
+        commitment_nonzero: bool,
+        ciphertext_bytes: usize,
+        max_ciphertext_bytes: usize,
+        ciphertext_hash_matches: bool,
+        ciphertext_size_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -7244,6 +7371,65 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_coinbase_action_payload_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean coinbase action payload admission vectors");
+        let vectors: LeanCoinbaseActionPayloadAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean coinbase action payload admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.coinbase_action_payload_admission_cases.is_empty(),
+            "Lean coinbase action payload admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.coinbase_action_payload_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_coinbase_action_payload_admission_case(case);
+        }
+    }
+
+    fn verify_lean_coinbase_action_payload_admission_case(
+        case: &LeanCoinbaseActionPayloadAdmissionCase,
+    ) {
+        assert_eq!(
+            case.max_ciphertext_bytes, MAX_CIPHERTEXT_BYTES,
+            "{} Lean ciphertext cap must match the production native cap",
+            case.name
+        );
+        let input = NativeCoinbaseActionPayloadAdmissionInput {
+            amount_nonzero: case.amount_nonzero,
+            commitment_matches: case.commitment_matches,
+            commitment_nonzero: case.commitment_nonzero,
+            ciphertext_bytes: case.ciphertext_bytes,
+            max_ciphertext_bytes: case.max_ciphertext_bytes,
+            ciphertext_hash_matches: case.ciphertext_hash_matches,
+            ciphertext_size_matches: case.ciphertext_size_matches,
+        };
+        let actual_rejection = evaluate_native_coinbase_action_payload_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native coinbase action payload admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native coinbase action payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn imported_block_actions_reject_hash_mismatch() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -7583,6 +7769,88 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("coinbase action must not carry nullifiers");
         assert!(err.to_string().contains("no other state deltas"));
+    }
+
+    #[test]
+    fn coinbase_action_rejects_zero_commitment() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut action = test_coinbase_action(subsidy);
+        let mut args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")
+                .expect("decode test coinbase args");
+        args.reward_bundle.miner_note.commitment = [0u8; 48];
+        action.commitments[0] = [0u8; 48];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("zero coinbase commitment must reject");
+        assert!(err.to_string().contains("zero coinbase commitment"));
+    }
+
+    #[test]
+    fn coinbase_action_rejects_ciphertext_hash_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut action = test_coinbase_action(subsidy);
+        action.ciphertext_hashes[0][0] ^= 1;
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("coinbase ciphertext hash mismatch must reject");
+        assert!(err.to_string().contains("ciphertext hash mismatch"));
+    }
+
+    #[test]
+    fn coinbase_action_rejects_ciphertext_size_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut action = test_coinbase_action(subsidy);
+        action.ciphertext_sizes[0] = action.ciphertext_sizes[0].saturating_add(1);
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("coinbase ciphertext size mismatch must reject");
+        assert!(err.to_string().contains("ciphertext size mismatch"));
+    }
+
+    #[test]
+    fn coinbase_action_rejects_oversized_ciphertext() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut action = test_coinbase_action(subsidy);
+        let mut args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")
+                .expect("decode test coinbase args");
+        args.reward_bundle.miner_note.encrypted_note.kem_ciphertext =
+            vec![0x55u8; MAX_CIPHERTEXT_BYTES + 1];
+        let total_len = args
+            .reward_bundle
+            .miner_note
+            .encrypted_note
+            .ciphertext
+            .len()
+            .saturating_add(
+                args.reward_bundle
+                    .miner_note
+                    .encrypted_note
+                    .kem_ciphertext
+                    .len(),
+            );
+        action.public_args = args.encode();
+        action.ciphertext_hashes[0] = NATIVE_EMPTY_DIGEST48;
+        action.ciphertext_sizes[0] = u32::try_from(total_len).unwrap_or(u32::MAX);
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("oversized coinbase ciphertext must reject");
+        assert!(err.to_string().contains("coinbase ciphertext size"));
+        assert!(err.to_string().contains("exceeds limit"));
     }
 
     #[test]
@@ -8497,6 +8765,10 @@ mod tests {
                 },
             },
         };
+        let (_, ciphertext_metadata) =
+            coinbase_ciphertext_metadata(&args.reward_bundle.miner_note.encrypted_note);
+        let (ciphertext_hash, ciphertext_size) =
+            ciphertext_metadata.expect("test coinbase ciphertext should fit the native cap");
         let mut action = PendingAction {
             tx_hash: [0u8; 32],
             binding: KernelVersionBinding {
@@ -8508,8 +8780,8 @@ mod tests {
             anchor: [0u8; 48],
             nullifiers: Vec::new(),
             commitments: vec![commitment],
-            ciphertext_hashes: Vec::new(),
-            ciphertext_sizes: Vec::new(),
+            ciphertext_hashes: vec![ciphertext_hash],
+            ciphertext_sizes: vec![ciphertext_size],
             public_args: args.encode(),
             fee: 0,
             candidate_artifact: None,

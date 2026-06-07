@@ -103,6 +103,9 @@ lean_exe gen_candidate_artifact_coupling_admission_vectors where
 lean_exe gen_coinbase_accounting_admission_vectors where
   root := `Hegemon.Native.GenerateCoinbaseAccountingAdmissionVectors
 
+lean_exe gen_coinbase_action_payload_admission_vectors where
+  root := `Hegemon.Native.GenerateCoinbaseActionPayloadAdmissionVectors
+
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
 

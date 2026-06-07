@@ -1575,6 +1575,61 @@
       "scope_boundary": "This node proves and vector-checks native coinbase accounting admission only. It does not prove encrypted coinbase note construction, coinbase ciphertext hash binding, transfer proof soundness, monetary policy economics beyond the current subsidy helper, full action payload validation, or complete native-node equivalence."
     },
     {
+      "id": "native.coinbase-action-payload-admission",
+      "claim_id": "native.coinbase-action-payload-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native coinbase action payload-admission transition, decoded coinbase payloads are accepted only when the amount is nonzero, the decoded note commitment matches the action commitment, that commitment is nonzero, the encrypted note bytes are within the native ciphertext cap, and the public ciphertext hash and size metadata match the decoded encrypted note.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.CoinbaseActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable payload predicate, with companion theorems for amount-zero, commitment mismatch, zero commitment, ciphertext-too-large, ciphertext-hash mismatch, ciphertext-size mismatch, and rejection precedence. `gen_coinbase_action_payload_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against `evaluate_native_coinbase_action_payload_admission`, the helper used by native mempool and block action validation.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "formal.transaction-balance",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded native coinbase reward-note payload admission. Scope is payload/public metadata binding after route/scope admission."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-coinbase-action-payload-admission-theorem",
+          "description": "Removing or weakening the coinbase action payload-admission theorem or companion rejection proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-coinbase-action-payload-conformance",
+          "description": "Changing production zero amount, commitment mismatch, zero commitment, ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, or valid payload behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-coinbase-action-payload-regressions",
+          "description": "Focused native tests must reject zero coinbase commitments, ciphertext hash mismatches, ciphertext size mismatches, and oversized coinbase ciphertexts.",
+          "gate": "cargo test -p hegemon-node coinbase_action_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-coinbase-action-payload-gate",
+          "description": "The release formal-core wrapper must generate coinbase action payload-admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks decoded native coinbase payload/public metadata admission only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, reward accounting, complete SCALE decoder correctness, transfer proof soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.candidate-artifact-admission",
       "claim_id": "native.candidate-artifact-admission",
       "kind": "target_claim",
@@ -2022,6 +2077,7 @@
         "bridge.header-mmr-transcript-binding",
         "consensus.supply-digest-accounting",
         "native.coinbase-accounting-admission",
+        "native.coinbase-action-payload-admission",
         "release.dependency-waivers"
       ],
       "implementation_paths": [

@@ -841,6 +841,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.coinbase-action-payload-admission",
+      "component": "native coinbase action payload admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native coinbase action payload-admission kernel proves the executable table for decoded coinbase reward-note amount, commitment agreement/nonzero checks, ciphertext byte caps, and ciphertext hash/size metadata agreement; generated Lean vectors are checked against the production native helper used by mempool and block action validation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents decoded coinbase payload/public metadata admission after action route and scope admission.",
+        "Generated Lean conformance vectors cover valid payloads, exact ciphertext-cap acceptance, zero amount, commitment mismatch, zero commitment, ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, and rejection precedence.",
+        "The theorem covers executable decoded coinbase payload binding only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, reward accounting, complete action decoding, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node coinbase_action_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.candidate-artifact-admission",
       "component": "native candidate artifact admission",
       "claim_class": "lean_theorem",
