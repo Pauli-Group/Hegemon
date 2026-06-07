@@ -208,6 +208,7 @@ struct NativeTxLeafAdmissionInput {
     expected_artifact_hash_matches: bool,
     has_cache_entry: bool,
     cache_receipt_matches: bool,
+    cache_transaction_matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +226,7 @@ enum NativeTxLeafAdmissionRejection {
     ReceiptVerifierProfileMismatch,
     ArtifactHashMismatch,
     CacheReceiptMismatch,
+    CacheTransactionMismatch,
 }
 
 impl NativeTxLeafAdmissionOutcome {
@@ -248,6 +250,7 @@ impl NativeTxLeafAdmissionRejection {
             Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
             Self::ArtifactHashMismatch => "artifact_hash_mismatch",
             Self::CacheReceiptMismatch => "cache_receipt_mismatch",
+            Self::CacheTransactionMismatch => "cache_transaction_mismatch",
         }
     }
 }
@@ -274,11 +277,13 @@ fn evaluate_native_tx_leaf_admission(
         return Err(NativeTxLeafAdmissionRejection::ArtifactHashMismatch);
     }
     if input.has_cache_entry {
-        if input.cache_receipt_matches {
-            Ok(NativeTxLeafAdmissionOutcome::CacheHit)
-        } else {
-            Err(NativeTxLeafAdmissionRejection::CacheReceiptMismatch)
+        if !input.cache_receipt_matches {
+            return Err(NativeTxLeafAdmissionRejection::CacheReceiptMismatch);
         }
+        if !input.cache_transaction_matches {
+            return Err(NativeTxLeafAdmissionRejection::CacheTransactionMismatch);
+        }
+        Ok(NativeTxLeafAdmissionOutcome::CacheHit)
     } else {
         Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
     }
@@ -326,6 +331,12 @@ fn native_tx_leaf_admission_error(
             ProofError::TransactionProofInputsMismatch {
                 index: 0,
                 message: "native tx-leaf cache entry receipt mismatch".to_string(),
+            }
+        }
+        NativeTxLeafAdmissionRejection::CacheTransactionMismatch => {
+            ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "native tx-leaf cache entry transaction mismatch".to_string(),
             }
         }
     }
@@ -679,6 +690,7 @@ fn recursive_block_admission_error(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
+    tx: TxLeafPublicTx,
     receipt: TxValidityReceipt,
     binding: TxStatementBinding,
     leaf: NativeTxLeafRecord,
@@ -1249,6 +1261,7 @@ fn verify_native_tx_leaf_artifact_record(
     let envelope = artifact.proof.as_ref();
     let native_profile = experimental_native_tx_leaf_verifier_profile();
     let max_artifact_bytes = max_native_tx_leaf_artifact_bytes();
+    let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
     let artifact_hash = envelope.and_then(|envelope| {
         let cheap_checks_pass = envelope.kind == ProofArtifactKind::TxLeaf
             && envelope.verifier_profile == native_profile
@@ -1281,6 +1294,10 @@ fn verify_native_tx_leaf_artifact_record(
             .as_ref()
             .map(|record| record.receipt == artifact.receipt)
             .unwrap_or(true),
+        cache_transaction_matches: cached_record
+            .as_ref()
+            .map(|record| record.tx == tx_view)
+            .unwrap_or(true),
     };
     let admission = evaluate_native_tx_leaf_admission(admission_input)
         .map_err(|rejection| native_tx_leaf_admission_error(admission_input, rejection))?;
@@ -1291,7 +1308,6 @@ fn verify_native_tx_leaf_artifact_record(
     let artifact_hash = artifact_hash.expect("native tx-leaf admission requires artifact hash");
 
     let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
-    let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
     let metadata =
         verify_native_tx_leaf_artifact_bytes(&tx_view, &canonical, &envelope.artifact_bytes)
             .map_err(|err| ProofError::TransactionProofVerification {
@@ -1309,6 +1325,7 @@ fn verify_native_tx_leaf_artifact_record(
             }
         })?;
     let record = VerifiedNativeTxLeaf {
+        tx: tx_view,
         receipt: artifact.receipt.clone(),
         binding,
         leaf: native_tx_leaf_record_from_artifact(&decoded),
@@ -2813,6 +2830,7 @@ mod tests {
         expected_artifact_hash_matches: bool,
         has_cache_entry: bool,
         cache_receipt_matches: bool,
+        cache_transaction_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_outcome: Option<String>,
@@ -3696,6 +3714,7 @@ mod tests {
             expected_artifact_hash_matches: case.expected_artifact_hash_matches,
             has_cache_entry: case.has_cache_entry,
             cache_receipt_matches: case.cache_receipt_matches,
+            cache_transaction_matches: case.cache_transaction_matches,
         };
         let result = evaluate_native_tx_leaf_admission(input);
         assert_eq!(
@@ -4301,6 +4320,63 @@ mod tests {
 
         ensure_claims_match_verified_artifacts(&provided, &provided)
             .expect("identical verified claims must be accepted");
+    }
+
+    fn fake_native_tx_leaf_record(seed: u8) -> NativeTxLeafRecord {
+        NativeTxLeafRecord {
+            params_fingerprint: [seed; 48],
+            spec_digest: [seed; 32],
+            relation_id: [seed; 32],
+            shape_digest: [seed; 32],
+            statement_digest: [seed; 48],
+            commitment: superneo_backend_lattice::LatticeCommitment::digest_only([seed; 48]),
+            proof_digest: [seed; 48],
+        }
+    }
+
+    #[test]
+    fn native_tx_leaf_cache_hit_requires_same_transaction_view() {
+        clear_verified_native_tx_leaf_store();
+        let native_profile = experimental_native_tx_leaf_verifier_profile();
+        let original_tx = tx_with_commitments(vec![[1u8; 48]]);
+        let mut mutated_tx = original_tx.clone();
+        mutated_tx.commitments[0] = [2u8; 48];
+
+        let receipt = TxValidityReceipt::new([3u8; 48], [4u8; 48], [5u8; 48], native_profile);
+        let artifact_bytes = b"cached native tx leaf artifact placeholder".to_vec();
+        let artifact = TxValidityArtifact {
+            receipt: receipt.clone(),
+            proof: Some(ProofEnvelope {
+                kind: ProofArtifactKind::TxLeaf,
+                verifier_profile: native_profile,
+                artifact_bytes: artifact_bytes.clone(),
+            }),
+        };
+
+        let cached = VerifiedNativeTxLeaf {
+            tx: tx_leaf_public_tx_from_consensus_tx(&original_tx),
+            receipt: receipt.clone(),
+            binding: TxStatementBinding {
+                statement_hash: receipt.statement_hash,
+                anchor: [6u8; 48],
+                fee: 0,
+                circuit_version: u32::from(original_tx.version.circuit),
+            },
+            leaf: fake_native_tx_leaf_record(7),
+        };
+        NATIVE_TX_LEAF_VERIFY_CACHE
+            .lock()
+            .insert(native_tx_leaf_artifact_hash(&artifact_bytes), cached);
+
+        let err = verify_native_tx_leaf_artifact_record(&mutated_tx, &artifact, None)
+            .expect_err("cache hit for a different transaction view must reject");
+        match err {
+            ProofError::TransactionProofInputsMismatch { message, .. } => {
+                assert!(message.contains("transaction mismatch"));
+            }
+            other => panic!("unexpected cache mismatch error: {other:?}"),
+        }
+        clear_verified_native_tx_leaf_store();
     }
 
     #[test]

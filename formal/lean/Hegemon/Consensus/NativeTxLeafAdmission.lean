@@ -18,6 +18,7 @@ inductive AdmissionReject where
   | receiptVerifierProfileMismatch
   | artifactHashMismatch
   | cacheReceiptMismatch
+  | cacheTransactionMismatch
 deriving DecidableEq, Repr
 
 inductive AdmissionOutcome where
@@ -36,6 +37,7 @@ structure AdmissionInput where
   expectedArtifactHashMatches : Bool
   hasCacheEntry : Bool
   cacheReceiptMatches : Bool
+  cacheTransactionMatches : Bool
 deriving DecidableEq, Repr
 
 def evaluateAdmissionRejection (input : AdmissionInput) : Option AdmissionReject :=
@@ -53,6 +55,8 @@ def evaluateAdmissionRejection (input : AdmissionInput) : Option AdmissionReject
     some AdmissionReject.artifactHashMismatch
   else if input.hasCacheEntry && input.cacheReceiptMatches = false then
     some AdmissionReject.cacheReceiptMismatch
+  else if input.hasCacheEntry && input.cacheTransactionMatches = false then
+    some AdmissionReject.cacheTransactionMismatch
   else
     none
 
@@ -82,6 +86,8 @@ def admissionPreconditions (input : AdmissionInput) : Bool :=
     false
   else if input.hasCacheEntry && input.cacheReceiptMatches = false then
     false
+  else if input.hasCacheEntry && input.cacheTransactionMatches = false then
+    false
   else
     true
 
@@ -93,17 +99,17 @@ theorem accepts_iff_admission_preconditions (input : AdmissionInput) :
   cases input with
   | mk hasEnvelope envelopeKind envelopeVerifierProfileMatches artifactBytesLen maxArtifactBytes
       receiptVerifierProfileMatches hasExpectedArtifactHash expectedArtifactHashMatches
-      hasCacheEntry cacheReceiptMatches =>
+      hasCacheEntry cacheReceiptMatches cacheTransactionMatches =>
       unfold admissionAccepts admissionPreconditions evaluateAdmissionRejection
       by_cases oversized : artifactBytesLen > maxArtifactBytes
       · cases hasEnvelope <;> cases envelopeKind <;> cases envelopeVerifierProfileMatches <;>
           cases receiptVerifierProfileMatches <;> cases hasExpectedArtifactHash <;>
           cases expectedArtifactHashMatches <;> cases hasCacheEntry <;>
-          cases cacheReceiptMatches <;> simp [oversized]
+          cases cacheReceiptMatches <;> cases cacheTransactionMatches <;> simp [oversized]
       · cases hasEnvelope <;> cases envelopeKind <;> cases envelopeVerifierProfileMatches <;>
           cases receiptVerifierProfileMatches <;> cases hasExpectedArtifactHash <;>
           cases expectedArtifactHashMatches <;> cases hasCacheEntry <;>
-          cases cacheReceiptMatches <;> simp [oversized]
+          cases cacheReceiptMatches <;> cases cacheTransactionMatches <;> simp [oversized]
 
 def validUncached : AdmissionInput :=
   {
@@ -116,7 +122,8 @@ def validUncached : AdmissionInput :=
     hasExpectedArtifactHash := true,
     expectedArtifactHashMatches := true,
     hasCacheEntry := false,
-    cacheReceiptMatches := true
+    cacheReceiptMatches := true,
+    cacheTransactionMatches := true
   }
 
 def validCacheHit : AdmissionInput :=
@@ -173,6 +180,11 @@ theorem missing_expected_hash_skips_hash_check :
 theorem cache_receipt_mismatch_rejects :
     evaluateAdmissionRejection { validCacheHit with cacheReceiptMatches := false } =
       some AdmissionReject.cacheReceiptMismatch := by
+  native_decide
+
+theorem cache_transaction_mismatch_rejects :
+    evaluateAdmissionRejection { validCacheHit with cacheTransactionMatches := false } =
+      some AdmissionReject.cacheTransactionMismatch := by
   native_decide
 
 theorem exact_size_limit_accepts :

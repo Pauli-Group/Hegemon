@@ -565,13 +565,13 @@
       "id": "consensus.native-tx-leaf-admission",
       "component": "native tx-leaf proof envelope admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf admission kernel proves executable fail-closed facts for missing proof envelopes, tx_leaf envelope kind, native verifier-profile agreement, artifact size caps, receipt verifier-profile agreement, expected artifact-hash checks, and cache receipt agreement before expensive backend verification; generated Lean vectors are checked against the production consensus helper.",
+      "summary": "The Lean native tx-leaf admission kernel proves executable fail-closed facts for missing proof envelopes, tx_leaf envelope kind, native verifier-profile agreement, artifact size caps, receipt verifier-profile agreement, expected artifact-hash checks, and cache receipt plus public transaction-view agreement before expensive backend verification or cache reuse; generated Lean vectors are checked against the production consensus helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "assumptions": [
         "The Lean model represents the cheap consensus admission table that runs before native tx-leaf backend verification or cache reuse.",
-        "Generated Lean conformance vectors cover valid uncached admission, valid cache hits, missing envelopes, wrong artifact kinds, envelope verifier-profile mismatch, artifact size cap rejection, receipt verifier-profile mismatch, expected artifact hash mismatch, absent expected-hash skipping, cache receipt mismatch, and exact-size-limit acceptance.",
+        "Generated Lean conformance vectors cover valid uncached admission, valid cache hits, missing envelopes, wrong artifact kinds, envelope verifier-profile mismatch, artifact size cap rejection, receipt verifier-profile mismatch, expected artifact hash mismatch, absent expected-hash skipping, cache receipt mismatch, cache transaction-view mismatch, and exact-size-limit acceptance.",
         "The theorem covers executable envelope/profile/size/hash/cache admission only. It does not prove native tx-leaf artifact byte parsing, statement-hash preimage binding, native backend proof soundness, BLAKE3 artifact-hash security or implementation equivalence, or complete block proof validity. Native tx-leaf artifact wire grammar and transaction statement-hash binding are covered separately."
       ],
       "evidence_paths": [

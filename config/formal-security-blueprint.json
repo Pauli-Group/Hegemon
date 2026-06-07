@@ -989,8 +989,8 @@
       "id": "consensus.native-tx-leaf-admission",
       "claim_id": "consensus.native-tx-leaf-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native tx-leaf admission transition, accepted inputs must have a present proof envelope, tx_leaf artifact kind, native verifier-profile agreement on the envelope and receipt, artifact bytes within the configured size cap, a matching expected artifact hash when one is supplied, and a matching cached receipt when a cache entry is reused; accepted uncached inputs require backend verification, while accepted cache hits may return the cached verified record.",
-      "informal_argument": "The Lean theorem `Hegemon.Consensus.NativeTxLeafAdmission.accepts_iff_admission_preconditions` proves that the executable acceptance decision is exactly the native tx-leaf admission predicate. The companion theorems `Hegemon.Consensus.NativeTxLeafAdmission.valid_uncached_requires_backend_verification`, `Hegemon.Consensus.NativeTxLeafAdmission.valid_cache_hit_accepts`, `Hegemon.Consensus.NativeTxLeafAdmission.missing_envelope_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.wrong_artifact_kind_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.envelope_profile_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.oversized_artifact_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.receipt_profile_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.expected_hash_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.missing_expected_hash_skips_hash_check`, `Hegemon.Consensus.NativeTxLeafAdmission.cache_receipt_mismatch_rejects`, and `Hegemon.Consensus.NativeTxLeafAdmission.exact_size_limit_accepts` pin representative accept/reject facts. `gen_native_tx_leaf_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_native_tx_leaf_admission` helper now called by native tx-leaf verification before backend verification or cache return.",
+      "formal_statement": "For the executable Lean native tx-leaf admission transition, accepted inputs must have a present proof envelope, tx_leaf artifact kind, native verifier-profile agreement on the envelope and receipt, artifact bytes within the configured size cap, a matching expected artifact hash when one is supplied, and matching cached receipt plus public transaction view when a cache entry is reused; accepted uncached inputs require backend verification, while accepted cache hits may return the cached verified record.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.NativeTxLeafAdmission.accepts_iff_admission_preconditions` proves that the executable acceptance decision is exactly the native tx-leaf admission predicate. The companion theorems `Hegemon.Consensus.NativeTxLeafAdmission.valid_uncached_requires_backend_verification`, `Hegemon.Consensus.NativeTxLeafAdmission.valid_cache_hit_accepts`, `Hegemon.Consensus.NativeTxLeafAdmission.missing_envelope_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.wrong_artifact_kind_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.envelope_profile_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.oversized_artifact_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.receipt_profile_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.expected_hash_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.missing_expected_hash_skips_hash_check`, `Hegemon.Consensus.NativeTxLeafAdmission.cache_receipt_mismatch_rejects`, `Hegemon.Consensus.NativeTxLeafAdmission.cache_transaction_mismatch_rejects`, and `Hegemon.Consensus.NativeTxLeafAdmission.exact_size_limit_accepts` pin representative accept/reject facts. `gen_native_tx_leaf_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_native_tx_leaf_admission` helper now called by native tx-leaf verification before backend verification or cache return.",
       "depends_on": [
         "formal.native-tx-leaf-artifact-wire",
         "formal.transaction-statement-hash-binding",
@@ -1015,7 +1015,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native tx-leaf envelope/profile/size/hash/cache admission before backend proof verification. Scope excludes backend cryptographic soundness and BLAKE3 implementation equivalence."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native tx-leaf envelope/profile/size/hash/cache receipt and transaction-view admission before backend proof verification. Scope excludes backend cryptographic soundness and BLAKE3 implementation equivalence."
       },
       "falsification_cases": [
         {
@@ -1029,12 +1029,17 @@
           "gate": "HEGEMON_LEAN_NATIVE_TX_LEAF_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_native_tx_leaf_admission_vectors_match_production -- --nocapture"
         },
         {
+          "id": "native-tx-leaf-cache-transaction-binding",
+          "description": "Reusing a cached native tx-leaf artifact for a different public transaction view must fail the focused cache replay regression.",
+          "gate": "cargo test -p consensus native_tx_leaf_cache_hit_requires_same_transaction_view -- --nocapture"
+        },
+        {
           "id": "formal-core-native-tx-leaf-admission-gate",
           "description": "The release formal-core wrapper must generate native tx-leaf admission vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native tx-leaf envelope/profile/size/expected-hash/cache admission only. It does not prove native tx-leaf artifact parsing, statement-hash preimage binding, native backend proof soundness, BLAKE3 artifact-hash security or implementation equivalence, cache implementation liveness, or complete block proof validity. Native tx-leaf artifact wire grammar and transaction statement-hash binding are covered separately."
+      "scope_boundary": "This node proves and vector-checks native tx-leaf envelope/profile/size/expected-hash/cache receipt and transaction-view admission only. It does not prove native tx-leaf artifact parsing, statement-hash preimage binding, native backend proof soundness, BLAKE3 artifact-hash security or implementation equivalence, cache implementation liveness, or complete block proof validity. Native tx-leaf artifact wire grammar and transaction statement-hash binding are covered separately."
     },
     {
       "id": "consensus.da-root-byte-binding",

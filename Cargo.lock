@@ -770,6 +770,7 @@ dependencies = [
  "sha2 0.10.9",
  "state-da",
  "state-merkle",
+ "superneo-backend-lattice",
  "superneo-hegemon",
  "synthetic-crypto",
  "thiserror 1.0.69",

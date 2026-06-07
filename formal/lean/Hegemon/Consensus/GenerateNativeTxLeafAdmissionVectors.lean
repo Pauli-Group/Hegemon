@@ -23,6 +23,7 @@ def admissionRejectJson : Option AdmissionReject -> String
       "\"receipt_verifier_profile_mismatch\""
   | some AdmissionReject.artifactHashMismatch => "\"artifact_hash_mismatch\""
   | some AdmissionReject.cacheReceiptMismatch => "\"cache_receipt_mismatch\""
+  | some AdmissionReject.cacheTransactionMismatch => "\"cache_transaction_mismatch\""
 
 def admissionOutcomeJson : AdmissionInput -> String
   | input =>
@@ -49,6 +50,8 @@ def nativeTxLeafAdmissionCaseJson (name : String) (input : AdmissionInput) : Str
     ++ boolJson input.expectedArtifactHashMatches ++ ",\n"
     ++ "      \"has_cache_entry\": " ++ boolJson input.hasCacheEntry ++ ",\n"
     ++ "      \"cache_receipt_matches\": " ++ boolJson input.cacheReceiptMatches ++ ",\n"
+    ++ "      \"cache_transaction_matches\": "
+    ++ boolJson input.cacheTransactionMatches ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
     ++ "      \"expected_rejection\": " ++ admissionRejectJson rejection ++ ",\n"
     ++ "      \"expected_outcome\": " ++ admissionOutcomeJson input ++ "\n"
@@ -79,6 +82,8 @@ def vectorJson : String :=
       } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "cache-receipt-mismatch-rejected"
       { validCacheHit with cacheReceiptMatches := false } ++ ",\n"
+    ++ nativeTxLeafAdmissionCaseJson "cache-transaction-mismatch-rejected"
+      { validCacheHit with cacheTransactionMatches := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "exact-size-limit-accepted"
       { validUncached with artifactBytesLen := 512, maxArtifactBytes := 512 } ++ "\n"
     ++ "  ]\n"
