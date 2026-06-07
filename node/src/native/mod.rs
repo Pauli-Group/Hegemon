@@ -6591,6 +6591,51 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCodecAdmissionVectorFile {
+        schema_version: u32,
+        sync_codec_cases: Vec<LeanSyncCodecCase>,
+        exact_decode_cases: Vec<LeanExactDecodeCase>,
+        block_action_decode_cases: Vec<LeanBlockActionDecodeCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncCodecCase {
+        name: String,
+        fixture: String,
+        bounded_wire_decode_accepts: bool,
+        consumed_all_bytes: bool,
+        legacy_bincode_payload: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanExactDecodeCase {
+        name: String,
+        codec: String,
+        fixture: String,
+        parser_accepts: bool,
+        consumed_all_bytes: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionDecodeCase {
+        name: String,
+        fixture: String,
+        declared_tx_count: usize,
+        actual_action_payload_count: usize,
+        every_action_decodes_exactly: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanActionScopeAdmissionVectorFile {
         schema_version: u32,
         action_scope_admission_cases: Vec<LeanActionScopeAdmissionCase>,
@@ -7838,6 +7883,210 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native action-hash admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_codec_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CODEC_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean codec admission vectors");
+        let vectors: LeanCodecAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean codec admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sync_codec_cases.is_empty()
+                && !vectors.exact_decode_cases.is_empty()
+                && !vectors.block_action_decode_cases.is_empty(),
+            "Lean codec admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sync_codec_cases {
+            assert!(names.insert(format!("sync:{}", case.name)));
+            verify_lean_sync_codec_case(case);
+        }
+        for case in &vectors.exact_decode_cases {
+            assert!(names.insert(format!("exact:{}", case.name)));
+            verify_lean_exact_decode_case(case);
+        }
+        for case in &vectors.block_action_decode_cases {
+            assert!(names.insert(format!("block-action:{}", case.name)));
+            verify_lean_block_action_decode_case(case);
+        }
+    }
+
+    fn verify_lean_sync_codec_case(case: &LeanSyncCodecCase) {
+        assert_eq!(
+            case.bounded_wire_decode_accepts && case.consumed_all_bytes,
+            case.expected_valid,
+            "{} Lean sync codec predicate fields disagree with expected validity",
+            case.name
+        );
+        if case.legacy_bincode_payload {
+            assert_eq!(
+                case.fixture, "legacy_bincode_request",
+                "{} legacy bincode flag must only be used by the legacy fixture",
+                case.name
+            );
+        }
+
+        let message = NativeSyncMessage::Request {
+            from_height: 1,
+            to_height: 2,
+        };
+        let payload = match case.fixture.as_str() {
+            "valid_request" => encode_sync_message(&message).expect("encode native sync message"),
+            "legacy_bincode_request" => {
+                bincode::serialize(&message).expect("legacy bincode sync message")
+            }
+            "valid_request_trailing" => {
+                let mut encoded =
+                    encode_sync_message(&message).expect("encode native sync message");
+                encoded.push(0);
+                encoded
+            }
+            other => panic!("unknown Lean sync codec fixture {other}"),
+        };
+        let actual = decode_sync_message(&payload);
+        let actual_rejection = if actual.is_ok() {
+            None
+        } else if case.fixture == "valid_request_trailing" {
+            Some("trailing_bytes".to_owned())
+        } else {
+            Some("wire_decode_rejected".to_owned())
+        };
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native sync codec validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native sync codec rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_exact_decode_case(case: &LeanExactDecodeCase) {
+        assert_eq!(
+            case.parser_accepts && case.consumed_all_bytes,
+            case.expected_valid,
+            "{} Lean exact-decode predicate fields disagree with expected validity",
+            case.name
+        );
+        let actual = match (case.codec.as_str(), case.fixture.as_str()) {
+            ("scale_pending_action", "valid_pending_action") => {
+                let action = test_outbound_bridge_action(b"lean codec admission");
+                decode_scale_exact::<PendingAction>(&action.encode(), "Lean pending action")
+                    .map(|_| ())
+            }
+            ("scale_pending_action", "trailing_pending_action") => {
+                let action = test_outbound_bridge_action(b"lean codec admission");
+                let mut encoded = action.encode();
+                encoded.push(0xaa);
+                decode_scale_exact::<PendingAction>(&encoded, "Lean pending action").map(|_| ())
+            }
+            ("bincode_native_meta", "valid_genesis_meta") => {
+                let meta = genesis_meta(0x207f_ffff).expect("genesis");
+                let encoded = bincode::serialize(&meta).expect("serialize native meta");
+                bincode_deserialize_exact::<NativeBlockMeta>(&encoded, "Lean native metadata")
+                    .map(|_| ())
+            }
+            ("bincode_native_meta", "trailing_genesis_meta") => {
+                let meta = genesis_meta(0x207f_ffff).expect("genesis");
+                let mut encoded = bincode::serialize(&meta).expect("serialize native meta");
+                encoded.push(0xbb);
+                bincode_deserialize_exact::<NativeBlockMeta>(&encoded, "Lean native metadata")
+                    .map(|_| ())
+            }
+            (codec, fixture) => {
+                panic!("unknown Lean exact-decode case codec={codec} fixture={fixture}")
+            }
+        };
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            if err.to_string().contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native exact-decode validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native exact-decode rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_block_action_decode_case(case: &LeanBlockActionDecodeCase) {
+        assert_eq!(
+            (case.declared_tx_count == case.actual_action_payload_count)
+                && case.every_action_decodes_exactly,
+            case.expected_valid,
+            "{} Lean block-action decode predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let mut block = genesis_meta(0x207f_ffff).expect("genesis");
+        let action = test_outbound_bridge_action(b"lean codec admission");
+        match case.fixture.as_str() {
+            "valid_one_action" => {
+                block.tx_count =
+                    u32::try_from(case.declared_tx_count).expect("test tx_count must fit u32");
+                block.action_bytes = vec![action.encode()];
+            }
+            "count_mismatch" => {
+                block.tx_count =
+                    u32::try_from(case.declared_tx_count).expect("test tx_count must fit u32");
+                block.action_bytes = Vec::new();
+            }
+            "trailing_action_payload" => {
+                block.tx_count =
+                    u32::try_from(case.declared_tx_count).expect("test tx_count must fit u32");
+                let mut encoded = action.encode();
+                encoded.push(0xcc);
+                block.action_bytes = vec![encoded];
+            }
+            other => panic!("unknown Lean block-action decode fixture {other}"),
+        }
+        assert_eq!(
+            block.action_bytes.len(),
+            case.actual_action_payload_count,
+            "{} fixture action payload count drifted from Lean vector",
+            case.name
+        );
+
+        let actual = decode_block_actions(&block);
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("count mismatch") {
+                "action_count_mismatch".to_owned()
+            } else {
+                "action_decode_not_exact".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native block-action decode validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native block-action decode rejection drifted from Lean spec",
             case.name
         );
     }

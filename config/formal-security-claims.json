@@ -1096,6 +1096,37 @@
       "residual_risks": []
     },
     {
+      "id": "native.codec-admission",
+      "component": "native sync and action codec admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, SCALE action payloads, bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats underlying wire, SCALE, and bincode parsers as parser-acceptance predicates and proves the executable exact-consumption and count-admission table around those parsers.",
+        "Generated Lean conformance vectors cover valid bounded sync messages, legacy bincode sync-message rejection, sync trailing-byte rejection, valid and trailing SCALE PendingAction decode, valid and trailing bincode NativeBlockMeta decode, block action count mismatch rejection, and trailing action payload rejection.",
+        "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. It does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CodecAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_sync_codec_rejects_legacy_or_trailing_bytes --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_metadata_rejects_trailing_bincode_bytes --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node submit_action_rejects_trailing_public_args --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node decode_block_actions_rejects_action_count_mismatch --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.action-scope-admission",
       "component": "native action route and public metadata scope admission",
       "claim_class": "lean_theorem",

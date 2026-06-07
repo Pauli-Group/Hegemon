@@ -2086,12 +2086,72 @@
       "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.codec-admission",
+      "claim_id": "native.codec-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native codec-admission transition, native sync decode, SCALE exact decode, bincode exact decode, and block-action payload decode accept only when the underlying parser accepts, every byte is consumed, and declared action count matches the action payload count.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, action count mismatch, and non-exact action payloads. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection and trailing-byte rejection.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CodecAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CodecAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for strict native codec admission at sync, metadata, and block-action decode boundaries. Scope is exact parser consumption and count matching, not parser implementation correctness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-codec-admission-theorem",
+          "description": "Removing or weakening the codec admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-codec-admission-conformance",
+          "description": "Changing native sync, exact-decode, or block-action decode behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-sync-codec-regression",
+          "description": "Native sync decode must reject legacy bincode payloads and bounded-wire payloads with trailing bytes.",
+          "gate": "cargo test -p hegemon-node native_sync_codec_rejects_legacy_or_trailing_bytes --lib --no-default-features"
+        },
+        {
+          "id": "native-metadata-exact-decode-regression",
+          "description": "Native metadata reload and lookup paths must reject bincode records with trailing bytes.",
+          "gate": "cargo test -p hegemon-node native_metadata_rejects_trailing_bincode_bytes --lib --no-default-features"
+        },
+        {
+          "id": "native-action-exact-decode-regression",
+          "description": "Native action submission and block action decoding must reject SCALE payloads with trailing bytes or action-count mismatches.",
+          "gate": "cargo test -p hegemon-node submit_action_rejects_trailing_public_args decode_block_actions_rejects_action_count_mismatch --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks strict native codec admission only. It does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 collision resistance, sync networking liveness, full action payload validation, tx leaf proof soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.action-scope-admission",
       "claim_id": "native.action-scope-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean action-scope admission transition, a native action is routed to bridge, candidate-artifact, coinbase, or shielded-transfer validation only when candidate-artifact payload scoping, route-specific state-delta scope, candidate payload presence, and transfer public metadata shape predicates satisfy the route's preconditions; rejection precedence is fixed by the executable table.",
       "informal_argument": "The Lean theorem `Hegemon.Native.ActionScopeAdmission.accepts_iff_scope_preconditions` proves the complete executable route/scope predicate, with companion theorems for all rejection routes and wrong-candidate-artifact-route precedence. `gen_action_scope_admission_vectors` emits Lean-derived route and reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_scope_admission` helper now called by native mempool and block action validation. Native regressions reject candidate artifacts on the wrong route, bridge/candidate/coinbase state-delta smuggling, missing candidate payloads, unsupported transfer routes, and malformed transfer public metadata.",
       "depends_on": [
+        "native.codec-admission",
         "native.block-action-hash-admission",
         "native.block-action-ordering",
         "release.dependency-waivers"
