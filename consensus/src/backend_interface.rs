@@ -39,7 +39,8 @@ pub use transaction_circuit::proof::{
     SerializedStarkInputs, TX_STATEMENT_HASH_DOMAIN, TransactionProof,
     decode_transaction_proof_bytes_exact, prove, stark_public_inputs_p3, transaction_proof_digest,
     transaction_public_inputs_digest, transaction_public_inputs_digest_from_serialized,
-    transaction_statement_hash, transaction_verifier_profile_digest,
+    transaction_statement_hash, transaction_statement_hash_from_parts,
+    transaction_statement_preimage_from_parts, transaction_verifier_profile_digest,
     transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
 };
 pub use transaction_circuit::{TransactionAirP3, TransactionPublicInputsP3};

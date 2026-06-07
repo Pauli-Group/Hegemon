@@ -11,6 +11,9 @@ def littleEndianBytes (width value : Nat) : List Byte :=
 def u16le (value : Nat) : List Byte :=
   littleEndianBytes 2 value
 
+def u32le (value : Nat) : List Byte :=
+  littleEndianBytes 4 value
+
 def u64le (value : Nat) : List Byte :=
   littleEndianBytes 8 value
 

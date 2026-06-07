@@ -37,7 +37,8 @@ LEAN_TRANSACTION_VECTORS="$(mktemp)"
 LEAN_MERKLE_VECTORS="$(mktemp)"
 LEAN_PUBLIC_INPUT_VECTORS="$(mktemp)"
 LEAN_PUBLIC_INPUT_BINDING_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS"' EXIT
+LEAN_STATEMENT_HASH_VECTORS="$(mktemp)"
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS" "$LEAN_STATEMENT_HASH_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
@@ -51,6 +52,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VEC
   lake exe gen_merkle_vectors > "$LEAN_MERKLE_VECTORS"
   lake exe gen_public_input_vectors > "$LEAN_PUBLIC_INPUT_VECTORS"
   lake exe gen_public_input_binding_vectors > "$LEAN_PUBLIC_INPUT_BINDING_VECTORS"
+  lake exe gen_statement_hash_vectors > "$LEAN_STATEMENT_HASH_VECTORS"
 )
 HEGEMON_LEAN_BRIDGE_VECTORS="$LEAN_BRIDGE_VECTORS" \
   cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture
@@ -78,6 +80,8 @@ HEGEMON_LEAN_PUBLIC_INPUT_VECTORS="$LEAN_PUBLIC_INPUT_VECTORS" \
   cargo test -p transaction-circuit lean_generated_public_input_shape_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS="$LEAN_PUBLIC_INPUT_BINDING_VECTORS" \
   cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production -- --nocapture
+HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
+  cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture
 
 printf '\n[5/11] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then

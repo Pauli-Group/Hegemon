@@ -183,31 +183,139 @@ pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
 }
 
 pub fn transaction_statement_hash_from_public_inputs(public: &TransactionPublicInputs) -> [u8; 48] {
+    transaction_statement_hash_from_parts(
+        &public.merkle_root,
+        &public.nullifiers,
+        &public.commitments,
+        &public.ciphertext_hashes,
+        public.native_fee,
+        public.value_balance,
+        &public.balance_tag,
+        public.circuit_version,
+        public.crypto_suite,
+        public.stablecoin.enabled as u8,
+        public.stablecoin.asset_id,
+        &public.stablecoin.policy_hash,
+        &public.stablecoin.oracle_commitment,
+        &public.stablecoin.attestation_commitment,
+        public.stablecoin.issuance_delta,
+        public.stablecoin.policy_version,
+    )
+    .expect("validated transaction public inputs fit statement hash layout")
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn transaction_statement_hash_from_parts(
+    merkle_root: &Commitment,
+    nullifiers: &[Commitment],
+    commitments: &[Commitment],
+    ciphertext_hashes: &[Commitment],
+    native_fee: u64,
+    value_balance: i128,
+    balance_tag: &Commitment,
+    circuit_version: protocol_versioning::CircuitVersion,
+    crypto_suite: protocol_versioning::CryptoSuiteId,
+    stablecoin_enabled: u8,
+    stablecoin_asset_id: u64,
+    stablecoin_policy_hash: &Commitment,
+    stablecoin_oracle_commitment: &Commitment,
+    stablecoin_attestation_commitment: &Commitment,
+    stablecoin_issuance_delta: i128,
+    stablecoin_policy_version: u32,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    let preimage = transaction_statement_preimage_from_parts(
+        merkle_root,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        native_fee,
+        value_balance,
+        balance_tag,
+        circuit_version,
+        crypto_suite,
+        stablecoin_enabled,
+        stablecoin_asset_id,
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+        stablecoin_issuance_delta,
+        stablecoin_policy_version,
+    )?;
+    Ok(blake3_384(&preimage))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn transaction_statement_preimage_from_parts(
+    merkle_root: &Commitment,
+    nullifiers: &[Commitment],
+    commitments: &[Commitment],
+    ciphertext_hashes: &[Commitment],
+    native_fee: u64,
+    value_balance: i128,
+    balance_tag: &Commitment,
+    circuit_version: protocol_versioning::CircuitVersion,
+    crypto_suite: protocol_versioning::CryptoSuiteId,
+    stablecoin_enabled: u8,
+    stablecoin_asset_id: u64,
+    stablecoin_policy_hash: &Commitment,
+    stablecoin_oracle_commitment: &Commitment,
+    stablecoin_attestation_commitment: &Commitment,
+    stablecoin_issuance_delta: i128,
+    stablecoin_policy_version: u32,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    if nullifiers.len() > MAX_INPUTS {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "transaction nullifier length {} exceeds MAX_INPUTS {MAX_INPUTS}",
+            nullifiers.len()
+        )));
+    }
+    if commitments.len() > MAX_OUTPUTS {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "transaction commitment length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
+            commitments.len()
+        )));
+    }
+    if ciphertext_hashes.len() > MAX_OUTPUTS {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "transaction ciphertext hash length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
+            ciphertext_hashes.len()
+        )));
+    }
+
     let mut message = Vec::new();
     message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
-    message.extend_from_slice(&public.merkle_root);
-    for nf in &public.nullifiers {
+    message.extend_from_slice(merkle_root);
+    for nf in nullifiers {
         message.extend_from_slice(nf);
     }
-    for cm in &public.commitments {
+    for _ in nullifiers.len()..MAX_INPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for cm in commitments {
         message.extend_from_slice(cm);
     }
-    for ct in &public.ciphertext_hashes {
+    for _ in commitments.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    for ct in ciphertext_hashes {
         message.extend_from_slice(ct);
     }
-    message.extend_from_slice(&public.native_fee.to_le_bytes());
-    message.extend_from_slice(&public.value_balance.to_le_bytes());
-    message.extend_from_slice(&public.balance_tag);
-    message.extend_from_slice(&public.circuit_version.to_le_bytes());
-    message.extend_from_slice(&public.crypto_suite.to_le_bytes());
-    message.push(public.stablecoin.enabled as u8);
-    message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_hash);
-    message.extend_from_slice(&public.stablecoin.oracle_commitment);
-    message.extend_from_slice(&public.stablecoin.attestation_commitment);
-    message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
-    blake3_384(&message)
+    for _ in ciphertext_hashes.len()..MAX_OUTPUTS {
+        message.extend_from_slice(&[0u8; 48]);
+    }
+    message.extend_from_slice(&native_fee.to_le_bytes());
+    message.extend_from_slice(&value_balance.to_le_bytes());
+    message.extend_from_slice(balance_tag);
+    message.extend_from_slice(&circuit_version.to_le_bytes());
+    message.extend_from_slice(&crypto_suite.to_le_bytes());
+    message.push(stablecoin_enabled);
+    message.extend_from_slice(&stablecoin_asset_id.to_le_bytes());
+    message.extend_from_slice(stablecoin_policy_hash);
+    message.extend_from_slice(stablecoin_oracle_commitment);
+    message.extend_from_slice(stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance_delta.to_le_bytes());
+    message.extend_from_slice(&stablecoin_policy_version.to_le_bytes());
+    Ok(message)
 }
 
 pub fn transaction_proof_digest(proof: &TransactionProof) -> [u8; 48] {

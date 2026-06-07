@@ -10,9 +10,10 @@ use crate::backend_interface::{
     recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
     transaction_proof_digest, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
-    verify_block_commitment, verify_block_recursive_v1, verify_block_recursive_v2,
-    verify_native_tx_leaf_artifact_bytes, verify_transaction_proof, verify_tx_leaf_artifact_bytes,
+    transaction_statement_hash_from_parts, transaction_verifier_profile_digest,
+    transaction_verifier_profile_digest_for_version, verify_block_commitment,
+    verify_block_recursive_v1, verify_block_recursive_v2, verify_native_tx_leaf_artifact_bytes,
+    verify_transaction_proof, verify_tx_leaf_artifact_bytes,
 };
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
@@ -1360,24 +1361,6 @@ fn statement_hash_from_tx_and_stark_inputs(
     tx: &crate::types::Transaction,
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48], String> {
-    if tx.nullifiers.len() > MAX_INPUTS {
-        return Err(format!(
-            "transaction nullifier length {} exceeds MAX_INPUTS {MAX_INPUTS}",
-            tx.nullifiers.len()
-        ));
-    }
-    if tx.commitments.len() > MAX_OUTPUTS {
-        return Err(format!(
-            "transaction commitment length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
-            tx.commitments.len()
-        ));
-    }
-    if tx.ciphertext_hashes.len() > MAX_OUTPUTS {
-        return Err(format!(
-            "transaction ciphertext hash length {} exceeds MAX_OUTPUTS {MAX_OUTPUTS}",
-            tx.ciphertext_hashes.len()
-        ));
-    }
     let value_balance = decode_signed_magnitude(
         stark_inputs.value_balance_sign,
         stark_inputs.value_balance_magnitude,
@@ -1389,40 +1372,25 @@ fn statement_hash_from_tx_and_stark_inputs(
         "stablecoin_issuance",
     )?;
 
-    let mut message = Vec::new();
-    message.extend_from_slice(crate::backend_interface::TX_STATEMENT_HASH_DOMAIN);
-    message.extend_from_slice(&stark_inputs.merkle_root);
-    for nf in &tx.nullifiers {
-        message.extend_from_slice(nf);
-    }
-    for _ in tx.nullifiers.len()..MAX_INPUTS {
-        message.extend_from_slice(&[0u8; 48]);
-    }
-    for cm in &tx.commitments {
-        message.extend_from_slice(cm);
-    }
-    for _ in tx.commitments.len()..MAX_OUTPUTS {
-        message.extend_from_slice(&[0u8; 48]);
-    }
-    for ct in &tx.ciphertext_hashes {
-        message.extend_from_slice(ct);
-    }
-    for _ in tx.ciphertext_hashes.len()..MAX_OUTPUTS {
-        message.extend_from_slice(&[0u8; 48]);
-    }
-    message.extend_from_slice(&stark_inputs.fee.to_le_bytes());
-    message.extend_from_slice(&value_balance.to_le_bytes());
-    message.extend_from_slice(&tx.balance_tag);
-    message.extend_from_slice(&tx.version.circuit.to_le_bytes());
-    message.extend_from_slice(&tx.version.crypto.to_le_bytes());
-    message.push(stark_inputs.stablecoin_enabled);
-    message.extend_from_slice(&stark_inputs.stablecoin_asset_id.to_le_bytes());
-    message.extend_from_slice(&stark_inputs.stablecoin_policy_hash);
-    message.extend_from_slice(&stark_inputs.stablecoin_oracle_commitment);
-    message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
-    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
-    message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
-    Ok(blake3_384(&message))
+    transaction_statement_hash_from_parts(
+        &stark_inputs.merkle_root,
+        &tx.nullifiers,
+        &tx.commitments,
+        &tx.ciphertext_hashes,
+        stark_inputs.fee,
+        value_balance,
+        &tx.balance_tag,
+        tx.version.circuit,
+        tx.version.crypto,
+        stark_inputs.stablecoin_enabled,
+        stark_inputs.stablecoin_asset_id,
+        &stark_inputs.stablecoin_policy_hash,
+        &stark_inputs.stablecoin_oracle_commitment,
+        &stark_inputs.stablecoin_attestation_commitment,
+        stablecoin_issuance,
+        stark_inputs.stablecoin_policy_version,
+    )
+    .map_err(|err| err.to_string())
 }
 
 fn statement_binding_from_tx_leaf(
@@ -2214,6 +2182,7 @@ fn verify_and_apply_tree_transition_without_anchors(
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
+    use protocol_versioning::VersionBinding;
     use serde::Deserialize;
     use std::sync::Mutex as StdMutex;
 
@@ -2247,6 +2216,39 @@ mod tests {
         has_tx_validity_claims: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStatementHashVectorFile {
+        schema_version: u32,
+        statement_hash_cases: Vec<LeanStatementHashCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStatementHashCase {
+        name: String,
+        merkle_root_seed: u64,
+        nullifier_seeds: Vec<u64>,
+        commitment_seeds: Vec<u64>,
+        ciphertext_hash_seeds: Vec<u64>,
+        fee: u64,
+        value_balance_sign: u8,
+        value_balance_magnitude: u64,
+        balance_tag_seed: u64,
+        circuit_version: u16,
+        crypto_suite: u16,
+        stablecoin_enabled: u8,
+        stablecoin_asset: u64,
+        stablecoin_policy_hash_seed: u64,
+        stablecoin_oracle_commitment_seed: u64,
+        stablecoin_attestation_commitment_seed: u64,
+        stablecoin_issuance_sign: u8,
+        stablecoin_issuance_magnitude: u64,
+        stablecoin_policy_version: u32,
+        expected_preimage_hex: String,
+        expected_valid: bool,
     }
 
     impl Drop for EnvGuard {
@@ -2284,6 +2286,67 @@ mod tests {
             DEFAULT_VERSION_BINDING,
             Vec::new(),
         )
+    }
+
+    fn statement_hash_tx_from_case(case: &LeanStatementHashCase) -> crate::types::Transaction {
+        crate::types::Transaction::new_with_hashes(
+            case.nullifier_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+            case.commitment_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+            patterned_bytes48(case.balance_tag_seed),
+            VersionBinding::new(case.circuit_version, case.crypto_suite),
+            case.ciphertext_hash_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+        )
+    }
+
+    fn statement_hash_stark_inputs_from_case(
+        case: &LeanStatementHashCase,
+    ) -> SerializedStarkInputs {
+        SerializedStarkInputs {
+            input_flags: vec![1, 0],
+            output_flags: vec![1, 0],
+            fee: case.fee,
+            value_balance_sign: case.value_balance_sign,
+            value_balance_magnitude: case.value_balance_magnitude,
+            merkle_root: patterned_bytes48(case.merkle_root_seed),
+            balance_slot_asset_ids: vec![0, 7, u64::MAX, u64::MAX],
+            stablecoin_enabled: case.stablecoin_enabled,
+            stablecoin_asset_id: case.stablecoin_asset,
+            stablecoin_policy_version: case.stablecoin_policy_version,
+            stablecoin_issuance_sign: case.stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude: case.stablecoin_issuance_magnitude,
+            stablecoin_policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
+            stablecoin_oracle_commitment: patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+            stablecoin_attestation_commitment: patterned_bytes48(
+                case.stablecoin_attestation_commitment_seed,
+            ),
+        }
+    }
+
+    fn patterned_bytes48(seed: u64) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = seed.wrapping_add((index as u64).wrapping_mul(17)) as u8;
+        }
+        out
+    }
+
+    fn expected_hex_bytes(value: &str) -> Vec<u8> {
+        let trimmed = value
+            .strip_prefix("0x")
+            .expect("Lean vector hex has 0x prefix");
+        hex::decode(trimmed).expect("Lean vector hex decodes")
     }
 
     #[derive(Clone)]
@@ -2404,6 +2467,101 @@ mod tests {
         for case in &vectors.proof_policy_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_proof_policy_case(case);
+        }
+    }
+
+    #[test]
+    fn lean_generated_statement_hash_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STATEMENT_HASH_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STATEMENT_HASH_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean statement-hash vectors");
+        let vectors: LeanStatementHashVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean statement-hash vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.statement_hash_cases.is_empty(),
+            "Lean statement-hash cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.statement_hash_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_statement_hash_case(case);
+        }
+    }
+
+    fn verify_lean_statement_hash_case(case: &LeanStatementHashCase) {
+        let tx = statement_hash_tx_from_case(case);
+        let stark_inputs = statement_hash_stark_inputs_from_case(case);
+        let actual_hash = statement_hash_from_tx_and_stark_inputs(&tx, &stark_inputs);
+        assert_eq!(
+            actual_hash.is_ok(),
+            case.expected_valid,
+            "{} statement hash validity drifted from Lean spec: {actual_hash:?}",
+            case.name
+        );
+
+        let value_balance = decode_signed_magnitude(
+            stark_inputs.value_balance_sign,
+            stark_inputs.value_balance_magnitude,
+            "value_balance",
+        );
+        let stablecoin_issuance = decode_signed_magnitude(
+            stark_inputs.stablecoin_issuance_sign,
+            stark_inputs.stablecoin_issuance_magnitude,
+            "stablecoin_issuance",
+        );
+        let actual_preimage = match (value_balance, stablecoin_issuance) {
+            (Ok(value_balance), Ok(stablecoin_issuance)) => {
+                crate::backend_interface::transaction_statement_preimage_from_parts(
+                    &stark_inputs.merkle_root,
+                    &tx.nullifiers,
+                    &tx.commitments,
+                    &tx.ciphertext_hashes,
+                    stark_inputs.fee,
+                    value_balance,
+                    &tx.balance_tag,
+                    tx.version.circuit,
+                    tx.version.crypto,
+                    stark_inputs.stablecoin_enabled,
+                    stark_inputs.stablecoin_asset_id,
+                    &stark_inputs.stablecoin_policy_hash,
+                    &stark_inputs.stablecoin_oracle_commitment,
+                    &stark_inputs.stablecoin_attestation_commitment,
+                    stablecoin_issuance,
+                    stark_inputs.stablecoin_policy_version,
+                )
+            }
+            (Err(message), _) | (_, Err(message)) => {
+                Err(transaction_circuit::TransactionCircuitError::ConstraintViolationOwned(message))
+            }
+        };
+        assert_eq!(
+            actual_preimage.is_ok(),
+            case.expected_valid,
+            "{} statement preimage validity drifted from Lean spec: {actual_preimage:?}",
+            case.name
+        );
+
+        if case.expected_valid {
+            let actual_preimage = actual_preimage.expect("valid Lean statement preimage");
+            let expected_preimage = expected_hex_bytes(&case.expected_preimage_hex);
+            assert_eq!(
+                actual_preimage, expected_preimage,
+                "{} statement preimage bytes drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_hash.expect("valid statement hash"),
+                blake3_384(&expected_preimage),
+                "{} statement hash digest no longer hashes the checked preimage",
+                case.name
+            );
         }
     }
 
