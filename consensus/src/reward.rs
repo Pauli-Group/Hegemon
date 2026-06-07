@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
-use crate::types::SupplyDigest;
+use crate::types::{CoinbaseData, SupplyDigest};
 
 // =============================================================================
 // CHAIN PARAMETERS - SINGLE SOURCE OF TRUTH
@@ -107,10 +107,60 @@ pub fn update_supply_digest(parent: SupplyDigest, delta: i128) -> Option<SupplyD
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupplyChainStep {
+    pub minted: u64,
+    pub fees: i64,
+    pub burns: u64,
+    pub claimed_supply: SupplyDigest,
+}
+
+impl SupplyChainStep {
+    pub fn coinbase(&self) -> CoinbaseData {
+        CoinbaseData {
+            minted: self.minted,
+            fees: self.fees,
+            burns: self.burns,
+            source: crate::types::CoinbaseSource::BalanceTag([0u8; 48]),
+        }
+    }
+}
+
+pub fn validate_supply_transition(
+    parent: SupplyDigest,
+    coinbase: &CoinbaseData,
+    claimed_supply: SupplyDigest,
+) -> Option<SupplyDigest> {
+    let expected = expected_supply_after_transition(parent, coinbase)?;
+    if expected == claimed_supply {
+        Some(expected)
+    } else {
+        None
+    }
+}
+
+pub fn expected_supply_after_transition(
+    parent: SupplyDigest,
+    coinbase: &CoinbaseData,
+) -> Option<SupplyDigest> {
+    update_supply_digest(parent, coinbase.net_native_delta())
+}
+
+pub fn validate_supply_chain(
+    genesis_supply: SupplyDigest,
+    steps: &[SupplyChainStep],
+) -> Option<SupplyDigest> {
+    let mut supply = genesis_supply;
+    for step in steps {
+        supply = validate_supply_transition(supply, &step.coinbase(), step.claimed_supply)?;
+    }
+    Some(supply)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CoinbaseData, CoinbaseSource};
+    use crate::types::CoinbaseSource;
     use serde::Deserialize;
     use std::collections::BTreeSet;
 
@@ -124,6 +174,13 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanSupplyInvariantVectorFile {
+        schema_version: u32,
+        supply_chain_cases: Vec<LeanSupplyChainCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanConsensusSupplyCase {
         name: String,
         parent_supply: String,
@@ -132,6 +189,24 @@ mod tests {
         burns: u64,
         expected_net_delta: String,
         expected_supply: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSupplyChainCase {
+        name: String,
+        genesis_supply: String,
+        steps: Vec<LeanSupplyChainStep>,
+        expected_final_supply: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSupplyChainStep {
+        minted: u64,
+        fees: String,
+        burns: u64,
+        claimed_supply: String,
     }
 
     #[test]
@@ -197,6 +272,53 @@ mod tests {
             assert!(names.insert(case.name.clone()));
             verify_lean_consensus_supply_case(case);
         }
+    }
+
+    #[test]
+    fn lean_generated_supply_invariant_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SUPPLY_INVARIANT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SUPPLY_INVARIANT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean supply invariant vectors");
+        let vectors: LeanSupplyInvariantVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean supply invariant vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.supply_chain_cases.is_empty(),
+            "Lean supply-chain cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.supply_chain_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_supply_chain_case(case);
+        }
+    }
+
+    fn verify_lean_supply_chain_case(case: &LeanSupplyChainCase) {
+        let genesis_supply = parse_u128(&case.genesis_supply);
+        let steps = case
+            .steps
+            .iter()
+            .map(|step| SupplyChainStep {
+                minted: step.minted,
+                fees: parse_i64(&step.fees),
+                burns: step.burns,
+                claimed_supply: parse_u128(&step.claimed_supply),
+            })
+            .collect::<Vec<_>>();
+        let expected_final_supply = case.expected_final_supply.as_deref().map(parse_u128);
+
+        assert_eq!(
+            validate_supply_chain(genesis_supply, &steps),
+            expected_final_supply,
+            "{} production supply-chain replay drifted from Lean spec",
+            case.name
+        );
     }
 
     fn verify_lean_consensus_supply_case(case: &LeanConsensusSupplyCase) {

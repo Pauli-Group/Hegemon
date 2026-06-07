@@ -21,6 +21,7 @@ import Hegemon.Consensus.RecursiveBlockAdmission
 import Hegemon.Consensus.RecursivePublicReplay
 import Hegemon.Consensus.RecursiveSemanticInputs
 import Hegemon.Consensus.Supply
+import Hegemon.Consensus.SupplyInvariant
 import Hegemon.Consensus.TreeTransition
 import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionHashAdmission

@@ -9,8 +9,8 @@ use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
 use crate::proof_interface::{ProofVerifier, verify_commitments};
 use crate::reward::{
-    MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy, retarget_target,
-    update_supply_digest,
+    MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy,
+    expected_supply_after_transition, retarget_target,
 };
 use crate::types::{
     CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
@@ -347,7 +347,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
             });
         }
         let Some(expected_supply) =
-            update_supply_digest(parent_node.supply_digest, coinbase.net_native_delta())
+            expected_supply_after_transition(parent_node.supply_digest, coinbase)
         else {
             return Err(ConsensusError::InvalidCoinbase("supply digest underflow"));
         };

@@ -812,6 +812,35 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.supply-chain-invariant",
+      "component": "PoW accepted-chain supply accounting",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean supply-chain invariant kernel proves that accepted claimed supply steps replay to the same final supply as the executable expected-delta sequence; generated Lean chain vectors are checked against the production consensus supply transition helper used by PoW validation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents a chain prefix as an ordered list of claimed supply steps carrying minted amount, signed fees, burns, and the claimed post-block supply digest.",
+        "Generated Lean conformance vectors cover valid multi-step replay, claimed-supply counterfeiting, burn underflow, and supply overflow rejection.",
+        "The theorem covers executable supply-chain replay and claimed supply matching. It does not prove transaction proof soundness, privacy, hash implementation equivalence, monetary policy economics beyond the current subsidy/delta helpers, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
+        "formal/lean/Hegemon/Consensus/GenerateSupplyInvariantVectors.lean",
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "consensus/src/reward.rs",
+        "consensus/src/pow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_SUPPLY_INVARIANT_VECTORS=<generated-json> cargo test -p consensus lean_generated_supply_invariant_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.coinbase-accounting-admission",
       "component": "native coinbase accounting admission",
       "claim_class": "lean_theorem",
