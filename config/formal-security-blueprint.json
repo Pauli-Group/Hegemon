@@ -1517,6 +1517,64 @@
       "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove PoW admission arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
     },
     {
+      "id": "native.coinbase-accounting-admission",
+      "claim_id": "native.coinbase-accounting-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native coinbase-accounting admission transition, a block is accepted only when it has at most one coinbase action, no-coinbase blocks are accepted without summing fees, and a present coinbase amount equals the checked block subsidy plus checked shielded-transfer fee total.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CoinbaseAccountingAdmission.no_coinbase_accepts`, `Hegemon.Native.CoinbaseAccountingAdmission.multiple_coinbase_rejects`, `Hegemon.Native.CoinbaseAccountingAdmission.fee_total_overflow_rejects`, `Hegemon.Native.CoinbaseAccountingAdmission.reward_overflow_rejects`, `Hegemon.Native.CoinbaseAccountingAdmission.coinbase_amount_missing_rejects`, `Hegemon.Native.CoinbaseAccountingAdmission.amount_mismatch_rejects`, `Hegemon.Native.CoinbaseAccountingAdmission.matching_amount_accepts`, and `Hegemon.Native.CoinbaseAccountingAdmission.multiple_precedes_fee_total_overflow` prove the executable admission table. `gen_coinbase_accounting_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against `evaluate_native_coinbase_accounting_admission`, the helper used by native block import and mining validation.",
+      "depends_on": [
+        "consensus.supply-digest-accounting",
+        "native.action-scope-admission",
+        "formal.transaction-balance",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native coinbase accounting admission. Scope is block reward admission policy, not encrypted note construction or monetary economics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-coinbase-accounting-admission-theorem",
+          "description": "Removing or weakening the coinbase-accounting admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-coinbase-accounting-conformance",
+          "description": "Changing production duplicate-coinbase, no-coinbase fee-burn, fee-total overflow, reward overflow, missing amount, reward mismatch, or valid reward behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_accounting_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-coinbase-accounting-regressions",
+          "description": "Focused native tests must reject multiple coinbase actions, reward mismatch, and overflowing fee totals when a block claims coinbase fees.",
+          "gate": "cargo test -p hegemon-node coinbase_accounting_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-coinbase-accounting-gate",
+          "description": "The release formal-core wrapper must generate coinbase-accounting admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native coinbase accounting admission only. It does not prove encrypted coinbase note construction, coinbase ciphertext hash binding, transfer proof soundness, monetary policy economics beyond the current subsidy helper, full action payload validation, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",
@@ -1718,6 +1776,7 @@
         "bridge.message-root-replay",
         "bridge.header-mmr-transcript-binding",
         "consensus.supply-digest-accounting",
+        "native.coinbase-accounting-admission",
         "release.dependency-waivers"
       ],
       "implementation_paths": [

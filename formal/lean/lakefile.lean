@@ -88,6 +88,9 @@ lean_exe gen_action_scope_admission_vectors where
 lean_exe gen_block_commitment_admission_vectors where
   root := `Hegemon.Native.GenerateBlockCommitmentAdmissionVectors
 
+lean_exe gen_coinbase_accounting_admission_vectors where
+  root := `Hegemon.Native.GenerateCoinbaseAccountingAdmissionVectors
+
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
 

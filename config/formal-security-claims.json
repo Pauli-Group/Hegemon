@@ -812,6 +812,35 @@
       "residual_risks": []
     },
     {
+      "id": "native.coinbase-accounting-admission",
+      "component": "native coinbase accounting admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native coinbase-accounting admission kernel proves the executable table for zero-or-one coinbase actions, checked subsidy-plus-fee reward computation, missing amount rejection, reward mismatch rejection, and the intentional no-coinbase fee-burn policy; generated Lean vectors are checked against the production native helper used by block import and mining.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model reuses the Consensus.Supply subsidy and checked u64 addition model for expected native coinbase amounts.",
+        "Generated Lean conformance vectors cover no-coinbase acceptance, valid subsidy-only and fee-inclusive coinbase rewards, multiple coinbase rejection, fee-total overflow rejection, reward overflow rejection, missing amount rejection, reward mismatch rejection, and rejection precedence.",
+        "The theorem covers executable native coinbase accounting admission only. It does not prove encrypted coinbase note construction, ciphertext hash binding, monetary policy economics beyond the current subsidy helper, full action payload validation, or proof-system soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_accounting_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node coinbase_accounting_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-action-ordering",
       "component": "native shielded block action ordering",
       "claim_class": "lean_theorem",

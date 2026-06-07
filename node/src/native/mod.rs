@@ -400,6 +400,36 @@ impl NativeActionScopeAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCoinbaseAccountingAdmissionInput {
+    coinbase_count: usize,
+    height: u64,
+    transfer_fee_total: Option<u64>,
+    observed_coinbase_amount: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCoinbaseAccountingAdmissionRejection {
+    MultipleCoinbase,
+    FeeTotalOverflow,
+    RewardOverflow,
+    CoinbaseAmountMissing,
+    AmountMismatch,
+}
+
+impl NativeCoinbaseAccountingAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::MultipleCoinbase => "multiple_coinbase",
+            Self::FeeTotalOverflow => "fee_total_overflow",
+            Self::RewardOverflow => "reward_overflow",
+            Self::CoinbaseAmountMissing => "coinbase_amount_missing",
+            Self::AmountMismatch => "amount_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBlockCommitmentAdmissionInput {
     tx_count_matches: bool,
     state_root_matches: bool,
@@ -4069,23 +4099,10 @@ fn orphaned_actions(
 }
 
 fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Result<()> {
-    let coinbase_actions = actions
-        .iter()
-        .filter(|action| is_coinbase_action(action))
-        .collect::<Vec<_>>();
-    if coinbase_actions.len() > 1 {
-        return Err(anyhow!("block contains multiple coinbase actions"));
-    }
-    if let Some(action) = coinbase_actions.first() {
-        let expected = expected_coinbase_amount(actions, height)?;
-        let observed = coinbase_action_amount(action)?;
-        if observed != expected {
-            return Err(anyhow!(
-                "coinbase amount mismatch: expected {expected}, observed {observed}"
-            ));
-        }
-    }
-    Ok(())
+    evaluate_native_coinbase_accounting_admission(native_coinbase_accounting_admission_input(
+        actions, height,
+    ))
+    .map_err(native_coinbase_accounting_admission_error)
 }
 
 fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u128> {
@@ -4107,16 +4124,95 @@ fn advance_native_supply_digest(
 }
 
 fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u64> {
-    let fees = actions
-        .iter()
-        .filter(|action| is_shielded_transfer_action(action))
-        .try_fold(0u64, |acc, action| {
-            acc.checked_add(action.fee)
-                .ok_or_else(|| anyhow!("block fee total overflow"))
-        })?;
+    let fees =
+        checked_transfer_fee_total(actions).ok_or_else(|| anyhow!("block fee total overflow"))?;
     consensus::reward::block_subsidy(height)
         .checked_add(fees)
         .ok_or_else(|| anyhow!("coinbase reward overflow"))
+}
+
+fn checked_transfer_fee_total(actions: &[PendingAction]) -> Option<u64> {
+    actions
+        .iter()
+        .filter(|action| is_shielded_transfer_action(action))
+        .try_fold(0u64, |acc, action| acc.checked_add(action.fee))
+}
+
+fn native_coinbase_accounting_admission_input(
+    actions: &[PendingAction],
+    height: u64,
+) -> NativeCoinbaseAccountingAdmissionInput {
+    let coinbase_actions = actions
+        .iter()
+        .filter(|action| is_coinbase_action(action))
+        .collect::<Vec<_>>();
+    let observed_coinbase_amount = if coinbase_actions.len() == 1 {
+        coinbase_action_amount(coinbase_actions[0]).ok()
+    } else {
+        None
+    };
+    NativeCoinbaseAccountingAdmissionInput {
+        coinbase_count: coinbase_actions.len(),
+        height,
+        transfer_fee_total: checked_transfer_fee_total(actions),
+        observed_coinbase_amount,
+    }
+}
+
+#[cfg(test)]
+fn expected_coinbase_amount_from_input(
+    input: NativeCoinbaseAccountingAdmissionInput,
+) -> Option<u64> {
+    let fees = input.transfer_fee_total?;
+    consensus::reward::block_subsidy(input.height).checked_add(fees)
+}
+
+fn evaluate_native_coinbase_accounting_admission(
+    input: NativeCoinbaseAccountingAdmissionInput,
+) -> Result<(), NativeCoinbaseAccountingAdmissionRejection> {
+    if input.coinbase_count > 1 {
+        Err(NativeCoinbaseAccountingAdmissionRejection::MultipleCoinbase)
+    } else if input.coinbase_count == 0 {
+        Ok(())
+    } else {
+        let Some(fees) = input.transfer_fee_total else {
+            return Err(NativeCoinbaseAccountingAdmissionRejection::FeeTotalOverflow);
+        };
+        let Some(expected) = consensus::reward::block_subsidy(input.height).checked_add(fees)
+        else {
+            return Err(NativeCoinbaseAccountingAdmissionRejection::RewardOverflow);
+        };
+        let Some(observed) = input.observed_coinbase_amount else {
+            return Err(NativeCoinbaseAccountingAdmissionRejection::CoinbaseAmountMissing);
+        };
+        if observed == expected {
+            Ok(())
+        } else {
+            Err(NativeCoinbaseAccountingAdmissionRejection::AmountMismatch)
+        }
+    }
+}
+
+fn native_coinbase_accounting_admission_error(
+    rejection: NativeCoinbaseAccountingAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCoinbaseAccountingAdmissionRejection::MultipleCoinbase => {
+            anyhow!("block contains multiple coinbase actions")
+        }
+        NativeCoinbaseAccountingAdmissionRejection::FeeTotalOverflow => {
+            anyhow!("block fee total overflow")
+        }
+        NativeCoinbaseAccountingAdmissionRejection::RewardOverflow => {
+            anyhow!("coinbase reward overflow")
+        }
+        NativeCoinbaseAccountingAdmissionRejection::CoinbaseAmountMissing => {
+            anyhow!("coinbase action amount unavailable")
+        }
+        NativeCoinbaseAccountingAdmissionRejection::AmountMismatch => {
+            anyhow!("coinbase amount mismatch")
+        }
+    }
 }
 
 fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
@@ -5260,6 +5356,26 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseAccountingAdmissionVectorFile {
+        schema_version: u32,
+        coinbase_accounting_admission_cases: Vec<LeanCoinbaseAccountingAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseAccountingAdmissionCase {
+        name: String,
+        coinbase_count: usize,
+        height: u64,
+        transfer_fee_total: Option<String>,
+        observed_coinbase_amount: Option<String>,
+        expected_coinbase_amount: Option<String>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -6160,6 +6276,60 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native block commitment admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_coinbase_accounting_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean coinbase accounting admission vectors");
+        let vectors: LeanCoinbaseAccountingAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean coinbase accounting admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.coinbase_accounting_admission_cases.is_empty(),
+            "Lean coinbase accounting admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.coinbase_accounting_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_coinbase_accounting_admission_case(case);
+        }
+    }
+
+    fn verify_lean_coinbase_accounting_admission_case(case: &LeanCoinbaseAccountingAdmissionCase) {
+        let input = NativeCoinbaseAccountingAdmissionInput {
+            coinbase_count: case.coinbase_count,
+            height: case.height,
+            transfer_fee_total: case.transfer_fee_total.as_deref().map(parse_u64),
+            observed_coinbase_amount: case.observed_coinbase_amount.as_deref().map(parse_u64),
+        };
+        assert_eq!(
+            expected_coinbase_amount_from_input(input).map(|amount| amount.to_string()),
+            case.expected_coinbase_amount,
+            "{} expected coinbase amount drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = evaluate_native_coinbase_accounting_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native coinbase accounting validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native coinbase accounting rejection drifted from Lean spec",
             case.name
         );
     }
@@ -7187,6 +7357,71 @@ mod tests {
     }
 
     #[test]
+    fn coinbase_accounting_rejects_multiple_coinbase_actions() {
+        let height = 1;
+        let subsidy = consensus::reward::block_subsidy(height);
+        let err = validate_coinbase_accounting(
+            &[test_coinbase_action(subsidy), test_coinbase_action(subsidy)],
+            height,
+        )
+        .expect_err("multiple coinbase actions must reject");
+        assert!(
+            err.to_string().contains("multiple coinbase"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn coinbase_accounting_rejects_reward_mismatch() {
+        let height = 1;
+        let subsidy = consensus::reward::block_subsidy(height);
+        let err = validate_coinbase_accounting(&[test_coinbase_action(subsidy + 1)], height)
+            .expect_err("wrong coinbase amount must reject");
+        assert!(
+            err.to_string().contains("coinbase amount mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn coinbase_accounting_rejects_fee_total_overflow_when_coinbase_claims_fees() {
+        let height = 1;
+        let subsidy = consensus::reward::block_subsidy(height);
+        let max_fee = test_empty_action(
+            FAMILY_SHIELDED_POOL,
+            ACTION_SHIELDED_TRANSFER_INLINE,
+            u64::MAX,
+        );
+        let one_fee = test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE, 1);
+        let err = validate_coinbase_accounting(
+            &[max_fee, one_fee, test_coinbase_action(subsidy)],
+            height,
+        )
+        .expect_err("overflowing fee total with coinbase must reject");
+        assert!(
+            err.to_string().contains("block fee total overflow"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn coinbase_accounting_allows_no_coinbase_fee_burn_without_summing_fees() {
+        let height = 1;
+        let max_fee = test_empty_action(
+            FAMILY_SHIELDED_POOL,
+            ACTION_SHIELDED_TRANSFER_INLINE,
+            u64::MAX,
+        );
+        let one_fee = test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE, 1);
+        validate_coinbase_accounting(&[max_fee.clone(), one_fee.clone()], height)
+            .expect("no coinbase burns fees without minting");
+        assert_eq!(
+            native_block_supply_delta(&[max_fee, one_fee], height).expect("supply delta"),
+            0
+        );
+    }
+
+    #[test]
     fn native_supply_digest_rejects_overflow() {
         let height = 1;
         let subsidy = consensus::reward::block_subsidy(height) as u128;
@@ -7268,6 +7503,11 @@ mod tests {
     fn parse_u128(raw: &str) -> u128 {
         raw.parse::<u128>()
             .expect("Lean supply value must be a decimal u128")
+    }
+
+    fn parse_u64(raw: &str) -> u64 {
+        raw.parse::<u64>()
+            .expect("Lean native value must be a decimal u64")
     }
 
     fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment: [u8; 48]) {
