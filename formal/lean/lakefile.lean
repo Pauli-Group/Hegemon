@@ -10,6 +10,9 @@ lean_lib Hegemon where
 lean_exe gen_bridge_vectors where
   root := `Hegemon.Bridge.GenerateVectors
 
+lean_exe gen_bridge_checkpoint_output_vectors where
+  root := `Hegemon.Bridge.GenerateCheckpointOutputVectors
+
 lean_exe gen_bridge_long_range_vectors where
   root := `Hegemon.Bridge.GenerateLongRangeVectors
 

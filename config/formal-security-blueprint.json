@@ -826,6 +826,59 @@
       "scope_boundary": "This node proves and vector-checks deterministic FlyClient sample transcript and digest-prefix arithmetic only. It does not prove BLAKE3 cryptographic security or implementation equivalence, MMR hash binding, PoW hash security, probabilistic FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
     },
     {
+      "id": "bridge.checkpoint-output-binding",
+      "claim_id": "bridge.checkpoint-output-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean checkpoint-output transition, canonical BridgeCheckpointOutputV1 bytes must equal the exact 35-byte output domain followed by the fixed 404-byte journal tuple, with source/rules/header/work/message fields in protocol order and u64/u128/u32 scalars encoded little-endian.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.CheckpointOutput.checkpoint_output_domain_bytes`, `Hegemon.Bridge.CheckpointOutput.canonical_preimage_is_domain_prefixed_wire`, `Hegemon.Bridge.CheckpointOutput.sample_wire_length`, `Hegemon.Bridge.CheckpointOutput.sample_canonical_length_exact`, `Hegemon.Bridge.CheckpointOutput.sample_checkpoint_height_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_canonical_tip_height_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_message_nonce_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_confirmations_little_endian`, and the max-scalar little-endian theorems prove representative executable facts about the output byte grammar. `gen_bridge_checkpoint_output_vectors` emits Lean-derived canonical and journal bytes, and the formal-core gate checks those vectors against `canonical_bridge_checkpoint_output_bytes_v1`, `bridge_checkpoint_output_wire_bytes_v1`, `bridge_checkpoint_output_wire_array_v1`, and `decode_bridge_checkpoint_output_wire_v1`, including decode round-trip and fixed-length rejection for truncated or trailing journal bytes.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "bridge.message-root-replay",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/CheckpointOutput.lean",
+        "formal/lean/Hegemon/Bridge/GenerateCheckpointOutputVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/CheckpointOutput.lean",
+        "formal/lean/Hegemon/Bridge/GenerateCheckpointOutputVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for BridgeCheckpointOutputV1 canonical preimage and fixed journal tuple byte grammar. Hash security, message-root derivation, and complete bridge light-client soundness remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-checkpoint-output-theorem",
+          "description": "Removing or weakening the checkpoint-output byte grammar theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-checkpoint-output-conformance",
+          "description": "Changing production checkpoint-output field order, domain prefix, scalar endian encoding, canonical/wire split, or fixed journal length away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_bridge_checkpoint_output_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-checkpoint-output-gate",
+          "description": "The release formal-core wrapper must generate checkpoint-output vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks BridgeCheckpointOutputV1 byte grammar and fixed-length journal decoding only. It does not prove BLAKE3 cryptographic security or implementation equivalence, bridge message-root/hash derivation, PoW hash security, MMR hash binding, FlyClient sampling soundness, external-chain verifier behavior, or complete bridge light-client soundness."
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "claim_id": "bridge.long-range-proof-shape",
       "kind": "target_claim",
@@ -836,6 +889,7 @@
         "bridge.header-mmr-opening-shape",
         "bridge.header-mmr-transcript-binding",
         "bridge.flyclient-sampling-transcript",
+        "bridge.checkpoint-output-binding",
         "bridge.message-root-replay",
         "release.dependency-waivers"
       ],
@@ -878,7 +932,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
+      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, checkpoint-output byte grammar, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript. Checkpoint output canonical/journal bytes are covered separately by bridge.checkpoint-output-binding."
     },
     {
       "id": "consensus.self-contained-proof-policy",

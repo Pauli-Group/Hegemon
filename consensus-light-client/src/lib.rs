@@ -14,6 +14,9 @@ pub type Digest48 = [u8; 48];
 pub type Work48 = [u8; 48];
 
 pub const BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1: usize = 404;
+pub const BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1: &[u8] = b"hegemon.bridge.checkpoint-output-v1";
+pub const BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V1: usize =
+    BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1.len() + BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1;
 
 pub const HEGEMON_CHAIN_ID_V1: Hash32 = [
     0xa3, 0x8e, 0xff, 0x6b, 0x93, 0xae, 0xae, 0xf8, 0x8d, 0xe8, 0x8d, 0x5f, 0x59, 0x67, 0xcf, 0x62,
@@ -280,9 +283,8 @@ pub fn canonical_trusted_checkpoint_bytes_v1(checkpoint: &TrustedCheckpointV1) -
 }
 
 pub fn canonical_bridge_checkpoint_output_bytes_v1(output: &BridgeCheckpointOutputV1) -> Vec<u8> {
-    let mut bytes =
-        Vec::with_capacity(32 + 32 + 8 + 32 + 48 + 8 + 32 + 48 + 48 + 48 + 16 + 4 + 48 + 32);
-    bytes.extend_from_slice(b"hegemon.bridge.checkpoint-output-v1");
+    let mut bytes = Vec::with_capacity(BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V1);
+    bytes.extend_from_slice(BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1);
     bytes.extend_from_slice(&output.source_chain_id);
     bytes.extend_from_slice(&output.rules_hash);
     bytes.extend_from_slice(&output.checkpoint_height.to_le_bytes());
@@ -1794,6 +1796,13 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeCheckpointOutputVectorFile {
+        schema_version: u32,
+        bridge_checkpoint_output_cases: Vec<LeanBridgeCheckpointOutputCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanHeaderMmrShapeVectorFile {
         schema_version: u32,
         header_mmr_shape_cases: Vec<LeanHeaderMmrShapeCase>,
@@ -1864,6 +1873,29 @@ mod tests {
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_confirmations_checked: Option<u32>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeCheckpointOutputCase {
+        name: String,
+        source_chain_id_hex: String,
+        rules_hash_hex: String,
+        checkpoint_height: u64,
+        checkpoint_header_hash_hex: String,
+        checkpoint_cumulative_work_hex: String,
+        canonical_tip_height: u64,
+        canonical_tip_header_hash_hex: String,
+        canonical_tip_cumulative_work_hex: String,
+        message_root_hex: String,
+        message_hash_hex: String,
+        message_nonce_decimal: String,
+        confirmations_checked: u32,
+        min_work_checked_hex: String,
+        expected_canonical_hex: String,
+        expected_canonical_len: usize,
+        expected_wire_hex: String,
+        expected_wire_len: usize,
     }
 
     #[allow(dead_code)]
@@ -2182,6 +2214,136 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_bridge_checkpoint_output_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge checkpoint output vectors");
+        let vectors: LeanBridgeCheckpointOutputVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge checkpoint output vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_checkpoint_output_cases.is_empty(),
+            "Lean bridge checkpoint output cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_checkpoint_output_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_checkpoint_output_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_checkpoint_output_case(case: &LeanBridgeCheckpointOutputCase) {
+        let output = BridgeCheckpointOutputV1 {
+            source_chain_id: hash32_from_hex(&case.source_chain_id_hex),
+            rules_hash: hash32_from_hex(&case.rules_hash_hex),
+            checkpoint_height: case.checkpoint_height,
+            checkpoint_header_hash: hash32_from_hex(&case.checkpoint_header_hash_hex),
+            checkpoint_cumulative_work: bytes48_from_hex(
+                &case.checkpoint_cumulative_work_hex,
+                "checkpoint cumulative work",
+            ),
+            canonical_tip_height: case.canonical_tip_height,
+            canonical_tip_header_hash: hash32_from_hex(&case.canonical_tip_header_hash_hex),
+            canonical_tip_cumulative_work: bytes48_from_hex(
+                &case.canonical_tip_cumulative_work_hex,
+                "canonical tip cumulative work",
+            ),
+            message_root: bytes48_from_hex(&case.message_root_hex, "message root"),
+            message_hash: bytes48_from_hex(&case.message_hash_hex, "message hash"),
+            message_nonce: case
+                .message_nonce_decimal
+                .parse::<u128>()
+                .expect("Lean message nonce must fit u128"),
+            confirmations_checked: case.confirmations_checked,
+            min_work_checked: bytes48_from_hex(&case.min_work_checked_hex, "min work checked"),
+        };
+
+        let canonical = canonical_bridge_checkpoint_output_bytes_v1(&output);
+        assert_eq!(
+            canonical.len(),
+            case.expected_canonical_len,
+            "{} canonical preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            canonical.len(),
+            BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V1,
+            "{} canonical preimage length drifted from protocol constant",
+            case.name
+        );
+        assert_eq!(
+            hex_string(&canonical),
+            case.expected_canonical_hex,
+            "{} canonical preimage bytes drifted from Lean spec",
+            case.name
+        );
+
+        let wire = bridge_checkpoint_output_wire_bytes_v1(&output);
+        assert_eq!(
+            wire.len(),
+            case.expected_wire_len,
+            "{} journal wire length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            wire.len(),
+            BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1,
+            "{} journal wire length drifted from protocol constant",
+            case.name
+        );
+        assert_eq!(
+            hex_string(&wire),
+            case.expected_wire_hex,
+            "{} journal wire bytes drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            &canonical[..BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1.len()],
+            BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1,
+            "{} canonical preimage lost its domain prefix",
+            case.name
+        );
+        assert_eq!(
+            &canonical[BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1.len()..],
+            wire.as_slice(),
+            "{} canonical preimage is no longer domain plus journal wire tuple",
+            case.name
+        );
+
+        let wire_array = bridge_checkpoint_output_wire_array_v1(&output);
+        assert_eq!(wire_array.as_slice(), wire.as_slice(), "{}", case.name);
+        assert_eq!(
+            decode_bridge_checkpoint_output_wire_v1(&wire),
+            Ok(output.clone()),
+            "{} journal wire decode did not round-trip",
+            case.name
+        );
+
+        let mut truncated = wire.clone();
+        truncated.pop();
+        assert_eq!(
+            decode_bridge_checkpoint_output_wire_v1(&truncated),
+            Err(LightClientError::ReceiptJournalMismatch),
+            "{} truncated journal wire was not rejected",
+            case.name
+        );
+        let mut trailing = wire;
+        trailing.push(0);
+        assert_eq!(
+            decode_bridge_checkpoint_output_wire_v1(&trailing),
+            Err(LightClientError::ReceiptJournalMismatch),
+            "{} trailing journal wire was not rejected",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_header_mmr_shape_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS") else {
             eprintln!(
@@ -2437,6 +2599,14 @@ mod tests {
         let bytes = bytes_from_hex(raw);
         assert_eq!(bytes.len(), 32, "expected 32-byte hash hex");
         let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        out
+    }
+
+    fn bytes48_from_hex(raw: &str, label: &str) -> [u8; 48] {
+        let bytes = bytes_from_hex(raw);
+        assert_eq!(bytes.len(), 48, "expected 48-byte {label} hex");
+        let mut out = [0u8; 48];
         out.copy_from_slice(&bytes);
         out
     }

@@ -434,7 +434,7 @@
       "assumptions": [
         "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
         "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
-        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
+        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, checkpoint-output byte grammar, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript. Checkpoint output canonical/journal bytes are covered separately by bridge.checkpoint-output-binding."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Bridge/LongRange.lean",
@@ -447,6 +447,34 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "bridge.checkpoint-output-binding",
+      "component": "bridge checkpoint output byte binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean checkpoint-output kernel proves the exact domain-separated canonical preimage and fixed-width journal tuple grammar for BridgeCheckpointOutputV1; generated Lean vectors are checked byte-for-byte against production consensus-light-client encoding and decoding helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents exact bytes for already-computed source chain ids, rules hashes, header hashes, work values, message roots, message hashes, nonce, confirmation count, and minimum-work policy.",
+        "Generated Lean conformance vectors cover the 35-byte canonical domain, 439-byte canonical preimage, 404-byte authenticated journal tuple, field order, u64/u128/u32 little-endian scalar encodings including max scalar cases, decode/re-encode round trips, and fixed-length rejection for truncated or trailing journal bytes.",
+        "The theorem covers byte grammar and Rust conformance to that grammar, not BLAKE3 cryptographic security, BLAKE3 implementation equivalence, bridge message-root/hash derivation, external verifier behavior, or complete bridge light-client soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/CheckpointOutput.lean",
+        "formal/lean/Hegemon/Bridge/GenerateCheckpointOutputVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_bridge_checkpoint_output_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

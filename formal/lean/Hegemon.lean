@@ -1,4 +1,5 @@
 import Hegemon.Bytes
+import Hegemon.Bridge.CheckpointOutput
 import Hegemon.Bridge.Encoding
 import Hegemon.Bridge.FlyClient
 import Hegemon.Bridge.HeaderMmr
