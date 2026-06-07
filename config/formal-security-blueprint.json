@@ -1143,8 +1143,8 @@
       "id": "consensus.recursive-block-admission",
       "claim_id": "consensus.recursive-block-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean recursive-block admission transition, accepted artifact inputs must have an envelope kind equal to the expected recursive_block_v1 or recursive_block_v2 kind, a matching verifier profile, successful artifact decoding, a recursive header artifact-version matching that kind, public tx_count equal to the block tx_count, public tx_statements_commitment equal to the expected block commitment, and public replay agreement with the expected block semantic tuple when replay is required.",
-      "informal_argument": "The Lean theorem `Hegemon.Consensus.RecursiveBlockAdmission.artifact_accepts_iff_preconditions` proves that the executable recursive-block admission decision is exactly the precondition predicate. Companion theorems `Hegemon.Consensus.RecursiveBlockAdmission.valid_v2_artifact_accepts`, `Hegemon.Consensus.RecursiveBlockAdmission.valid_v1_artifact_accepts`, `Hegemon.Consensus.RecursiveBlockAdmission.wrong_kind_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.profile_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.decode_failed_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.header_version_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.tx_count_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.statement_commitment_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.public_replay_mismatch_rejects`, and `Hegemon.Consensus.RecursiveBlockAdmission.kind_precedes_decode_failure` pin representative accept/reject and precedence facts. `gen_recursive_block_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_recursive_block_artifact_admission` helper called by the recursive-block verifier paths in `consensus/src/proof.rs` before heavy recursive proof verification.",
+      "formal_statement": "For the executable Lean recursive-block admission transition, accepted artifact inputs must have an envelope kind equal to the expected recursive_block_v1 or recursive_block_v2 kind, a matching verifier profile, successful artifact decoding, a recursive header artifact-version matching that kind, public tx_count equal to the block tx_count, public tx_statements_commitment equal to the expected block commitment, and public replay agreement with the expected block semantic tuple when replay is required. The generic recursive_block_v1/v2 registry ArtifactVerifier path must reject direct verification with requires_semantic_replay because it lacks verified tx records and semantic replay inputs.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.RecursiveBlockAdmission.artifact_accepts_iff_preconditions` proves that the executable recursive-block admission decision is exactly the precondition predicate. Companion theorems `Hegemon.Consensus.RecursiveBlockAdmission.valid_v2_artifact_accepts`, `Hegemon.Consensus.RecursiveBlockAdmission.valid_v1_artifact_accepts`, `Hegemon.Consensus.RecursiveBlockAdmission.wrong_kind_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.profile_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.decode_failed_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.header_version_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.tx_count_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.statement_commitment_mismatch_rejects`, `Hegemon.Consensus.RecursiveBlockAdmission.public_replay_mismatch_rejects`, and `Hegemon.Consensus.RecursiveBlockAdmission.kind_precedes_decode_failure` pin representative accept/reject and precedence facts. `Hegemon.Consensus.RecursiveBlockAdmission.direct_v1_requires_semantic_replay` and `Hegemon.Consensus.RecursiveBlockAdmission.direct_v2_requires_semantic_replay` pin the fail-closed generic registry rule. `gen_recursive_block_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_recursive_block_artifact_admission` helper plus the direct `RecursiveBlockVerifier` rejection in `consensus/src/proof.rs` before heavy recursive proof verification.",
       "depends_on": [
         "consensus.proven-batch-binding",
         "consensus.native-tx-leaf-admission",
@@ -1170,7 +1170,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for recursive-block artifact envelope/decode/header/count/statement/public-replay admission before heavy recursive verification. Scope excludes recursive proof cryptographic soundness and native tx-leaf soundness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for recursive-block artifact envelope/decode/header/count/statement/public-replay admission before heavy recursive verification, and for direct registry-verifier semantic-replay rejection. Scope excludes recursive proof cryptographic soundness and native tx-leaf soundness."
       },
       "falsification_cases": [
         {
@@ -1180,7 +1180,7 @@
         },
         {
           "id": "lean-generated-recursive-block-admission-conformance",
-          "description": "Changing production recursive-block admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "description": "Changing production recursive-block admission or direct registry-verifier rejection away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture"
         },
         {
@@ -1189,7 +1189,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks recursive-block envelope kind, verifier profile, artifact decoding, recursive header version, tx-count, statement-commitment, and public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+      "scope_boundary": "This node proves and vector-checks recursive-block envelope kind, verifier profile, artifact decoding, recursive header version, tx-count, statement-commitment, public-replay admission, and direct registry-verifier semantic-replay rejection only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
     },
     {
       "id": "consensus.recursive-public-replay",

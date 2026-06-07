@@ -1504,165 +1504,15 @@ impl ArtifactVerifier for RecursiveBlockVerifier {
 
     fn verify_block_artifact(
         &self,
-        txs: &[crate::types::Transaction],
+        _txs: &[crate::types::Transaction],
         _tx_artifacts: Option<&[TxValidityArtifact]>,
-        expected_commitment: &[u8; 48],
-        envelope: &ProofEnvelope,
+        _expected_commitment: &[u8; 48],
+        _envelope: &ProofEnvelope,
     ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        match self.kind {
-            ProofArtifactKind::RecursiveBlockV1 => {
-                let label = ProofArtifactKind::RecursiveBlockV1.label();
-                let admission_input = recursive_block_admission_input_for_predecode(
-                    ProofArtifactKind::RecursiveBlockV1,
-                    envelope,
-                    envelope.verifier_profile == backend_recursive_block_profile_v1(),
-                );
-                evaluate_recursive_block_artifact_admission(admission_input).map_err(
-                    |rejection| {
-                        recursive_block_admission_error(
-                            label,
-                            admission_input,
-                            txs.len(),
-                            None,
-                            None,
-                            None,
-                            rejection,
-                        )
-                    },
-                )?;
-                let parsed = match deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes)
-                {
-                    Ok(parsed) => parsed,
-                    Err(err) => {
-                        let decode_input = recursive_block_decode_admission_input(admission_input);
-                        let rejection = evaluate_recursive_block_artifact_admission(decode_input)
-                            .expect_err(
-                                "recursive block decode admission must reject failed decode",
-                            );
-                        return Err(recursive_block_admission_error(
-                            label,
-                            decode_input,
-                            txs.len(),
-                            None,
-                            None,
-                            Some(err.to_string()),
-                            rejection,
-                        ));
-                    }
-                };
-                let decoded_input = RecursiveBlockArtifactAdmissionInput {
-                    header_version_matches: parsed.artifact.header.artifact_version_rec
-                        == RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-                    tx_count_matches: parsed.public.tx_count as usize == txs.len(),
-                    statement_commitment_matches: parsed.public.tx_statements_commitment
-                        == *expected_commitment,
-                    public_replay_matches: true,
-                    ..admission_input
-                };
-                evaluate_recursive_block_artifact_admission(decoded_input).map_err(
-                    |rejection| {
-                        recursive_block_admission_error(
-                            label,
-                            decoded_input,
-                            txs.len(),
-                            Some(parsed.public.tx_count),
-                            Some(parsed.artifact.header.artifact_version_rec),
-                            None,
-                            rejection,
-                        )
-                    },
-                )?;
-                verify_block_recursive_v1(&parsed, &parsed.public).map_err(|err| {
-                    ProofError::AggregationProofVerification(format!(
-                        "recursive_block_v1 verification failed: {err}"
-                    ))
-                })?;
-            }
-            ProofArtifactKind::RecursiveBlockV2 => {
-                let label = ProofArtifactKind::RecursiveBlockV2.label();
-                let admission_input = recursive_block_admission_input_for_predecode(
-                    ProofArtifactKind::RecursiveBlockV2,
-                    envelope,
-                    envelope.verifier_profile == backend_recursive_block_profile_v2(),
-                );
-                evaluate_recursive_block_artifact_admission(admission_input).map_err(
-                    |rejection| {
-                        recursive_block_admission_error(
-                            label,
-                            admission_input,
-                            txs.len(),
-                            None,
-                            None,
-                            None,
-                            rejection,
-                        )
-                    },
-                )?;
-                let parsed = match deserialize_recursive_block_artifact_v2(&envelope.artifact_bytes)
-                {
-                    Ok(parsed) => parsed,
-                    Err(err) => {
-                        let decode_input = recursive_block_decode_admission_input(admission_input);
-                        let rejection = evaluate_recursive_block_artifact_admission(decode_input)
-                            .expect_err(
-                                "recursive block decode admission must reject failed decode",
-                            );
-                        return Err(recursive_block_admission_error(
-                            label,
-                            decode_input,
-                            txs.len(),
-                            None,
-                            None,
-                            Some(err.to_string()),
-                            rejection,
-                        ));
-                    }
-                };
-                let decoded_input = RecursiveBlockArtifactAdmissionInput {
-                    header_version_matches: parsed.artifact.header.artifact_version_rec
-                        == RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
-                    tx_count_matches: parsed.public.tx_count as usize == txs.len(),
-                    statement_commitment_matches: parsed.public.tx_statements_commitment
-                        == *expected_commitment,
-                    public_replay_matches: true,
-                    ..admission_input
-                };
-                evaluate_recursive_block_artifact_admission(decoded_input).map_err(
-                    |rejection| {
-                        recursive_block_admission_error(
-                            label,
-                            decoded_input,
-                            txs.len(),
-                            Some(parsed.public.tx_count),
-                            Some(parsed.artifact.header.artifact_version_rec),
-                            None,
-                            rejection,
-                        )
-                    },
-                )?;
-                verify_block_recursive_v2(&parsed, &parsed.public).map_err(|err| {
-                    ProofError::AggregationProofVerification(format!(
-                        "recursive_block_v2 verification failed: {err}"
-                    ))
-                })?;
-            }
-            _ => {
-                return Err(ProofError::UnsupportedProofArtifact(format!(
-                    "proof kind {} does not support recursive block verification",
-                    self.kind.label()
-                )));
-            }
-        }
-
-        Ok(BlockArtifactVerifyReport {
-            tx_count: txs.len(),
-            verified_statement_commitment: *expected_commitment,
-            verify_ms: 0,
-            verify_batch_ms: 0,
-            cache_hit: None,
-            cache_build_ms: None,
-            root_verify_mode: Some(self.kind().label()),
-        })
+        Err(ProofError::UnsupportedProofArtifact(format!(
+            "recursive block artifacts require verified-record semantic replay; use the product recursive verifier path for {}",
+            self.kind.label()
+        )))
     }
 }
 
@@ -3028,6 +2878,7 @@ mod tests {
     struct LeanRecursiveBlockAdmissionVectorFile {
         schema_version: u32,
         artifact_cases: Vec<LeanRecursiveBlockArtifactCase>,
+        direct_verifier_cases: Vec<LeanRecursiveBlockDirectVerifierCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -3042,6 +2893,15 @@ mod tests {
         tx_count_matches: bool,
         statement_commitment_matches: bool,
         public_replay_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRecursiveBlockDirectVerifierCase {
+        name: String,
+        kind: String,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -3482,11 +3342,19 @@ mod tests {
             !vectors.artifact_cases.is_empty(),
             "Lean recursive-block admission cases must not be empty"
         );
+        assert!(
+            !vectors.direct_verifier_cases.is_empty(),
+            "Lean recursive-block direct verifier cases must not be empty"
+        );
 
         let mut names = BTreeSet::new();
         for case in &vectors.artifact_cases {
-            assert!(names.insert(case.name.clone()));
+            assert!(names.insert(format!("artifact:{}", case.name)));
             verify_lean_recursive_block_artifact_case(case);
+        }
+        for case in &vectors.direct_verifier_cases {
+            assert!(names.insert(format!("direct:{}", case.name)));
+            verify_lean_recursive_block_direct_verifier_case(case);
         }
     }
 
@@ -3969,6 +3837,74 @@ mod tests {
             "{} recursive-block admission rejection label drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_recursive_block_direct_verifier_case(
+        case: &LeanRecursiveBlockDirectVerifierCase,
+    ) {
+        let kind = parse_lean_proof_artifact_kind(&case.kind);
+        let (verifier_profile, artifact_bytes) = match kind {
+            ProofArtifactKind::RecursiveBlockV1 => (
+                backend_recursive_block_profile_v1(),
+                crate::backend_interface::serialize_recursive_block_artifact_v1(
+                    &sample_recursive_block_artifact_v1(1),
+                )
+                .expect("serialize recursive_block_v1 artifact"),
+            ),
+            ProofArtifactKind::RecursiveBlockV2 => (
+                backend_recursive_block_profile_v2(),
+                crate::backend_interface::serialize_recursive_block_artifact_v2(
+                    &sample_recursive_block_artifact_v2(1),
+                )
+                .expect("serialize recursive_block_v2 artifact"),
+            ),
+            other => panic!(
+                "unexpected Lean recursive direct verifier kind {}",
+                other.label()
+            ),
+        };
+        let verifier = RecursiveBlockVerifier { kind };
+        let envelope = ProofEnvelope {
+            kind,
+            verifier_profile,
+            artifact_bytes,
+        };
+        let result = verifier.verify_block_artifact(
+            &[tx_with_commitments(vec![])],
+            None,
+            &[0u8; 48],
+            &envelope,
+        );
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} direct recursive verifier validity drifted from Lean spec: {result:?}",
+            case.name
+        );
+        let actual_rejection = result
+            .as_ref()
+            .err()
+            .map(recursive_block_direct_verifier_error_label)
+            .map(str::to_string);
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} direct recursive verifier rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn recursive_block_direct_verifier_error_label(error: &ProofError) -> &'static str {
+        match error {
+            ProofError::UnsupportedProofArtifact(message)
+                if message.contains("verified-record semantic replay") =>
+            {
+                "requires_semantic_replay"
+            }
+            other => {
+                panic!("unexpected direct recursive verifier error for Lean vector: {other:?}")
+            }
+        }
     }
 
     fn verify_lean_recursive_semantic_input_case(case: &LeanRecursiveSemanticInputCase) {
@@ -4465,7 +4401,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_v2_verifier_is_registered_and_accepts_valid_artifact() {
+    fn recursive_block_v2_registry_direct_verifier_requires_semantic_replay() {
         let registry = VerifierRegistry::default();
         let verifier_profile = backend_recursive_block_profile_v2();
         let verifier = registry
@@ -4479,14 +4415,17 @@ mod tests {
             verifier_profile,
             artifact_bytes: bytes,
         };
-        let report = verifier
+        let err = verifier
             .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect("recursive_block_v2 verifier should accept a structurally valid artifact");
-        assert_eq!(report.tx_count, 1);
+            .expect_err("registry recursive_block_v2 verifier must require semantic replay");
+        assert_eq!(
+            recursive_block_direct_verifier_error_label(&err),
+            "requires_semantic_replay"
+        );
     }
 
     #[test]
-    fn recursive_block_v1_verifier_is_registered_and_accepts_valid_artifact() {
+    fn recursive_block_v1_registry_direct_verifier_requires_semantic_replay() {
         let registry = VerifierRegistry::default();
         let verifier_profile = backend_recursive_block_profile_v1();
         let verifier = registry
@@ -4500,14 +4439,17 @@ mod tests {
             verifier_profile,
             artifact_bytes: bytes,
         };
-        let report = verifier
+        let err = verifier
             .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect("recursive verifier should accept a structurally valid artifact");
-        assert_eq!(report.tx_count, 1);
+            .expect_err("registry recursive_block_v1 verifier must require semantic replay");
+        assert_eq!(
+            recursive_block_direct_verifier_error_label(&err),
+            "requires_semantic_replay"
+        );
     }
 
     #[test]
-    fn recursive_block_v1_verifier_rejects_tx_count_mismatch() {
+    fn recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch() {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV1,
         };
@@ -4521,12 +4463,15 @@ mod tests {
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
-            .expect_err("tx_count mismatch");
-        assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+            .expect_err("direct recursive_block_v1 verifier must require semantic replay");
+        assert_eq!(
+            recursive_block_direct_verifier_error_label(&err),
+            "requires_semantic_replay"
+        );
     }
 
     #[test]
-    fn recursive_block_v2_verifier_rejects_tx_count_mismatch() {
+    fn recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch() {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV2,
         };
@@ -4540,7 +4485,10 @@ mod tests {
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
-            .expect_err("tx_count mismatch");
-        assert!(matches!(err, ProofError::AggregationProofInputsMismatch(_)));
+            .expect_err("direct recursive_block_v2 verifier must require semantic replay");
+        assert_eq!(
+            recursive_block_direct_verifier_error_label(&err),
+            "requires_semantic_replay"
+        );
     }
 }

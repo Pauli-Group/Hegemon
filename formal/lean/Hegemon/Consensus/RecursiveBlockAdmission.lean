@@ -20,6 +20,10 @@ inductive ArtifactReject where
   | publicReplayMismatch
 deriving DecidableEq, Repr
 
+inductive DirectVerifierReject where
+  | requiresSemanticReplay
+deriving DecidableEq, Repr
+
 structure ArtifactAdmissionInput where
   expectedKind : ArtifactKind
   envelopeKind : ArtifactKind
@@ -69,6 +73,9 @@ def artifactPreconditions (input : ArtifactAdmissionInput) : Bool :=
 
 def artifactAccepts (input : ArtifactAdmissionInput) : Bool :=
   evaluateArtifactRejection input = none
+
+def evaluateDirectVerifierRejection (_kind : ArtifactKind) : Option DirectVerifierReject :=
+  some DirectVerifierReject.requiresSemanticReplay
 
 theorem artifact_accepts_iff_preconditions (input : ArtifactAdmissionInput) :
     artifactAccepts input = artifactPreconditions input := by
@@ -148,6 +155,16 @@ theorem kind_precedes_decode_failure :
           artifactDecoded := false
         } =
       some ArtifactReject.artifactKindMismatch := by
+  native_decide
+
+theorem direct_v1_requires_semantic_replay :
+    evaluateDirectVerifierRejection ArtifactKind.recursiveBlockV1 =
+      some DirectVerifierReject.requiresSemanticReplay := by
+  native_decide
+
+theorem direct_v2_requires_semantic_replay :
+    evaluateDirectVerifierRejection ArtifactKind.recursiveBlockV2 =
+      some DirectVerifierReject.requiresSemanticReplay := by
   native_decide
 
 end RecursiveBlockAdmission

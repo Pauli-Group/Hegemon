@@ -22,6 +22,10 @@ def artifactRejectJson : Option ArtifactReject -> String
   | some ArtifactReject.statementCommitmentMismatch => "\"statement_commitment_mismatch\""
   | some ArtifactReject.publicReplayMismatch => "\"public_replay_mismatch\""
 
+def directVerifierRejectJson : Option DirectVerifierReject -> String
+  | none => "null"
+  | some DirectVerifierReject.requiresSemanticReplay => "\"requires_semantic_replay\""
+
 def artifactCaseJson (name : String) (input : ArtifactAdmissionInput) : String :=
   let rejection := evaluateArtifactRejection input
   "    {\n"
@@ -38,6 +42,15 @@ def artifactCaseJson (name : String) (input : ArtifactAdmissionInput) : String :
     ++ "      \"public_replay_matches\": " ++ boolJson input.publicReplayMatches ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
     ++ "      \"expected_rejection\": " ++ artifactRejectJson rejection ++ "\n"
+    ++ "    }"
+
+def directVerifierCaseJson (name : String) (kind : ArtifactKind) : String :=
+  let rejection := evaluateDirectVerifierRejection kind
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"kind\": \"" ++ artifactKindJson kind ++ "\",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
+    ++ "      \"expected_rejection\": " ++ directVerifierRejectJson rejection ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=
@@ -65,6 +78,12 @@ def vectorJson : String :=
         envelopeKind := ArtifactKind.receiptRoot,
         artifactDecoded := false
       } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"direct_verifier_cases\": [\n"
+    ++ directVerifierCaseJson "direct-recursive-block-v1-requires-semantic-replay"
+      ArtifactKind.recursiveBlockV1 ++ ",\n"
+    ++ directVerifierCaseJson "direct-recursive-block-v2-requires-semantic-replay"
+      ArtifactKind.recursiveBlockV2 ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 
