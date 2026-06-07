@@ -89,6 +89,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T01:55:00Z) Added a Lean native receipt-root artifact parser and structural schedule kernel proving representative accept/reject facts for bounded leaf/fold counts, non-empty expected leaf agreement, `fold_count = leaf_count - 1`, exact fold challenge count, exact parent-row dimensions, trailing-byte rejection, and truncation rejection.
 - [x] (2026-06-07T01:55:00Z) Added `gen_native_receipt_root_vectors`, a production `validate_native_receipt_root_artifact_structure_with_params` gate used by both native receipt-root verifier entry points before backend fold verification, a `superneo-hegemon` conformance test for Lean-generated receipt-root vectors, and a formal claim/blueprint node for the native receipt-root wire/schedule gate.
 - [x] (2026-06-07T02:05:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 20 claims, 18 production-eligible claims, 20 blueprint nodes, 44 edges, and 48 falsification cases. An exploratory broad `cargo test -p superneo-hegemon native_receipt_root_ -- --nocapture` run was interrupted after the heavier native fixture path ran too long and is not counted as validation evidence for this revision.
+- [x] (2026-06-07T02:06:00Z) Validated branch tip `25dd5365` on `hegemon-dev`: the expanded formal-core gate passed with native receipt-root parser/schedule conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404526`, mining advanced from height `404538` to `404539` in a polling check, `scripts/test-node.sh wallet-send` passed, NTP was synchronized, and final service check was active at height `404545`.
 
 ## Surprises & Discoveries
 
@@ -235,6 +236,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now includes native receipt-root parser/schedule conformance.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding native receipt-root wire/schedule gating, ran `lean_generated_native_receipt_root_vectors_match_production`, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 48`.
+
+- Observation: `hegemon-dev` can run the native receipt-root parser/schedule proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `25dd5365` built 77 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction statement-hash, native backend reference vectors, native tx-leaf artifact conformance, and native receipt-root conformance, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 48`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404526`; NTP was synchronized; a bounded polling mining check advanced from `404538` to `404539` in 14 seconds; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404545`.
+
+- Discovery: Fixed-window PoW sampling is weak evidence on `hegemon-dev`.
+  Evidence: After the `25dd5365` restart, a 25-second sample stayed at height `404529`, while logs showed active PoW imports before and after the window and a polling-based check advanced from `404538` to `404539` in 14 seconds. Future runtime validation should prefer a bounded polling check over a fixed sleep.
 
 ## Decision Log
 
@@ -465,3 +472,5 @@ Revision note 2026-06-07T00:59:00Z: Added the Lean native tx-leaf artifact wire 
 Revision note 2026-06-07T01:10:00Z: Recorded `hegemon-dev` validation for commit `8c293045`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
 
 Revision note 2026-06-07T02:05:00Z: Added the Lean native receipt-root parser/schedule kernel, generated receipt-root vectors, production structural validator before backend fold verification, superneo-hegemon conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-07T02:06:00Z: Recorded `hegemon-dev` validation for commit `25dd5365`, including full formal-core, release rebuild, service restart, smoke RPC checks, NTP synchronization, polling-based mining height advance, wallet submission compatibility, and final active service status.
