@@ -368,6 +368,34 @@
       "residual_risks": []
     },
     {
+      "id": "bridge.header-mmr-opening-shape",
+      "component": "bridge header MMR opening shape",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean header-MMR kernel proves executable opening-shape facts for peak ranges, peak selection, leaf bounds, sibling-count requirements, local-index derivation, and left/right path orientation; generated Lean vectors are checked against the production helper used by standalone and long-range bridge MMR opening verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents header MMR opening shape and path orientation over already-computed header and sibling hashes.",
+        "Generated Lean conformance vectors cover valid singleton, multi-peak, and four-leaf orientation cases plus context mismatch, leaf-out-of-range, empty leaf-set, peak-count mismatch, and sibling-count mismatch rejection.",
+        "The theorem covers executable MMR opening shape semantics, not SHA-256 implementation equivalence, MMR parent/root hash security, FlyClient sampling soundness, or complete long-range light-client soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmr.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_header_mmr_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "component": "bridge long-range light-client proof shape",
       "claim_class": "lean_theorem",
@@ -378,7 +406,7 @@
       "assumptions": [
         "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
         "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
-        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
+        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Bridge/LongRange.lean",

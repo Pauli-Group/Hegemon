@@ -671,6 +671,57 @@
       "scope_boundary": "This node proves and vector-checks schedule admission semantics only. It does not prove social upgrade governance, protocol manifest correctness, proof-system soundness for each version, transaction-proof backend security, or full native-node equivalence."
     },
     {
+      "id": "bridge.header-mmr-opening-shape",
+      "claim_id": "bridge.header-mmr-opening-shape",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean header-MMR opening-shape transition, valid openings must have a matching context, in-range leaf index, peak count equal to the leaf-count peak decomposition, sibling count equal to the selected peak height, and path orientation bits derived from the leaf's local index.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.HeaderMmr.peak_ranges_six`, `Hegemon.Bridge.HeaderMmr.valid_shape_accepts`, `Hegemon.Bridge.HeaderMmr.singleton_shape_accepts`, `Hegemon.Bridge.HeaderMmr.four_leaf_left_orientation`, `Hegemon.Bridge.HeaderMmr.four_leaf_right_orientation`, `Hegemon.Bridge.HeaderMmr.rejects_context_mismatch`, `Hegemon.Bridge.HeaderMmr.rejects_leaf_out_of_range`, `Hegemon.Bridge.HeaderMmr.rejects_empty_leaf_set`, `Hegemon.Bridge.HeaderMmr.rejects_peak_count_mismatch`, and `Hegemon.Bridge.HeaderMmr.rejects_sibling_count_mismatch` prove representative facts about the MMR opening shape table. `gen_bridge_header_mmr_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks those vectors against `evaluate_header_mmr_opening_shape`, the production helper used by `verify_header_mmr_opening` and the long-range verifier's shared MMR context path.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmr.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmr.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for header MMR opening shape and path orientation. SHA-256/MMR hash binding and FlyClient sampling soundness remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-header-mmr-shape-theorem",
+          "description": "Removing or weakening the header MMR opening-shape theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-header-mmr-shape-conformance",
+          "description": "Changing production MMR opening shape admission or path orientation away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_header_mmr_shape_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-header-mmr-shape-gate",
+          "description": "The release formal-core wrapper must generate header MMR vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks header MMR opening shape and left/right path orientation over already-computed hashes only. It does not prove SHA-256 implementation equivalence, MMR parent/root hash security, FlyClient sampling soundness, bridge message-root hashing, external-chain verifier behavior, or complete long-range light-client soundness."
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "claim_id": "bridge.long-range-proof-shape",
       "kind": "target_claim",
@@ -678,6 +729,7 @@
       "informal_argument": "The Lean theorems `Hegemon.Bridge.LongRange.valid_shape_accepts`, `Hegemon.Bridge.LongRange.rejects_bad_verifier_hash`, `Hegemon.Bridge.LongRange.rejects_message_count_mismatch`, `Hegemon.Bridge.LongRange.rejects_tip_mmr_len_mismatch`, `Hegemon.Bridge.LongRange.rejects_tip_not_after_message`, `Hegemon.Bridge.LongRange.rejects_message_not_after_trusted`, `Hegemon.Bridge.LongRange.rejects_message_opening_leaf_mismatch`, `Hegemon.Bridge.LongRange.rejects_message_index_oob`, `Hegemon.Bridge.LongRange.rejects_message_source_chain_mismatch`, `Hegemon.Bridge.LongRange.rejects_message_source_height_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_count_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_height_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_opening_leaf_mismatch`, `Hegemon.Bridge.LongRange.rejects_under_confirmed`, `Hegemon.Bridge.LongRange.rejects_insufficient_tip_work`, and `Hegemon.Bridge.LongRange.rejects_output_mismatch` prove representative executable facts about the long-range bridge admission table. `gen_bridge_long_range_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks those vectors against `evaluate_long_range_proof_shape`, the production helper called by `verify_hegemon_long_range_proof_inner` before bridge outputs are accepted.",
       "depends_on": [
         "consensus.pow-admission",
+        "bridge.header-mmr-opening-shape",
         "bridge.message-root-replay",
         "release.dependency-waivers"
       ],
@@ -720,7 +772,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
+      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape."
     },
     {
       "id": "consensus.self-contained-proof-policy",

@@ -185,6 +185,25 @@ pub struct LongRangeProofShapeInput<'a> {
     pub expected_output_matches: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct HeaderMmrOpeningShapeInput {
+    pub context_matches: bool,
+    pub leaf_index: u64,
+    pub leaf_count: u64,
+    pub sibling_count: usize,
+    pub peak_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderMmrOpeningShape {
+    pub peak_index: usize,
+    pub peak_start: u64,
+    pub peak_size: u64,
+    pub expected_siblings: usize,
+    pub local_index: u64,
+    pub current_is_left: Vec<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct RiscZeroBridgeReceiptV1 {
     pub proof_system_id: Hash32,
@@ -956,35 +975,27 @@ pub fn verify_header_mmr_opening(
     leaf_hash: Hash32,
     opening: &HeaderMmrOpeningV1,
 ) -> Result<(), LightClientError> {
-    if opening.leaf_index >= opening.leaf_count {
-        return Err(LightClientError::HeaderMmrLeafOutOfRange);
-    }
-    let ranges = header_mmr_peak_ranges(opening.leaf_count);
-    if ranges.len() != opening.peak_hashes.len() {
-        return Err(LightClientError::HeaderMmrPeakMismatch);
-    }
-    let peak_index = ranges
-        .iter()
-        .position(|(start, size)| {
-            opening.leaf_index >= *start && opening.leaf_index < start.saturating_add(*size)
-        })
-        .ok_or(LightClientError::HeaderMmrLeafOutOfRange)?;
-    let (peak_start, peak_size) = ranges[peak_index];
-    let expected_siblings = peak_size.trailing_zeros() as usize;
-    if opening.sibling_hashes.len() != expected_siblings {
-        return Err(LightClientError::HeaderMmrOpeningMismatch);
-    }
+    let shape = evaluate_header_mmr_opening_shape(&HeaderMmrOpeningShapeInput {
+        context_matches: true,
+        leaf_index: opening.leaf_index,
+        leaf_count: opening.leaf_count,
+        sibling_count: opening.sibling_hashes.len(),
+        peak_count: opening.peak_hashes.len(),
+    })?;
     let mut computed = leaf_hash;
-    let mut local_index = opening.leaf_index - peak_start;
-    for (level, sibling) in opening.sibling_hashes.iter().enumerate() {
-        computed = if local_index & 1 == 0 {
+    for (level, (sibling, current_is_left)) in opening
+        .sibling_hashes
+        .iter()
+        .zip(shape.current_is_left.iter())
+        .enumerate()
+    {
+        computed = if *current_is_left {
             header_mmr_parent_hash((level + 1) as u32, computed, *sibling)
         } else {
             header_mmr_parent_hash((level + 1) as u32, *sibling, computed)
         };
-        local_index >>= 1;
     }
-    if computed != opening.peak_hashes[peak_index] {
+    if computed != opening.peak_hashes[shape.peak_index] {
         return Err(LightClientError::HeaderMmrOpeningMismatch);
     }
     if header_mmr_root_from_peaks(opening.leaf_count, &opening.peak_hashes) != root {
@@ -1021,35 +1032,28 @@ fn verify_header_mmr_opening_in_context(
     leaf_hash: Hash32,
     opening: &HeaderMmrOpeningV1,
 ) -> Result<(), LightClientError> {
-    if opening.leaf_count != context.leaf_count || opening.peak_hashes != context.peak_hashes {
-        return Err(LightClientError::HeaderMmrMismatch);
-    }
-    if opening.leaf_index >= opening.leaf_count {
-        return Err(LightClientError::HeaderMmrLeafOutOfRange);
-    }
-    let peak_index = context
-        .ranges
-        .iter()
-        .position(|(start, size)| {
-            opening.leaf_index >= *start && opening.leaf_index < start.saturating_add(*size)
-        })
-        .ok_or(LightClientError::HeaderMmrLeafOutOfRange)?;
-    let (peak_start, peak_size) = context.ranges[peak_index];
-    let expected_siblings = peak_size.trailing_zeros() as usize;
-    if opening.sibling_hashes.len() != expected_siblings {
-        return Err(LightClientError::HeaderMmrOpeningMismatch);
-    }
+    let shape = evaluate_header_mmr_opening_shape(&HeaderMmrOpeningShapeInput {
+        context_matches: opening.leaf_count == context.leaf_count
+            && opening.peak_hashes == context.peak_hashes,
+        leaf_index: opening.leaf_index,
+        leaf_count: opening.leaf_count,
+        sibling_count: opening.sibling_hashes.len(),
+        peak_count: context.ranges.len(),
+    })?;
     let mut computed = leaf_hash;
-    let mut local_index = opening.leaf_index - peak_start;
-    for (level, sibling) in opening.sibling_hashes.iter().enumerate() {
-        computed = if local_index & 1 == 0 {
+    for (level, (sibling, current_is_left)) in opening
+        .sibling_hashes
+        .iter()
+        .zip(shape.current_is_left.iter())
+        .enumerate()
+    {
+        computed = if *current_is_left {
             header_mmr_parent_hash((level + 1) as u32, computed, *sibling)
         } else {
             header_mmr_parent_hash((level + 1) as u32, *sibling, computed)
         };
-        local_index >>= 1;
     }
-    if computed != context.peak_hashes[peak_index] {
+    if computed != context.peak_hashes[shape.peak_index] {
         return Err(LightClientError::HeaderMmrOpeningMismatch);
     }
     Ok(())
@@ -1361,6 +1365,47 @@ pub fn evaluate_long_range_proof_shape(
         return Err(LightClientError::ReceiptOutputMismatch);
     }
     Ok(confirmations_checked)
+}
+
+pub fn evaluate_header_mmr_opening_shape(
+    input: &HeaderMmrOpeningShapeInput,
+) -> Result<HeaderMmrOpeningShape, LightClientError> {
+    if !input.context_matches {
+        return Err(LightClientError::HeaderMmrMismatch);
+    }
+    if input.leaf_index >= input.leaf_count {
+        return Err(LightClientError::HeaderMmrLeafOutOfRange);
+    }
+    let ranges = header_mmr_peak_ranges(input.leaf_count);
+    if ranges.len() != input.peak_count {
+        return Err(LightClientError::HeaderMmrPeakMismatch);
+    }
+    let peak_index = ranges
+        .iter()
+        .position(|(start, size)| {
+            input.leaf_index >= *start && input.leaf_index < start.saturating_add(*size)
+        })
+        .ok_or(LightClientError::HeaderMmrLeafOutOfRange)?;
+    let (peak_start, peak_size) = ranges[peak_index];
+    let expected_siblings = peak_size.trailing_zeros() as usize;
+    if input.sibling_count != expected_siblings {
+        return Err(LightClientError::HeaderMmrOpeningMismatch);
+    }
+    let local_index = input.leaf_index - peak_start;
+    let mut shifted = local_index;
+    let mut current_is_left = Vec::with_capacity(expected_siblings);
+    for _ in 0..expected_siblings {
+        current_is_left.push(shifted & 1 == 0);
+        shifted >>= 1;
+    }
+    Ok(HeaderMmrOpeningShape {
+        peak_index,
+        peak_start,
+        peak_size,
+        expected_siblings,
+        local_index,
+        current_is_left,
+    })
 }
 
 fn verify_hegemon_long_range_proof_inner(
@@ -1691,6 +1736,13 @@ mod tests {
         long_range_shape_cases: Vec<LeanLongRangeShapeCase>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanHeaderMmrShapeVectorFile {
+        schema_version: u32,
+        header_mmr_shape_cases: Vec<LeanHeaderMmrShapeCase>,
+    }
+
     #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1740,6 +1792,26 @@ mod tests {
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_confirmations_checked: Option<u32>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanHeaderMmrShapeCase {
+        name: String,
+        context_matches: bool,
+        leaf_index: u64,
+        leaf_count: u64,
+        sibling_count: usize,
+        peak_count: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_peak_index: Option<usize>,
+        expected_peak_start: Option<u64>,
+        expected_peak_size: Option<u64>,
+        expected_siblings: Option<usize>,
+        expected_local_index: Option<u64>,
+        expected_current_is_left: Option<Vec<bool>>,
     }
 
     fn checkpoint(pow_bits: u32) -> TrustedCheckpointV1 {
@@ -1990,13 +2062,99 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lean_generated_header_mmr_shape_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean header MMR shape vectors");
+        let vectors: LeanHeaderMmrShapeVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean header MMR shape vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.header_mmr_shape_cases.is_empty(),
+            "Lean header MMR shape cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.header_mmr_shape_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_header_mmr_shape_case(case);
+        }
+    }
+
+    fn verify_lean_header_mmr_shape_case(case: &LeanHeaderMmrShapeCase) {
+        let input = HeaderMmrOpeningShapeInput {
+            context_matches: case.context_matches,
+            leaf_index: case.leaf_index,
+            leaf_count: case.leaf_count,
+            sibling_count: case.sibling_count,
+            peak_count: case.peak_count,
+        };
+        let actual = evaluate_header_mmr_opening_shape(&input);
+        match (case.expected_valid, case.expected_rejection.as_deref()) {
+            (true, None) => {
+                let shape = actual.expect("Lean expected valid MMR shape");
+                assert_eq!(
+                    Some(shape.peak_index),
+                    case.expected_peak_index,
+                    "{} peak index drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(shape.peak_start),
+                    case.expected_peak_start,
+                    "{} peak start drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(shape.peak_size),
+                    case.expected_peak_size,
+                    "{} peak size drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(shape.expected_siblings),
+                    case.expected_siblings,
+                    "{} sibling count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(shape.local_index),
+                    case.expected_local_index,
+                    "{} local index drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(shape.current_is_left),
+                    case.expected_current_is_left.clone(),
+                    "{} path orientation drifted from Lean spec",
+                    case.name
+                );
+            }
+            (false, Some(expected_rejection)) => assert_eq!(
+                actual,
+                Err(light_client_error_from_lean(expected_rejection)),
+                "{}",
+                case.name
+            ),
+            _ => panic!("{} has inconsistent Lean validity metadata", case.name),
+        }
+    }
+
     fn light_client_error_from_lean(raw: &str) -> LightClientError {
         match raw {
             "verifier_hash_mismatch" => LightClientError::VerifierHashMismatch,
             "header_message_count_mismatch" => LightClientError::HeaderMessageCountMismatch,
             "header_mmr_mismatch" => LightClientError::HeaderMmrMismatch,
+            "header_mmr_leaf_out_of_range" => LightClientError::HeaderMmrLeafOutOfRange,
             "long_range_proof_mismatch" => LightClientError::LongRangeProofMismatch,
             "header_mmr_opening_mismatch" => LightClientError::HeaderMmrOpeningMismatch,
+            "header_mmr_peak_mismatch" => LightClientError::HeaderMmrPeakMismatch,
             "message_index_out_of_bounds" => LightClientError::MessageIndexOutOfBounds,
             "receipt_output_mismatch" => LightClientError::ReceiptOutputMismatch,
             "flyclient_sample_mismatch" => LightClientError::FlyClientSampleMismatch,

@@ -1,5 +1,6 @@
 import Hegemon.Bytes
 import Hegemon.Bridge.Encoding
+import Hegemon.Bridge.HeaderMmr
 import Hegemon.Bridge.LongRange
 import Hegemon.Bridge.MessageRoot
 import Hegemon.Bridge.Replay
