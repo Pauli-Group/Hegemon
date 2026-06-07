@@ -1625,6 +1625,65 @@
       "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.block-commitment-admission",
+      "claim_id": "native.block-commitment-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean block commitment-admission transition, native block admission accepts only when the derived tx count, state root, kernel root, nullifier root, action root, bridge message root, bridge message count, header-MMR root, header-MMR length, and supply digest all agree with the claimed block header fields; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
+      "depends_on": [
+        "native.block-action-hash-admission",
+        "native.block-action-ordering",
+        "shielded.nullifier-state",
+        "bridge.message-root-replay",
+        "bridge.header-mmr-transcript-binding",
+        "consensus.supply-digest-accounting",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native derived block commitment admission. Scope is equality of already-derived roots, counts, header history, and checked supply digest."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-commitment-admission-theorem",
+          "description": "Removing or weakening the block commitment-admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-block-commitment-admission-conformance",
+          "description": "Changing the production block commitment-admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-counterfeit-body-commitment-regression",
+          "description": "Native announced-block import must reject internally consistent PoW headers whose claimed body commitment fields do not match derived roots/counts/supply.",
+          "gate": "cargo test -p hegemon-node announced_block_rejects_counterfeit_body_commitments --lib --no-default-features"
+        },
+        {
+          "id": "native-replay-message-commitment-regression",
+          "description": "Native branch replay must reject persisted block records whose bridge message commitment no longer matches decoded actions.",
+          "gate": "cargo test -p hegemon-node replay_rejects_counterfeit_message_commitment --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the native block derived commitment-admission table only. It does not prove commitment-tree hash security, BLAKE3 bridge message-root security or implementation equivalence, header-MMR hash binding, PoW threshold validity, full action payload validation, tx proof soundness, supply economics, or complete native-node equivalence."
+    },
+    {
       "id": "bridge.message-root-replay",
       "claim_id": "bridge.message-root-replay",
       "kind": "target_claim",

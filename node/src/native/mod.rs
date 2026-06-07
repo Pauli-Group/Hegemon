@@ -339,6 +339,51 @@ impl NativeActionHashAdmissionRejection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBlockCommitmentAdmissionInput {
+    tx_count_matches: bool,
+    state_root_matches: bool,
+    kernel_root_matches: bool,
+    nullifier_root_matches: bool,
+    extrinsics_root_matches: bool,
+    message_root_matches: bool,
+    message_count_matches: bool,
+    header_mmr_root_matches: bool,
+    header_mmr_len_matches: bool,
+    supply_digest_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBlockCommitmentAdmissionRejection {
+    TxCountMismatch,
+    StateRootMismatch,
+    KernelRootMismatch,
+    NullifierRootMismatch,
+    ExtrinsicsRootMismatch,
+    MessageRootMismatch,
+    MessageCountMismatch,
+    HeaderMmrRootMismatch,
+    HeaderMmrLenMismatch,
+    SupplyDigestMismatch,
+}
+
+impl NativeBlockCommitmentAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::TxCountMismatch => "tx_count_mismatch",
+            Self::StateRootMismatch => "state_root_mismatch",
+            Self::KernelRootMismatch => "kernel_root_mismatch",
+            Self::NullifierRootMismatch => "nullifier_root_mismatch",
+            Self::ExtrinsicsRootMismatch => "extrinsics_root_mismatch",
+            Self::MessageRootMismatch => "message_root_mismatch",
+            Self::MessageCountMismatch => "message_count_mismatch",
+            Self::HeaderMmrRootMismatch => "header_mmr_root_mismatch",
+            Self::HeaderMmrLenMismatch => "header_mmr_len_mismatch",
+            Self::SupplyDigestMismatch => "supply_digest_mismatch",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct SubmitActionRpcRequest {
     binding_circuit: u16,
@@ -602,15 +647,34 @@ impl NativeNode {
         let preview_bridge_messages = bridge_messages_from_actions(&actions, work.height);
         let preview_message_count = u32::try_from(preview_bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
-        if preview_tx_count != work.tx_count
-            || preview_state_root != work.state_root
-            || preview_kernel_root != work.kernel_root
-            || preview_nullifier_root != work.nullifier_root
-            || preview_extrinsics_root != work.extrinsics_root
-            || bridge_message_root(&preview_bridge_messages) != work.message_root
-            || preview_message_count != work.message_count
-        {
-            return Ok(None);
+        let preview_message_root = bridge_message_root(&preview_bridge_messages);
+        let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
+        let commitment_admission =
+            evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+                tx_count_matches: preview_tx_count == work.tx_count,
+                state_root_matches: preview_state_root == work.state_root,
+                kernel_root_matches: preview_kernel_root == work.kernel_root,
+                nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
+                extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
+                message_root_matches: preview_message_root == work.message_root,
+                message_count_matches: preview_message_count == work.message_count,
+                header_mmr_root_matches: work.header_mmr_root
+                    == header_mmr_root_from_hashes(&expected_header_history),
+                header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
+                supply_digest_matches: true,
+            });
+        match commitment_admission {
+            Ok(()) => {}
+            Err(
+                rejection @ (NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch
+                | NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch),
+            ) => {
+                return Err(native_block_commitment_admission_error(
+                    "native mined block commitment mismatch",
+                    rejection,
+                ));
+            }
+            Err(_) => return Ok(None),
         }
         let supply_digest =
             advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
@@ -649,12 +713,6 @@ impl NativeNode {
             tx_count: work.tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
         };
-        let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
-        if meta.header_mmr_root != header_mmr_root_from_hashes(&expected_header_history)
-            || meta.header_mmr_len != expected_header_history.len() as u64
-        {
-            return Err(anyhow!("native mined block header MMR mismatch"));
-        }
         verify_native_pow_meta(&state.best, &meta)?;
 
         persist_block(&self.meta_tree, &self.height_tree, &self.block_tree, &meta)?;
@@ -679,11 +737,6 @@ impl NativeNode {
         };
         validate_announced_block(&parent, &meta)?;
         let expected_header_history = self.header_hashes_to_hash(parent.hash)?;
-        if meta.header_mmr_root != header_mmr_root_from_hashes(&expected_header_history)
-            || meta.header_mmr_len != expected_header_history.len() as u64
-        {
-            return Err(anyhow!("announced block header MMR mismatch"));
-        }
 
         let parent_state = if parent.hash == state.best.hash {
             NativeState {
@@ -701,30 +754,36 @@ impl NativeNode {
         let actions = decode_block_actions(&meta)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&parent_state, &actions)?;
-        if tx_count != meta.tx_count {
-            return Err(anyhow!("announced block action count mismatch"));
-        }
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let bridge_messages = bridge_messages_from_actions(&actions, meta.height);
         let message_root = bridge_message_root(&bridge_messages);
-        if state_root != meta.state_root
-            || kernel_root != meta.kernel_root
-            || nullifier_root != meta.nullifier_root
-            || extrinsics_root != meta.extrinsics_root
-            || message_root != meta.message_root
-            || bridge_messages.len() as u32 != meta.message_count
-        {
-            return Err(anyhow!("announced block state transition mismatch"));
-        }
+        let message_count = u32::try_from(bridge_messages.len())
+            .map_err(|_| anyhow!("native bridge message count overflow"))?;
+        let expected_supply =
+            advance_native_supply_digest(parent.supply_digest, &actions, meta.height)?;
+        evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+            tx_count_matches: tx_count == meta.tx_count,
+            state_root_matches: state_root == meta.state_root,
+            kernel_root_matches: kernel_root == meta.kernel_root,
+            nullifier_root_matches: nullifier_root == meta.nullifier_root,
+            extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
+            message_root_matches: message_root == meta.message_root,
+            message_count_matches: message_count == meta.message_count,
+            header_mmr_root_matches: meta.header_mmr_root
+                == header_mmr_root_from_hashes(&expected_header_history),
+            header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
+            supply_digest_matches: meta.supply_digest == expected_supply,
+        })
+        .map_err(|rejection| {
+            native_block_commitment_admission_error(
+                "announced block commitment mismatch",
+                rejection,
+            )
+        })?;
         if !actions.is_empty() {
             validate_block_actions_locked(&parent_state, &actions)?;
             validate_coinbase_accounting(&actions, meta.height)?;
             verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
-        }
-        let expected_supply =
-            advance_native_supply_digest(parent.supply_digest, &actions, meta.height)?;
-        if meta.supply_digest != expected_supply {
-            return Err(anyhow!("announced block supply digest mismatch"));
         }
         persist_block_record(&self.block_tree, &meta)?;
         if native_meta_better_than(&meta, &state.best) {
@@ -826,24 +885,40 @@ impl NativeNode {
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
-        for meta in chain.into_iter().skip(1) {
+        for (idx, meta) in chain.iter().cloned().enumerate().skip(1) {
             let actions = decode_block_actions(&meta)?;
             validate_block_actions_locked(&state, &actions)?;
             let (state_root, nullifier_root, extrinsics_root, tx_count) =
                 preview_pending_roots(&state, &actions)?;
-            if tx_count != meta.tx_count
-                || state_root != meta.state_root
-                || nullifier_root != meta.nullifier_root
-                || extrinsics_root != meta.extrinsics_root
-            {
-                return Err(anyhow!("native replay state transition mismatch"));
-            }
+            let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+            let bridge_messages = bridge_messages_from_actions(&actions, meta.height);
+            let message_root = bridge_message_root(&bridge_messages);
+            let message_count = u32::try_from(bridge_messages.len())
+                .map_err(|_| anyhow!("native bridge message count overflow"))?;
+            let expected_header_history: Vec<Hash32> =
+                chain[..idx].iter().map(|header| header.hash).collect();
             validate_coinbase_accounting(&actions, meta.height)?;
             let expected_supply =
                 advance_native_supply_digest(state.best.supply_digest, &actions, meta.height)?;
-            if meta.supply_digest != expected_supply {
-                return Err(anyhow!("native replay supply digest mismatch"));
-            }
+            evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+                tx_count_matches: tx_count == meta.tx_count,
+                state_root_matches: state_root == meta.state_root,
+                kernel_root_matches: kernel_root == meta.kernel_root,
+                nullifier_root_matches: nullifier_root == meta.nullifier_root,
+                extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
+                message_root_matches: message_root == meta.message_root,
+                message_count_matches: message_count == meta.message_count,
+                header_mmr_root_matches: meta.header_mmr_root
+                    == header_mmr_root_from_hashes(&expected_header_history),
+                header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
+                supply_digest_matches: meta.supply_digest == expected_supply,
+            })
+            .map_err(|rejection| {
+                native_block_commitment_admission_error(
+                    "native replay commitment mismatch",
+                    rejection,
+                )
+            })?;
             apply_actions_to_memory(&mut state, &actions)?;
             state.best = meta;
         }
@@ -3537,6 +3612,41 @@ fn native_action_hash_admission_error(
     }
 }
 
+fn evaluate_native_block_commitment_admission(
+    input: NativeBlockCommitmentAdmissionInput,
+) -> Result<(), NativeBlockCommitmentAdmissionRejection> {
+    if !input.tx_count_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::TxCountMismatch)
+    } else if !input.state_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::StateRootMismatch)
+    } else if !input.kernel_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::KernelRootMismatch)
+    } else if !input.nullifier_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::NullifierRootMismatch)
+    } else if !input.extrinsics_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::ExtrinsicsRootMismatch)
+    } else if !input.message_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::MessageRootMismatch)
+    } else if !input.message_count_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::MessageCountMismatch)
+    } else if !input.header_mmr_root_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch)
+    } else if !input.header_mmr_len_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch)
+    } else if !input.supply_digest_matches {
+        Err(NativeBlockCommitmentAdmissionRejection::SupplyDigestMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_block_commitment_admission_error(
+    context: &'static str,
+    rejection: NativeBlockCommitmentAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
 fn block_action_hashes_match(actions: &[PendingAction]) -> bool {
     actions
         .iter()
@@ -4919,6 +5029,31 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockCommitmentAdmissionVectorFile {
+        schema_version: u32,
+        block_commitment_admission_cases: Vec<LeanBlockCommitmentAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockCommitmentAdmissionCase {
+        name: String,
+        tx_count_matches: bool,
+        state_root_matches: bool,
+        kernel_root_matches: bool,
+        nullifier_root_matches: bool,
+        extrinsics_root_matches: bool,
+        message_root_matches: bool,
+        message_count_matches: bool,
+        header_mmr_root_matches: bool,
+        header_mmr_len_matches: bool,
+        supply_digest_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -5276,6 +5411,70 @@ mod tests {
         let err = validate_announced_block(&parent, &future)
             .expect_err("future-dated block should be rejected");
         assert!(err.to_string().contains("future skew"));
+    }
+
+    #[test]
+    fn announced_block_rejects_counterfeit_body_commitments() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let cases = [
+            (TestCommitmentMutation::StateRoot, "state_root_mismatch"),
+            (TestCommitmentMutation::KernelRoot, "kernel_root_mismatch"),
+            (
+                TestCommitmentMutation::NullifierRoot,
+                "nullifier_root_mismatch",
+            ),
+            (
+                TestCommitmentMutation::ExtrinsicsRoot,
+                "extrinsics_root_mismatch",
+            ),
+            (TestCommitmentMutation::MessageRoot, "message_root_mismatch"),
+            (
+                TestCommitmentMutation::MessageCount,
+                "message_count_mismatch",
+            ),
+            (
+                TestCommitmentMutation::SupplyDigest,
+                "supply_digest_mismatch",
+            ),
+        ];
+
+        for (idx, (mutation, expected)) in cases.into_iter().enumerate() {
+            let block =
+                mined_empty_child_with_commitment_mutation(&parent, pow_bits, idx as u64, mutation);
+            let err = node
+                .import_announced_block(block)
+                .expect_err("counterfeit body commitment should be rejected");
+            assert!(
+                err.to_string().contains(expected),
+                "{mutation:?} should reject with {expected}, got {err}"
+            );
+        }
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
+    fn replay_rejects_counterfeit_message_commitment() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let block = mined_empty_child_with_commitment_mutation(
+            &parent,
+            pow_bits,
+            0,
+            TestCommitmentMutation::MessageCount,
+        );
+        persist_block_record(&node.block_tree, &block).expect("persist counterfeit block");
+
+        let err = node
+            .replay_state_to_hash(block.hash)
+            .expect_err("replay must reject counterfeit message commitment");
+        assert!(err.to_string().contains("message_count_mismatch"));
     }
 
     #[test]
@@ -5642,6 +5841,60 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native action-hash admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_block_commitment_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean block commitment admission vectors");
+        let vectors: LeanBlockCommitmentAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean block commitment vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.block_commitment_admission_cases.is_empty(),
+            "Lean block commitment admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.block_commitment_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_block_commitment_admission_case(case);
+        }
+    }
+
+    fn verify_lean_block_commitment_admission_case(case: &LeanBlockCommitmentAdmissionCase) {
+        let input = NativeBlockCommitmentAdmissionInput {
+            tx_count_matches: case.tx_count_matches,
+            state_root_matches: case.state_root_matches,
+            kernel_root_matches: case.kernel_root_matches,
+            nullifier_root_matches: case.nullifier_root_matches,
+            extrinsics_root_matches: case.extrinsics_root_matches,
+            message_root_matches: case.message_root_matches,
+            message_count_matches: case.message_count_matches,
+            header_mmr_root_matches: case.header_mmr_root_matches,
+            header_mmr_len_matches: case.header_mmr_len_matches,
+            supply_digest_matches: case.supply_digest_matches,
+        };
+        let actual_rejection = evaluate_native_block_commitment_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native block commitment admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native block commitment admission rejection drifted from Lean spec",
             case.name
         );
     }
@@ -6207,6 +6460,116 @@ mod tests {
             work_hash: seal.work_hash,
             cumulative_work,
             supply_digest: parent.supply_digest,
+            tx_count: 0,
+            action_bytes: Vec::new(),
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum TestCommitmentMutation {
+        StateRoot,
+        KernelRoot,
+        NullifierRoot,
+        ExtrinsicsRoot,
+        MessageRoot,
+        MessageCount,
+        SupplyDigest,
+    }
+
+    fn mined_empty_child_with_commitment_mutation(
+        parent: &NativeBlockMeta,
+        pow_bits: u32,
+        round: u64,
+        mutation: TestCommitmentMutation,
+    ) -> NativeBlockMeta {
+        let height = parent.height.saturating_add(1);
+        let timestamp_ms = parent.timestamp_ms.saturating_add(1);
+        let mut state_root = parent.state_root;
+        let mut kernel_root = parent.kernel_root;
+        let mut nullifier_root = parent.nullifier_root;
+        let mut extrinsics_root = actions_extrinsics_root(&[]);
+        let mut message_root = empty_bridge_message_root();
+        let mut message_count = 0;
+        let header_history = if parent.height == 0 {
+            vec![parent.hash]
+        } else if parent.height == 1 {
+            vec![parent.parent_hash, parent.hash]
+        } else {
+            vec![parent.hash]
+        };
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
+        let mut supply_digest = parent.supply_digest;
+
+        match mutation {
+            TestCommitmentMutation::StateRoot => state_root[0] ^= 1,
+            TestCommitmentMutation::KernelRoot => kernel_root[0] ^= 1,
+            TestCommitmentMutation::NullifierRoot => nullifier_root[0] ^= 1,
+            TestCommitmentMutation::ExtrinsicsRoot => extrinsics_root[0] ^= 1,
+            TestCommitmentMutation::MessageRoot => message_root[0] ^= 1,
+            TestCommitmentMutation::MessageCount => message_count = 1,
+            TestCommitmentMutation::SupplyDigest => supply_digest = supply_digest.saturating_add(1),
+        }
+
+        let pre_header = native_pow_header_from_parts(
+            height,
+            timestamp_ms,
+            parent.hash,
+            pow_bits,
+            [0u8; 32],
+            cumulative_work,
+            &state_root,
+            &kernel_root,
+            &nullifier_root,
+            &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            supply_digest,
+            0,
+        );
+        let pre_hash = pre_header.pre_hash();
+        let work = NativeWork {
+            height,
+            parent_hash: parent.hash,
+            pre_hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
+            tx_count: 0,
+            timestamp_ms,
+            pow_bits,
+        };
+        let seal = mine_native_round(work, round).expect("mutated seal");
+        NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            height,
+            hash: seal.work_hash,
+            parent_hash: parent.hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            timestamp_ms,
+            pow_bits,
+            nonce: seal.nonce,
+            work_hash: seal.work_hash,
+            cumulative_work,
+            supply_digest,
             tx_count: 0,
             action_bytes: Vec::new(),
         }

@@ -868,6 +868,35 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-commitment-admission",
+      "component": "native block derived commitment admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block commitment-admission kernel proves the executable table requiring derived tx-count, state-root, kernel-root, nullifier-root, action-root, bridge message-root/count, header-MMR root/length, and supply-digest agreement before native mined, announced, or replayed blocks are accepted; generated Lean vectors are checked against the production native admission helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats each derived commitment equality as a Boolean predicate; it does not prove commitment-tree hash security, bridge message-root collision resistance, header-MMR hash binding, or BLAKE3/Blake2 implementation equivalence.",
+        "Generated Lean conformance vectors cover valid admission, every single field mismatch, and rejection precedence when state-root and supply-digest mismatches are both present.",
+        "The theorem covers the executable native admission table after production code derives roots, counts, header history, and checked supply; it does not prove full action payload validation, tx proof soundness, PoW threshold validity, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_commitment_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node announced_block_rejects_counterfeit_body_commitments --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node replay_rejects_counterfeit_message_commitment --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "formal.native-tx-leaf-artifact-wire",
       "component": "native tx-leaf artifact wire grammar",
       "claim_class": "lean_theorem",

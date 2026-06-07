@@ -82,6 +82,9 @@ lean_exe gen_action_order_vectors where
 lean_exe gen_action_hash_admission_vectors where
   root := `Hegemon.Native.GenerateActionHashAdmissionVectors
 
+lean_exe gen_block_commitment_admission_vectors where
+  root := `Hegemon.Native.GenerateBlockCommitmentAdmissionVectors
+
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
 
