@@ -302,6 +302,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bridge/MessageRoot.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
         "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
+        "formal/lean/Hegemon/Consensus/AggregationV5.lean",
+        "formal/lean/Hegemon/Consensus/GenerateAggregationV5Vectors.lean",
         "formal/lean/Hegemon/Consensus/ForkChoice.lean",
         "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
         "formal/lean/Hegemon/Consensus/Header.lean",

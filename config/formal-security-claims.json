@@ -518,7 +518,7 @@
       "assumptions": [
         "The Lean model represents the consensus proof payload availability and route-shape decision before cryptographic artifact verification.",
         "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, missing recursive block artifacts, and receipt-root payload requirements.",
-        "The theorem covers executable proof policy admission semantics, not recursive proof cryptographic soundness, transaction leaf proof soundness, DA root derivation, or native backend security."
+        "The theorem covers executable proof policy admission semantics, not recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, DA root derivation, or native backend security. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
@@ -529,6 +529,33 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.aggregation-v5-header-admission",
+      "component": "self-contained aggregation proof V5 header admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean aggregation V5 kernel proves executable header-admission facts for version, format, packed-public-values encoding, statement-commitment binding, child/fan-in bounds, subtree tx-count binding, tree-level/root-level checks, binary-minimum merge fan-in, and packed public-input length agreement; generated Lean vectors are checked against the production consensus aggregation V5 header helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the cheap aggregation V5 payload header gate before representative child proof decoding and STARK batch verification.",
+        "Generated Lean conformance vectors cover valid singleton leaf and merge headers plus bad version, bad proof format, bad public-values encoding, bad statement-commitment length, statement-commitment mismatch, child-count underflow/overflow, subtree tx-count mismatch, tree-level mismatch, root-level overflow, leaf fan-in overflow, merge fan-in mismatch, and packed public-input length mismatch.",
+        "The theorem covers executable aggregation V5 header admission only. It does not prove postcard or zstd implementation equivalence, representative child proof decoding, transaction proof soundness, aggregation STARK soundness, packed public-value cryptographic binding, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/AggregationV5.lean",
+        "formal/lean/Hegemon/Consensus/GenerateAggregationV5Vectors.lean",
+        "consensus/src/aggregation/v5.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_AGGREGATION_V5_VECTORS=<generated-json> cargo test -p consensus lean_generated_aggregation_v5_header_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

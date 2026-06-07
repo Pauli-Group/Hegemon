@@ -25,6 +25,9 @@ lean_exe gen_bridge_header_mmr_transcript_vectors where
 lean_exe gen_bridge_flyclient_vectors where
   root := `Hegemon.Bridge.GenerateFlyClientVectors
 
+lean_exe gen_aggregation_v5_vectors where
+  root := `Hegemon.Consensus.GenerateAggregationV5Vectors
+
 lean_exe gen_shielded_vectors where
   root := `Hegemon.Shielded.GenerateVectors
 

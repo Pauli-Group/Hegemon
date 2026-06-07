@@ -152,7 +152,7 @@ fn merge_fan_in() -> usize {
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .unwrap_or(2)
-        .max(1)
+        .max(2)
 }
 
 fn leaf_count_for_tx_count(tx_count: usize) -> usize {
@@ -320,99 +320,132 @@ fn decode_leaf_representative_tx(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AggregationV5HeaderReject {
+    UnsupportedVersion,
+    UnsupportedProofFormat,
+    UnsupportedPublicValuesEncoding,
+    StatementCommitmentLength,
+    StatementCommitmentMismatch,
+    ChildCountOutOfRange,
+    SubtreeTxCountMismatch,
+    TreeLevelsMismatch,
+    RootLevelOutOfRange,
+    FanInZero,
+    LeafFanInExceedsConfigured,
+    MultilevelLeafFanInMismatch,
+    MergeFanInMismatch,
+    InnerPublicInputsLenMismatch,
+}
+
+impl AggregationV5HeaderReject {
+    fn label(self) -> &'static str {
+        match self {
+            Self::UnsupportedVersion => "unsupported_version",
+            Self::UnsupportedProofFormat => "unsupported_proof_format",
+            Self::UnsupportedPublicValuesEncoding => "unsupported_public_values_encoding",
+            Self::StatementCommitmentLength => "statement_commitment_length",
+            Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
+            Self::ChildCountOutOfRange => "child_count_out_of_range",
+            Self::SubtreeTxCountMismatch => "subtree_tx_count_mismatch",
+            Self::TreeLevelsMismatch => "tree_levels_mismatch",
+            Self::RootLevelOutOfRange => "root_level_out_of_range",
+            Self::FanInZero => "fan_in_zero",
+            Self::LeafFanInExceedsConfigured => "leaf_fan_in_exceeds_configured",
+            Self::MultilevelLeafFanInMismatch => "multilevel_leaf_fan_in_mismatch",
+            Self::MergeFanInMismatch => "merge_fan_in_mismatch",
+            Self::InnerPublicInputsLenMismatch => "inner_public_inputs_len_mismatch",
+        }
+    }
+
+    fn into_proof_error(self) -> ProofError {
+        let message = self.label().to_string();
+        match self {
+            Self::UnsupportedVersion
+            | Self::UnsupportedProofFormat
+            | Self::UnsupportedPublicValuesEncoding
+            | Self::StatementCommitmentLength
+            | Self::RootLevelOutOfRange
+            | Self::FanInZero => ProofError::AggregationProofV5Decode(message),
+            Self::StatementCommitmentMismatch
+            | Self::ChildCountOutOfRange
+            | Self::SubtreeTxCountMismatch
+            | Self::TreeLevelsMismatch
+            | Self::LeafFanInExceedsConfigured
+            | Self::MultilevelLeafFanInMismatch
+            | Self::MergeFanInMismatch
+            | Self::InnerPublicInputsLenMismatch => ProofError::AggregationProofV5Binding(message),
+        }
+    }
+}
+
+fn evaluate_header(
+    payload: &AggregationProofV5Payload,
+    tx_count: usize,
+    expected_statement_commitment: &[u8; 48],
+) -> Result<(), AggregationV5HeaderReject> {
+    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V5 {
+        return Err(AggregationV5HeaderReject::UnsupportedVersion);
+    }
+    if payload.proof_format != AGGREGATION_PROOF_FORMAT_VERSION_V5 {
+        return Err(AggregationV5HeaderReject::UnsupportedProofFormat);
+    }
+    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V2 {
+        return Err(AggregationV5HeaderReject::UnsupportedPublicValuesEncoding);
+    }
+    if payload.tx_statements_commitment.len() != 48 {
+        return Err(AggregationV5HeaderReject::StatementCommitmentLength);
+    }
+    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
+        return Err(AggregationV5HeaderReject::StatementCommitmentMismatch);
+    }
+    if payload.child_count == 0 || payload.child_count > payload.fan_in {
+        return Err(AggregationV5HeaderReject::ChildCountOutOfRange);
+    }
+    if payload.subtree_tx_count == 0 || payload.subtree_tx_count as usize != tx_count {
+        return Err(AggregationV5HeaderReject::SubtreeTxCountMismatch);
+    }
+    let expected_levels = tree_levels_for_tx_count(tx_count);
+    if payload.tree_levels != expected_levels {
+        return Err(AggregationV5HeaderReject::TreeLevelsMismatch);
+    }
+    if payload.root_level >= payload.tree_levels {
+        return Err(AggregationV5HeaderReject::RootLevelOutOfRange);
+    }
+    if payload.fan_in == 0 {
+        return Err(AggregationV5HeaderReject::FanInZero);
+    }
+    match payload.node_kind {
+        AggregationNodeKind::Leaf => {
+            let configured_leaf_fan_in = leaf_fan_in();
+            let payload_fan_in = payload.fan_in as usize;
+            if payload_fan_in > configured_leaf_fan_in {
+                return Err(AggregationV5HeaderReject::LeafFanInExceedsConfigured);
+            }
+            if payload.tree_levels > 1 && payload_fan_in != configured_leaf_fan_in {
+                return Err(AggregationV5HeaderReject::MultilevelLeafFanInMismatch);
+            }
+        }
+        AggregationNodeKind::Merge => {
+            let configured_merge_fan_in = merge_fan_in();
+            if payload.fan_in as usize != configured_merge_fan_in {
+                return Err(AggregationV5HeaderReject::MergeFanInMismatch);
+            }
+        }
+    }
+    if payload.inner_public_inputs_len as usize != payload.packed_public_values.len() {
+        return Err(AggregationV5HeaderReject::InnerPublicInputsLenMismatch);
+    }
+    Ok(())
+}
+
 fn validate_header(
     payload: &AggregationProofV5Payload,
     tx_count: usize,
     expected_statement_commitment: &[u8; 48],
 ) -> Result<(), ProofError> {
-    if payload.version != AGGREGATION_PROOF_FORMAT_VERSION_V5 {
-        return Err(ProofError::AggregationProofV5Decode(format!(
-            "unsupported aggregation proof payload version {}",
-            payload.version
-        )));
-    }
-    if payload.proof_format != AGGREGATION_PROOF_FORMAT_VERSION_V5 {
-        return Err(ProofError::AggregationProofV5Decode(format!(
-            "unsupported aggregation proof format {}",
-            payload.proof_format
-        )));
-    }
-    if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V2 {
-        return Err(ProofError::AggregationProofV5Decode(format!(
-            "unsupported packed public values encoding {}",
-            payload.public_values_encoding
-        )));
-    }
-    if payload.tx_statements_commitment.len() != 48 {
-        return Err(ProofError::AggregationProofV5Decode(
-            "tx_statements_commitment length invalid".to_string(),
-        ));
-    }
-    if payload.tx_statements_commitment.as_slice() != expected_statement_commitment.as_slice() {
-        return Err(ProofError::AggregationProofV5Binding(
-            "tx_statements_commitment mismatch".to_string(),
-        ));
-    }
-    if payload.child_count == 0 || payload.child_count > payload.fan_in {
-        return Err(ProofError::AggregationProofV5Binding(
-            "child_count out of range".to_string(),
-        ));
-    }
-    if payload.subtree_tx_count == 0 || payload.subtree_tx_count as usize != tx_count {
-        return Err(ProofError::AggregationProofV5Binding(format!(
-            "subtree_tx_count mismatch (payload {}, expected {})",
-            payload.subtree_tx_count, tx_count
-        )));
-    }
-    let expected_levels = tree_levels_for_tx_count(tx_count);
-    if payload.tree_levels != expected_levels {
-        return Err(ProofError::AggregationProofV5Binding(format!(
-            "tree_levels mismatch (payload {}, expected {})",
-            payload.tree_levels, expected_levels
-        )));
-    }
-    if payload.root_level >= payload.tree_levels {
-        return Err(ProofError::AggregationProofV5Decode(
-            "root_level must be less than tree_levels".to_string(),
-        ));
-    }
-    if payload.fan_in == 0 {
-        return Err(ProofError::AggregationProofV5Decode(
-            "fan_in must be non-zero".to_string(),
-        ));
-    }
-    match payload.node_kind {
-        AggregationNodeKind::Leaf => {
-            let configured_leaf_fan_in = leaf_fan_in() as u16;
-            if payload.fan_in > configured_leaf_fan_in {
-                return Err(ProofError::AggregationProofV5Binding(format!(
-                    "leaf fan_in {} exceeds configured leaf fan-in {}",
-                    payload.fan_in, configured_leaf_fan_in
-                )));
-            }
-            if payload.tree_levels > 1 && payload.fan_in != configured_leaf_fan_in {
-                return Err(ProofError::AggregationProofV5Binding(format!(
-                    "multi-level leaf fan_in mismatch (payload {}, expected {})",
-                    payload.fan_in, configured_leaf_fan_in
-                )));
-            }
-        }
-        AggregationNodeKind::Merge => {
-            let configured_merge_fan_in = merge_fan_in() as u16;
-            if payload.fan_in != configured_merge_fan_in {
-                return Err(ProofError::AggregationProofV5Binding(format!(
-                    "merge fan_in mismatch (payload {}, expected {})",
-                    payload.fan_in, configured_merge_fan_in
-                )));
-            }
-        }
-    }
-    if payload.inner_public_inputs_len as usize != payload.packed_public_values.len() {
-        return Err(ProofError::AggregationProofV5Binding(
-            "inner_public_inputs_len does not match packed_public_values length".to_string(),
-        ));
-    }
-    Ok(())
+    evaluate_header(payload, tx_count, expected_statement_commitment)
+        .map_err(AggregationV5HeaderReject::into_proof_error)
 }
 
 fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, ProofError> {
@@ -797,5 +830,129 @@ pub(crate) fn verify_with_metrics(
                 total_ms: started.elapsed().as_millis(),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct LeanAggregationV5VectorFile {
+        schema_version: u32,
+        aggregation_v5_header_cases: Vec<LeanAggregationV5HeaderCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanAggregationV5HeaderCase {
+        name: String,
+        version: u8,
+        proof_format: u8,
+        node_kind: String,
+        fan_in: u16,
+        child_count: u16,
+        subtree_tx_count: u32,
+        expected_tx_count: usize,
+        tree_levels: u16,
+        root_level: u16,
+        statement_commitment_len: usize,
+        statement_commitment_matches: bool,
+        public_values_encoding: u8,
+        inner_public_inputs_len: u32,
+        packed_public_values_len: usize,
+        configured_leaf_fan_in: usize,
+        configured_merge_fan_in: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[test]
+    fn lean_generated_aggregation_v5_header_vectors_match_production() {
+        let Some(path) = std::env::var_os("HEGEMON_LEAN_AGGREGATION_V5_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_AGGREGATION_V5_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean aggregation V5 vectors");
+        let vectors: LeanAggregationV5VectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean aggregation V5 vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.aggregation_v5_header_cases.is_empty(),
+            "Lean aggregation V5 header cases must not be empty"
+        );
+
+        for case in vectors.aggregation_v5_header_cases.iter() {
+            assert_eq!(
+                case.configured_leaf_fan_in,
+                leaf_fan_in(),
+                "{} Lean vector assumes the default leaf fan-in used by production",
+                case.name
+            );
+            assert_eq!(
+                case.configured_merge_fan_in,
+                merge_fan_in(),
+                "{} Lean vector assumes the binary-minimum merge fan-in used by production",
+                case.name
+            );
+            verify_lean_aggregation_v5_header_case(case);
+        }
+    }
+
+    fn verify_lean_aggregation_v5_header_case(case: &LeanAggregationV5HeaderCase) {
+        let expected_commitment = [0x7bu8; 48];
+        let commitment_byte = if case.statement_commitment_matches {
+            0x7b
+        } else {
+            0x55
+        };
+        let payload = AggregationProofV5Payload {
+            version: case.version,
+            proof_format: case.proof_format,
+            node_kind: match case.node_kind.as_str() {
+                "leaf" => AggregationNodeKind::Leaf,
+                "merge" => AggregationNodeKind::Merge,
+                other => panic!("{} unknown node kind {other}", case.name),
+            },
+            fan_in: case.fan_in,
+            child_count: case.child_count,
+            subtree_tx_count: case.subtree_tx_count,
+            tree_arity: case.fan_in,
+            tree_levels: case.tree_levels,
+            root_level: case.root_level,
+            shape_id: [0u8; 32],
+            tx_statements_commitment: vec![commitment_byte; case.statement_commitment_len],
+            public_values_encoding: case.public_values_encoding,
+            inner_public_inputs_len: case.inner_public_inputs_len,
+            representative_child_proof: vec![0xa5],
+            packed_public_values: vec![0; case.packed_public_values_len],
+            outer_proof: vec![0x5a],
+        };
+
+        let observed = evaluate_header(&payload, case.expected_tx_count, &expected_commitment)
+            .err()
+            .map(|reject| reject.label().to_string());
+        assert_eq!(
+            observed.is_none(),
+            case.expected_valid,
+            "{} production aggregation V5 header validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            observed, case.expected_rejection,
+            "{} production aggregation V5 header rejection drifted from Lean spec",
+            case.name
+        );
+
+        let production_valid =
+            validate_header(&payload, case.expected_tx_count, &expected_commitment).is_ok();
+        assert_eq!(
+            production_valid, case.expected_valid,
+            "{} validate_header drifted from the formal decision helper",
+            case.name
+        );
     }
 }
