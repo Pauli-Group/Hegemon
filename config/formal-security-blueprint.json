@@ -1243,7 +1243,62 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks recursive public replay tx-index ordering, semantic-field propagation, version-specific message-root behavior, and public tuple lengths only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, correctness of consensus-derived block semantic inputs, aggregation STARK soundness, or complete block proof validity."
+      "scope_boundary": "This node proves and vector-checks recursive public replay tx-index ordering, semantic-field propagation, version-specific message-root behavior, and public tuple lengths only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, recursive semantic-input source binding except through the separate consensus.recursive-semantic-inputs source-mapping claim, aggregation STARK soundness, or complete block proof validity."
+    },
+    {
+      "id": "consensus.recursive-semantic-inputs",
+      "claim_id": "consensus.recursive-semantic-inputs",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean recursive semantic-input derivation, accepted inputs must satisfy nonempty block, nullifier-count, nonzero-nullifier, duplicate-nullifier, and DA-encoding preconditions; the resulting semantic tuple must source each field from the expected statement commitment, parent and applied commitment-tree roots, kernel roots of those roots, nonzero-nullifier root, block DA root under header DA params, header message root, and parent/applied recursive tree-state commitments exactly as specified.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.RecursiveSemanticInputs.semantic_accepts_iff_preconditions` proves that semantic-input acceptance is exactly the executable admission predicate. Companion theorems `valid_semantic_derivation_accepts`, `empty_block_rejects`, `excessive_nullifiers_rejects`, `zero_nullifier_rejects`, `missing_nonzero_nullifier_rejects`, `duplicate_nullifier_rejects`, `da_encoding_rejects`, `valid_semantic_fields_match_sources`, and `rejection_precedes_da_encoding` pin representative acceptance, rejection, field-source, and precedence facts. `gen_recursive_semantic_input_vectors` emits Lean-derived examples, and the formal-core gate checks them against `recursive_block_semantic_inputs_from_block` in consensus.",
+      "depends_on": [
+        "consensus.recursive-public-replay",
+        "consensus.da-root-byte-binding",
+        "formal.transaction-merkle-membership",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursiveSemanticInputVectors.lean",
+        "consensus/src/proof.rs",
+        "consensus/src/commitment_tree.rs",
+        "consensus/src/types.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursiveSemanticInputVectors.lean",
+        "consensus/src/proof.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for recursive semantic-input admission, field-source mapping, and rejection precedence. Scope excludes cryptographic hash/security equivalence and recursive proof soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-recursive-semantic-input-theorem",
+          "description": "Removing or weakening the recursive semantic-input theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-recursive-semantic-input-conformance",
+          "description": "Changing production recursive semantic-input field sourcing or rejection ordering away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_semantic_input_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-recursive-semantic-input-gate",
+          "description": "The release formal-core wrapper must generate recursive semantic-input vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks recursive semantic-input admission, field-source mapping, and rejection precedence only. It does not prove BLAKE3, DA erasure-code, Merkle tree hash, kernel-root hash, nullifier-root hash, or recursive-state-commitment cryptographic security or implementation equivalence, native tx-leaf proof soundness, recursive proof cryptographic soundness, consensus block-header validity, or complete block proof validity."
     },
     {
       "id": "consensus.receipt-root-admission",

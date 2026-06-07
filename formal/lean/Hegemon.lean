@@ -19,6 +19,7 @@ import Hegemon.Consensus.ProvenBatchBinding
 import Hegemon.Consensus.ReceiptRootAdmission
 import Hegemon.Consensus.RecursiveBlockAdmission
 import Hegemon.Consensus.RecursivePublicReplay
+import Hegemon.Consensus.RecursiveSemanticInputs
 import Hegemon.Consensus.Supply
 import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionOrder

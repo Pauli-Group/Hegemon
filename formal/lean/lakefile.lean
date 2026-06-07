@@ -64,6 +64,9 @@ lean_exe gen_recursive_block_admission_vectors where
 lean_exe gen_recursive_public_replay_vectors where
   root := `Hegemon.Consensus.GenerateRecursivePublicReplayVectors
 
+lean_exe gen_recursive_semantic_input_vectors where
+  root := `Hegemon.Consensus.GenerateRecursiveSemanticInputVectors
+
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 

@@ -653,7 +653,7 @@
       "assumptions": [
         "The Lean model represents the public replay field-mapping and tx-index admission table around recursive_block_v1/v2 public tuple construction, not recursive proof cryptographic soundness.",
         "Generated Lean conformance vectors cover valid recursive_block_v1/v2 zero-based replay, the production helper behavior for a nonzero contiguous start, gap rejection, duplicate-index rejection, decreasing-order rejection, v1/v2 serialized public byte lengths, and semantic-root/commitment propagation.",
-        "The theorem covers executable public replay field propagation and tx-index ordering only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, correctness of native tx-leaf proofs, correctness of block semantic inputs derived from native state, or complete block proof validity."
+        "The theorem covers executable public replay field propagation and tx-index ordering only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, correctness of native tx-leaf proofs, correctness of block semantic inputs derived from native state beyond the separate consensus.recursive-semantic-inputs source-mapping claim, or complete block proof validity."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/RecursivePublicReplay.lean",
@@ -667,6 +667,35 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS=<generated-json> cargo test -p block-recursion lean_generated_recursive_public_replay_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.recursive-semantic-inputs",
+      "component": "recursive block consensus semantic inputs",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean recursive semantic-input kernel proves executable admission and source-mapping facts for the recursive-block semantic tuple: nonempty block/nullifier/DA admission, expected statement commitment, parent and applied commitment-tree roots, kernel roots derived from those roots, nonzero-nullifier root source, DA root source, header message-root source, and recursive tree-state commitments; generated Lean vectors are checked against the private consensus semantic derivation helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the cheap source-mapping and rejection-order table around recursive_block_v1/v2 semantic tuple construction, not recursive proof cryptographic soundness.",
+        "Generated Lean conformance vectors cover valid default-parent and nondefault-parent cases, empty-block rejection, excessive-nullifier rejection, zero-nullifier rejection, missing-nonzero-nullifier rejection, duplicate-nullifier rejection, DA-encoding rejection, and duplicate-before-DA rejection precedence.",
+        "The theorem covers executable semantic field source binding only. It does not prove BLAKE3, DA erasure-code, Merkle tree hash, kernel-root hash, nullifier-root hash, or recursive-state-commitment cryptographic security or implementation equivalence, native tx-leaf proof soundness, recursive proof cryptographic soundness, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursiveSemanticInputVectors.lean",
+        "consensus/src/proof.rs",
+        "consensus/src/commitment_tree.rs",
+        "consensus/src/types.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_semantic_input_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

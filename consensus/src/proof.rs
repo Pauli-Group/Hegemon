@@ -3048,6 +3048,40 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanRecursiveSemanticInputVectorFile {
+        schema_version: u32,
+        semantic_cases: Vec<LeanRecursiveSemanticInputCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRecursiveSemanticInputCase {
+        name: String,
+        tx_count: usize,
+        nullifier_counts_within_max: bool,
+        has_zero_nullifier: bool,
+        has_any_nonzero_nullifier: bool,
+        has_duplicate_nonzero_nullifier: bool,
+        da_encoding_valid: bool,
+        parent_leaf_seeds: Vec<u64>,
+        expected_commitment_seed: u64,
+        message_root_seed: u64,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_tx_statements_source: String,
+        expected_start_shielded_source: String,
+        expected_end_shielded_source: String,
+        expected_start_kernel_source: String,
+        expected_end_kernel_source: String,
+        expected_nullifier_root_source: String,
+        expected_da_root_source: String,
+        expected_message_root_source: String,
+        expected_start_tree_commitment_source: String,
+        expected_end_tree_commitment_source: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProvenBatchBindingVectorFile {
         schema_version: u32,
         proven_batch_binding_cases: Vec<LeanProvenBatchBindingCase>,
@@ -3207,6 +3241,7 @@ mod tests {
     struct TestHeader {
         da_params: crate::types::DaParams,
         da_root: [u8; 48],
+        message_root: [u8; 48],
     }
 
     impl HeaderProofExt for TestHeader {
@@ -3236,6 +3271,10 @@ mod tests {
 
         fn kernel_root(&self) -> [u8; 48] {
             [0u8; 48]
+        }
+
+        fn message_root(&self) -> [u8; 48] {
+            self.message_root
         }
     }
 
@@ -3277,7 +3316,11 @@ mod tests {
             artifact_bytes: vec![1, 2, 3],
         };
         let block = Block {
-            header: TestHeader { da_params, da_root },
+            header: TestHeader {
+                da_params,
+                da_root,
+                message_root: [0u8; 48],
+            },
             transactions,
             coinbase: None,
             proven_batch: Some(crate::types::ProvenBatch {
@@ -3420,6 +3463,29 @@ mod tests {
         for case in &vectors.artifact_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_recursive_block_artifact_case(case);
+        }
+    }
+
+    #[test]
+    fn lean_generated_recursive_semantic_input_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean recursive semantic input vectors");
+        let vectors: LeanRecursiveSemanticInputVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean recursive semantic vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.semantic_cases.is_empty(),
+            "Lean recursive semantic cases must not be empty"
+        );
+
+        for case in &vectors.semantic_cases {
+            verify_lean_recursive_semantic_input_case(case);
         }
     }
 
@@ -3725,6 +3791,204 @@ mod tests {
             "{} recursive-block admission rejection label drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_recursive_semantic_input_case(case: &LeanRecursiveSemanticInputCase) {
+        assert_eq!(case.expected_tx_statements_source, "expected_commitment");
+        assert_eq!(case.expected_start_shielded_source, "parent_tree_root");
+        assert_eq!(
+            case.expected_end_shielded_source,
+            "applied_commitment_tree_root"
+        );
+        assert_eq!(
+            case.expected_start_kernel_source,
+            "kernel_root(parent_tree_root)"
+        );
+        assert_eq!(
+            case.expected_end_kernel_source,
+            "kernel_root(applied_commitment_tree_root)"
+        );
+        assert_eq!(case.expected_nullifier_root_source, "nonzero_nullifier_set");
+        assert_eq!(
+            case.expected_da_root_source,
+            "block_transactions_and_header_da_params"
+        );
+        assert_eq!(case.expected_message_root_source, "header_message_root");
+        assert_eq!(
+            case.expected_start_tree_commitment_source,
+            "parent_tree_recursive_state"
+        );
+        assert_eq!(
+            case.expected_end_tree_commitment_source,
+            "applied_tree_recursive_state"
+        );
+
+        let parent_tree = recursive_semantic_parent_tree(case);
+        let transactions = recursive_semantic_transactions_from_case(case);
+        let da_params = if case.da_encoding_valid {
+            crate::types::DaParams {
+                chunk_size: 64,
+                sample_count: 1,
+            }
+        } else {
+            crate::types::DaParams {
+                chunk_size: 0,
+                sample_count: 1,
+            }
+        };
+        let header_da_root = da_root(&transactions, da_params).unwrap_or([0u8; 48]);
+        let message_root = patterned_bytes48(case.message_root_seed);
+        let block = Block {
+            header: TestHeader {
+                da_params,
+                da_root: header_da_root,
+                message_root,
+            },
+            transactions,
+            coinbase: None,
+            proven_batch: None,
+            block_artifact: None,
+            tx_validity_claims: None,
+            tx_statements_commitment: None,
+            proof_verification_mode: ProofVerificationMode::SelfContainedAggregation,
+        };
+        let expected_commitment = patterned_bytes48(case.expected_commitment_seed);
+        let result =
+            recursive_block_semantic_inputs_from_block(&block, &parent_tree, expected_commitment);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} recursive semantic validity drifted from Lean spec: {result:?}",
+            case.name
+        );
+        let actual_rejection = result
+            .as_ref()
+            .err()
+            .map(recursive_semantic_error_label)
+            .map(str::to_string);
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} recursive semantic rejection label drifted from Lean spec",
+            case.name
+        );
+
+        if let Ok(semantic) = result {
+            let expected_tree = apply_commitments(&parent_tree, &block.transactions)
+                .expect("valid Lean semantic case applies commitments");
+            let nullifier_lists = commitment_nullifier_lists(&block.transactions)
+                .expect("valid Lean semantic case has nullifiers");
+            let expected_nullifier_root = nullifier_root_from_list(&nullifier_lists.nullifiers)
+                .expect("valid Lean semantic case has unique nullifiers");
+            let expected_da_root = da_root(&block.transactions, block.header.da_params())
+                .expect("valid Lean semantic case has DA root");
+            assert_eq!(semantic.tx_statements_commitment, expected_commitment);
+            assert_eq!(semantic.start_shielded_root, parent_tree.root());
+            assert_eq!(semantic.end_shielded_root, expected_tree.root());
+            assert_eq!(
+                semantic.start_kernel_root,
+                kernel_root_from_shielded_root(&parent_tree.root())
+            );
+            assert_eq!(
+                semantic.end_kernel_root,
+                kernel_root_from_shielded_root(&expected_tree.root())
+            );
+            assert_eq!(semantic.nullifier_root, expected_nullifier_root);
+            assert_eq!(semantic.da_root, expected_da_root);
+            assert_eq!(semantic.message_root, message_root);
+            assert_eq!(
+                semantic.start_tree_commitment,
+                parent_tree.recursive_state_commitment()
+            );
+            assert_eq!(
+                semantic.end_tree_commitment,
+                expected_tree.recursive_state_commitment()
+            );
+        }
+    }
+
+    fn recursive_semantic_error_label(error: &ProofError) -> &'static str {
+        match error {
+            ProofError::CommitmentProofEmptyBlock => "empty_block",
+            ProofError::DaEncoding(_) => "da_encoding",
+            ProofError::CommitmentProofInputsMismatch(message)
+                if message.contains("exceeds MAX_INPUTS") =>
+            {
+                "excessive_nullifiers"
+            }
+            ProofError::CommitmentProofInputsMismatch(message)
+                if message.contains("includes zero nullifier") =>
+            {
+                "zero_nullifier"
+            }
+            ProofError::CommitmentProofInputsMismatch(message)
+                if message.contains("must include at least one non-zero") =>
+            {
+                "missing_nonzero_nullifier"
+            }
+            ProofError::CommitmentProofInputsMismatch(message)
+                if message.contains("duplicate nullifier") =>
+            {
+                "duplicate_nullifier"
+            }
+            other => panic!("unexpected recursive semantic error for Lean vector: {other:?}"),
+        }
+    }
+
+    fn recursive_semantic_parent_tree(
+        case: &LeanRecursiveSemanticInputCase,
+    ) -> CommitmentTreeState {
+        let mut tree = CommitmentTreeState::default();
+        for seed in &case.parent_leaf_seeds {
+            tree.append(patterned_bytes48(*seed))
+                .expect("Lean parent leaf seed fits default commitment tree");
+        }
+        tree
+    }
+
+    fn recursive_semantic_transactions_from_case(
+        case: &LeanRecursiveSemanticInputCase,
+    ) -> Vec<crate::types::Transaction> {
+        (0..case.tx_count)
+            .map(|index| recursive_semantic_transaction_from_case(case, index))
+            .collect()
+    }
+
+    fn recursive_semantic_transaction_from_case(
+        case: &LeanRecursiveSemanticInputCase,
+        index: usize,
+    ) -> crate::types::Transaction {
+        let mut nullifiers = Vec::new();
+        if case.nullifier_counts_within_max {
+            if case.has_zero_nullifier && index == 0 {
+                nullifiers.push([0u8; 48]);
+            }
+            if case.has_any_nonzero_nullifier {
+                let seed = if case.has_duplicate_nonzero_nullifier {
+                    0x77
+                } else {
+                    0x100 + index as u64
+                };
+                nullifiers.push(patterned_bytes48(seed));
+            }
+        } else if index == 0 {
+            nullifiers.extend(
+                (0..=transaction_circuit::constants::MAX_INPUTS)
+                    .map(|offset| patterned_bytes48(0x180 + offset as u64)),
+            );
+        }
+
+        crate::types::Transaction::new(
+            nullifiers,
+            vec![patterned_bytes48(0x200 + index as u64)],
+            patterned_bytes48(0x300 + index as u64),
+            DEFAULT_VERSION_BINDING,
+            vec![vec![
+                (0x40 + index as u8),
+                (0x50 + index as u8),
+                (0x60 + index as u8),
+            ]],
+        )
     }
 
     fn verify_lean_proven_batch_binding_case(case: &LeanProvenBatchBindingCase) {
