@@ -6912,6 +6912,85 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanRpcAdmissionVectorFile {
+        schema_version: u32,
+        policy_cases: Vec<LeanRpcPolicyCase>,
+        method_gate_cases: Vec<LeanRpcMethodGateCase>,
+        method_list_cases: Vec<LeanRpcMethodListCase>,
+        timestamp_range_cases: Vec<LeanRpcTimestampRangeCase>,
+        byte_parse_cases: Vec<LeanRpcByteParseCase>,
+        batch_cases: Vec<LeanRpcBatchCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcPolicyCase {
+        name: String,
+        raw: String,
+        raw_tag: String,
+        rpc_external: bool,
+        expected_valid: bool,
+        expected_policy: Option<String>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcMethodGateCase {
+        name: String,
+        policy: String,
+        method: String,
+        is_unsafe_method: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcMethodListCase {
+        name: String,
+        policy: String,
+        expected_unsafe_methods_visible: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcTimestampRangeCase {
+        name: String,
+        start_height: u64,
+        end_height: u64,
+        max_rows: u64,
+        expected_requested_rows: Option<String>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcByteParseCase {
+        name: String,
+        encoding: String,
+        raw_text_bytes: usize,
+        decoded_bytes: usize,
+        max_decoded_bytes: usize,
+        expected_encoded_len_limit: usize,
+        expected_hex_len_limit: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRpcBatchCase {
+        name: String,
+        request_count: usize,
+        max_requests: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanSidecarUploadAdmissionVectorFile {
         schema_version: u32,
         request_count_cases: Vec<LeanSidecarRequestCountCase>,
@@ -8869,6 +8948,386 @@ mod tests {
             "{} native staged-proof budget admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[tokio::test]
+    async fn lean_generated_rpc_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RPC_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_RPC_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean RPC admission vectors");
+        let vectors: LeanRpcAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean RPC admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.policy_cases.is_empty(),
+            "Lean RPC policy cases must not be empty"
+        );
+        assert!(
+            !vectors.method_gate_cases.is_empty(),
+            "Lean RPC method-gate cases must not be empty"
+        );
+        assert!(
+            !vectors.method_list_cases.is_empty(),
+            "Lean RPC method-list cases must not be empty"
+        );
+        assert!(
+            !vectors.timestamp_range_cases.is_empty(),
+            "Lean RPC timestamp range cases must not be empty"
+        );
+        assert!(
+            !vectors.byte_parse_cases.is_empty(),
+            "Lean RPC byte-parse cases must not be empty"
+        );
+        assert!(
+            !vectors.batch_cases.is_empty(),
+            "Lean RPC batch cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.policy_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_policy_case(case);
+        }
+        for case in &vectors.method_gate_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_method_gate_case(case);
+        }
+        for case in &vectors.method_list_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_method_list_case(case);
+        }
+        for case in &vectors.timestamp_range_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_timestamp_range_case(case);
+        }
+        for case in &vectors.byte_parse_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_byte_parse_case(case);
+        }
+        for case in &vectors.batch_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_rpc_batch_case(case).await;
+        }
+    }
+
+    fn verify_lean_rpc_policy_case(case: &LeanRpcPolicyCase) {
+        assert!(
+            matches!(
+                case.raw_tag.as_str(),
+                "safe" | "unsafe" | "auto" | "empty" | "invalid"
+            ),
+            "{} unknown Lean RPC raw policy tag {}",
+            case.name,
+            case.raw_tag
+        );
+        let actual = rpc_method_policy(&case.raw, case.rpc_external);
+        let actual_policy = actual.as_ref().ok().map(|policy| policy.label().to_owned());
+        let actual_rejection = actual.as_ref().err().map(|_| "invalid_policy".to_string());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} RPC policy validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_policy, case.expected_policy,
+            "{} RPC policy resolution drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} RPC policy rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_rpc_method_gate_case(case: &LeanRpcMethodGateCase) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, &case.policy, false))
+            .expect("node");
+        let params = rpc_test_params_for_method(&case.method);
+        let actual = dispatch_rpc_method(&node, &case.method, params);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .and_then(|err| rpc_method_gate_rejection_label(&err.to_string()));
+        assert_eq!(
+            is_unsafe_rpc_method(&case.method),
+            case.is_unsafe_method,
+            "{} RPC unsafe-method classification drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} RPC method gate validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} RPC method gate rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_rpc_method_list_case(case: &LeanRpcMethodListCase) {
+        let policy = rpc_policy_from_label(&case.policy);
+        let methods = native_rpc_methods(policy);
+        let unsafe_methods = [
+            "da_submitCiphertexts",
+            "da_submitProofs",
+            "hegemon_startMining",
+            "hegemon_stopMining",
+        ];
+        for method in unsafe_methods {
+            assert_eq!(
+                methods.contains(&method),
+                case.expected_unsafe_methods_visible,
+                "{} RPC method-list unsafe visibility drifted for {method}",
+                case.name
+            );
+        }
+        assert!(
+            methods.contains(&"system_health"),
+            "{} RPC method-list must keep safe health method visible",
+            case.name
+        );
+    }
+
+    fn verify_lean_rpc_timestamp_range_case(case: &LeanRpcTimestampRangeCase) {
+        assert_eq!(
+            case.max_rows, MAX_NATIVE_TIMESTAMP_ROWS,
+            "{} Lean timestamp cap must match production native RPC cap",
+            case.name
+        );
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let actual = block_timestamps(&node, json!([case.start_height, case.end_height]), false);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .and_then(|err| rpc_timestamp_rejection_label(&err.to_string()));
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} RPC timestamp range validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} RPC timestamp range rejection drifted from Lean spec",
+            case.name
+        );
+        if let Ok(value) = actual {
+            let rows = value
+                .as_array()
+                .expect("timestamp response should be an array")
+                .len()
+                .to_string();
+            assert_eq!(
+                Some(rows),
+                case.expected_requested_rows,
+                "{} RPC timestamp requested-row count drifted from Lean spec",
+                case.name
+            );
+        }
+    }
+
+    fn verify_lean_rpc_byte_parse_case(case: &LeanRpcByteParseCase) {
+        assert_eq!(
+            encoded_len_limit(case.max_decoded_bytes),
+            case.expected_encoded_len_limit,
+            "{} RPC base64 encoded length limit drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            case.max_decoded_bytes.saturating_mul(2),
+            case.expected_hex_len_limit,
+            "{} RPC hex length limit drifted from Lean spec",
+            case.name
+        );
+        let value = rpc_byte_parse_value(case);
+        if case.encoding == "base64" {
+            assert_eq!(
+                value.as_str().expect("base64 test value").len(),
+                case.raw_text_bytes,
+                "{} RPC base64 raw text length fixture drifted from Lean spec",
+                case.name
+            );
+        } else if case.encoding == "hex" {
+            assert_eq!(
+                value
+                    .as_str()
+                    .expect("hex test value")
+                    .strip_prefix("0x")
+                    .expect("hex prefix")
+                    .len(),
+                case.raw_text_bytes,
+                "{} RPC hex raw text length fixture drifted from Lean spec",
+                case.name
+            );
+        } else {
+            panic!("{} unknown byte encoding {}", case.name, case.encoding);
+        }
+        let actual = parse_bytes_value(&value, case.max_decoded_bytes, "Lean RPC byte case");
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .and_then(|err| rpc_byte_parse_rejection_label(&err.to_string()));
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} RPC byte parser validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} RPC byte parser rejection drifted from Lean spec",
+            case.name
+        );
+        if let Ok(bytes) = actual {
+            assert_eq!(
+                bytes.len(),
+                case.decoded_bytes,
+                "{} RPC byte parser decoded length drifted from Lean spec",
+                case.name
+            );
+        }
+    }
+
+    async fn verify_lean_rpc_batch_case(case: &LeanRpcBatchCase) {
+        assert_eq!(
+            case.max_requests, MAX_NATIVE_RPC_BATCH_REQUESTS,
+            "{} Lean batch cap must match production native RPC cap",
+            case.name
+        );
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let payload = Value::Array(
+            (0..case.request_count)
+                .map(|idx| {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": idx,
+                        "method": "system_health",
+                        "params": [],
+                    })
+                })
+                .collect(),
+        );
+        let response = rpc_handler(State(node), Json(payload)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("RPC response body");
+        let decoded: Value = serde_json::from_slice(&body).expect("RPC JSON body");
+        let actual_rejection = decoded
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .and_then(rpc_batch_rejection_label);
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} RPC batch validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} RPC batch rejection drifted from Lean spec",
+            case.name
+        );
+        if case.expected_valid {
+            assert_eq!(
+                decoded.as_array().expect("batch response array").len(),
+                case.request_count,
+                "{} RPC batch response count drifted from Lean spec",
+                case.name
+            );
+        }
+    }
+
+    fn rpc_policy_from_label(label: &str) -> RpcMethodPolicy {
+        match label {
+            "safe" => RpcMethodPolicy::Safe,
+            "unsafe" => RpcMethodPolicy::Unsafe,
+            other => panic!("unknown RPC method policy label {other}"),
+        }
+    }
+
+    fn rpc_test_params_for_method(method: &str) -> Value {
+        match method {
+            "da_submitCiphertexts" => json!({ "ciphertexts": [] }),
+            "da_submitProofs" => json!({ "proofs": [] }),
+            "hegemon_startMining" => json!({ "threads": 1 }),
+            "hegemon_stopMining" => Value::Array(Vec::new()),
+            _ => Value::Array(Vec::new()),
+        }
+    }
+
+    fn rpc_method_gate_rejection_label(message: &str) -> Option<String> {
+        if message.contains("unsafe RPC method") {
+            Some("unsafe_method_disabled".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn rpc_timestamp_rejection_label(message: &str) -> Option<String> {
+        if message.contains("before start") {
+            Some("end_before_start".to_string())
+        } else if message.contains("timestamp range overflow") {
+            Some("range_overflow".to_string())
+        } else if message.contains("timestamp range too large") {
+            Some("range_too_large".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn rpc_byte_parse_rejection_label(message: &str) -> Option<String> {
+        if message.contains("hex length") {
+            Some("hex_text_too_long".to_string())
+        } else if message.contains("base64 length") {
+            Some("base64_text_too_long".to_string())
+        } else if message.contains("decoded length") {
+            Some("decoded_too_long".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn rpc_batch_rejection_label(message: &str) -> Option<String> {
+        if message.contains("empty JSON-RPC batch") {
+            Some("empty_batch".to_string())
+        } else if message.contains("batch too large") {
+            Some("batch_too_large".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn rpc_byte_parse_value(case: &LeanRpcByteParseCase) -> Value {
+        match case.encoding.as_str() {
+            "base64" => {
+                if case.expected_rejection.as_deref() == Some("base64_text_too_long") {
+                    json!("A".repeat(case.raw_text_bytes))
+                } else {
+                    use base64::Engine;
+                    json!(base64::engine::general_purpose::STANDARD
+                        .encode(vec![0u8; case.decoded_bytes]))
+                }
+            }
+            "hex" => json!(format!("0x{}", "00".repeat(case.decoded_bytes))),
+            other => panic!("{} unknown byte encoding {other}", case.name),
+        }
     }
 
     #[test]

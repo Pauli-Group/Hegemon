@@ -121,6 +121,9 @@ lean_exe gen_coinbase_action_payload_admission_vectors where
 lean_exe gen_resource_budget_admission_vectors where
   root := `Hegemon.Native.GenerateResourceBudgetAdmissionVectors
 
+lean_exe gen_rpc_admission_vectors where
+  root := `Hegemon.Native.GenerateRpcAdmissionVectors
+
 lean_exe gen_sidecar_upload_admission_vectors where
   root := `Hegemon.Native.GenerateSidecarUploadAdmissionVectors
 

@@ -926,6 +926,37 @@
       "residual_risks": []
     },
     {
+      "id": "native.rpc-admission",
+      "component": "native JSON-RPC admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native RPC admission kernel proves executable method-policy resolution, unsafe-method gating and method-list filtering, timestamp range bounds, byte string cap prechecks, and JSON-RPC batch-size admission; generated Lean vectors are checked against the production native RPC helpers and handler.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the finite RPC policy/method table and cap arithmetic after JSON field discovery, with raw policy string parsing represented by enumerated tokens and checked by generated Rust conformance vectors.",
+        "Generated Lean conformance vectors cover safe/unsafe/auto/empty/invalid policy resolution, external auto safe fallback, local auto unsafe fallback, unsafe method rejection under safe policy, unsafe method allowance under unsafe policy, safe method-list filtering, timestamp exact/inverted/overflow/over-limit ranges, base64/hex text caps, decoded byte caps, and empty/exact/over-limit JSON-RPC batches.",
+        "The theorem covers executable native RPC admission only. It does not prove RPC authentication, host firewall posture, plaintext control-plane safety, JSON parser correctness, base64/hex parser correctness beyond cap behavior, handler method semantics, mining liveness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RpcAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateRpcAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RPC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_rpc_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node rpc_policy_gates_unsafe_methods --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node timestamp_rpc_rejects_unbounded_ranges --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node rpc_handler_rejects_oversized_batches --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",
