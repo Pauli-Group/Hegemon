@@ -85,6 +85,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T00:59:00Z) Added a Lean native tx-leaf artifact byte-parser kernel proving representative accept/reject facts for bounded serialized STARK/public-tx counts, proof-length caps, commitment row/coeff caps, backend-byte defaulting, bad backend rejection, trailing-byte rejection, and truncation rejection.
 - [x] (2026-06-07T00:59:00Z) Added `gen_native_tx_leaf_artifact_vectors`, a `superneo-hegemon` conformance test that checks Lean-generated artifact bytes against production decoding and canonical re-encoding, and a formal claim/blueprint node for the native tx-leaf artifact wire grammar.
 - [x] (2026-06-07T00:59:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 19 claims, 17 production-eligible claims, 19 blueprint nodes, and 46 falsification cases.
+- [x] (2026-06-07T01:10:00Z) Validated branch tip `8c293045` on `hegemon-dev`: the expanded formal-core gate passed with native tx-leaf artifact parser conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404321`, mining advanced from height `404322` to `404324`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `404325`.
 
 ## Surprises & Discoveries
 
@@ -222,6 +223,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now includes native tx-leaf artifact parser conformance.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding native tx-leaf artifact wire grammar, ran `lean_generated_native_tx_leaf_artifact_vectors_match_production`, and reported `claims = 19`, `production_eligible = 17`, `nodes = 19`, and `falsification_cases = 46`.
+
+- Observation: `hegemon-dev` can run the native tx-leaf artifact parser proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `8c293045` built 72 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction statement-hash, native backend reference vectors, and native tx-leaf artifact conformance, and reported `claims = 19`, `production_eligible = 17`, `nodes = 19`, `edges = 41`, and `falsification_cases = 46`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404321`; a 25-second height sample advanced from `404322` to `404324`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404325`.
 
 ## Decision Log
 
@@ -444,3 +448,5 @@ Revision note 2026-06-07T00:18:00Z: Added the Lean transaction statement-hash pr
 Revision note 2026-06-07T00:26:00Z: Recorded `hegemon-dev` validation for commit `ad6c9184`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
 
 Revision note 2026-06-07T00:59:00Z: Added the Lean native tx-leaf artifact wire parser kernel, generated artifact vectors, superneo-hegemon decoder/re-encoder conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-07T01:10:00Z: Recorded `hegemon-dev` validation for commit `8c293045`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
