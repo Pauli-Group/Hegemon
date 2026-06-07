@@ -50,7 +50,7 @@ p budgets.
 
 - Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, native node RPC flows, and disclosure tooling.
 - `wallet payment-proof create|verify|purge` generates and verifies proofs of disclosure and manages stored outgoing disclosure records.
-- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets.
+- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets. One-shot commands accept the native node's `http://` JSON-RPC endpoint as well as WebSocket; subscription-backed daemon mode still requires `ws://`/`wss://`.
 - Wallet sync falls back to archive providers for ciphertext recovery when hot DA is pruned. Configure `HEGEMON_WALLET_ARCHIVE_WS_URL` or ensure providers are discoverable via `archive_listProviders`.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize proof-of-disclosure packages.
 - `wallet::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.

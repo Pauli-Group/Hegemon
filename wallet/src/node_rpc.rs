@@ -1,12 +1,15 @@
 //! Native node RPC client for Wallet
 //!
-//! This module provides a WebSocket-based RPC client for the native Hegemon
+//! This module provides a JSON-RPC client for the native Hegemon
 //! node. It implements the wallet-specific JSON-RPC methods defined in the
 //! `hegemon_*`, `da_*`, `archive_*`, and compatibility namespaces.
 //!
-//! # WebSocket RPC
+//! # RPC transports
 //!
-//! The client uses WebSocket RPC for wallet-specific methods and supports:
+//! One-shot wallet operations support HTTP and WebSocket JSON-RPC. Streaming
+//! sync operations still require WebSocket subscriptions.
+//!
+//! The client supports:
 //! - Persistent connections with automatic reconnection
 //! - Block subscriptions for real-time sync
 //! - Full async/await support
@@ -29,9 +32,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codec::{Decode, Encode};
-use jsonrpsee::core::client::{ClientT, SubscriptionClientT};
+use jsonrpsee::core::client::{ClientT, Error as RpcError, Subscription, SubscriptionClientT};
+use jsonrpsee::core::traits::ToRpcParams;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -410,14 +416,14 @@ fn decode_ciphertext_entries(
     Ok(decoded)
 }
 
-/// WebSocket RPC client for wallet operations.
+/// JSON-RPC client for wallet operations.
 ///
-/// This client connects to a Hegemon node via WebSocket and provides
+/// This client connects to a Hegemon node over HTTP or WebSocket and provides
 /// methods to interact with the wallet-specific RPC endpoints.
 pub struct NodeRpcClient {
-    /// The underlying WebSocket client
-    client: Arc<RwLock<WsClient>>,
-    /// Optional archive provider WebSocket client
+    /// The underlying JSON-RPC client
+    client: Arc<RwLock<RpcTransport>>,
+    /// Optional archive provider JSON-RPC client
     archive_client: Arc<RwLock<Option<ArchiveRpcState>>>,
     /// Client configuration
     config: NodeRpcConfig,
@@ -426,7 +432,55 @@ pub struct NodeRpcClient {
 #[derive(Debug)]
 struct ArchiveRpcState {
     endpoint: String,
-    client: WsClient,
+    client: RpcTransport,
+}
+
+#[derive(Debug)]
+enum RpcTransport {
+    Http(HttpClient),
+    Ws(WsClient),
+}
+
+impl RpcTransport {
+    fn is_connected(&self) -> bool {
+        match self {
+            Self::Http(_) => true,
+            Self::Ws(client) => client.is_connected(),
+        }
+    }
+
+    async fn request<R, Params>(&self, method: &str, params: Params) -> Result<R, RpcError>
+    where
+        R: DeserializeOwned,
+        Params: ToRpcParams + Send,
+    {
+        match self {
+            Self::Http(client) => client.request(method, params).await,
+            Self::Ws(client) => client.request(method, params).await,
+        }
+    }
+
+    async fn subscribe<Notif, Params>(
+        &self,
+        subscribe_method: &str,
+        params: Params,
+        unsubscribe_method: &str,
+    ) -> Result<Subscription<Notif>, RpcError>
+    where
+        Notif: DeserializeOwned,
+        Params: ToRpcParams + Send,
+    {
+        match self {
+            Self::Ws(client) => {
+                client
+                    .subscribe(subscribe_method, params, unsubscribe_method)
+                    .await
+            }
+            Self::Http(_) => Err(RpcError::Custom(
+                "subscriptions require a ws:// or wss:// RPC endpoint".to_string(),
+            )),
+        }
+    }
 }
 
 impl NodeRpcClient {
@@ -434,7 +488,7 @@ impl NodeRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `endpoint` - WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
+    /// * `endpoint` - RPC endpoint URL (e.g., "http://127.0.0.1:9944" or "ws://127.0.0.1:9944")
     ///
     /// # Example
     ///
@@ -468,19 +522,30 @@ impl NodeRpcClient {
         })
     }
 
-    async fn build_client(config: &NodeRpcConfig) -> Result<WsClient, WalletError> {
+    async fn build_client(config: &NodeRpcConfig) -> Result<RpcTransport, WalletError> {
         Self::build_client_for_endpoint(&config.endpoint, config).await
     }
 
     async fn build_client_for_endpoint(
         endpoint: &str,
         config: &NodeRpcConfig,
-    ) -> Result<WsClient, WalletError> {
+    ) -> Result<RpcTransport, WalletError> {
+        if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+            return HttpClientBuilder::default()
+                .request_timeout(config.request_timeout)
+                .build(endpoint)
+                .map(RpcTransport::Http)
+                .map_err(|e| {
+                    WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e))
+                });
+        }
+
         WsClientBuilder::default()
             .connection_timeout(config.connection_timeout)
             .request_timeout(config.request_timeout)
             .build(endpoint)
             .await
+            .map(RpcTransport::Ws)
             .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e)))
     }
 
@@ -916,7 +981,7 @@ impl NodeRpcClient {
     /// This is useful for real-time wallet synchronization.
     pub async fn subscribe_new_heads(
         &self,
-    ) -> Result<jsonrpsee::core::client::Subscription<serde_json::Value>, WalletError> {
+    ) -> Result<Subscription<serde_json::Value>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
         client
@@ -934,7 +999,7 @@ impl NodeRpcClient {
     /// Returns a subscription that yields finalized block headers.
     pub async fn subscribe_finalized_heads(
         &self,
-    ) -> Result<jsonrpsee::core::client::Subscription<serde_json::Value>, WalletError> {
+    ) -> Result<Subscription<serde_json::Value>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
         client
