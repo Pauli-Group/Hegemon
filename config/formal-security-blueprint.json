@@ -454,7 +454,7 @@
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, header hashing, every network partition, timestamp edge case, or long-range adversarial mining schedule."
+      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, or long-range adversarial mining schedule."
     },
     {
       "id": "consensus.pow-admission",
@@ -506,7 +506,60 @@
           "gate": "cargo test -p consensus --test pow_rules -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove header serialization, hash-function implementation equivalence, retarget economics, network orphan policy, or long-range finality."
+      "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove SHA-256 implementation equivalence, retarget economics, network orphan policy, or long-range finality. Header preimage serialization is covered separately by consensus.header-preimage-binding."
+    },
+    {
+      "id": "consensus.header-preimage-binding",
+      "claim_id": "consensus.header-preimage-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean header grammar, the signing preimage is the ASCII domain `block` followed by the fixed consensus header fields in the specified little-endian and byte-array order, and is independent of signature, BFT bitmap, and PoW seal payloads; the full header preimage appends signature length/payload, optional bitmap tag/length/payload, and optional PoW seal tag/nonce/pow_bits.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.Header.signingPreimage_independent_of_auth_payloads`, `Hegemon.Consensus.Header.sample_signing_preimage_length`, `Hegemon.Consensus.Header.sample_pow_full_header_length`, `Hegemon.Consensus.Header.bft_full_header_length`, `Hegemon.Consensus.Header.unsigned_full_header_length`, `Hegemon.Consensus.Header.pow_header_has_pow_tag`, `Hegemon.Consensus.Header.bft_header_has_bitmap_tag`, and `Hegemon.Consensus.Header.unsigned_header_has_absent_auth_tags` prove executable facts about the header preimage grammar. `gen_header_vectors` emits Lean-derived exact byte preimages, and the formal-core gate checks them against production `BlockHeader::signing_preimage_v1` and `BlockHeader::full_header_preimage_v1`, the helpers used by miner signature verification and PoW work hashing.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/Header.lean",
+        "formal/lean/Hegemon/Consensus/GenerateHeaderVectors.lean",
+        "consensus/src/header.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/validator.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/Header.lean",
+        "formal/lean/Hegemon/Consensus/GenerateHeaderVectors.lean",
+        "consensus/src/header.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/validator.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus header signing and full-header work-hash preimage grammar. SHA-256 security and implementation equivalence remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-header-preimage-theorem",
+          "description": "Removing or weakening the header preimage theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-header-preimage-conformance",
+          "description": "Changing production header preimage serialization away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_HEADER_VECTORS=<generated-json> cargo test -p consensus lean_generated_header_preimage_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-header-preimage-gate",
+          "description": "The full formal-core gate must run the header preimage conformance check with generated Lean vectors.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks consensus header preimage byte grammar only. It does not prove SHA-256 collision resistance, SHA-256 implementation equivalence, ML-DSA unforgeability, semantic correctness of header field values, retarget economics, network orphan policy, or long-range finality."
     },
     {
       "id": "consensus.pow-miner-identity",
@@ -516,6 +569,7 @@
       "informal_argument": "The Lean theorems `Hegemon.Consensus.powMinerIdentity_accepts_valid`, `Hegemon.Consensus.powMinerIdentity_rejects_signature_bitmap`, `Hegemon.Consensus.powMinerIdentity_rejects_unregistered`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_length`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_bytes`, and `Hegemon.Consensus.powMinerIdentity_rejects_failed_signature_verification` prove core facts about the executable PoW miner-identity admission table. `gen_miner_identity_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_miner_identity` helper used by `PowConsensus::verify_pow_miner_signature` after real ML-DSA parsing and verification.",
       "depends_on": [
         "consensus.pow-admission",
+        "consensus.header-preimage-binding",
         "release.pq-binary",
         "release.dependency-waivers"
       ],
@@ -559,7 +613,7 @@
           "gate": "cargo test -p consensus --test pow_rules -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks miner identity and signature admission ordering only. It does not prove ML-DSA unforgeability, ML-DSA implementation equivalence, header signing-hash serialization, validator-set governance, miner key custody, retarget economics, network orphan policy, or long-range finality."
+      "scope_boundary": "This node proves and vector-checks miner identity and signature admission ordering only. It does not prove ML-DSA unforgeability, ML-DSA implementation equivalence, validator-set governance, miner key custody, retarget economics, network orphan policy, or long-range finality. Header signing-hash byte grammar is covered separately by consensus.header-preimage-binding."
     },
     {
       "id": "consensus.version-policy",

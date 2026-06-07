@@ -19,6 +19,9 @@ lean_exe gen_shielded_vectors where
 lean_exe gen_consensus_vectors where
   root := `Hegemon.Consensus.GenerateVectors
 
+lean_exe gen_header_vectors where
+  root := `Hegemon.Consensus.GenerateHeaderVectors
+
 lean_exe gen_miner_identity_vectors where
   root := `Hegemon.Consensus.GenerateMinerIdentityVectors
 

@@ -229,7 +229,7 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "assumptions": [
-        "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not PoW admission arithmetic or header hashing.",
+        "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not PoW admission arithmetic or SHA-256 header-hash implementation equivalence.",
         "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import.",
         "The theorem covers deterministic two-tip fork-choice ordering, not every network partition, timestamp edge case, or long-range adversarial mining schedule."
       ],
@@ -260,9 +260,9 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "assumptions": [
-        "The Lean model represents arithmetic over already-computed PoW hash values; it does not prove header serialization or hash-function implementation equivalence.",
+        "The Lean model represents arithmetic over already-computed PoW hash values; header preimage serialization is covered separately by consensus.header-preimage-binding, while SHA-256 implementation equivalence remains outside this claim.",
         "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
-        "The theorem covers executable target/timestamp/work admission semantics, not difficulty-retarget economics, network orphan policy, header hashing, or long-range adversarial mining schedules."
+        "The theorem covers executable target/timestamp/work admission semantics, not difficulty-retarget economics, network orphan policy, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/PowRules.lean",
@@ -280,6 +280,35 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.header-preimage-binding",
+      "component": "consensus block header signing and work-hash byte binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean header-preimage kernel proves executable byte-layout facts for consensus signing preimages and full header preimages, and generated Lean vectors are checked against production BlockHeader preimage helpers used by miner signature verification and PoW work hashing.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats fixed-width roots, commitments, hashes, signatures, bitmaps, and PoW nonces as byte arrays and proves the byte grammar around those values, not their cryptographic derivation.",
+        "Generated Lean conformance vectors cover the signing preimage domain, fixed field order, little-endian integer encodings, BFT bitmap tag/length encoding, PoW seal tag/nonce/pow_bits encoding, absent auth tags, and signing-preimage independence from signature, bitmap, and PoW seal payloads.",
+        "The theorem covers executable header preimage serialization only; it does not prove SHA-256 collision resistance, SHA-256 implementation equivalence, ML-DSA unforgeability, semantic correctness of the header field values, retarget economics, or network finality."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/Header.lean",
+        "formal/lean/Hegemon/Consensus/GenerateHeaderVectors.lean",
+        "consensus/src/header.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/validator.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_HEADER_VECTORS=<generated-json> cargo test -p consensus lean_generated_header_preimage_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.pow-miner-identity",
       "component": "PoW miner identity and signature-shape admission",
       "claim_class": "lean_theorem",
@@ -290,7 +319,7 @@
       "assumptions": [
         "The Lean model treats ML-DSA signature parsing and verification as boolean results from the production cryptography implementation.",
         "Generated Lean conformance vectors cover the accepted case, forbidden BFT bitmap rejection, unregistered miner rejection, missing and oversized signature rejection, invalid signature byte rejection, and failed signature-verification rejection.",
-        "The theorem covers executable miner identity and signature admission ordering, not ML-DSA unforgeability, ML-DSA implementation equivalence, header signing-hash serialization, key-registration governance, or miner key compromise."
+        "The theorem covers executable miner identity and signature admission ordering, not ML-DSA unforgeability, ML-DSA implementation equivalence, key-registration governance, or miner key compromise. Header signing-hash byte grammar is covered separately by consensus.header-preimage-binding."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/MinerIdentity.lean",
