@@ -959,6 +959,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.bridge-action-payload-admission",
+      "component": "native decoded bridge action payload admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; generated Lean vectors are checked against the production native helper used by bridge action validation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats SCALE decoding, bridge_payload_hash computation, route identity, and state-delta scanning as production-derived predicates; it proves the decoded pre-receipt admission table and rejection precedence.",
+        "Generated Lean conformance vectors cover valid outbound, inbound, and verifier-registration payloads; non-bridge actions; state-delta smuggling; unsupported bridge actions; empty outbound payloads; empty inbound proof receipts; inbound replay-key, destination, and payload-hash mismatches; and not-bridge/state-delta/inbound-precondition precedence.",
+        "The theorem covers executable decoded native bridge payload admission only. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, inbound replay-set state transitions, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node bridge_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.transfer-action-payload-admission",
       "component": "native decoded shielded transfer payload admission",
       "claim_class": "lean_theorem",

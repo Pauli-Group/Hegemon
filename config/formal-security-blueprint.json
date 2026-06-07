@@ -1821,6 +1821,63 @@
       "scope_boundary": "This node proves and vector-checks native action route/scope admission only. It does not prove SCALE payload decoding, bridge receipt soundness, candidate artifact proof soundness, coinbase ciphertext hash/size binding, transfer binding-hash validation, nullifier replay, tx leaf proof soundness, action ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.bridge-action-payload-admission",
+      "claim_id": "native.bridge-action-payload-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean decoded bridge-payload admission transition, native bridge action validation accepts only when the action is in the bridge family, carries no shielded state deltas or candidate artifact payload, uses a supported bridge action kind, carries a nonempty outbound payload for outbound messages, and for inbound messages carries a nonempty proof receipt, binds the replay key to the embedded message source/nonce, targets the Hegemon chain id, and binds the embedded payload to its payload hash; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded bridge payload-admission predicate, with companion theorems for valid outbound/inbound/register payloads, non-bridge action rejection, state-delta smuggling rejection, unsupported action rejection, outbound empty-payload rejection, inbound empty-proof rejection, inbound replay-key mismatch rejection, inbound destination mismatch rejection, and inbound payload-hash mismatch rejection. `gen_bridge_action_payload_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_bridge_action_payload_admission` helper now called by native bridge action validation before the disabled RISC Zero receipt verifier path. Native regressions reject empty outbound payloads and inbound proof/replay/destination/payload-hash mismatches before receipt verification.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "bridge.message-root-replay",
+        "bridge.inbound-replay-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded bridge action payload admission. Scope is cheap pre-receipt payload admission; receipt verification remains separate and RISC Zero remains disabled/fail-closed in the release native node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-bridge-payload-admission-theorem",
+          "description": "Removing or weakening the bridge payload-admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-bridge-payload-admission-conformance",
+          "description": "Changing the production bridge payload-admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-bridge-outbound-empty-payload-regression",
+          "description": "Native bridge action validation must reject outbound bridge actions with empty payloads.",
+          "gate": "cargo test -p hegemon-node bridge_outbound_payload_must_be_non_empty --lib --no-default-features"
+        },
+        {
+          "id": "native-bridge-inbound-pre-receipt-regressions",
+          "description": "Native bridge action validation must reject empty inbound proof receipts, replay-key mismatches, wrong destinations, and payload-hash mismatches before receipt verification.",
+          "gate": "cargo test -p hegemon-node bridge_inbound_ --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission only. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, inbound replay-set state transitions, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.transfer-action-payload-admission",
       "claim_id": "native.transfer-action-payload-admission",
       "kind": "target_claim",
@@ -1896,6 +1953,7 @@
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-scope-admission",
+        "native.bridge-action-payload-admission",
         "native.transfer-action-payload-admission",
         "native.candidate-artifact-admission",
         "native.block-action-ordering",

@@ -400,6 +400,54 @@ impl NativeActionScopeAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeActionPayloadAdmissionInput {
+    bridge_route: bool,
+    state_deltas_absent: bool,
+    action_kind: NativeBridgeActionPayloadKind,
+    outbound_payload_nonempty: bool,
+    inbound_proof_receipt_nonempty: bool,
+    inbound_replay_key_matches: bool,
+    inbound_destination_matches: bool,
+    inbound_payload_hash_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeActionPayloadKind {
+    Outbound,
+    Inbound,
+    Register,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeActionPayloadAdmissionRejection {
+    NotBridgeAction,
+    StateDeltasPresent,
+    UnsupportedBridgeAction,
+    OutboundPayloadEmpty,
+    InboundProofReceiptEmpty,
+    InboundReplayKeyMismatch,
+    InboundDestinationMismatch,
+    InboundPayloadHashMismatch,
+}
+
+impl NativeBridgeActionPayloadAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotBridgeAction => "not_bridge_action",
+            Self::StateDeltasPresent => "state_deltas_present",
+            Self::UnsupportedBridgeAction => "unsupported_bridge_action",
+            Self::OutboundPayloadEmpty => "outbound_payload_empty",
+            Self::InboundProofReceiptEmpty => "inbound_proof_receipt_empty",
+            Self::InboundReplayKeyMismatch => "inbound_replay_key_mismatch",
+            Self::InboundDestinationMismatch => "inbound_destination_mismatch",
+            Self::InboundPayloadHashMismatch => "inbound_payload_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeTransferPayloadAdmissionInput {
     proof_bytes: usize,
     max_proof_bytes: usize,
@@ -3771,58 +3819,206 @@ fn transfer_key_extends_canonical_order(
 }
 
 fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
-    if action.family_id != FAMILY_BRIDGE {
-        return Err(anyhow!("not a bridge action"));
+    let bridge_route = action.family_id == FAMILY_BRIDGE;
+    let state_deltas_absent = bridge_action_has_no_state_deltas(action);
+    let action_kind = native_bridge_action_payload_kind(action.action_id);
+    if !bridge_route || !state_deltas_absent {
+        let input = native_bridge_action_payload_admission_input(
+            bridge_route,
+            state_deltas_absent,
+            action_kind,
+            true,
+            true,
+            true,
+            true,
+            true,
+        );
+        return evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
+            native_bridge_action_payload_admission_error(action.action_id, rejection)
+        });
     }
-    if !action.nullifiers.is_empty()
-        || !action.commitments.is_empty()
-        || !action.ciphertext_hashes.is_empty()
-        || !action.ciphertext_sizes.is_empty()
-        || action.fee != 0
-        || action.anchor != [0u8; 48]
-        || action.candidate_artifact.is_some()
-    {
-        return Err(anyhow!(
-            "bridge actions must not carry shielded state deltas"
-        ));
-    }
-    match action.action_id {
-        ACTION_BRIDGE_OUTBOUND => {
+    match action_kind {
+        NativeBridgeActionPayloadKind::Outbound => {
             let args: OutboundBridgeArgsV1 =
                 decode_scale_exact(&action.public_args, "outbound bridge action args")?;
-            if args.payload.is_empty() {
-                return Err(anyhow!("outbound bridge payload must be non-empty"));
-            }
+            let input = native_bridge_action_payload_admission_input(
+                bridge_route,
+                state_deltas_absent,
+                action_kind,
+                !args.payload.is_empty(),
+                true,
+                true,
+                true,
+                true,
+            );
+            evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
+                native_bridge_action_payload_admission_error(action.action_id, rejection)
+            })?;
             Ok(())
         }
-        ACTION_BRIDGE_INBOUND => {
+        NativeBridgeActionPayloadKind::Inbound => {
             let args: InboundBridgeArgsV1 =
                 decode_scale_exact(&action.public_args, "inbound bridge action args")?;
-            if args.proof_receipt.is_empty() {
-                return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
-            }
-            if args.message.source_chain_id != args.source_chain_id
-                || args.message.message_nonce != args.source_message_nonce
-            {
-                return Err(anyhow!("inbound bridge replay key does not match message"));
-            }
-            if args.message.destination_chain_id != HEGEMON_CHAIN_ID_V1 {
-                return Err(anyhow!(
-                    "inbound bridge message is not addressed to Hegemon"
-                ));
-            }
-            if args.message.payload_hash != bridge_payload_hash(&args.message.payload) {
-                return Err(anyhow!("inbound bridge message payload hash mismatch"));
-            }
+            let input = native_bridge_action_payload_admission_input(
+                bridge_route,
+                state_deltas_absent,
+                action_kind,
+                true,
+                !args.proof_receipt.is_empty(),
+                args.message.source_chain_id == args.source_chain_id
+                    && args.message.message_nonce == args.source_message_nonce,
+                args.message.destination_chain_id == HEGEMON_CHAIN_ID_V1,
+                args.message.payload_hash == bridge_payload_hash(&args.message.payload),
+            );
+            evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
+                native_bridge_action_payload_admission_error(action.action_id, rejection)
+            })?;
             verify_inbound_bridge_receipt(&args)?;
             Ok(())
         }
-        ACTION_REGISTER_BRIDGE_VERIFIER => {
+        NativeBridgeActionPayloadKind::Register => {
             let _: BridgeVerifierRegistrationV1 =
                 decode_scale_exact(&action.public_args, "bridge verifier registration args")?;
+            let input = native_bridge_action_payload_admission_input(
+                bridge_route,
+                state_deltas_absent,
+                action_kind,
+                true,
+                true,
+                true,
+                true,
+                true,
+            );
+            evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
+                native_bridge_action_payload_admission_error(action.action_id, rejection)
+            })?;
             Ok(())
         }
-        other => Err(anyhow!("unsupported bridge action {other}")),
+        NativeBridgeActionPayloadKind::Unsupported => {
+            let input = native_bridge_action_payload_admission_input(
+                bridge_route,
+                state_deltas_absent,
+                action_kind,
+                true,
+                true,
+                true,
+                true,
+                true,
+            );
+            evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
+                native_bridge_action_payload_admission_error(action.action_id, rejection)
+            })
+        }
+    }
+}
+
+fn native_bridge_action_payload_kind(action_id: u16) -> NativeBridgeActionPayloadKind {
+    match action_id {
+        ACTION_BRIDGE_OUTBOUND => NativeBridgeActionPayloadKind::Outbound,
+        ACTION_BRIDGE_INBOUND => NativeBridgeActionPayloadKind::Inbound,
+        ACTION_REGISTER_BRIDGE_VERIFIER => NativeBridgeActionPayloadKind::Register,
+        _ => NativeBridgeActionPayloadKind::Unsupported,
+    }
+}
+
+fn bridge_action_has_no_state_deltas(action: &PendingAction) -> bool {
+    action.nullifiers.is_empty()
+        && action.commitments.is_empty()
+        && action.ciphertext_hashes.is_empty()
+        && action.ciphertext_sizes.is_empty()
+        && action.fee == 0
+        && action.anchor == [0u8; 48]
+        && action.candidate_artifact.is_none()
+}
+
+fn native_bridge_action_payload_admission_input(
+    bridge_route: bool,
+    state_deltas_absent: bool,
+    action_kind: NativeBridgeActionPayloadKind,
+    outbound_payload_nonempty: bool,
+    inbound_proof_receipt_nonempty: bool,
+    inbound_replay_key_matches: bool,
+    inbound_destination_matches: bool,
+    inbound_payload_hash_matches: bool,
+) -> NativeBridgeActionPayloadAdmissionInput {
+    NativeBridgeActionPayloadAdmissionInput {
+        bridge_route,
+        state_deltas_absent,
+        action_kind,
+        outbound_payload_nonempty,
+        inbound_proof_receipt_nonempty,
+        inbound_replay_key_matches,
+        inbound_destination_matches,
+        inbound_payload_hash_matches,
+    }
+}
+
+fn evaluate_native_bridge_action_payload_admission(
+    input: NativeBridgeActionPayloadAdmissionInput,
+) -> Result<(), NativeBridgeActionPayloadAdmissionRejection> {
+    if !input.bridge_route {
+        Err(NativeBridgeActionPayloadAdmissionRejection::NotBridgeAction)
+    } else if !input.state_deltas_absent {
+        Err(NativeBridgeActionPayloadAdmissionRejection::StateDeltasPresent)
+    } else {
+        match input.action_kind {
+            NativeBridgeActionPayloadKind::Outbound => {
+                if !input.outbound_payload_nonempty {
+                    Err(NativeBridgeActionPayloadAdmissionRejection::OutboundPayloadEmpty)
+                } else {
+                    Ok(())
+                }
+            }
+            NativeBridgeActionPayloadKind::Inbound => {
+                if !input.inbound_proof_receipt_nonempty {
+                    Err(NativeBridgeActionPayloadAdmissionRejection::InboundProofReceiptEmpty)
+                } else if !input.inbound_replay_key_matches {
+                    Err(NativeBridgeActionPayloadAdmissionRejection::InboundReplayKeyMismatch)
+                } else if !input.inbound_destination_matches {
+                    Err(NativeBridgeActionPayloadAdmissionRejection::InboundDestinationMismatch)
+                } else if !input.inbound_payload_hash_matches {
+                    Err(NativeBridgeActionPayloadAdmissionRejection::InboundPayloadHashMismatch)
+                } else {
+                    Ok(())
+                }
+            }
+            NativeBridgeActionPayloadKind::Register => Ok(()),
+            NativeBridgeActionPayloadKind::Unsupported => {
+                Err(NativeBridgeActionPayloadAdmissionRejection::UnsupportedBridgeAction)
+            }
+        }
+    }
+}
+
+fn native_bridge_action_payload_admission_error(
+    action_id: u16,
+    rejection: NativeBridgeActionPayloadAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeActionPayloadAdmissionRejection::NotBridgeAction => {
+            anyhow!("not a bridge action")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::StateDeltasPresent => {
+            anyhow!("bridge actions must not carry shielded state deltas")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::UnsupportedBridgeAction => {
+            anyhow!("unsupported bridge action {action_id}")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::OutboundPayloadEmpty => {
+            anyhow!("outbound bridge payload must be non-empty")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::InboundProofReceiptEmpty => {
+            anyhow!("inbound bridge proof receipt must be non-empty")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::InboundReplayKeyMismatch => {
+            anyhow!("inbound bridge replay key does not match message")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::InboundDestinationMismatch => {
+            anyhow!("inbound bridge message is not addressed to Hegemon")
+        }
+        NativeBridgeActionPayloadAdmissionRejection::InboundPayloadHashMismatch => {
+            anyhow!("inbound bridge message payload hash mismatch")
+        }
     }
 }
 
@@ -5628,6 +5824,29 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeActionPayloadAdmissionVectorFile {
+        schema_version: u32,
+        bridge_action_payload_admission_cases: Vec<LeanBridgeActionPayloadAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeActionPayloadAdmissionCase {
+        name: String,
+        bridge_route: bool,
+        state_deltas_absent: bool,
+        action_kind: String,
+        outbound_payload_nonempty: bool,
+        inbound_proof_receipt_nonempty: bool,
+        inbound_replay_key_matches: bool,
+        inbound_destination_matches: bool,
+        inbound_payload_hash_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanTransferActionPayloadAdmissionVectorFile {
         schema_version: u32,
         transfer_action_payload_admission_cases: Vec<LeanTransferActionPayloadAdmissionCase>,
@@ -6576,6 +6795,73 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_bridge_action_payload_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge action payload admission vectors");
+        let vectors: LeanBridgeActionPayloadAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge action payload admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_action_payload_admission_cases.is_empty(),
+            "Lean bridge action payload admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_action_payload_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_action_payload_admission_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_action_payload_admission_case(
+        case: &LeanBridgeActionPayloadAdmissionCase,
+    ) {
+        let input = NativeBridgeActionPayloadAdmissionInput {
+            bridge_route: case.bridge_route,
+            state_deltas_absent: case.state_deltas_absent,
+            action_kind: lean_bridge_action_payload_kind(&case.action_kind, &case.name),
+            outbound_payload_nonempty: case.outbound_payload_nonempty,
+            inbound_proof_receipt_nonempty: case.inbound_proof_receipt_nonempty,
+            inbound_replay_key_matches: case.inbound_replay_key_matches,
+            inbound_destination_matches: case.inbound_destination_matches,
+            inbound_payload_hash_matches: case.inbound_payload_hash_matches,
+        };
+        let actual_rejection = evaluate_native_bridge_action_payload_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bridge action payload admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge action payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn lean_bridge_action_payload_kind(
+        action_kind: &str,
+        case_name: &str,
+    ) -> NativeBridgeActionPayloadKind {
+        match action_kind {
+            "outbound" => NativeBridgeActionPayloadKind::Outbound,
+            "inbound" => NativeBridgeActionPayloadKind::Inbound,
+            "register" => NativeBridgeActionPayloadKind::Register,
+            "unsupported" => NativeBridgeActionPayloadKind::Unsupported,
+            other => panic!("{case_name} has unknown bridge action kind {other}"),
+        }
+    }
+
+    #[test]
     fn lean_generated_transfer_action_payload_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS")
         else {
@@ -7116,6 +7402,72 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("bridge action must not carry fee or anchor deltas");
         assert!(err.to_string().contains("state deltas"));
+    }
+
+    #[test]
+    fn bridge_outbound_payload_must_be_non_empty() {
+        let action = test_outbound_bridge_action(b"");
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("empty outbound bridge payload must be rejected");
+        assert!(err.to_string().contains("payload must be non-empty"));
+    }
+
+    #[test]
+    fn bridge_inbound_proof_receipt_must_be_non_empty() {
+        let mut action = test_inbound_bridge_action(b"inbound payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.proof_receipt.clear();
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("empty inbound bridge receipt must be rejected before receipt decode");
+        assert!(err.to_string().contains("proof receipt must be non-empty"));
+    }
+
+    #[test]
+    fn bridge_inbound_replay_key_must_match_message() {
+        let mut action = test_inbound_bridge_action(b"inbound payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.source_message_nonce = args.source_message_nonce.saturating_add(1);
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action).expect_err(
+            "inbound bridge replay key mismatch must be rejected before receipt verify",
+        );
+        assert!(err.to_string().contains("replay key does not match"));
+    }
+
+    #[test]
+    fn bridge_inbound_destination_must_be_hegemon() {
+        let mut action = test_inbound_bridge_action(b"inbound payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.message.destination_chain_id = [19u8; 32];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("wrong inbound bridge destination must be rejected before receipt verify");
+        assert!(err.to_string().contains("not addressed to Hegemon"));
+    }
+
+    #[test]
+    fn bridge_inbound_payload_hash_must_match_payload() {
+        let mut action = test_inbound_bridge_action(b"inbound payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.message.payload_hash = [29u8; 48];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("wrong inbound bridge payload hash must be rejected before receipt verify");
+        assert!(err.to_string().contains("payload hash mismatch"));
     }
 
     #[test]
@@ -7805,6 +8157,47 @@ mod tests {
             },
             family_id: FAMILY_BRIDGE,
             action_id: ACTION_BRIDGE_OUTBOUND,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn test_inbound_bridge_action(payload: &[u8]) -> PendingAction {
+        let source_chain_id = HEGEMON_CHAIN_ID_V1;
+        let source_message_nonce = 17u128;
+        let message = BridgeMessageV1 {
+            source_chain_id,
+            destination_chain_id: HEGEMON_CHAIN_ID_V1,
+            app_family_id: FAMILY_BRIDGE,
+            message_nonce: source_message_nonce,
+            source_height: 42,
+            payload_hash: bridge_payload_hash(payload),
+            payload: payload.to_vec(),
+        };
+        let args = InboundBridgeArgsV1 {
+            source_chain_id,
+            source_message_nonce,
+            verifier_program_hash: [7u8; 32],
+            proof_receipt: vec![1, 2, 3],
+            message,
+        };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_BRIDGE,
+            action_id: ACTION_BRIDGE_INBOUND,
             anchor: [0u8; 48],
             nullifiers: Vec::new(),
             commitments: Vec::new(),
