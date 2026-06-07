@@ -93,6 +93,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T02:31:00Z) Added a Lean bridge message-root transcript kernel proving representative accept/reject facts for exact root-preimage domain/count/hash length-prefix bytes, invalid hash-length rejection, ordered-pair transcript construction, reversed-pair transcript distinction, and count-prefix binding.
 - [x] (2026-06-07T02:31:00Z) Extended `gen_bridge_vectors` and the production `protocol-kernel` conformance test with bridge message-root transcript cases, exposed `bridge_message_root_preimage_v1_from_hashes`, routed `bridge_message_root` through the shared helper, and hardened the helper against silent `u32` count truncation.
 - [x] (2026-06-07T02:31:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_BRIDGE_VECTORS=<generated-json> cargo test -p protocol-kernel lean_generated_bridge_vectors_match_production -- --nocapture`, `cargo test -p protocol-kernel -- --nocapture`, `jq empty config/formal-security-claims.json config/formal-security-blueprint.json`, `git diff --check`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate built 79 Lean jobs, checked bridge message-root/replay conformance, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 49`.
+- [x] (2026-06-07T02:41:00Z) Validated branch tip `a42b897f` on `hegemon-dev`: the expanded formal-core gate passed with bridge message-root transcript conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404717`, bounded polling confirmed mining advanced from `404719` to `404720` in 9 seconds, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `404728`.
 
 ## Surprises & Discoveries
 
@@ -251,6 +252,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now includes bridge message-root transcript conformance.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding bridge message-root transcript gating, ran `lean_generated_bridge_vectors_match_production`, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 49`.
+
+- Observation: `hegemon-dev` can run the bridge message-root transcript proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `a42b897f` built 79 Lean jobs, passed bridge replay, bridge message-root, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction statement-hash, native backend reference vectors, native tx-leaf artifact conformance, and native receipt-root conformance, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 49`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404717`; bounded polling confirmed mining advanced from `404719` to `404720` in 9 seconds; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404728`.
 
 ## Decision Log
 
@@ -489,3 +493,5 @@ Revision note 2026-06-07T02:05:00Z: Added the Lean native receipt-root parser/sc
 Revision note 2026-06-07T02:06:00Z: Recorded `hegemon-dev` validation for commit `25dd5365`, including full formal-core, release rebuild, service restart, smoke RPC checks, NTP synchronization, polling-based mining height advance, wallet submission compatibility, and final active service status.
 
 Revision note 2026-06-07T02:31:00Z: Added the Lean bridge message-root transcript kernel, generated transcript vectors, production root preimage helper, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-07T02:41:00Z: Recorded `hegemon-dev` validation for commit `a42b897f`, including full formal-core, release rebuild, service restart, smoke RPC checks, polling-based mining height advance, wallet submission compatibility, and final active service status.
