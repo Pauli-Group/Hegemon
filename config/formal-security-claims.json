@@ -838,6 +838,36 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-action-hash-admission",
+      "component": "native block action hash and count admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-hash admission kernel proves count agreement, embedded action-hash agreement, and duplicate action-hash rejection ordering; generated Lean vectors are checked against the production native admission helper used by block decode and import.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats action-count agreement, pending_action_hash agreement, and action-hash uniqueness as Boolean predicates; it does not prove BLAKE3 collision resistance or SCALE encoding implementation equivalence.",
+        "Generated Lean conformance vectors cover valid admission, action payload count mismatch, action hash mismatch, duplicate action hash rejection, and hash-mismatch-before-duplicate precedence.",
+        "The theorem covers the executable admission table used before native block-action semantic validation, not full action payload validation, action_order_key derivation, tx leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_HASH_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_hash_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node imported_block_actions_reject_hash_mismatch --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node imported_block_actions_reject_duplicate_hashes --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node decode_block_actions_rejects_action_count_mismatch --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "formal.native-tx-leaf-artifact-wire",
       "component": "native tx-leaf artifact wire grammar",
       "claim_class": "lean_theorem",

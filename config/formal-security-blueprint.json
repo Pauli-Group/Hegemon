@@ -1564,7 +1564,65 @@
           "gate": "cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate only. It does not prove BLAKE2 action-order key derivation, full block action payload validation, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate only. It does not prove BLAKE2 action-order key derivation, native action hash/count admission, full block action payload validation, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+    },
+    {
+      "id": "native.block-action-hash-admission",
+      "claim_id": "native.block-action-hash-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-hash admission transition, native block action decoding/import accepts only when action payload count agrees with header tx_count, every decoded action's embedded tx_hash equals the recomputed pending_action_hash(action), and all action hashes are unique; count mismatch rejects before hash mismatch, and hash mismatch rejects before duplicate-hash reporting.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionHashAdmission.accepts_iff_admission_preconditions` proves the complete executable admission predicate, with companion theorems for count mismatch, action-hash mismatch, duplicate action hash, and hash-mismatch-before-duplicate precedence. `gen_action_hash_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_hash_admission` helper called by `decode_block_actions` and `validate_block_actions_locked`, while native regressions reject mutated embedded action hashes, duplicate action hashes, and action payload count mismatches.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block action hash/count admission. Scope is the cheap admission table before action semantic validation."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-hash-admission-theorem",
+          "description": "Removing or weakening the action-hash admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-hash-admission-conformance",
+          "description": "Changing the production action hash/count admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-block-action-hash-mismatch-regression",
+          "description": "Native block-action validation must reject an action whose embedded tx_hash no longer matches its decoded payload.",
+          "gate": "cargo test -p hegemon-node imported_block_actions_reject_hash_mismatch --lib --no-default-features"
+        },
+        {
+          "id": "native-block-duplicate-action-hash-regression",
+          "description": "Native block-action validation must reject repeated action hashes before applying action semantics.",
+          "gate": "cargo test -p hegemon-node imported_block_actions_reject_duplicate_hashes --lib --no-default-features"
+        },
+        {
+          "id": "native-block-action-count-regression",
+          "description": "Native block-action decoding must reject action payload counts that disagree with the header tx_count.",
+          "gate": "cargo test -p hegemon-node decode_block_actions_rejects_action_count_mismatch --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

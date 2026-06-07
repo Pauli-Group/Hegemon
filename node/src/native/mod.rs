@@ -314,6 +314,31 @@ struct PendingAction {
     received_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeActionHashAdmissionInput {
+    action_count_matches: bool,
+    action_hashes_match: bool,
+    action_hashes_unique: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionHashAdmissionRejection {
+    ActionCountMismatch,
+    ActionHashMismatch,
+    DuplicateActionHash,
+}
+
+impl NativeActionHashAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::ActionCountMismatch => "action_count_mismatch",
+            Self::ActionHashMismatch => "action_hash_mismatch",
+            Self::DuplicateActionHash => "duplicate_action_hash",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct SubmitActionRpcRequest {
     binding_circuit: u16,
@@ -3470,28 +3495,71 @@ fn bridge_messages_from_actions(
 }
 
 fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
-    if meta.action_bytes.len() != meta.tx_count as usize {
-        return Err(anyhow!("block action payload count mismatch"));
-    }
+    evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
+        action_count_matches: meta.action_bytes.len() == meta.tx_count as usize,
+        action_hashes_match: true,
+        action_hashes_unique: true,
+    })
+    .map_err(native_action_hash_admission_error)?;
     meta.action_bytes
         .iter()
         .map(|bytes| decode_scale_exact::<PendingAction>(bytes, "native block action"))
         .collect()
 }
 
+fn evaluate_native_action_hash_admission(
+    input: NativeActionHashAdmissionInput,
+) -> Result<(), NativeActionHashAdmissionRejection> {
+    if !input.action_count_matches {
+        Err(NativeActionHashAdmissionRejection::ActionCountMismatch)
+    } else if !input.action_hashes_match {
+        Err(NativeActionHashAdmissionRejection::ActionHashMismatch)
+    } else if !input.action_hashes_unique {
+        Err(NativeActionHashAdmissionRejection::DuplicateActionHash)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_action_hash_admission_error(
+    rejection: NativeActionHashAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeActionHashAdmissionRejection::ActionCountMismatch => {
+            anyhow!("block action payload count mismatch")
+        }
+        NativeActionHashAdmissionRejection::ActionHashMismatch => {
+            anyhow!("block action hash mismatch")
+        }
+        NativeActionHashAdmissionRejection::DuplicateActionHash => {
+            anyhow!("duplicate action in block")
+        }
+    }
+}
+
+fn block_action_hashes_match(actions: &[PendingAction]) -> bool {
+    actions
+        .iter()
+        .all(|action| action.tx_hash == pending_action_hash(action))
+}
+
+fn block_action_hashes_unique(actions: &[PendingAction]) -> bool {
+    let mut seen = BTreeSet::new();
+    actions.iter().all(|action| seen.insert(action.tx_hash))
+}
+
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
-    let mut seen_actions = BTreeSet::new();
+    evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
+        action_count_matches: true,
+        action_hashes_match: block_action_hashes_match(actions),
+        action_hashes_unique: block_action_hashes_unique(actions),
+    })
+    .map_err(native_action_hash_admission_error)?;
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
-        if action.tx_hash != pending_action_hash(action) {
-            return Err(anyhow!("block action hash mismatch"));
-        }
-        if !seen_actions.insert(action.tx_hash) {
-            return Err(anyhow!("duplicate action in block"));
-        }
         if action.candidate_artifact.is_some() && !is_candidate_artifact_action(action) {
             return Err(anyhow!(
                 "candidate artifact payload is only valid on candidate artifact actions"
@@ -4833,6 +4901,24 @@ mod tests {
         key: String,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionHashAdmissionVectorFile {
+        schema_version: u32,
+        action_hash_admission_cases: Vec<LeanActionHashAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionHashAdmissionCase {
+        name: String,
+        action_count_matches: bool,
+        action_hashes_match: bool,
+        action_hashes_unique: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -5511,6 +5597,90 @@ mod tests {
             previous = Some(*key);
         }
         true
+    }
+
+    #[test]
+    fn lean_generated_action_hash_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_HASH_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_HASH_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action-hash admission vectors");
+        let vectors: LeanActionHashAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action-hash vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_hash_admission_cases.is_empty(),
+            "Lean action-hash admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_hash_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_hash_admission_case(case);
+        }
+    }
+
+    fn verify_lean_action_hash_admission_case(case: &LeanActionHashAdmissionCase) {
+        let input = NativeActionHashAdmissionInput {
+            action_count_matches: case.action_count_matches,
+            action_hashes_match: case.action_hashes_match,
+            action_hashes_unique: case.action_hashes_unique,
+        };
+        let actual_rejection = evaluate_native_action_hash_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native action-hash admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native action-hash admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn imported_block_actions_reject_hash_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [21u8; 48], [121u8; 48], 0);
+        action.tx_hash[0] ^= 1;
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("mutated action hash should fail admission");
+        assert!(err.to_string().contains("block action hash mismatch"));
+    }
+
+    #[test]
+    fn imported_block_actions_reject_duplicate_hashes() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [22u8; 48], [122u8; 48], 0);
+
+        let err = validate_block_actions_locked(&state, &[action.clone(), action])
+            .expect_err("duplicate action hash should fail admission");
+        assert!(err.to_string().contains("duplicate action in block"));
+    }
+
+    #[test]
+    fn decode_block_actions_rejects_action_count_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let mut block = genesis_meta(pow_bits).expect("genesis");
+        block.tx_count = 1;
+
+        let err = decode_block_actions(&block).expect_err("count mismatch should fail admission");
+        assert!(err
+            .to_string()
+            .contains("block action payload count mismatch"));
     }
 
     #[test]
