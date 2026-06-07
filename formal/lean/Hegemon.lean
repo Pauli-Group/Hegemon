@@ -13,6 +13,7 @@ import Hegemon.Consensus.Header
 import Hegemon.Consensus.MinerIdentity
 import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
+import Hegemon.Consensus.ProvenBatchBinding
 import Hegemon.Consensus.Supply
 import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionOrder

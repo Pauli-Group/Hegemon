@@ -1539,6 +1539,83 @@ fn ensure_claims_match_verified_artifacts(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProvenBatchBindingInput {
+    proven_batch_mode: ProvenBatchMode,
+    proof_kind: ProofArtifactKind,
+    tx_count: usize,
+    expected_tx_count: usize,
+    statement_commitment_matches: bool,
+    da_root_matches: bool,
+    da_chunk_count: u32,
+    artifact_kind: Option<ProofArtifactKind>,
+    artifact_verifier_profile_matches: bool,
+    has_receipt_root: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProvenBatchBindingRejection {
+    IncompatibleRoute,
+    TxCountMismatch,
+    StatementCommitmentMismatch,
+    DaRootMismatch,
+    DaChunkCountZero,
+    ArtifactKindMismatch,
+    ArtifactVerifierProfileMismatch,
+    RecursiveBlockReceiptRootPayload,
+}
+
+impl ProvenBatchBindingRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::IncompatibleRoute => "incompatible_route",
+            Self::TxCountMismatch => "tx_count_mismatch",
+            Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
+            Self::DaRootMismatch => "da_root_mismatch",
+            Self::DaChunkCountZero => "da_chunk_count_zero",
+            Self::ArtifactKindMismatch => "artifact_kind_mismatch",
+            Self::ArtifactVerifierProfileMismatch => "artifact_verifier_profile_mismatch",
+            Self::RecursiveBlockReceiptRootPayload => "recursive_block_receipt_root_payload",
+        }
+    }
+}
+
+fn evaluate_proven_batch_binding(
+    input: ProvenBatchBindingInput,
+) -> Result<(), ProvenBatchBindingRejection> {
+    if !crate::types::ArtifactRoute::new(input.proven_batch_mode, input.proof_kind)
+        .is_compatible_with_mode()
+    {
+        return Err(ProvenBatchBindingRejection::IncompatibleRoute);
+    }
+    if input.tx_count != input.expected_tx_count {
+        return Err(ProvenBatchBindingRejection::TxCountMismatch);
+    }
+    if !input.statement_commitment_matches {
+        return Err(ProvenBatchBindingRejection::StatementCommitmentMismatch);
+    }
+    if !input.da_root_matches {
+        return Err(ProvenBatchBindingRejection::DaRootMismatch);
+    }
+    if input.da_chunk_count == 0 {
+        return Err(ProvenBatchBindingRejection::DaChunkCountZero);
+    }
+    if let Some(artifact_kind) = input.artifact_kind {
+        if artifact_kind != input.proof_kind {
+            return Err(ProvenBatchBindingRejection::ArtifactKindMismatch);
+        }
+        if !input.artifact_verifier_profile_matches {
+            return Err(ProvenBatchBindingRejection::ArtifactVerifierProfileMismatch);
+        }
+    }
+    if matches!(input.proven_batch_mode, ProvenBatchMode::RecursiveBlock) && input.has_receipt_root
+    {
+        return Err(ProvenBatchBindingRejection::RecursiveBlockReceiptRootPayload);
+    }
+    Ok(())
+}
+
 fn validate_proven_batch_binding<BH>(
     block: &Block<BH>,
     proven_batch: &crate::types::ProvenBatch,
@@ -1548,59 +1625,69 @@ fn validate_proven_batch_binding<BH>(
 where
     BH: HeaderProofExt,
 {
-    if !proven_batch.route().is_compatible_with_mode() {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "proven batch route mode={:?} kind={} is incompatible",
-            proven_batch.mode,
-            proven_batch.proof_kind.label()
-        )));
-    }
-    if proven_batch.tx_count as usize != block.transactions.len() {
-        return Err(ProofError::ProvenBatchBindingMismatch(format!(
-            "proven batch tx_count mismatch (payload {}, expected {})",
-            proven_batch.tx_count,
-            block.transactions.len()
-        )));
-    }
-    if proven_batch.tx_statements_commitment != *expected_commitment {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "proven batch statement commitment mismatch".to_string(),
-        ));
-    }
     let expected_da_root = da_root(&block.transactions, block.header.da_params())
         .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    if proven_batch.da_root != expected_da_root {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "proven batch DA root mismatch".to_string(),
-        ));
-    }
-    if proven_batch.da_chunk_count == 0 {
-        return Err(ProofError::ProvenBatchBindingMismatch(
+    let artifact_kind = block_artifact.map(|artifact| artifact.kind);
+    let artifact_verifier_profile_matches = block_artifact
+        .map(|artifact| artifact.verifier_profile == proven_batch.verifier_profile)
+        .unwrap_or(true);
+    let input = ProvenBatchBindingInput {
+        proven_batch_mode: proven_batch.mode,
+        proof_kind: proven_batch.proof_kind,
+        tx_count: proven_batch.tx_count as usize,
+        expected_tx_count: block.transactions.len(),
+        statement_commitment_matches: proven_batch.tx_statements_commitment == *expected_commitment,
+        da_root_matches: proven_batch.da_root == expected_da_root,
+        da_chunk_count: proven_batch.da_chunk_count,
+        artifact_kind,
+        artifact_verifier_profile_matches,
+        has_receipt_root: proven_batch.receipt_root.is_some(),
+    };
+    evaluate_proven_batch_binding(input).map_err(|rejection| match rejection {
+        ProvenBatchBindingRejection::IncompatibleRoute => {
+            ProofError::ProvenBatchBindingMismatch(format!(
+                "proven batch route mode={:?} kind={} is incompatible",
+                proven_batch.mode,
+                proven_batch.proof_kind.label()
+            ))
+        }
+        ProvenBatchBindingRejection::TxCountMismatch => {
+            ProofError::ProvenBatchBindingMismatch(format!(
+                "proven batch tx_count mismatch (payload {}, expected {})",
+                proven_batch.tx_count,
+                block.transactions.len()
+            ))
+        }
+        ProvenBatchBindingRejection::StatementCommitmentMismatch => {
+            ProofError::ProvenBatchBindingMismatch(
+                "proven batch statement commitment mismatch".to_string(),
+            )
+        }
+        ProvenBatchBindingRejection::DaRootMismatch => {
+            ProofError::ProvenBatchBindingMismatch("proven batch DA root mismatch".to_string())
+        }
+        ProvenBatchBindingRejection::DaChunkCountZero => ProofError::ProvenBatchBindingMismatch(
             "proven batch DA chunk count must be non-zero".to_string(),
-        ));
-    }
-    if let Some(envelope) = block_artifact {
-        if envelope.kind != proven_batch.proof_kind {
-            return Err(ProofError::ProvenBatchBindingMismatch(format!(
+        ),
+        ProvenBatchBindingRejection::ArtifactKindMismatch => {
+            let envelope = block_artifact.expect("artifact kind mismatch requires artifact");
+            ProofError::ProvenBatchBindingMismatch(format!(
                 "block artifact kind {} does not match proven batch kind {}",
                 envelope.kind.label(),
                 proven_batch.proof_kind.label()
-            )));
+            ))
         }
-        if envelope.verifier_profile != proven_batch.verifier_profile {
-            return Err(ProofError::ProvenBatchBindingMismatch(
+        ProvenBatchBindingRejection::ArtifactVerifierProfileMismatch => {
+            ProofError::ProvenBatchBindingMismatch(
                 "block artifact verifier profile does not match proven batch".to_string(),
-            ));
+            )
         }
-    }
-    if matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock)
-        && proven_batch.receipt_root.is_some()
-    {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "recursive block proven batch must not carry receipt_root payload".to_string(),
-        ));
-    }
-    Ok(())
+        ProvenBatchBindingRejection::RecursiveBlockReceiptRootPayload => {
+            ProofError::ProvenBatchBindingMismatch(
+                "recursive block proven batch must not carry receipt_root payload".to_string(),
+            )
+        }
+    })
 }
 
 pub fn tx_statement_bindings_from_tx_artifacts(
@@ -2220,6 +2307,32 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanProvenBatchBindingVectorFile {
+        schema_version: u32,
+        proven_batch_binding_cases: Vec<LeanProvenBatchBindingCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProvenBatchBindingCase {
+        name: String,
+        batch_mode: String,
+        proof_kind: String,
+        tx_count: usize,
+        expected_tx_count: usize,
+        statement_commitment_matches: bool,
+        da_root_matches: bool,
+        da_chunk_count: u32,
+        has_artifact: bool,
+        artifact_kind: String,
+        artifact_verifier_profile_matches: bool,
+        has_receipt_root: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanStatementHashVectorFile {
         schema_version: u32,
         statement_hash_cases: Vec<LeanStatementHashCase>,
@@ -2471,6 +2584,31 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_proven_batch_binding_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean proven-batch binding vectors");
+        let vectors: LeanProvenBatchBindingVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean proven-batch binding vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.proven_batch_binding_cases.is_empty(),
+            "Lean proven-batch binding cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.proven_batch_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proven_batch_binding_case(case);
+        }
+    }
+
+    #[test]
     fn lean_generated_statement_hash_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_STATEMENT_HASH_VECTORS") else {
             eprintln!(
@@ -2594,6 +2732,37 @@ mod tests {
         );
     }
 
+    fn verify_lean_proven_batch_binding_case(case: &LeanProvenBatchBindingCase) {
+        let input = ProvenBatchBindingInput {
+            proven_batch_mode: parse_lean_batch_mode(&case.batch_mode),
+            proof_kind: parse_lean_proof_artifact_kind(&case.proof_kind),
+            tx_count: case.tx_count,
+            expected_tx_count: case.expected_tx_count,
+            statement_commitment_matches: case.statement_commitment_matches,
+            da_root_matches: case.da_root_matches,
+            da_chunk_count: case.da_chunk_count,
+            artifact_kind: case
+                .has_artifact
+                .then(|| parse_lean_proof_artifact_kind(&case.artifact_kind)),
+            artifact_verifier_profile_matches: case.artifact_verifier_profile_matches,
+            has_receipt_root: case.has_receipt_root,
+        };
+        let result = evaluate_proven_batch_binding(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} proven-batch binding validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} proven-batch binding rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn parse_lean_verification_mode(value: &str) -> ProofVerificationMode {
         match value {
             "inline_required" => ProofVerificationMode::InlineRequired,
@@ -2608,6 +2777,17 @@ mod tests {
             "receipt_root" => ProvenBatchMode::ReceiptRoot,
             "recursive_block" => ProvenBatchMode::RecursiveBlock,
             other => panic!("unknown Lean proven batch mode {other}"),
+        }
+    }
+
+    fn parse_lean_proof_artifact_kind(value: &str) -> ProofArtifactKind {
+        match value {
+            "inline_tx" => ProofArtifactKind::InlineTx,
+            "tx_leaf" => ProofArtifactKind::TxLeaf,
+            "receipt_root" => ProofArtifactKind::ReceiptRoot,
+            "recursive_block_v1" => ProofArtifactKind::RecursiveBlockV1,
+            "recursive_block_v2" => ProofArtifactKind::RecursiveBlockV2,
+            other => panic!("unknown Lean proof artifact kind {other}"),
         }
     }
 

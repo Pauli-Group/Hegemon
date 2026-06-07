@@ -983,7 +983,58 @@
           "gate": "cargo test -p consensus --test self_contained_mode -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks proof payload shape/admission only. It does not prove aggregation V5 header admission, recursive proof cryptographic soundness, tx leaf proof soundness, DA root derivation, receipt-root security, native backend security, or complete block-state equivalence. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
+      "scope_boundary": "This node proves and vector-checks proof payload shape/admission only. It does not prove proven-batch binding, aggregation V5 header admission, recursive proof cryptographic soundness, tx leaf proof soundness, DA root derivation, receipt-root security, native backend security, or complete block-state equivalence. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
+    },
+    {
+      "id": "consensus.proven-batch-binding",
+      "claim_id": "consensus.proven-batch-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean proven-batch binding transition, accepted proven batches must have a route-compatible proof kind, tx_count equal to the block transaction count, a statement commitment matching the expected block commitment, a DA root matching the block/body-derived DA root, a nonzero DA chunk count, matching block-artifact envelope kind and verifier profile when an envelope is present, and no receipt-root payload on recursive-block mode.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.ProvenBatchBinding.accepts_iff_binding_preconditions` proves that the executable acceptance decision is exactly the proven-batch binding predicate. The companion theorems `Hegemon.Consensus.ProvenBatchBinding.valid_recursive_block_v2_accepts`, `Hegemon.Consensus.ProvenBatchBinding.valid_receipt_root_accepts`, `Hegemon.Consensus.ProvenBatchBinding.rejects_incompatible_recursive_route`, `Hegemon.Consensus.ProvenBatchBinding.rejects_incompatible_receipt_route`, `Hegemon.Consensus.ProvenBatchBinding.rejects_tx_count_mismatch`, `Hegemon.Consensus.ProvenBatchBinding.rejects_statement_commitment_mismatch`, `Hegemon.Consensus.ProvenBatchBinding.rejects_da_root_mismatch`, `Hegemon.Consensus.ProvenBatchBinding.rejects_da_chunk_count_zero`, `Hegemon.Consensus.ProvenBatchBinding.rejects_artifact_kind_mismatch`, `Hegemon.Consensus.ProvenBatchBinding.rejects_artifact_profile_mismatch`, `Hegemon.Consensus.ProvenBatchBinding.rejects_recursive_block_receipt_root_payload`, `Hegemon.Consensus.ProvenBatchBinding.skips_artifact_checks_when_no_artifact`, `Hegemon.Consensus.ProvenBatchBinding.recursive_v1_route_is_compatible`, and `Hegemon.Consensus.ProvenBatchBinding.tx_leaf_is_not_block_artifact_route` pin representative accept/reject facts about the table. `gen_proven_batch_binding_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_proven_batch_binding` helper called by `validate_proven_batch_binding` before heavy proof verification.",
+      "depends_on": [
+        "consensus.self-contained-proof-policy",
+        "formal.transaction-statement-hash-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProvenBatchBindingVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProvenBatchBindingVectors.lean",
+        "consensus/src/proof.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for proven-batch binding before recursive block or receipt-root proof verification. Scope excludes proof-system and DA hash soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-proven-batch-binding-theorem",
+          "description": "Removing or weakening the proven-batch binding theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-proven-batch-binding-conformance",
+          "description": "Changing production proven-batch binding away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS=<generated-json> cargo test -p consensus lean_generated_proven_batch_binding_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-proven-batch-binding-gate",
+          "description": "The release formal-core wrapper must generate proven-batch binding vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks cheap proven-batch binding only. It does not prove DA codec/hash implementation equivalence, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity."
     },
     {
       "id": "consensus.aggregation-v5-header-admission",

@@ -518,7 +518,7 @@
       "assumptions": [
         "The Lean model represents the consensus proof payload availability and route-shape decision before cryptographic artifact verification.",
         "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, missing recursive block artifacts, and receipt-root payload requirements.",
-        "The theorem covers executable proof policy admission semantics, not recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, DA root derivation, or native backend security. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
+        "The theorem covers executable proof policy admission semantics, not proven-batch binding, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, DA root derivation, or native backend security. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
@@ -529,6 +529,33 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.proven-batch-binding",
+      "component": "proven batch block/header/proof artifact binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean proven-batch binding kernel proves the executable acceptance predicate for proof route compatibility, tx-count binding, statement-commitment binding, DA-root binding, nonzero DA chunks, block-artifact envelope kind/profile agreement, and recursive-block receipt-root exclusion; generated Lean vectors are checked against the production consensus helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the cheap proven-batch binding gate after DA root computation succeeds and before recursive block or receipt-root proof verification.",
+        "Generated Lean conformance vectors cover valid recursive_block_v2 and receipt_root bindings plus incompatible routes, tx-count mismatch, statement-commitment mismatch, DA-root mismatch, zero DA chunk count, artifact kind mismatch, artifact verifier-profile mismatch, recursive-block receipt-root payload rejection, missing-artifact envelope skipping, recursive_block_v1 route compatibility, and tx_leaf route rejection.",
+        "The theorem covers executable proven-batch binding only. It does not prove DA codec/hash implementation equivalence, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
+        "formal/lean/Hegemon/Consensus/GenerateProvenBatchBindingVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS=<generated-json> cargo test -p consensus lean_generated_proven_batch_binding_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
