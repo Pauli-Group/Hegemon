@@ -30,6 +30,7 @@ import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.ReceiptRoot
+import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance

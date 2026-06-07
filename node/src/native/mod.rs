@@ -400,6 +400,56 @@ impl NativeActionScopeAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeTransferPayloadAdmissionInput {
+    proof_bytes: usize,
+    max_proof_bytes: usize,
+    anchor_matches: bool,
+    commitments_match: bool,
+    inline_ciphertext_bytes: usize,
+    max_ciphertext_bytes: usize,
+    ciphertext_hashes_match: bool,
+    ciphertext_sizes_match: bool,
+    binding_hash_matches: bool,
+    fee_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTransferPayloadRoute {
+    Inline,
+    Sidecar,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTransferPayloadAdmissionRejection {
+    ProofMissing,
+    ProofTooLarge,
+    AnchorMismatch,
+    CommitmentsMismatch,
+    InlineCiphertextTooLarge,
+    CiphertextHashesMismatch,
+    CiphertextSizesMismatch,
+    BindingHashMismatch,
+    FeeMismatch,
+}
+
+impl NativeTransferPayloadAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::ProofMissing => "proof_missing",
+            Self::ProofTooLarge => "proof_too_large",
+            Self::AnchorMismatch => "anchor_mismatch",
+            Self::CommitmentsMismatch => "commitments_mismatch",
+            Self::InlineCiphertextTooLarge => "inline_ciphertext_too_large",
+            Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
+            Self::CiphertextSizesMismatch => "ciphertext_sizes_mismatch",
+            Self::BindingHashMismatch => "binding_hash_mismatch",
+            Self::FeeMismatch => "fee_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCandidateArtifactAdmissionInput {
     state_deltas_absent: bool,
     artifact_present: bool,
@@ -3098,6 +3148,31 @@ fn validate_binding_hash(
     binding_hash: [u8; 64],
     stablecoin: Option<protocol_shielded_pool::types::StablecoinPolicyBinding>,
 ) -> Result<()> {
+    if !binding_hash_matches(
+        anchor,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        balance_slot_asset_ids,
+        fee,
+        binding_hash,
+        stablecoin,
+    ) {
+        return Err(anyhow!("binding hash mismatch"));
+    }
+    Ok(())
+}
+
+fn binding_hash_matches(
+    anchor: [u8; 48],
+    nullifiers: &[[u8; 48]],
+    commitments: &[[u8; 48]],
+    ciphertext_hashes: &[[u8; 48]],
+    balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
+    fee: u64,
+    binding_hash: [u8; 64],
+    stablecoin: Option<protocol_shielded_pool::types::StablecoinPolicyBinding>,
+) -> bool {
     let inputs = ShieldedTransferInputs {
         anchor,
         nullifiers: nullifiers.to_vec(),
@@ -3109,10 +3184,122 @@ fn validate_binding_hash(
         stablecoin,
     };
     let expected = StarkVerifier::compute_binding_hash(&inputs).data;
-    if expected != binding_hash {
-        return Err(anyhow!("binding hash mismatch"));
+    expected == binding_hash
+}
+
+fn evaluate_native_transfer_payload_admission(
+    input: NativeTransferPayloadAdmissionInput,
+) -> Result<(), NativeTransferPayloadAdmissionRejection> {
+    if input.proof_bytes == 0 {
+        Err(NativeTransferPayloadAdmissionRejection::ProofMissing)
+    } else if input.proof_bytes > input.max_proof_bytes {
+        Err(NativeTransferPayloadAdmissionRejection::ProofTooLarge)
+    } else if !input.anchor_matches {
+        Err(NativeTransferPayloadAdmissionRejection::AnchorMismatch)
+    } else if !input.commitments_match {
+        Err(NativeTransferPayloadAdmissionRejection::CommitmentsMismatch)
+    } else if input.inline_ciphertext_bytes > input.max_ciphertext_bytes {
+        Err(NativeTransferPayloadAdmissionRejection::InlineCiphertextTooLarge)
+    } else if !input.ciphertext_hashes_match {
+        Err(NativeTransferPayloadAdmissionRejection::CiphertextHashesMismatch)
+    } else if !input.ciphertext_sizes_match {
+        Err(NativeTransferPayloadAdmissionRejection::CiphertextSizesMismatch)
+    } else if !input.binding_hash_matches {
+        Err(NativeTransferPayloadAdmissionRejection::BindingHashMismatch)
+    } else if !input.fee_matches {
+        Err(NativeTransferPayloadAdmissionRejection::FeeMismatch)
+    } else {
+        Ok(())
     }
-    Ok(())
+}
+
+fn native_transfer_payload_admission_error(
+    route: NativeTransferPayloadRoute,
+    input: NativeTransferPayloadAdmissionInput,
+    rejection: NativeTransferPayloadAdmissionRejection,
+) -> anyhow::Error {
+    let route_label = match route {
+        NativeTransferPayloadRoute::Inline => "inline",
+        NativeTransferPayloadRoute::Sidecar => "sidecar",
+    };
+    match rejection {
+        NativeTransferPayloadAdmissionRejection::ProofMissing => {
+            anyhow!("shielded {route_label} transfer missing proof")
+        }
+        NativeTransferPayloadAdmissionRejection::ProofTooLarge => anyhow!(
+            "shielded {route_label} proof size {} exceeds native tx-leaf artifact limit {}",
+            input.proof_bytes,
+            input.max_proof_bytes
+        ),
+        NativeTransferPayloadAdmissionRejection::AnchorMismatch => {
+            anyhow!("shielded {route_label} anchor mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::CommitmentsMismatch => {
+            anyhow!("shielded {route_label} commitments mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::InlineCiphertextTooLarge => anyhow!(
+            "inline ciphertext size {} exceeds limit {}",
+            input.inline_ciphertext_bytes,
+            input.max_ciphertext_bytes
+        ),
+        NativeTransferPayloadAdmissionRejection::CiphertextHashesMismatch => {
+            anyhow!("shielded {route_label} ciphertext hashes mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::CiphertextSizesMismatch => {
+            anyhow!("shielded {route_label} ciphertext sizes mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::BindingHashMismatch => {
+            anyhow!("binding hash mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::FeeMismatch => {
+            anyhow!("shielded {route_label} fee mismatch")
+        }
+    }
+}
+
+fn inline_ciphertext_metadata(
+    ciphertexts: &[protocol_shielded_pool::types::EncryptedNote],
+) -> (usize, Option<(Vec<[u8; 48]>, Vec<u32>)>) {
+    let max_inline_ciphertext_bytes = ciphertexts
+        .iter()
+        .map(|note| {
+            note.ciphertext
+                .len()
+                .saturating_add(note.kem_ciphertext.len())
+        })
+        .max()
+        .unwrap_or(0);
+    if max_inline_ciphertext_bytes > MAX_CIPHERTEXT_BYTES {
+        return (max_inline_ciphertext_bytes, None);
+    }
+    let ciphertext_hashes = ciphertexts
+        .iter()
+        .map(|note| {
+            let total_len = note
+                .ciphertext
+                .len()
+                .saturating_add(note.kem_ciphertext.len());
+            let mut bytes = Vec::with_capacity(total_len);
+            bytes.extend_from_slice(&note.ciphertext);
+            bytes.extend_from_slice(&note.kem_ciphertext);
+            ciphertext_hash_bytes(&bytes)
+        })
+        .collect::<Vec<_>>();
+    let ciphertext_sizes = ciphertexts
+        .iter()
+        .map(|note| {
+            u32::try_from(
+                note.ciphertext
+                    .len()
+                    .saturating_add(note.kem_ciphertext.len()),
+            )
+            .unwrap_or(u32::MAX)
+        })
+        .collect::<Vec<_>>();
+    (
+        max_inline_ciphertext_bytes,
+        Some((ciphertext_hashes, ciphertext_sizes)),
+    )
 }
 
 fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
@@ -3155,109 +3342,77 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
         ACTION_SHIELDED_TRANSFER_INLINE => {
             let args: ShieldedTransferInlineArgs =
                 decode_scale_exact(&action.public_args, "shielded inline action args")?;
-            if args.proof.is_empty() {
-                return Err(anyhow!("shielded inline transfer missing proof"));
-            }
-            if args.proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
-                return Err(anyhow!(
-                    "shielded inline proof size {} exceeds native tx-leaf artifact limit {}",
-                    args.proof.len(),
-                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
-                ));
-            }
-            if args.anchor != action.anchor {
-                return Err(anyhow!("shielded inline anchor mismatch"));
-            }
-            if args.commitments != action.commitments {
-                return Err(anyhow!("shielded inline commitments mismatch"));
-            }
-            let ciphertext_hashes = args
-                .ciphertexts
-                .iter()
-                .map(|note| {
-                    let total_len = note
-                        .ciphertext
-                        .len()
-                        .saturating_add(note.kem_ciphertext.len());
-                    if total_len > MAX_CIPHERTEXT_BYTES {
-                        return Err(anyhow!(
-                            "inline ciphertext size {} exceeds limit {}",
-                            total_len,
-                            MAX_CIPHERTEXT_BYTES
-                        ));
-                    }
-                    let mut bytes = Vec::with_capacity(total_len);
-                    bytes.extend_from_slice(&note.ciphertext);
-                    bytes.extend_from_slice(&note.kem_ciphertext);
-                    Ok(ciphertext_hash_bytes(&bytes))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let ciphertext_sizes = args
-                .ciphertexts
-                .iter()
-                .map(|note| {
-                    u32::try_from(note.ciphertext.len() + note.kem_ciphertext.len())
-                        .unwrap_or(u32::MAX)
-                })
-                .collect::<Vec<_>>();
-            if ciphertext_hashes != action.ciphertext_hashes {
-                return Err(anyhow!("shielded inline ciphertext hashes mismatch"));
-            }
-            if ciphertext_sizes != action.ciphertext_sizes {
-                return Err(anyhow!("shielded inline ciphertext sizes mismatch"));
-            }
-            validate_binding_hash(
-                args.anchor,
-                &action.nullifiers,
-                &args.commitments,
-                &ciphertext_hashes,
-                args.balance_slot_asset_ids,
-                args.fee,
-                args.binding_hash,
-                args.stablecoin,
-            )?;
-            if args.fee != action.fee {
-                return Err(anyhow!("shielded inline fee mismatch"));
-            }
+            let (inline_ciphertext_bytes, inline_metadata) =
+                inline_ciphertext_metadata(&args.ciphertexts);
+            let (ciphertext_hashes, ciphertext_sizes) = inline_metadata
+                .clone()
+                .unwrap_or_else(|| (Vec::new(), Vec::new()));
+            let input = NativeTransferPayloadAdmissionInput {
+                proof_bytes: args.proof.len(),
+                max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                anchor_matches: args.anchor == action.anchor,
+                commitments_match: args.commitments == action.commitments,
+                inline_ciphertext_bytes,
+                max_ciphertext_bytes: MAX_CIPHERTEXT_BYTES,
+                ciphertext_hashes_match: inline_metadata.is_some()
+                    && ciphertext_hashes == action.ciphertext_hashes,
+                ciphertext_sizes_match: inline_metadata.is_some()
+                    && ciphertext_sizes == action.ciphertext_sizes,
+                binding_hash_matches: inline_metadata.as_ref().is_some_and(
+                    |(ciphertext_hashes, _)| {
+                        binding_hash_matches(
+                            args.anchor,
+                            &action.nullifiers,
+                            &args.commitments,
+                            ciphertext_hashes,
+                            args.balance_slot_asset_ids,
+                            args.fee,
+                            args.binding_hash,
+                            args.stablecoin,
+                        )
+                    },
+                ),
+                fee_matches: args.fee == action.fee,
+            };
+            evaluate_native_transfer_payload_admission(input).map_err(|rejection| {
+                native_transfer_payload_admission_error(
+                    NativeTransferPayloadRoute::Inline,
+                    input,
+                    rejection,
+                )
+            })?;
         }
         ACTION_SHIELDED_TRANSFER_SIDECAR => {
             let args: ShieldedTransferSidecarArgs =
                 decode_scale_exact(&action.public_args, "shielded sidecar action args")?;
-            if args.proof.is_empty() {
-                return Err(anyhow!("shielded sidecar transfer missing proof"));
-            }
-            if args.proof.len() > NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
-                return Err(anyhow!(
-                    "shielded sidecar proof size {} exceeds native tx-leaf artifact limit {}",
-                    args.proof.len(),
-                    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
-                ));
-            }
-            if args.anchor != action.anchor {
-                return Err(anyhow!("shielded sidecar anchor mismatch"));
-            }
-            if args.commitments != action.commitments {
-                return Err(anyhow!("shielded sidecar commitments mismatch"));
-            }
-            if args.ciphertext_hashes != action.ciphertext_hashes {
-                return Err(anyhow!("shielded sidecar ciphertext hashes mismatch"));
-            }
-            if args.ciphertext_sizes != action.ciphertext_sizes {
-                return Err(anyhow!("shielded sidecar ciphertext sizes mismatch"));
-            }
-            validate_binding_hash(
-                args.anchor,
-                &action.nullifiers,
-                &args.commitments,
-                &args.ciphertext_hashes,
-                args.balance_slot_asset_ids,
-                args.fee,
-                args.binding_hash,
-                args.stablecoin,
-            )?;
-            if args.fee != action.fee {
-                return Err(anyhow!("shielded sidecar fee mismatch"));
-            }
+            let input = NativeTransferPayloadAdmissionInput {
+                proof_bytes: args.proof.len(),
+                max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                anchor_matches: args.anchor == action.anchor,
+                commitments_match: args.commitments == action.commitments,
+                inline_ciphertext_bytes: 0,
+                max_ciphertext_bytes: MAX_CIPHERTEXT_BYTES,
+                ciphertext_hashes_match: args.ciphertext_hashes == action.ciphertext_hashes,
+                ciphertext_sizes_match: args.ciphertext_sizes == action.ciphertext_sizes,
+                binding_hash_matches: binding_hash_matches(
+                    args.anchor,
+                    &action.nullifiers,
+                    &args.commitments,
+                    &args.ciphertext_hashes,
+                    args.balance_slot_asset_ids,
+                    args.fee,
+                    args.binding_hash,
+                    args.stablecoin,
+                ),
+                fee_matches: args.fee == action.fee,
+            };
+            evaluate_native_transfer_payload_admission(input).map_err(|rejection| {
+                native_transfer_payload_admission_error(
+                    NativeTransferPayloadRoute::Sidecar,
+                    input,
+                    rejection,
+                )
+            })?;
         }
         _ => unreachable!("transfer action checked above"),
     }
@@ -5473,6 +5628,31 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanTransferActionPayloadAdmissionVectorFile {
+        schema_version: u32,
+        transfer_action_payload_admission_cases: Vec<LeanTransferActionPayloadAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTransferActionPayloadAdmissionCase {
+        name: String,
+        proof_bytes: usize,
+        max_proof_bytes: usize,
+        anchor_matches: bool,
+        commitments_match: bool,
+        inline_ciphertext_bytes: usize,
+        max_ciphertext_bytes: usize,
+        ciphertext_hashes_match: bool,
+        ciphertext_sizes_match: bool,
+        binding_hash_matches: bool,
+        fee_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanCandidateArtifactAdmissionVectorFile {
         schema_version: u32,
         candidate_artifact_admission_cases: Vec<LeanCandidateArtifactAdmissionCase>,
@@ -6396,6 +6576,73 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_transfer_action_payload_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean transfer action payload admission vectors");
+        let vectors: LeanTransferActionPayloadAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean transfer action payload admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.transfer_action_payload_admission_cases.is_empty(),
+            "Lean transfer action payload admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.transfer_action_payload_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_transfer_action_payload_admission_case(case);
+        }
+    }
+
+    fn verify_lean_transfer_action_payload_admission_case(
+        case: &LeanTransferActionPayloadAdmissionCase,
+    ) {
+        assert_eq!(
+            case.max_proof_bytes, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            "{} Lean proof cap must match the production native tx-leaf cap",
+            case.name
+        );
+        assert_eq!(
+            case.max_ciphertext_bytes, MAX_CIPHERTEXT_BYTES,
+            "{} Lean ciphertext cap must match the production native cap",
+            case.name
+        );
+        let input = NativeTransferPayloadAdmissionInput {
+            proof_bytes: case.proof_bytes,
+            max_proof_bytes: case.max_proof_bytes,
+            anchor_matches: case.anchor_matches,
+            commitments_match: case.commitments_match,
+            inline_ciphertext_bytes: case.inline_ciphertext_bytes,
+            max_ciphertext_bytes: case.max_ciphertext_bytes,
+            ciphertext_hashes_match: case.ciphertext_hashes_match,
+            ciphertext_sizes_match: case.ciphertext_sizes_match,
+            binding_hash_matches: case.binding_hash_matches,
+            fee_matches: case.fee_matches,
+        };
+        let actual_rejection = evaluate_native_transfer_payload_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native transfer payload admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native transfer payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_candidate_artifact_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS") else {
             eprintln!(
@@ -6613,6 +6860,72 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("mismatched binding hash should fail");
         assert!(err.to_string().contains("binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_missing_inline_proof() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [34u8; 48], [35u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof.clear();
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("missing inline proof must fail transfer payload admission");
+        assert!(err.to_string().contains("missing proof"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_oversized_inline_proof() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [36u8; 48], [37u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = vec![0x44u8; NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE + 1];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("oversized inline proof must fail transfer payload admission");
+        assert!(err.to_string().contains("proof size"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_oversized_inline_ciphertext() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [38u8; 48], [39u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.ciphertexts[0].kem_ciphertext =
+            vec![0x55u8; protocol_shielded_pool::types::MAX_KEM_CIPHERTEXT_LEN as usize + 1];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("oversized inline ciphertext must fail transfer payload admission");
+        assert!(err.to_string().contains("inline ciphertext size"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_inline_fee_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [40u8; 48], [41u8; 48], 7);
+        action.fee = 8;
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("action fee must agree with decoded inline payload fee");
+        assert!(err.to_string().contains("fee mismatch"));
     }
 
     #[test]

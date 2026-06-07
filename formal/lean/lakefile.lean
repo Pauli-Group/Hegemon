@@ -85,6 +85,9 @@ lean_exe gen_action_hash_admission_vectors where
 lean_exe gen_action_scope_admission_vectors where
   root := `Hegemon.Native.GenerateActionScopeAdmissionVectors
 
+lean_exe gen_transfer_action_payload_admission_vectors where
+  root := `Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors
+
 lean_exe gen_block_commitment_admission_vectors where
   root := `Hegemon.Native.GenerateBlockCommitmentAdmissionVectors
 

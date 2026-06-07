@@ -1821,6 +1821,73 @@
       "scope_boundary": "This node proves and vector-checks native action route/scope admission only. It does not prove SCALE payload decoding, bridge receipt soundness, candidate artifact proof soundness, coinbase ciphertext hash/size binding, transfer binding-hash validation, nullifier replay, tx leaf proof soundness, action ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.transfer-action-payload-admission",
+      "claim_id": "native.transfer-action-payload-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean decoded transfer-payload admission transition, native shielded transfer payload validation accepts only when proof bytes are present and within the native tx-leaf cap, anchor and commitment fields agree with the action metadata, inline ciphertext bytes are within the ciphertext cap, ciphertext hash and size metadata agree, the binding hash matches the decoded transfer statement, and the decoded fee equals the action fee; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.TransferActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded payload-admission predicate, with companion theorems for missing proof, proof oversize, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, binding-hash mismatch, fee mismatch, exact proof-limit acceptance, and proof-missing-before-anchor precedence. `gen_transfer_action_payload_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_transfer_payload_admission` helper now called by native inline and sidecar transfer payload validation. Native regressions reject missing inline proofs, oversized inline proofs, oversized inline ciphertexts, mismatched binding hashes, and action/payload fee mismatches.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "formal.transaction-public-input-binding",
+        "formal.transaction-statement-hash-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded transfer payload admission. Scope is the decoded payload admission table before nullifier replay, anchor-state, and tx-leaf proof verification."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-transfer-payload-admission-theorem",
+          "description": "Removing or weakening the transfer payload-admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-transfer-payload-admission-conformance",
+          "description": "Changing the production transfer payload-admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-transfer-proof-cap-regression",
+          "description": "Native block-action validation must reject missing or oversized inline transfer proofs.",
+          "gate": "cargo test -p hegemon-node transfer_action_rejects_oversized_inline_proof --lib --no-default-features"
+        },
+        {
+          "id": "native-transfer-ciphertext-cap-regression",
+          "description": "Native block-action validation must reject inline ciphertexts whose encrypted note plus KEM ciphertext exceeds the cap.",
+          "gate": "cargo test -p hegemon-node transfer_action_rejects_oversized_inline_ciphertext --lib --no-default-features"
+        },
+        {
+          "id": "native-transfer-binding-regression",
+          "description": "Native block-action validation must reject mismatched transfer binding hashes.",
+          "gate": "cargo test -p hegemon-node imported_block_actions_recompute_binding_hash --lib --no-default-features"
+        },
+        {
+          "id": "native-transfer-fee-regression",
+          "description": "Native block-action validation must reject decoded fee/action fee disagreement.",
+          "gate": "cargo test -p hegemon-node transfer_action_rejects_inline_fee_mismatch --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks decoded shielded transfer payload admission only. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, StarkVerifier binding-hash cryptographic assumptions, nullifier replay, anchor-state membership, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-commitment-admission",
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
@@ -1829,6 +1896,7 @@
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-scope-admission",
+        "native.transfer-action-payload-admission",
         "native.candidate-artifact-admission",
         "native.block-action-ordering",
         "shielded.nullifier-state",
