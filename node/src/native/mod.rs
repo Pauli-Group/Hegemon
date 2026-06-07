@@ -556,6 +556,31 @@ impl NativeCandidateArtifactAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCandidateArtifactCouplingAdmissionInput {
+    transfer_count: usize,
+    candidate_artifact_count: usize,
+    candidate_tx_count_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCandidateArtifactCouplingAdmissionRejection {
+    CandidateWithoutTransfers,
+    MissingOrMultipleCandidateArtifact,
+    CandidateTxCountMismatch,
+}
+
+impl NativeCandidateArtifactCouplingAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::CandidateWithoutTransfers => "candidate_without_transfers",
+            Self::MissingOrMultipleCandidateArtifact => "missing_or_multiple_candidate_artifact",
+            Self::CandidateTxCountMismatch => "candidate_tx_count_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCoinbaseAccountingAdmissionInput {
     coinbase_count: usize,
     height: u64,
@@ -4711,6 +4736,57 @@ fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
     Ok(args.reward_bundle.miner_note.amount)
 }
 
+fn native_candidate_artifact_coupling_admission_input(
+    transfer_count: usize,
+    candidate_artifacts: &[&CandidateArtifact],
+) -> NativeCandidateArtifactCouplingAdmissionInput {
+    NativeCandidateArtifactCouplingAdmissionInput {
+        transfer_count,
+        candidate_artifact_count: candidate_artifacts.len(),
+        candidate_tx_count_matches: candidate_artifacts
+            .first()
+            .filter(|_| candidate_artifacts.len() == 1)
+            .and_then(|artifact| usize::try_from(artifact.tx_count).ok())
+            == Some(transfer_count),
+    }
+}
+
+fn evaluate_native_candidate_artifact_coupling_admission(
+    input: NativeCandidateArtifactCouplingAdmissionInput,
+) -> Result<(), NativeCandidateArtifactCouplingAdmissionRejection> {
+    if input.transfer_count == 0 {
+        if input.candidate_artifact_count == 0 {
+            Ok(())
+        } else {
+            Err(NativeCandidateArtifactCouplingAdmissionRejection::CandidateWithoutTransfers)
+        }
+    } else if input.candidate_artifact_count != 1 {
+        Err(NativeCandidateArtifactCouplingAdmissionRejection::MissingOrMultipleCandidateArtifact)
+    } else if !input.candidate_tx_count_matches {
+        Err(NativeCandidateArtifactCouplingAdmissionRejection::CandidateTxCountMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_candidate_artifact_coupling_admission_error(
+    rejection: NativeCandidateArtifactCouplingAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCandidateArtifactCouplingAdmissionRejection::CandidateWithoutTransfers => {
+            anyhow!("candidate artifact action requires shielded transfer actions")
+        }
+        NativeCandidateArtifactCouplingAdmissionRejection::MissingOrMultipleCandidateArtifact => {
+            anyhow!(
+                "non-empty shielded block requires exactly one matching recursive candidate artifact"
+            )
+        }
+        NativeCandidateArtifactCouplingAdmissionRejection::CandidateTxCountMismatch => {
+            anyhow!("candidate artifact tx_count mismatch")
+        }
+    }
+}
+
 fn verify_native_block_artifacts_locked(
     node: &NativeNode,
     state: &NativeState,
@@ -4725,12 +4801,14 @@ fn verify_native_block_artifacts_locked(
         .filter(|action| is_candidate_artifact_action(action))
         .filter_map(|action| action.candidate_artifact.as_ref())
         .collect::<Vec<_>>();
+    let coupling_input =
+        native_candidate_artifact_coupling_admission_input(transfers.len(), &candidate_artifacts);
+    if let Err(rejection) = evaluate_native_candidate_artifact_coupling_admission(coupling_input) {
+        return Err(native_candidate_artifact_coupling_admission_error(
+            rejection,
+        ));
+    }
     if transfers.is_empty() {
-        if !candidate_artifacts.is_empty() {
-            return Err(anyhow!(
-                "candidate artifact action requires shielded transfer actions"
-            ));
-        }
         return Ok(());
     }
 
@@ -5901,6 +5979,25 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactCouplingAdmissionVectorFile {
+        schema_version: u32,
+        candidate_artifact_coupling_admission_cases:
+            Vec<LeanCandidateArtifactCouplingAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactCouplingAdmissionCase {
+        name: String,
+        transfer_count: usize,
+        candidate_artifact_count: usize,
+        candidate_tx_count_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockCommitmentAdmissionVectorFile {
         schema_version: u32,
         block_commitment_admission_cases: Vec<LeanBlockCommitmentAdmissionCase>,
@@ -6987,6 +7084,58 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_candidate_artifact_coupling_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean candidate artifact coupling admission vectors");
+        let vectors: LeanCandidateArtifactCouplingAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean candidate artifact coupling admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .candidate_artifact_coupling_admission_cases
+                .is_empty(),
+            "Lean candidate artifact coupling admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.candidate_artifact_coupling_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_candidate_artifact_coupling_admission_case(case);
+        }
+    }
+
+    fn verify_lean_candidate_artifact_coupling_admission_case(
+        case: &LeanCandidateArtifactCouplingAdmissionCase,
+    ) {
+        let input = NativeCandidateArtifactCouplingAdmissionInput {
+            transfer_count: case.transfer_count,
+            candidate_artifact_count: case.candidate_artifact_count,
+            candidate_tx_count_matches: case.candidate_tx_count_matches,
+        };
+        let actual_rejection = evaluate_native_candidate_artifact_coupling_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native candidate-artifact coupling admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native candidate-artifact coupling admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_block_commitment_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS") else {
             eprintln!(
@@ -7329,6 +7478,66 @@ mod tests {
         let err = verify_native_block_artifacts_locked(&node, &state, &[action])
             .expect_err("candidate artifact without transfers must be rejected");
         assert!(err.to_string().contains("requires shielded transfer"));
+    }
+
+    #[test]
+    fn shielded_transfer_requires_candidate_artifact() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let transfer =
+            test_inline_transfer_action(state.commitment_tree.root(), [7u8; 48], [8u8; 48], 0);
+        validate_block_actions_locked(&state, &[transfer.clone()])
+            .expect("transfer action is structurally valid");
+
+        let err = verify_native_block_artifacts_locked(&node, &state, &[transfer])
+            .expect_err("non-empty shielded block without candidate artifact must be rejected");
+        assert!(err
+            .to_string()
+            .contains("requires exactly one matching recursive candidate artifact"));
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_multiple_candidate_artifacts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let transfer =
+            test_inline_transfer_action(state.commitment_tree.root(), [9u8; 48], [10u8; 48], 0);
+        let first_candidate = test_candidate_artifact_action(1, 21);
+        let second_candidate = test_candidate_artifact_action(1, 22);
+        let actions = vec![transfer, first_candidate, second_candidate];
+        validate_block_actions_locked(&state, &actions)
+            .expect("multiple candidate artifacts are structurally valid before coupling");
+
+        let err = verify_native_block_artifacts_locked(&node, &state, &actions)
+            .expect_err("non-empty shielded block with multiple candidates must be rejected");
+        assert!(err
+            .to_string()
+            .contains("requires exactly one matching recursive candidate artifact"));
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_candidate_tx_count_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let transfer =
+            test_inline_transfer_action(state.commitment_tree.root(), [11u8; 48], [12u8; 48], 0);
+        let candidate = test_candidate_artifact_action(2, 23);
+        let actions = vec![transfer, candidate];
+        validate_block_actions_locked(&state, &actions)
+            .expect("mismatched candidate artifact is structurally valid before coupling");
+
+        let err = verify_native_block_artifacts_locked(&node, &state, &actions)
+            .expect_err("candidate artifact tx_count mismatch must be rejected");
+        assert!(err.to_string().contains("tx_count mismatch"));
     }
 
     #[test]
@@ -8230,6 +8439,21 @@ mod tests {
                 },
             }),
         }
+    }
+
+    fn test_candidate_artifact_action(tx_count: u32, tag: u8) -> PendingAction {
+        let mut artifact = test_candidate_artifact(tx_count);
+        artifact.tx_statements_commitment = [tag; 48];
+        artifact.da_root = [tag.wrapping_add(1); 48];
+        if let Some(recursive) = artifact.recursive_block.as_mut() {
+            recursive.proof.data = vec![tag; 32];
+        }
+        let mut action =
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.candidate_artifact = Some(artifact);
+        action.received_ms = u64::from(tag);
+        action.tx_hash = pending_action_hash(&action);
+        action
     }
 
     fn test_empty_action(family_id: u16, action_id: u16, fee: u64) -> PendingAction {

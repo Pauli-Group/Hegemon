@@ -869,6 +869,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.candidate-artifact-coupling-admission",
+      "component": "native candidate artifact block coupling admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean candidate-artifact coupling kernel proves the executable native block table requiring zero candidate artifacts when a block has no shielded transfers, and exactly one candidate artifact whose tx_count matches the shielded transfer count when a block is non-empty; generated Lean vectors are checked against the production helper used before recursive block artifact verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats shielded transfer counts, decoded candidate-artifact counts, and candidate tx_count agreement as production-derived values. Route scope, payload presence, and candidate-artifact shape are covered by separate native action-scope and candidate-artifact admission claims.",
+        "Generated Lean conformance vectors cover empty block acceptance, matching single-candidate acceptance for one and multiple transfers, orphan candidate rejection, missing candidate rejection, multiple candidate rejection, tx_count mismatch rejection, and rejection precedence.",
+        "The theorem covers only cheap block-level transfer/candidate coupling before recursive verification. It does not prove recursive proof cryptographic soundness, native tx-leaf proof soundness, DA-root correctness, statement-commitment correctness, candidate selection fairness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_coupling_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node shielded_transfer_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-action-ordering",
       "component": "native shielded block action ordering",
       "claim_class": "lean_theorem",

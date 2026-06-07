@@ -1633,6 +1633,65 @@
       "scope_boundary": "This node proves and vector-checks native candidate-artifact action/artifact admission only. It does not prove SCALE decoder correctness, verifier-profile digest construction, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, block tree-transition correctness, or complete native-node equivalence."
     },
     {
+      "id": "native.candidate-artifact-coupling-admission",
+      "claim_id": "native.candidate-artifact-coupling-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native candidate-artifact coupling transition, accepted native blocks must have zero decoded candidate artifacts when they contain zero shielded transfers, and must have exactly one decoded candidate artifact whose tx_count matches the shielded transfer count when they contain one or more shielded transfers.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.CandidateArtifactCouplingAdmission.accepts_iff_coupling_preconditions` proves that the executable coupling predicate is exactly the transfer/candidate count precondition. Companion theorems `Hegemon.Native.CandidateArtifactCouplingAdmission.empty_block_accepts`, `Hegemon.Native.CandidateArtifactCouplingAdmission.matched_candidate_accepts`, `Hegemon.Native.CandidateArtifactCouplingAdmission.candidate_without_transfers_rejects`, `Hegemon.Native.CandidateArtifactCouplingAdmission.missing_candidate_rejects`, `Hegemon.Native.CandidateArtifactCouplingAdmission.multiple_candidates_rejects`, `Hegemon.Native.CandidateArtifactCouplingAdmission.candidate_tx_count_mismatch_rejects`, `Hegemon.Native.CandidateArtifactCouplingAdmission.no_transfers_precedes_tx_count_mismatch`, and `Hegemon.Native.CandidateArtifactCouplingAdmission.candidate_count_precedes_tx_count_mismatch` pin representative accept/reject and precedence facts. `gen_candidate_artifact_coupling_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_candidate_artifact_coupling_admission`, the production helper called by `verify_native_block_artifacts_locked` before recursive block artifact verification.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "native.transfer-action-payload-admission",
+        "native.candidate-artifact-admission",
+        "consensus.proven-batch-binding",
+        "consensus.recursive-block-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block-level shielded-transfer/candidate-artifact coupling before recursive proof verification. Scope is count and tx_count matching, not recursive proof soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-candidate-artifact-coupling-theorem",
+          "description": "Removing or weakening the candidate-artifact coupling theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-candidate-artifact-coupling-conformance",
+          "description": "Changing production candidate-artifact coupling admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_coupling_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-candidate-artifact-coupling-regressions",
+          "description": "Native block artifact verification must reject a shielded transfer block with no candidate, with multiple candidates, or with a candidate tx_count mismatch.",
+          "gate": "cargo test -p hegemon-node shielded_transfer_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-candidate-artifact-coupling-gate",
+          "description": "The release formal-core wrapper must generate candidate-artifact coupling vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native transfer/candidate-artifact coupling only. It does not prove SCALE decoder correctness, action-route validation, candidate-artifact shape validation, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, mining candidate-selection fairness, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",
@@ -1956,6 +2015,7 @@
         "native.bridge-action-payload-admission",
         "native.transfer-action-payload-admission",
         "native.candidate-artifact-admission",
+        "native.candidate-artifact-coupling-admission",
         "native.block-action-ordering",
         "shielded.nullifier-state",
         "bridge.message-root-replay",

@@ -348,6 +348,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
