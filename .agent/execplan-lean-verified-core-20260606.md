@@ -108,6 +108,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T04:46:40Z) Added a Lean consensus header-preimage kernel proving signing-preimage independence from mutable auth payloads, fixed byte-length facts for PoW/BFT/unsigned headers, and explicit optional-auth tag placement.
 - [x] (2026-06-07T04:46:40Z) Added `gen_header_vectors`, production `BlockHeader::signing_preimage_v1` and `BlockHeader::full_header_preimage_v1` helpers, and a consensus conformance test that checks exact Lean-generated preimage bytes against the Rust header hashing inputs.
 - [x] (2026-06-07T04:46:40Z) Ran local validation: `bash scripts/check_lean_formal.sh`, focused generated header-preimage conformance, `cargo fmt --all -- --check`, `jq empty config/formal-security-claims.json config/formal-security-blueprint.json`, `git diff --check`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate built 99 Lean jobs, checked header-preimage conformance, and reported `claims = 24`, `production_eligible = 22`, `nodes = 24`, `edges = 53`, and `falsification_cases = 61`. Remote `hegemon-dev` validation is still pending for this revision.
+- [x] (2026-06-07T04:54:11Z) Validated branch tip `e41f8c48` on `hegemon-dev`: the expanded formal-core gate passed with consensus header-preimage conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly after a brief RPC readiness wait, smoke RPC checks passed at height `405333`, bounded polling confirmed mining advanced from `405335` to `405336`, `scripts/test-node.sh wallet-send` passed, NTP was synchronized, and final service check was active at height `405339`.
 
 ## Surprises & Discoveries
 
@@ -302,6 +303,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now checks the consensus header preimage bytes that feed signing and header hashing.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding `consensus.header-preimage-binding`, ran the header-preimage conformance test, built 99 Lean jobs, and reported `claims = 24`, `production_eligible = 22`, `nodes = 24`, `edges = 53`, and `falsification_cases = 61`.
+
+- Observation: `hegemon-dev` can run the consensus header-preimage proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `e41f8c48` built 99 Lean jobs, passed bridge replay, bridge message-root, bridge long-range proof-shape, shielded nullifier, fork-choice, consensus header preimage, PoW miner identity, PoW admission, light-client Work48, proof-policy, consensus version policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction statement-hash, native backend reference vectors, native tx-leaf artifact conformance, and native receipt-root conformance, and reported `claims = 24`, `production_eligible = 22`, `nodes = 24`, `edges = 53`, and `falsification_cases = 61`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; the immediate smoke check saw RPC not ready, then a retry passed at height `405333`; bounded polling confirmed mining advanced from `405335` to `405336`; `scripts/test-node.sh wallet-send` passed; NTP was synchronized; final service check was active and consensus status reported height `405339` with `syncing = false`.
 
 ## Decision Log
 
@@ -568,3 +572,5 @@ Revision note 2026-06-07T04:07:34Z: Added the Lean consensus version-policy kern
 Revision note 2026-06-07T04:15:04Z: Recorded `hegemon-dev` validation for commit `8f10b8f4`, including full formal-core, release rebuild, service restart, smoke RPC checks, NTP synchronization, polling-based mining height advance, wallet submission compatibility, and final active service status.
 
 Revision note 2026-06-07T04:46:40Z: Added the Lean consensus header-preimage kernel, generated exact header preimage vectors, production signing/full preimage helpers used by `BlockHeader::signing_hash` and `BlockHeader::hash`, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-07T04:54:11Z: Recorded `hegemon-dev` validation for commit `e41f8c48`, including full formal-core, release rebuild, service restart, smoke RPC retry after readiness, NTP synchronization, polling-based mining height advance, wallet submission compatibility, and final active service status.
