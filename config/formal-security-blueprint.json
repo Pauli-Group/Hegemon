@@ -791,6 +791,48 @@
       "scope_boundary": "This node proves and vector-checks native tx-leaf artifact byte grammar, count caps, backend-byte defaulting, trailing-byte rejection, and canonical re-encoding behavior only. It does not prove lattice backend security, STARK proof soundness, receipt-root fold soundness, statement-digest collision resistance, or full native backend cryptographic acceptance."
     },
     {
+      "id": "formal.native-receipt-root-wire",
+      "claim_id": "formal.native-receipt-root-wire",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native receipt-root parser and structural gate, valid bounded artifact bytes parse with the expected summary, non-empty expected leaf sets must match artifact leaf count, fold_count must equal leaf_count - 1, each fold must carry exactly five challenges and exact 11 by 54 parent-row shape, and malformed counts, trailing bytes, and truncation are rejected.",
+      "informal_argument": "Native receipt-root artifacts are consumed after tx-leaf verification and before backend fold verification. The Lean parser models the bounded byte grammar, and the Lean schedule predicate models the cheap production validator now called by both native receipt-root verifier entry points before cryptographic fold checks. `gen_native_receipt_root_vectors` emits accepted parser/schedule cases and rejected mismatch cases, and the superneo-hegemon conformance test checks production decoding, canonical re-encoding, and structural-gate agreement.",
+      "depends_on": [
+        "formal.native-tx-leaf-artifact-wire",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean",
+        "formal/lean/Hegemon/Native/GenerateReceiptRootVectors.lean",
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native receipt-root parser grammar and structural fold-schedule gating. Scope excludes cryptographic fold soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-native-receipt-root-theorem",
+          "description": "Removing or weakening the native receipt-root parser/schedule theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-native-receipt-root-conformance",
+          "description": "Changing production native receipt-root decoding, canonical re-encoding, or structural scheduling away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native receipt-root byte grammar and cheap structural fold-schedule gating only. It does not prove lattice backend security, backend transcript challenge derivation, fold proof soundness, statement-digest collision resistance, or full native backend cryptographic acceptance."
+    },
+    {
       "id": "proof.native-backend-vectors",
       "claim_id": "proof.native-backend-vectors",
       "kind": "target_claim",
@@ -798,6 +840,7 @@
       "informal_argument": "Native proof artifacts are a trust boundary. The reference verifier is run by the formal-core gate to ensure canonical decoding and key binding checks keep rejecting known invalid variants.",
       "depends_on": [
         "formal.native-tx-leaf-artifact-wire",
+        "formal.native-receipt-root-wire",
         "release.dependency-waivers"
       ],
       "implementation_paths": [

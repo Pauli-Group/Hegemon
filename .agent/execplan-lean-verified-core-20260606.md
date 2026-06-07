@@ -86,6 +86,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T00:59:00Z) Added `gen_native_tx_leaf_artifact_vectors`, a `superneo-hegemon` conformance test that checks Lean-generated artifact bytes against production decoding and canonical re-encoding, and a formal claim/blueprint node for the native tx-leaf artifact wire grammar.
 - [x] (2026-06-07T00:59:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 19 claims, 17 production-eligible claims, 19 blueprint nodes, and 46 falsification cases.
 - [x] (2026-06-07T01:10:00Z) Validated branch tip `8c293045` on `hegemon-dev`: the expanded formal-core gate passed with native tx-leaf artifact parser conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404321`, mining advanced from height `404322` to `404324`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `404325`.
+- [x] (2026-06-07T01:55:00Z) Added a Lean native receipt-root artifact parser and structural schedule kernel proving representative accept/reject facts for bounded leaf/fold counts, non-empty expected leaf agreement, `fold_count = leaf_count - 1`, exact fold challenge count, exact parent-row dimensions, trailing-byte rejection, and truncation rejection.
+- [x] (2026-06-07T01:55:00Z) Added `gen_native_receipt_root_vectors`, a production `validate_native_receipt_root_artifact_structure_with_params` gate used by both native receipt-root verifier entry points before backend fold verification, a `superneo-hegemon` conformance test for Lean-generated receipt-root vectors, and a formal claim/blueprint node for the native receipt-root wire/schedule gate.
+- [x] (2026-06-07T02:05:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 20 claims, 18 production-eligible claims, 20 blueprint nodes, 44 edges, and 48 falsification cases. An exploratory broad `cargo test -p superneo-hegemon native_receipt_root_ -- --nocapture` run was interrupted after the heavier native fixture path ran too long and is not counted as validation evidence for this revision.
 
 ## Surprises & Discoveries
 
@@ -227,6 +230,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the native tx-leaf artifact parser proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `8c293045` built 72 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction statement-hash, native backend reference vectors, and native tx-leaf artifact conformance, and reported `claims = 19`, `production_eligible = 17`, `nodes = 19`, `edges = 41`, and `falsification_cases = 46`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404321`; a 25-second height sample advanced from `404322` to `404324`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404325`.
 
+- Observation: The native receipt-root artifact wire grammar and cheap fold-schedule gate now have Lean-backed executable evidence.
+  Evidence: `formal/lean/Hegemon/Native/ReceiptRoot.lean` proves valid one-, two-, and three-leaf parser/schedule cases plus rejection for zero expected leaves, artifact leaf-count mismatch, missing and extra folds, too few/too many challenges, too few/too many parent rows, too few/too many row coefficients, over-cap leaf/fold counts, trailing bytes, and truncation. `formal/lean/Hegemon/Native/GenerateReceiptRootVectors.lean` emits exact artifact bytes; `circuits/superneo-hegemon/src/lib.rs` checks those vectors against production receipt-root decoding, canonical re-encoding, and the structural validator called before backend fold verification.
+
+- Observation: The expanded formal-core gate now includes native receipt-root parser/schedule conformance.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding native receipt-root wire/schedule gating, ran `lean_generated_native_receipt_root_vectors_match_production`, and reported `claims = 20`, `production_eligible = 18`, `nodes = 20`, `edges = 44`, and `falsification_cases = 48`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -291,6 +300,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize native tx-leaf artifact wire parsing before receipt-root fold soundness or native backend cryptographic acceptance.
   Rationale: Consensus consumes native tx-leaf artifact bytes before using the receipt metadata and leaf records. Parser drift, cap mistakes, backend-byte ambiguity, or trailing-byte acceptance are counterfeit-style seams that can be bounded and conformance-checked today. Lattice backend security, STARK proof soundness, and receipt-root fold soundness remain larger follow-on obligations.
+  Date/Author: 2026-06-07 / Codex.
+
+- Decision: Mechanize native receipt-root wire parsing and structural fold-schedule gating before cryptographic fold soundness.
+  Rationale: The receipt-root verifier already rejects malformed folds through backend proof comparison, but exact non-empty leaf agreement, `fold_count = leaf_count - 1`, challenge count, and parent-row dimensions are cheap validity rules that can fail before expensive fold verification. Mechanizing those rules reduces parser/schedule drift and leaves transcript challenge derivation, lattice fold proof soundness, and commitment security as explicit follow-on obligations.
   Date/Author: 2026-06-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -450,3 +463,5 @@ Revision note 2026-06-07T00:26:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-07T00:59:00Z: Added the Lean native tx-leaf artifact wire parser kernel, generated artifact vectors, superneo-hegemon decoder/re-encoder conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
 
 Revision note 2026-06-07T01:10:00Z: Recorded `hegemon-dev` validation for commit `8c293045`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-07T02:05:00Z: Added the Lean native receipt-root parser/schedule kernel, generated receipt-root vectors, production structural validator before backend fold verification, superneo-hegemon conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.

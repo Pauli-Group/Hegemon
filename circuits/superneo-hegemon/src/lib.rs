@@ -3801,6 +3801,63 @@ pub fn build_native_tx_leaf_receipt_root_artifact_bytes_with_params(
     )
 }
 
+pub fn native_receipt_root_expected_fold_count(leaf_count: usize) -> Result<usize> {
+    ensure!(
+        leaf_count > 0,
+        "native receipt-root artifact requires at least one leaf"
+    );
+    Ok(leaf_count - 1)
+}
+
+fn validate_native_receipt_root_artifact_structure_with_params(
+    params: &NativeBackendParams,
+    artifact: &ReceiptRootArtifact,
+    expected_leaf_count: usize,
+) -> Result<()> {
+    let expected_fold_count = native_receipt_root_expected_fold_count(expected_leaf_count)?;
+    ensure!(
+        artifact.leaves.len() == expected_leaf_count,
+        "native receipt-root leaf count {} does not match expected leaves {}",
+        artifact.leaves.len(),
+        expected_leaf_count
+    );
+    ensure!(
+        artifact.leaves.len() <= params.max_claimed_receipt_root_leaves as usize,
+        "native receipt-root leaf count {} exceeds claimed maximum {}",
+        artifact.leaves.len(),
+        params.max_claimed_receipt_root_leaves
+    );
+    ensure!(
+        artifact.folds.len() == expected_fold_count,
+        "native receipt-root fold count {} does not match expected {}",
+        artifact.folds.len(),
+        expected_fold_count
+    );
+    for (fold_index, fold) in artifact.folds.iter().enumerate() {
+        ensure!(
+            fold.challenges.len() == params.fold_challenge_count as usize,
+            "native receipt-root fold {fold_index} challenge count {} does not match expected {}",
+            fold.challenges.len(),
+            params.fold_challenge_count
+        );
+        ensure!(
+            fold.parent_rows.len() == params.matrix_rows,
+            "native receipt-root fold {fold_index} row count {} does not match expected {}",
+            fold.parent_rows.len(),
+            params.matrix_rows
+        );
+        for (row_index, row) in fold.parent_rows.iter().enumerate() {
+            ensure!(
+                row.coeffs.len() == params.matrix_cols,
+                "native receipt-root fold {fold_index} row {row_index} coefficient count {} does not match expected {}",
+                row.coeffs.len(),
+                params.matrix_cols
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn verify_native_tx_leaf_receipt_root_artifact_bytes(
     artifacts: &[NativeTxLeafArtifact],
     artifact_bytes: &[u8],
@@ -3851,18 +3908,11 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
         artifact.shape_digest == context.pk.shape_digest.0,
         "native receipt-root shape digest mismatch"
     );
-    ensure!(
-        artifact.leaves.len() == artifacts.len(),
-        "native receipt-root leaf count {} does not match tx-leaf artifacts {}",
-        artifact.leaves.len(),
-        artifacts.len()
-    );
-    ensure!(
-        artifact.leaves.len() <= params.max_claimed_receipt_root_leaves as usize,
-        "native receipt-root leaf count {} exceeds claimed maximum {}",
-        artifact.leaves.len(),
-        params.max_claimed_receipt_root_leaves
-    );
+    validate_native_receipt_root_artifact_structure_with_params(
+        params,
+        &artifact,
+        artifacts.len(),
+    )?;
 
     let mut current = Vec::with_capacity(artifacts.len());
     for (native_artifact, leaf) in artifacts.iter().zip(&artifact.leaves) {
@@ -4039,18 +4089,7 @@ pub fn verify_native_tx_leaf_receipt_root_artifact_from_records_with_params(
         artifact.shape_digest == context.pk.shape_digest.0,
         "native receipt-root shape digest mismatch"
     );
-    ensure!(
-        artifact.leaves.len() == records.len(),
-        "native receipt-root leaf count {} does not match tx-leaf records {}",
-        artifact.leaves.len(),
-        records.len()
-    );
-    ensure!(
-        artifact.leaves.len() <= params.max_claimed_receipt_root_leaves as usize,
-        "native receipt-root leaf count {} exceeds claimed maximum {}",
-        artifact.leaves.len(),
-        params.max_claimed_receipt_root_leaves
-    );
+    validate_native_receipt_root_artifact_structure_with_params(params, &artifact, records.len())?;
 
     let mut current = Vec::with_capacity(records.len());
     for (record, leaf) in records.iter().zip(&artifact.leaves) {
@@ -5323,6 +5362,37 @@ mod tests {
         row_coeff_counts: Vec<usize>,
     }
 
+    #[derive(serde::Deserialize)]
+    struct LeanNativeReceiptRootVectorFile {
+        schema_version: u32,
+        native_receipt_root_cases: Vec<LeanNativeReceiptRootCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeReceiptRootCase {
+        name: String,
+        artifact_hex: String,
+        expected_record_count: usize,
+        expected_parse_valid: bool,
+        expected_schedule_valid: bool,
+        expected_summary: Option<LeanNativeReceiptRootSummary>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeReceiptRootSummary {
+        version: u16,
+        leaf_count: usize,
+        fold_count: usize,
+        folds: Vec<LeanNativeReceiptRootFoldSummary>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeReceiptRootFoldSummary {
+        challenge_count: usize,
+        row_count: usize,
+        row_coeff_counts: Vec<usize>,
+    }
+
     fn decode_lean_hex(value: &str) -> Vec<u8> {
         let hex = value.strip_prefix("0x").unwrap_or(value);
         hex::decode(hex).expect("Lean vector hex must decode")
@@ -5784,6 +5854,97 @@ mod tests {
                 let mut expected_canonical = artifact_bytes.clone();
                 expected_canonical.push(expected.proof_backend);
                 assert_eq!(canonical, expected_canonical, "{}", case.name);
+            }
+        }
+    }
+
+    #[test]
+    fn lean_generated_native_receipt_root_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = fs::read(&path).expect("read Lean native receipt-root vector file");
+        let vectors: LeanNativeReceiptRootVectorFile =
+            serde_json::from_slice(&raw).expect("parse Lean native receipt-root vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        let params = native_backend_params();
+        for case in vectors.native_receipt_root_cases {
+            let artifact_bytes = decode_lean_hex(&case.artifact_hex);
+            let decoded = decode_receipt_root_artifact_bytes(&artifact_bytes);
+            assert_eq!(
+                decoded.is_ok(),
+                case.expected_parse_valid,
+                "{}: production receipt-root decode result disagreed with Lean expectation: {:?}",
+                case.name,
+                decoded.as_ref().err()
+            );
+
+            let schedule_valid = decoded
+                .as_ref()
+                .map(|artifact| {
+                    validate_native_receipt_root_artifact_structure_with_params(
+                        &params,
+                        artifact,
+                        case.expected_record_count,
+                    )
+                    .is_ok()
+                })
+                .unwrap_or(false);
+            assert_eq!(
+                schedule_valid, case.expected_schedule_valid,
+                "{}: production receipt-root schedule gate disagreed with Lean expectation",
+                case.name
+            );
+
+            let Some(expected) = case.expected_summary else {
+                continue;
+            };
+            let artifact = decoded.expect("valid Lean receipt-root vector must decode");
+            assert_eq!(artifact.version, expected.version, "{}", case.name);
+            assert_eq!(artifact.leaves.len(), expected.leaf_count, "{}", case.name);
+            assert_eq!(artifact.folds.len(), expected.fold_count, "{}", case.name);
+            let fold_summaries = artifact
+                .folds
+                .iter()
+                .map(|fold| LeanNativeReceiptRootFoldSummary {
+                    challenge_count: fold.challenges.len(),
+                    row_count: fold.parent_rows.len(),
+                    row_coeff_counts: fold
+                        .parent_rows
+                        .iter()
+                        .map(|row| row.coeffs.len())
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(fold_summaries.len(), expected.folds.len(), "{}", case.name);
+            for (observed, expected_fold) in fold_summaries.iter().zip(&expected.folds) {
+                assert_eq!(
+                    observed.challenge_count, expected_fold.challenge_count,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(observed.row_count, expected_fold.row_count, "{}", case.name);
+                assert_eq!(
+                    observed.row_coeff_counts, expected_fold.row_coeff_counts,
+                    "{}",
+                    case.name
+                );
+            }
+
+            let canonical = encode_receipt_root_artifact_bytes(&artifact);
+            assert_eq!(canonical, artifact_bytes, "{}", case.name);
+            if schedule_valid {
+                assert_eq!(
+                    native_receipt_root_expected_fold_count(case.expected_record_count)
+                        .expect("valid schedule must have expected fold count"),
+                    artifact.folds.len(),
+                    "{}",
+                    case.name
+                );
             }
         }
     }

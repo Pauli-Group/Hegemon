@@ -303,6 +303,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
         "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean",
+        "formal/lean/Hegemon/Native/GenerateReceiptRootVectors.lean",
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
         "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
         "formal/lean/Hegemon/Transaction/Balance.lean",

@@ -388,6 +388,33 @@
       "residual_risks": []
     },
     {
+      "id": "formal.native-receipt-root-wire",
+      "component": "native receipt-root artifact wire grammar and fold schedule",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native receipt-root kernel proves executable parse and structural schedule facts for the bounded artifact grammar, including leaf/fold caps, trailing/truncation rejection, exact non-empty expected leaf agreement, fold_count = leaf_count - 1, exact fold challenge count, and exact fold row/coeff dimensions; generated Lean vectors are checked against the production superneo-hegemon decoder and structural validator used before backend fold verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model covers native receipt-root artifact byte parsing and the cheap structural fold-schedule gate, not cryptographic validity of the lattice fold proof, transcript challenge derivation, or commitment binding security.",
+        "Generated Lean conformance vectors cover one-, two-, and three-leaf valid schedules plus zero expected leaves, leaf-count mismatch, missing/extra folds, bad challenge counts, bad row counts, bad row coefficient counts, over-cap leaf/fold counts, trailing bytes, and truncation.",
+        "The production conformance test checks decoder agreement, canonical re-encoding, and the structural validator now called by both native receipt-root verifier entry points before backend fold verification."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean",
+        "formal/lean/Hegemon/Native/GenerateReceiptRootVectors.lean",
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.message-root-replay",
       "component": "protocol bridge messages",
       "claim_class": "reference_vector",
@@ -447,7 +474,8 @@
       "assumptions": [
         "The native-backend-ref verifier remains independent of production verification helpers.",
         "The vector bundle includes malformed companions for canonical decode and binding failures.",
-        "The native tx-leaf artifact wire grammar is separately Lean-gated by formal.native-tx-leaf-artifact-wire."
+        "The native tx-leaf artifact wire grammar is separately Lean-gated by formal.native-tx-leaf-artifact-wire.",
+        "The native receipt-root artifact wire grammar and structural fold schedule are separately Lean-gated by formal.native-receipt-root-wire."
       ],
       "evidence_paths": [
         "tools/native-backend-ref/src/lib.rs",

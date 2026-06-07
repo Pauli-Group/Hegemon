@@ -6,6 +6,7 @@ import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.Supply
 import Hegemon.Native.ActionOrder
+import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance
