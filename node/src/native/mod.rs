@@ -400,6 +400,64 @@ impl NativeActionScopeAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCandidateArtifactAdmissionInput {
+    state_deltas_absent: bool,
+    artifact_present: bool,
+    schema_matches: bool,
+    tx_count: u32,
+    max_tx_count: u32,
+    da_chunk_count: u32,
+    proof_mode_recursive_block: bool,
+    proof_kind_recursive_block_v2: bool,
+    verifier_profile_matches: bool,
+    commitment_proof_empty: bool,
+    receipt_root_absent: bool,
+    recursive_payload_present: bool,
+    recursive_proof_bytes: usize,
+    max_recursive_proof_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCandidateArtifactAdmissionRejection {
+    StateDeltasPresent,
+    ArtifactMissing,
+    SchemaMismatch,
+    TxCountZero,
+    TxCountTooLarge,
+    DaChunkCountZero,
+    WrongProofMode,
+    WrongProofKind,
+    VerifierProfileMismatch,
+    CommitmentProofPresent,
+    ReceiptRootPresent,
+    RecursivePayloadMissing,
+    RecursiveProofEmpty,
+    RecursiveProofTooLarge,
+}
+
+impl NativeCandidateArtifactAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::StateDeltasPresent => "state_deltas_present",
+            Self::ArtifactMissing => "artifact_missing",
+            Self::SchemaMismatch => "schema_mismatch",
+            Self::TxCountZero => "tx_count_zero",
+            Self::TxCountTooLarge => "tx_count_too_large",
+            Self::DaChunkCountZero => "da_chunk_count_zero",
+            Self::WrongProofMode => "wrong_proof_mode",
+            Self::WrongProofKind => "wrong_proof_kind",
+            Self::VerifierProfileMismatch => "verifier_profile_mismatch",
+            Self::CommitmentProofPresent => "commitment_proof_present",
+            Self::ReceiptRootPresent => "receipt_root_present",
+            Self::RecursivePayloadMissing => "recursive_payload_missing",
+            Self::RecursiveProofEmpty => "recursive_proof_empty",
+            Self::RecursiveProofTooLarge => "recursive_proof_too_large",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCoinbaseAccountingAdmissionInput {
     coinbase_count: usize,
     height: u64,
@@ -3208,83 +3266,165 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
 }
 
 fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
-    if artifact.version != BLOCK_PROOF_BUNDLE_SCHEMA {
-        return Err(anyhow!("candidate artifact schema mismatch"));
-    }
-    if artifact.tx_count == 0 {
-        return Err(anyhow!("candidate artifact tx_count must be non-zero"));
-    }
-    if artifact.tx_count > MAX_BATCH_SIZE {
-        return Err(anyhow!(
-            "candidate artifact tx_count {} exceeds max {}",
-            artifact.tx_count,
-            MAX_BATCH_SIZE
-        ));
-    }
-    if artifact.da_chunk_count == 0 {
-        return Err(anyhow!("candidate artifact must declare DA chunks"));
-    }
-    if artifact.proof_mode != BlockProofMode::RecursiveBlock {
-        return Err(anyhow!("native cutover requires recursive block artifacts"));
-    }
-    if artifact.proof_kind != PoolProofArtifactKind::RecursiveBlockV2 {
-        return Err(anyhow!(
-            "native candidate artifact must use the shipped recursive_block_v2 route"
-        ));
-    }
-    if artifact.verifier_profile != consensus::proof::recursive_block_artifact_verifier_profile() {
-        return Err(anyhow!(
-            "native candidate artifact recursive_block_v2 verifier profile mismatch"
-        ));
-    }
-    if !artifact.commitment_proof.data.is_empty() {
-        return Err(anyhow!(
-            "recursive candidate artifact must not carry commitment proof bytes"
-        ));
-    }
-    if artifact.receipt_root.is_some() {
-        return Err(anyhow!(
-            "recursive candidate artifact must not carry receipt-root payload"
-        ));
-    }
-    let Some(recursive) = artifact.recursive_block.as_ref() else {
-        return Err(anyhow!(
-            "candidate artifact missing recursive proof payload"
-        ));
-    };
-    if recursive.proof.data.is_empty() {
-        return Err(anyhow!("candidate artifact recursive proof is empty"));
-    }
-    let max_recursive_bytes = RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE;
-    if recursive.proof.data.len() > max_recursive_bytes {
-        return Err(anyhow!(
-            "candidate artifact recursive proof size {} exceeds {}",
-            recursive.proof.data.len(),
-            max_recursive_bytes
-        ));
-    }
-    Ok(())
+    let input = native_candidate_artifact_admission_input(true, Some(artifact));
+    evaluate_native_candidate_artifact_admission(input)
+        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))
 }
 
 fn validate_candidate_action_payload(action: &PendingAction) -> Result<()> {
     if !is_candidate_artifact_action(action) {
         return Err(anyhow!("not a candidate artifact action"));
     }
-    if !action.nullifiers.is_empty()
-        || !action.commitments.is_empty()
-        || !action.ciphertext_hashes.is_empty()
-        || !action.ciphertext_sizes.is_empty()
-        || action.fee != 0
-        || action.anchor != [0u8; 48]
-    {
-        return Err(anyhow!(
-            "candidate artifact actions must not carry shielded state deltas"
-        ));
-    }
-    let Some(artifact) = action.candidate_artifact.as_ref() else {
-        return Err(anyhow!("candidate artifact action missing payload"));
+    let input = native_candidate_artifact_admission_input(
+        candidate_action_has_no_state_deltas(action),
+        action.candidate_artifact.as_ref(),
+    );
+    evaluate_native_candidate_artifact_admission(input)
+        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))
+}
+
+fn candidate_action_has_no_state_deltas(action: &PendingAction) -> bool {
+    action.nullifiers.is_empty()
+        && action.commitments.is_empty()
+        && action.ciphertext_hashes.is_empty()
+        && action.ciphertext_sizes.is_empty()
+        && action.fee == 0
+        && action.anchor == [0u8; 48]
+}
+
+fn native_candidate_artifact_admission_input(
+    state_deltas_absent: bool,
+    artifact: Option<&CandidateArtifact>,
+) -> NativeCandidateArtifactAdmissionInput {
+    let Some(artifact) = artifact else {
+        return NativeCandidateArtifactAdmissionInput {
+            state_deltas_absent,
+            artifact_present: false,
+            schema_matches: false,
+            tx_count: 0,
+            max_tx_count: MAX_BATCH_SIZE,
+            da_chunk_count: 0,
+            proof_mode_recursive_block: false,
+            proof_kind_recursive_block_v2: false,
+            verifier_profile_matches: false,
+            commitment_proof_empty: false,
+            receipt_root_absent: false,
+            recursive_payload_present: false,
+            recursive_proof_bytes: 0,
+            max_recursive_proof_bytes: RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+        };
     };
-    validate_candidate_artifact(artifact)
+    NativeCandidateArtifactAdmissionInput {
+        state_deltas_absent,
+        artifact_present: true,
+        schema_matches: artifact.version == BLOCK_PROOF_BUNDLE_SCHEMA,
+        tx_count: artifact.tx_count,
+        max_tx_count: MAX_BATCH_SIZE,
+        da_chunk_count: artifact.da_chunk_count,
+        proof_mode_recursive_block: artifact.proof_mode == BlockProofMode::RecursiveBlock,
+        proof_kind_recursive_block_v2: artifact.proof_kind
+            == PoolProofArtifactKind::RecursiveBlockV2,
+        verifier_profile_matches: artifact.verifier_profile
+            == consensus::proof::recursive_block_artifact_verifier_profile(),
+        commitment_proof_empty: artifact.commitment_proof.data.is_empty(),
+        receipt_root_absent: artifact.receipt_root.is_none(),
+        recursive_payload_present: artifact.recursive_block.is_some(),
+        recursive_proof_bytes: artifact
+            .recursive_block
+            .as_ref()
+            .map_or(0, |recursive| recursive.proof.data.len()),
+        max_recursive_proof_bytes: RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    }
+}
+
+fn evaluate_native_candidate_artifact_admission(
+    input: NativeCandidateArtifactAdmissionInput,
+) -> Result<(), NativeCandidateArtifactAdmissionRejection> {
+    if !input.state_deltas_absent {
+        Err(NativeCandidateArtifactAdmissionRejection::StateDeltasPresent)
+    } else if !input.artifact_present {
+        Err(NativeCandidateArtifactAdmissionRejection::ArtifactMissing)
+    } else if !input.schema_matches {
+        Err(NativeCandidateArtifactAdmissionRejection::SchemaMismatch)
+    } else if input.tx_count == 0 {
+        Err(NativeCandidateArtifactAdmissionRejection::TxCountZero)
+    } else if input.tx_count > input.max_tx_count {
+        Err(NativeCandidateArtifactAdmissionRejection::TxCountTooLarge)
+    } else if input.da_chunk_count == 0 {
+        Err(NativeCandidateArtifactAdmissionRejection::DaChunkCountZero)
+    } else if !input.proof_mode_recursive_block {
+        Err(NativeCandidateArtifactAdmissionRejection::WrongProofMode)
+    } else if !input.proof_kind_recursive_block_v2 {
+        Err(NativeCandidateArtifactAdmissionRejection::WrongProofKind)
+    } else if !input.verifier_profile_matches {
+        Err(NativeCandidateArtifactAdmissionRejection::VerifierProfileMismatch)
+    } else if !input.commitment_proof_empty {
+        Err(NativeCandidateArtifactAdmissionRejection::CommitmentProofPresent)
+    } else if !input.receipt_root_absent {
+        Err(NativeCandidateArtifactAdmissionRejection::ReceiptRootPresent)
+    } else if !input.recursive_payload_present {
+        Err(NativeCandidateArtifactAdmissionRejection::RecursivePayloadMissing)
+    } else if input.recursive_proof_bytes == 0 {
+        Err(NativeCandidateArtifactAdmissionRejection::RecursiveProofEmpty)
+    } else if input.recursive_proof_bytes > input.max_recursive_proof_bytes {
+        Err(NativeCandidateArtifactAdmissionRejection::RecursiveProofTooLarge)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_candidate_artifact_admission_error(
+    input: NativeCandidateArtifactAdmissionInput,
+    rejection: NativeCandidateArtifactAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCandidateArtifactAdmissionRejection::StateDeltasPresent => {
+            anyhow!("candidate artifact actions must not carry shielded state deltas")
+        }
+        NativeCandidateArtifactAdmissionRejection::ArtifactMissing => {
+            anyhow!("candidate artifact action missing payload")
+        }
+        NativeCandidateArtifactAdmissionRejection::SchemaMismatch => {
+            anyhow!("candidate artifact schema mismatch")
+        }
+        NativeCandidateArtifactAdmissionRejection::TxCountZero => {
+            anyhow!("candidate artifact tx_count must be non-zero")
+        }
+        NativeCandidateArtifactAdmissionRejection::TxCountTooLarge => anyhow!(
+            "candidate artifact tx_count {} exceeds max {}",
+            input.tx_count,
+            input.max_tx_count
+        ),
+        NativeCandidateArtifactAdmissionRejection::DaChunkCountZero => {
+            anyhow!("candidate artifact must declare DA chunks")
+        }
+        NativeCandidateArtifactAdmissionRejection::WrongProofMode => {
+            anyhow!("native cutover requires recursive block artifacts")
+        }
+        NativeCandidateArtifactAdmissionRejection::WrongProofKind => {
+            anyhow!("native candidate artifact must use the shipped recursive_block_v2 route")
+        }
+        NativeCandidateArtifactAdmissionRejection::VerifierProfileMismatch => {
+            anyhow!("native candidate artifact recursive_block_v2 verifier profile mismatch")
+        }
+        NativeCandidateArtifactAdmissionRejection::CommitmentProofPresent => {
+            anyhow!("recursive candidate artifact must not carry commitment proof bytes")
+        }
+        NativeCandidateArtifactAdmissionRejection::ReceiptRootPresent => {
+            anyhow!("recursive candidate artifact must not carry receipt-root payload")
+        }
+        NativeCandidateArtifactAdmissionRejection::RecursivePayloadMissing => {
+            anyhow!("candidate artifact missing recursive proof payload")
+        }
+        NativeCandidateArtifactAdmissionRejection::RecursiveProofEmpty => {
+            anyhow!("candidate artifact recursive proof is empty")
+        }
+        NativeCandidateArtifactAdmissionRejection::RecursiveProofTooLarge => anyhow!(
+            "candidate artifact recursive proof size {} exceeds {}",
+            input.recursive_proof_bytes,
+            input.max_recursive_proof_bytes
+        ),
+    }
 }
 
 fn validate_coinbase_action_payload(action: &PendingAction) -> Result<()> {
@@ -5333,6 +5473,35 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactAdmissionVectorFile {
+        schema_version: u32,
+        candidate_artifact_admission_cases: Vec<LeanCandidateArtifactAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactAdmissionCase {
+        name: String,
+        state_deltas_absent: bool,
+        artifact_present: bool,
+        schema_matches: bool,
+        tx_count: u32,
+        max_tx_count: u32,
+        da_chunk_count: u32,
+        proof_mode_recursive_block: bool,
+        proof_kind_recursive_block_v2: bool,
+        verifier_profile_matches: bool,
+        commitment_proof_empty: bool,
+        receipt_root_absent: bool,
+        recursive_payload_present: bool,
+        recursive_proof_bytes: usize,
+        max_recursive_proof_bytes: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockCommitmentAdmissionVectorFile {
         schema_version: u32,
         block_commitment_admission_cases: Vec<LeanBlockCommitmentAdmissionCase>,
@@ -6227,6 +6396,64 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_candidate_artifact_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean candidate artifact admission vectors");
+        let vectors: LeanCandidateArtifactAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean candidate artifact admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.candidate_artifact_admission_cases.is_empty(),
+            "Lean candidate artifact admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.candidate_artifact_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_candidate_artifact_admission_case(case);
+        }
+    }
+
+    fn verify_lean_candidate_artifact_admission_case(case: &LeanCandidateArtifactAdmissionCase) {
+        let input = NativeCandidateArtifactAdmissionInput {
+            state_deltas_absent: case.state_deltas_absent,
+            artifact_present: case.artifact_present,
+            schema_matches: case.schema_matches,
+            tx_count: case.tx_count,
+            max_tx_count: case.max_tx_count,
+            da_chunk_count: case.da_chunk_count,
+            proof_mode_recursive_block: case.proof_mode_recursive_block,
+            proof_kind_recursive_block_v2: case.proof_kind_recursive_block_v2,
+            verifier_profile_matches: case.verifier_profile_matches,
+            commitment_proof_empty: case.commitment_proof_empty,
+            receipt_root_absent: case.receipt_root_absent,
+            recursive_payload_present: case.recursive_payload_present,
+            recursive_proof_bytes: case.recursive_proof_bytes,
+            max_recursive_proof_bytes: case.max_recursive_proof_bytes,
+        };
+        let actual_rejection = evaluate_native_candidate_artifact_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native candidate-artifact admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native candidate-artifact admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_block_commitment_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS") else {
             eprintln!(
@@ -6450,6 +6677,40 @@ mod tests {
         let err = validate_candidate_artifact(&artifact)
             .expect_err("native candidate artifacts must use the shipped v2 route");
         assert!(err.to_string().contains("recursive_block_v2"));
+    }
+
+    #[test]
+    fn candidate_artifact_rejects_zero_tx_count() {
+        let artifact = test_candidate_artifact(0);
+
+        let err = validate_candidate_artifact(&artifact)
+            .expect_err("native candidate artifacts must bind at least one tx");
+        assert!(err.to_string().contains("tx_count must be non-zero"));
+    }
+
+    #[test]
+    fn candidate_artifact_rejects_wrong_verifier_profile() {
+        let mut artifact = test_candidate_artifact(1);
+        artifact.verifier_profile = [0x77u8; 48];
+
+        let err = validate_candidate_artifact(&artifact)
+            .expect_err("native candidate artifacts must bind shipped verifier profile");
+        assert!(err.to_string().contains("verifier profile mismatch"));
+    }
+
+    #[test]
+    fn candidate_artifact_rejects_oversized_recursive_proof() {
+        let mut artifact = test_candidate_artifact(1);
+        artifact
+            .recursive_block
+            .as_mut()
+            .expect("test recursive payload")
+            .proof
+            .data = vec![0x42u8; RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE + 1];
+
+        let err = validate_candidate_artifact(&artifact)
+            .expect_err("oversized recursive candidate proof must fail admission");
+        assert!(err.to_string().contains("recursive proof size"));
     }
 
     #[test]

@@ -27,6 +27,7 @@ import Hegemon.Native.ActionHashAdmission
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.BlockCommitmentAdmission
+import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.TxLeafArtifact

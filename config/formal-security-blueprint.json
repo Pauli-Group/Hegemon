@@ -1575,6 +1575,64 @@
       "scope_boundary": "This node proves and vector-checks native coinbase accounting admission only. It does not prove encrypted coinbase note construction, coinbase ciphertext hash binding, transfer proof soundness, monetary policy economics beyond the current subsidy helper, full action payload validation, or complete native-node equivalence."
     },
     {
+      "id": "native.candidate-artifact-admission",
+      "claim_id": "native.candidate-artifact-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native candidate-artifact admission transition, accepted candidate actions must carry no shielded state deltas, must have a decoded artifact payload, and that artifact must match the shipped recursive_block_v2 schema, nonzero/in-bound tx count, nonzero DA chunks, verifier profile, empty legacy commitment-proof bytes, absent receipt-root payload, present nonempty recursive proof bytes, and recursive proof size cap.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CandidateArtifactAdmission.valid_candidate_artifact_accepts`, `Hegemon.Native.CandidateArtifactAdmission.state_deltas_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.artifact_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.schema_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_too_large_rejects`, `Hegemon.Native.CandidateArtifactAdmission.da_chunk_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_mode_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_kind_rejects`, `Hegemon.Native.CandidateArtifactAdmission.verifier_profile_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.commitment_proof_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.receipt_root_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_payload_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_empty_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_too_large_rejects`, and `Hegemon.Native.CandidateArtifactAdmission.state_deltas_precede_artifact_validation` prove the executable admission table. `gen_candidate_artifact_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against `evaluate_native_candidate_artifact_admission`, the helper used by native candidate action and artifact validation.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "consensus.proven-batch-binding",
+        "consensus.recursive-block-admission",
+        "consensus.recursive-semantic-inputs",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native candidate-artifact admission. Scope is cheap decoded action/artifact shape and shipped-route admission, not recursive proof cryptographic soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-candidate-artifact-admission-theorem",
+          "description": "Removing or weakening the candidate-artifact admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-candidate-artifact-admission-conformance",
+          "description": "Changing production candidate-artifact admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-candidate-artifact-regressions",
+          "description": "Focused native tests must reject state-delta smuggling, missing payloads, zero tx count, wrong recursive route/profile, and oversized recursive proofs.",
+          "gate": "cargo test -p hegemon-node candidate_artifact_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-candidate-artifact-gate",
+          "description": "The release formal-core wrapper must generate candidate-artifact admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native candidate-artifact action/artifact admission only. It does not prove SCALE decoder correctness, verifier-profile digest construction, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, block tree-transition correctness, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",
@@ -1771,6 +1829,7 @@
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-scope-admission",
+        "native.candidate-artifact-admission",
         "native.block-action-ordering",
         "shielded.nullifier-state",
         "bridge.message-root-replay",
