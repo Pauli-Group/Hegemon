@@ -3082,6 +3082,30 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanTreeTransitionVectorFile {
+        schema_version: u32,
+        tree_transition_cases: Vec<LeanTreeTransitionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTreeTransitionCase {
+        name: String,
+        tree_depth: usize,
+        parent_leaf_seeds: Vec<u64>,
+        tx_commitment_seed_groups: Vec<Vec<u64>>,
+        proof_starting_root_source: String,
+        proof_starting_root_seed: u64,
+        proof_ending_root_source: String,
+        proof_ending_root_seed: u64,
+        apply_commitments_succeeds: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_result_root_source: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProvenBatchBindingVectorFile {
         schema_version: u32,
         proven_batch_binding_cases: Vec<LeanProvenBatchBindingCase>,
@@ -3490,6 +3514,31 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_tree_transition_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_TREE_TRANSITION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_TREE_TRANSITION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean tree-transition vectors");
+        let vectors: LeanTreeTransitionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean tree-transition vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.tree_transition_cases.is_empty(),
+            "Lean tree-transition cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.tree_transition_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_tree_transition_case(case);
+        }
+    }
+
+    #[test]
     fn lean_generated_proven_batch_binding_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS") else {
             eprintln!(
@@ -3536,6 +3585,135 @@ mod tests {
         for case in &vectors.statement_hash_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_statement_hash_case(case);
+        }
+    }
+
+    fn verify_lean_tree_transition_case(case: &LeanTreeTransitionCase) {
+        let parent_tree = tree_transition_parent_tree(case);
+        let transactions = tree_transition_transactions_from_case(case);
+        let applied_tree = apply_commitments(&parent_tree, &transactions);
+        assert_eq!(
+            applied_tree.is_ok(),
+            case.apply_commitments_succeeds,
+            "{} commitment application drifted from Lean vector setup: {applied_tree:?}",
+            case.name
+        );
+
+        let proof_starting_root = tree_transition_root_from_source(
+            &case.proof_starting_root_source,
+            case.proof_starting_root_seed,
+            &parent_tree,
+            applied_tree.as_ref().ok(),
+        );
+        let proof_ending_root = tree_transition_root_from_source(
+            &case.proof_ending_root_source,
+            case.proof_ending_root_seed,
+            &parent_tree,
+            applied_tree.as_ref().ok(),
+        );
+        let result = verify_and_apply_tree_transition_without_anchors(
+            &parent_tree,
+            proof_starting_root,
+            proof_ending_root,
+            &transactions,
+        );
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} tree-transition validity drifted from Lean spec: {result:?}",
+            case.name
+        );
+        let actual_rejection = result
+            .as_ref()
+            .err()
+            .map(tree_transition_error_label)
+            .map(str::to_string);
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} tree-transition rejection label drifted from Lean spec",
+            case.name
+        );
+
+        if let Ok(updated_tree) = result {
+            assert_eq!(
+                case.expected_result_root_source.as_deref(),
+                Some("applied_commitment_tree_root"),
+                "{} accepted tree-transition vector must name the applied root source",
+                case.name
+            );
+            let expected_tree = applied_tree.expect("accepted Lean tree-transition applies");
+            assert_eq!(
+                updated_tree.root(),
+                expected_tree.root(),
+                "{} accepted tree-transition root no longer matches applied tree",
+                case.name
+            );
+            assert_eq!(
+                updated_tree.leaf_count(),
+                expected_tree.leaf_count(),
+                "{} accepted tree-transition leaf count no longer matches applied tree",
+                case.name
+            );
+        }
+    }
+
+    fn tree_transition_parent_tree(case: &LeanTreeTransitionCase) -> CommitmentTreeState {
+        let mut tree = CommitmentTreeState::new_empty(
+            case.tree_depth,
+            crate::commitment_tree::DEFAULT_ROOT_HISTORY_LIMIT,
+        )
+        .expect("Lean tree-transition depth is valid");
+        for seed in &case.parent_leaf_seeds {
+            tree.append(patterned_bytes48(*seed))
+                .expect("Lean parent leaf seed fits tree");
+        }
+        tree
+    }
+
+    fn tree_transition_transactions_from_case(
+        case: &LeanTreeTransitionCase,
+    ) -> Vec<crate::types::Transaction> {
+        case.tx_commitment_seed_groups
+            .iter()
+            .map(|group| {
+                let commitments = group
+                    .iter()
+                    .map(|seed| {
+                        if *seed == 0 {
+                            [0u8; 48]
+                        } else {
+                            patterned_bytes48(*seed)
+                        }
+                    })
+                    .collect();
+                tx_with_commitments(commitments)
+            })
+            .collect()
+    }
+
+    fn tree_transition_root_from_source(
+        source: &str,
+        seed: u64,
+        parent_tree: &CommitmentTreeState,
+        applied_tree: Option<&CommitmentTreeState>,
+    ) -> [u8; 48] {
+        match source {
+            "parent_tree_root" => parent_tree.root(),
+            "applied_commitment_tree_root" => applied_tree
+                .expect("Lean vector requested applied root after successful application")
+                .root(),
+            "patterned_seed" => patterned_bytes48(seed),
+            other => panic!("unknown Lean tree-transition root source {other}"),
+        }
+    }
+
+    fn tree_transition_error_label(error: &ProofError) -> &'static str {
+        match error {
+            ProofError::StartingRootMismatch { .. } => "starting_root_mismatch",
+            ProofError::CommitmentTree(_) => "apply_failed",
+            ProofError::EndingRootMismatch { .. } => "ending_root_mismatch",
+            other => panic!("unexpected tree-transition error for Lean vector: {other:?}"),
         }
     }
 

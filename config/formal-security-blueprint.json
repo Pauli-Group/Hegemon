@@ -1301,6 +1301,58 @@
       "scope_boundary": "This node proves and vector-checks recursive semantic-input admission, field-source mapping, and rejection precedence only. It does not prove BLAKE3, DA erasure-code, Merkle tree hash, kernel-root hash, nullifier-root hash, or recursive-state-commitment cryptographic security or implementation equivalence, native tx-leaf proof soundness, recursive proof cryptographic soundness, consensus block-header validity, or complete block proof validity."
     },
     {
+      "id": "consensus.block-tree-transition",
+      "claim_id": "consensus.block-tree-transition",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean block tree-transition predicate, accepted transitions must have proof starting root equal to the parent commitment-tree root, commitment application must succeed, proof ending root must equal the applied commitment-tree root, and accepted execution must return that applied root. Starting-root mismatch must reject before commitment application, and commitment application failure must reject before ending-root comparison.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.TreeTransition.tree_transition_accepts_iff_preconditions` proves that transition acceptance is exactly starting-root agreement plus successful commitment application plus ending-root agreement. Companion theorems `valid_transition_accepts`, `accepted_transition_returns_applied_root`, `starting_root_mismatch_rejects`, `apply_failure_rejects`, `ending_root_mismatch_rejects`, `starting_root_mismatch_precedes_apply_failure`, `apply_failure_precedes_ending_root_mismatch`, and `empty_valid_transition_accepts` pin representative acceptance, return-root, rejection, and precedence facts. `gen_tree_transition_vectors` emits Lean-derived examples, and the formal-core gate checks them against `verify_and_apply_tree_transition_without_anchors` in consensus.",
+      "depends_on": [
+        "consensus.recursive-semantic-inputs",
+        "formal.transaction-merkle-membership",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon/Consensus/GenerateTreeTransitionVectors.lean",
+        "consensus/src/proof.rs",
+        "consensus/src/commitment_tree.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon/Consensus/GenerateTreeTransitionVectors.lean",
+        "consensus/src/proof.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus commitment-tree transition control flow. Scope excludes Merkle/hash cryptographic soundness and complete block proof validity."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-tree-transition-theorem",
+          "description": "Removing or weakening the block tree-transition theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-block-tree-transition-conformance",
+          "description": "Changing production tree-transition start-root, commitment-application, end-root, or rejection-precedence behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_TREE_TRANSITION_VECTORS=<generated-json> cargo test -p consensus lean_generated_tree_transition_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-block-tree-transition-gate",
+          "description": "The release formal-core wrapper must generate block tree-transition vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks consensus commitment-tree transition control flow only: starting-root agreement, commitment application success/failure, ending-root agreement, accepted applied-root return, and rejection precedence. It does not prove note commitment correctness, BLAKE3 or Poseidon2 security or implementation equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, or complete block proof validity."
+    },
+    {
       "id": "consensus.receipt-root-admission",
       "claim_id": "consensus.receipt-root-admission",
       "kind": "target_claim",

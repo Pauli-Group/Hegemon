@@ -701,6 +701,34 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.block-tree-transition",
+      "component": "consensus commitment-tree state transition",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block tree-transition kernel proves the executable acceptance predicate for proof starting-root agreement, commitment application success, proof ending-root agreement, accepted applied-root return, and rejection precedence; generated Lean vectors are checked against the production consensus tree-transition verifier used after block proof verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents commitment-tree roots as abstract digest identifiers and commitment application as a checked success/failure bit; it does not prove Merkle hash security or implementation equivalence.",
+        "Generated Lean conformance vectors cover empty valid transitions, one-commitment valid transitions, zero commitment filtering, starting-root mismatch rejection, commitment application failure, ending-root mismatch rejection, starting-root-before-application-failure precedence, and application-failure-before-ending-root precedence.",
+        "The theorem covers executable block commitment-tree transition control flow only. It does not prove note commitment correctness, BLAKE3 or Poseidon2 implementation equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon/Consensus/GenerateTreeTransitionVectors.lean",
+        "consensus/src/proof.rs",
+        "consensus/src/commitment_tree.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_TREE_TRANSITION_VECTORS=<generated-json> cargo test -p consensus lean_generated_tree_transition_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.receipt-root-admission",
       "component": "receipt-root proof payload and block-artifact admission",
       "claim_class": "lean_theorem",

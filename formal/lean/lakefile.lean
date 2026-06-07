@@ -70,6 +70,9 @@ lean_exe gen_recursive_semantic_input_vectors where
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 
+lean_exe gen_tree_transition_vectors where
+  root := `Hegemon.Consensus.GenerateTreeTransitionVectors
+
 lean_exe gen_version_policy_vectors where
   root := `Hegemon.Consensus.GenerateVersionPolicyVectors
 
