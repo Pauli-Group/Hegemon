@@ -15,9 +15,10 @@ use super::{
     hosted_step_binding_bytes_v1, prefix_statement_for_records_v1,
     previous_proof_rows_for_limbs_v1, prove_block_recursive_v1, prove_block_recursive_v2,
     public_replay_v1, public_replay_v2, recursive_block_artifact_bytes_v2,
-    recursive_block_artifact_verifier_profile_v2, segment_statement_for_interval_v1,
-    serialize_recursive_block_artifact_v1, serialize_recursive_block_artifact_v2,
-    serialize_recursive_block_public_v1, step_recursive_witness_layout_v1,
+    recursive_block_artifact_verifier_profile_v2, recursive_block_public_bytes_v2,
+    segment_statement_for_interval_v1, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
+    serialize_recursive_block_public_v2, step_recursive_witness_layout_v1,
     step_recursive_witness_words_v1, tree_proof_cap_report_v2, tree_witness_geometry_report_v2,
     verify_block_recursive_v1, verify_block_recursive_v2,
     verify_hosted_recursive_proof_context_binding_trace_v1,
@@ -60,6 +61,34 @@ fn digest48(tag: u8, idx: u32) -> [u8; 48] {
             .wrapping_add((offset as u8).wrapping_mul(5));
     }
     out
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LeanRecursivePublicReplayVectorFile {
+    schema_version: u32,
+    replay_cases: Vec<LeanRecursivePublicReplayCase>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LeanRecursivePublicReplayCase {
+    name: String,
+    version: String,
+    tx_indices: Vec<u32>,
+    tx_statements_commitment_seed: u8,
+    start_shielded_root_seed: u8,
+    end_shielded_root_seed: u8,
+    start_kernel_root_seed: u8,
+    end_kernel_root_seed: u8,
+    nullifier_root_seed: u8,
+    da_root_seed: u8,
+    message_root_seed: u8,
+    start_tree_commitment_seed: u8,
+    end_tree_commitment_seed: u8,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+    expected_tx_count: u32,
+    expected_public_bytes_len: usize,
+    expected_carries_message_root: bool,
 }
 
 struct FakeIdentityWitnessStatement {
@@ -178,6 +207,131 @@ fn sample_input(tx_count: u32) -> BlockRecursiveProverInputV1 {
             start_tree_commitment: digest48(0xa8, 0),
             end_tree_commitment: digest48(0xa9, tx_count),
         },
+    }
+}
+
+fn replay_records_from_indices(tx_indices: &[u32]) -> Vec<BlockLeafRecordV1> {
+    tx_indices
+        .iter()
+        .copied()
+        .map(|tx_index| BlockLeafRecordV1 {
+            tx_index,
+            receipt_statement_hash: digest48(0x10, tx_index),
+            receipt_proof_digest: digest48(0x20, tx_index),
+            receipt_public_inputs_digest: digest48(0x30, tx_index),
+            receipt_verifier_profile: digest48(0x40, tx_index),
+            leaf_params_fingerprint: digest48(0x50, tx_index),
+            leaf_spec_digest: digest32(0x60, tx_index),
+            leaf_relation_id: digest32(0x70, tx_index),
+            leaf_shape_digest: digest32(0x80, tx_index),
+            leaf_statement_digest: digest48(0x90, tx_index),
+            leaf_commitment_digest: digest48(0xa0, tx_index),
+            leaf_proof_digest: digest48(0xb0, tx_index),
+        })
+        .collect()
+}
+
+fn replay_semantic_from_lean_case(case: &LeanRecursivePublicReplayCase) -> BlockSemanticInputsV1 {
+    BlockSemanticInputsV1 {
+        tx_statements_commitment: digest48(case.tx_statements_commitment_seed, 0),
+        start_shielded_root: digest48(case.start_shielded_root_seed, 0),
+        end_shielded_root: digest48(case.end_shielded_root_seed, 0),
+        start_kernel_root: digest48(case.start_kernel_root_seed, 0),
+        end_kernel_root: digest48(case.end_kernel_root_seed, 0),
+        nullifier_root: digest48(case.nullifier_root_seed, 0),
+        da_root: digest48(case.da_root_seed, 0),
+        message_root: digest48(case.message_root_seed, 0),
+        start_tree_commitment: digest48(case.start_tree_commitment_seed, 0),
+        end_tree_commitment: digest48(case.end_tree_commitment_seed, 0),
+    }
+}
+
+fn verify_lean_recursive_public_replay_case(case: &LeanRecursivePublicReplayCase) {
+    let records = replay_records_from_indices(&case.tx_indices);
+    let semantic = replay_semantic_from_lean_case(case);
+    match case.version.as_str() {
+        "recursive_block_v1" => {
+            let result = public_replay_v1(&records, &semantic);
+            assert_eq!(
+                result.is_ok(),
+                case.expected_valid,
+                "{} v1 public replay validity drifted from Lean spec: {result:?}",
+                case.name
+            );
+            let actual_rejection = result.as_ref().err().map(|_| "tx_index_gap".to_string());
+            assert_eq!(
+                actual_rejection.as_deref(),
+                case.expected_rejection.as_deref(),
+                "{} v1 public replay rejection drifted from Lean spec",
+                case.name
+            );
+            if let Ok(public) = result {
+                assert_eq!(public.tx_count, case.expected_tx_count);
+                assert_eq!(
+                    public.tx_statements_commitment,
+                    semantic.tx_statements_commitment
+                );
+                assert_eq!(public.start_shielded_root, semantic.start_shielded_root);
+                assert_eq!(public.end_shielded_root, semantic.end_shielded_root);
+                assert_eq!(public.start_kernel_root, semantic.start_kernel_root);
+                assert_eq!(public.end_kernel_root, semantic.end_kernel_root);
+                assert_eq!(public.nullifier_root, semantic.nullifier_root);
+                assert_eq!(public.da_root, semantic.da_root);
+                assert_eq!(public.message_root, semantic.message_root);
+                assert_eq!(public.start_tree_commitment, semantic.start_tree_commitment);
+                assert_eq!(public.end_tree_commitment, semantic.end_tree_commitment);
+                assert!(case.expected_carries_message_root);
+                assert_eq!(
+                    serialize_recursive_block_public_v1(&public).len(),
+                    case.expected_public_bytes_len
+                );
+                assert_eq!(
+                    case.expected_public_bytes_len,
+                    RECURSIVE_BLOCK_PUBLIC_BYTES_V1
+                );
+            }
+        }
+        "recursive_block_v2" => {
+            let result = public_replay_v2(&records, &semantic);
+            assert_eq!(
+                result.is_ok(),
+                case.expected_valid,
+                "{} v2 public replay validity drifted from Lean spec: {result:?}",
+                case.name
+            );
+            let actual_rejection = result.as_ref().err().map(|_| "tx_index_gap".to_string());
+            assert_eq!(
+                actual_rejection.as_deref(),
+                case.expected_rejection.as_deref(),
+                "{} v2 public replay rejection drifted from Lean spec",
+                case.name
+            );
+            if let Ok(public) = result {
+                assert_eq!(public.tx_count, case.expected_tx_count);
+                assert_eq!(
+                    public.tx_statements_commitment,
+                    semantic.tx_statements_commitment
+                );
+                assert_eq!(public.start_shielded_root, semantic.start_shielded_root);
+                assert_eq!(public.end_shielded_root, semantic.end_shielded_root);
+                assert_eq!(public.start_kernel_root, semantic.start_kernel_root);
+                assert_eq!(public.end_kernel_root, semantic.end_kernel_root);
+                assert_eq!(public.nullifier_root, semantic.nullifier_root);
+                assert_eq!(public.da_root, semantic.da_root);
+                assert_eq!(public.start_tree_commitment, semantic.start_tree_commitment);
+                assert_eq!(public.end_tree_commitment, semantic.end_tree_commitment);
+                assert!(!case.expected_carries_message_root);
+                assert_eq!(
+                    serialize_recursive_block_public_v2(&public).len(),
+                    case.expected_public_bytes_len
+                );
+                assert_eq!(
+                    case.expected_public_bytes_len,
+                    recursive_block_public_bytes_v2()
+                );
+            }
+        }
+        other => panic!("unknown recursive public replay version {other}"),
     }
 }
 
@@ -689,6 +843,28 @@ where
 }
 
 #[test]
+fn lean_generated_recursive_public_replay_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS") else {
+        eprintln!(
+            "HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS not set; skipping generated Lean vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(&path).expect("read generated Lean recursive replay vectors");
+    let vectors: LeanRecursivePublicReplayVectorFile =
+        serde_json::from_str(&raw).expect("parse generated Lean recursive replay vectors");
+    assert_eq!(vectors.schema_version, 1);
+    assert!(
+        !vectors.replay_cases.is_empty(),
+        "Lean recursive replay cases must not be empty"
+    );
+
+    for case in &vectors.replay_cases {
+        verify_lean_recursive_public_replay_case(case);
+    }
+}
+
+#[test]
 fn public_replay_matches_semantic_tuple() {
     let input = sample_input(3);
     let public = public_replay_v1(&input.records, &input.semantic).unwrap();
@@ -714,7 +890,10 @@ fn public_replay_matches_semantic_tuple() {
         public.end_tree_commitment,
         input.semantic.end_tree_commitment
     );
-    assert_eq!(serialize_recursive_block_public_v1(&public).len(), 532);
+    assert_eq!(
+        serialize_recursive_block_public_v1(&public).len(),
+        RECURSIVE_BLOCK_PUBLIC_BYTES_V1
+    );
 }
 
 #[test]

@@ -324,6 +324,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean",
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean",
         "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockAdmissionVectors.lean",
+        "formal/lean/Hegemon/Consensus/RecursivePublicReplay.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
         "formal/lean/Hegemon/Consensus/VersionPolicy.lean",

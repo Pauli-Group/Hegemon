@@ -1189,7 +1189,61 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks recursive-block envelope kind, verifier profile, artifact decoding, recursive header version, tx-count, statement-commitment, and public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+      "scope_boundary": "This node proves and vector-checks recursive-block envelope kind, verifier profile, artifact decoding, recursive header version, tx-count, statement-commitment, and public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+    },
+    {
+      "id": "consensus.recursive-public-replay",
+      "claim_id": "consensus.recursive-public-replay",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean recursive public replay transition, accepted v1/v2 replay inputs must have contiguous tx indices, and the resulting public tuple must carry the tx count, tx statements commitment, state roots, kernel roots, nullifier root, DA root, tree commitments, and version-specific message-root behavior exactly as specified; non-contiguous tx indices are rejected.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.RecursivePublicReplay.accepts_iff_contiguous` proves that replay acceptance is exactly contiguous tx-index admission. Companion theorems `Hegemon.Consensus.RecursivePublicReplay.zero_based_contiguous_accepts`, `Hegemon.Consensus.RecursivePublicReplay.nonzero_start_contiguous_accepts`, `Hegemon.Consensus.RecursivePublicReplay.gap_rejects`, `Hegemon.Consensus.RecursivePublicReplay.duplicate_rejects`, `Hegemon.Consensus.RecursivePublicReplay.decreasing_rejects`, `Hegemon.Consensus.RecursivePublicReplay.valid_v1_public_fields_match_semantic`, `Hegemon.Consensus.RecursivePublicReplay.valid_v2_public_fields_match_semantic`, `Hegemon.Consensus.RecursivePublicReplay.v1_public_byte_length`, and `Hegemon.Consensus.RecursivePublicReplay.v2_public_byte_length` pin representative accept/reject, field propagation, and serialized public-length facts. `gen_recursive_public_replay_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `public_replay_v1` and `public_replay_v2` helpers in `block-recursion`.",
+      "depends_on": [
+        "consensus.recursive-block-admission",
+        "consensus.native-tx-leaf-admission",
+        "formal.native-tx-leaf-artifact-wire",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/RecursivePublicReplay.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean",
+        "circuits/block-recursion/src/public_replay.rs",
+        "circuits/block-recursion/src/tree_v2.rs",
+        "circuits/block-recursion/src/tests.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/RecursivePublicReplay.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean",
+        "circuits/block-recursion/src/tests.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for recursive public replay tx-index ordering, semantic-field propagation, version-specific message-root behavior, and public tuple lengths. Scope excludes hash security/equivalence and recursive proof cryptographic soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-recursive-public-replay-theorem",
+          "description": "Removing or weakening the recursive public replay theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-recursive-public-replay-conformance",
+          "description": "Changing production recursive public replay field propagation or tx-index admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS=<generated-json> cargo test -p block-recursion lean_generated_recursive_public_replay_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-recursive-public-replay-gate",
+          "description": "The release formal-core wrapper must generate recursive public replay vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks recursive public replay tx-index ordering, semantic-field propagation, version-specific message-root behavior, and public tuple lengths only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, correctness of consensus-derived block semantic inputs, aggregation STARK soundness, or complete block proof validity."
     },
     {
       "id": "consensus.receipt-root-admission",

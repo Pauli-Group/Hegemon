@@ -626,7 +626,7 @@
       "assumptions": [
         "The Lean model represents the cheap consensus admission and binding table around recursive_block_v1/v2 artifact verification after the ordered tx_leaf stream has already been verified.",
         "Generated Lean conformance vectors cover valid recursive_block_v2 and recursive_block_v1 cases plus wrong artifact kind, verifier-profile mismatch, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, and rejection-precedence for wrong kind before decode failure.",
-        "The theorem covers executable recursive-block envelope/decode/header/count/statement/public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+        "The theorem covers executable recursive-block envelope/decode/header/count/statement/public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean",
@@ -638,6 +638,35 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.recursive-public-replay",
+      "component": "recursive block public replay",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean recursive public replay kernel proves executable facts for v1/v2 recursive-block public replay: contiguous tx-index admission, rejection of gaps/duplicates/decreasing order, exact semantic-field propagation into public tuples, v1 message-root carriage, v2 message-root omission, and public tuple byte lengths; generated Lean vectors are checked against block-recursion production helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the public replay field-mapping and tx-index admission table around recursive_block_v1/v2 public tuple construction, not recursive proof cryptographic soundness.",
+        "Generated Lean conformance vectors cover valid recursive_block_v1/v2 zero-based replay, the production helper behavior for a nonzero contiguous start, gap rejection, duplicate-index rejection, decreasing-order rejection, v1/v2 serialized public byte lengths, and semantic-root/commitment propagation.",
+        "The theorem covers executable public replay field propagation and tx-index ordering only. It does not prove BLAKE3/fold_digest48 security or implementation equivalence, recursive proof cryptographic soundness, correctness of native tx-leaf proofs, correctness of block semantic inputs derived from native state, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/RecursivePublicReplay.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean",
+        "circuits/block-recursion/src/public_replay.rs",
+        "circuits/block-recursion/src/tree_v2.rs",
+        "circuits/block-recursion/src/tests.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS=<generated-json> cargo test -p block-recursion lean_generated_recursive_public_replay_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
