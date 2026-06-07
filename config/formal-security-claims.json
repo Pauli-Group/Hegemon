@@ -308,6 +308,37 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.version-policy",
+      "component": "consensus transaction version admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean version-policy kernel proves executable admission facts for initial protocol versions, activation-height boundaries, retirement-height boundaries, same-height retirement precedence, duplicate initial bindings, and first unsupported transaction-version reporting; generated Lean vectors are checked against the VersionSchedule helper used by PoW and BFT block import.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents version bindings as circuit/crypto pairs and schedule events as explicit activation and retirement lists.",
+        "Generated Lean conformance vectors cover accepted initial versions, unknown-version rejection, pre-activation rejection, activation-boundary acceptance, pre-retirement acceptance, retirement-boundary rejection, same-height retirement precedence, first-unsupported transaction ordering, and duplicate initial binding deduplication.",
+        "The theorem covers executable VersionSchedule admission semantics, not social upgrade governance, protocol manifest correctness, proof-system soundness for each version, or full native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/VersionPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVersionPolicyVectors.lean",
+        "consensus/src/version_policy.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/bft.rs",
+        "consensus/tests/version_policy.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_VERSION_POLICY_VECTORS=<generated-json> cargo test -p consensus lean_generated_version_policy_vectors_match_production -- --nocapture",
+        "cargo test -p consensus --test version_policy -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "component": "bridge long-range light-client proof shape",
       "claim_class": "lean_theorem",

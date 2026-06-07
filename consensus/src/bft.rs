@@ -142,15 +142,15 @@ impl<V: ProofVerifier> BftConsensus<V> {
         }
         block.header.ensure_structure()?;
         verify_commitments(&block)?;
-        if let Some(version) = self.version_schedule.first_unsupported(
-            block.header.height,
-            block.transactions.iter().map(|tx| tx.version),
-        ) {
-            return Err(ConsensusError::UnsupportedVersion {
+        self.version_schedule
+            .validate_versions(
+                block.header.height,
+                block.transactions.iter().map(|tx| tx.version),
+            )
+            .map_err(|version| ConsensusError::UnsupportedVersion {
                 version,
                 height: block.header.height,
-            });
-        }
+            })?;
         if block.header.validator_set_commitment != self.validator_set.validator_set_commitment() {
             return Err(ConsensusError::ValidatorSetMismatch);
         }

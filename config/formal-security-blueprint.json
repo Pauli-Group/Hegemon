@@ -562,6 +562,61 @@
       "scope_boundary": "This node proves and vector-checks miner identity and signature admission ordering only. It does not prove ML-DSA unforgeability, ML-DSA implementation equivalence, header signing-hash serialization, validator-set governance, miner key custody, retarget economics, network orphan policy, or long-range finality."
     },
     {
+      "id": "consensus.version-policy",
+      "claim_id": "consensus.version-policy",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean version-policy transition, initial version bindings are allowed, activation events add bindings at and after their activation height, retirement events remove bindings at and after their retirement height, retirement wins over same-height activation, duplicate initial bindings are deduplicated, and block admission reports the first unsupported transaction version in transaction order.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.versionPolicy_initial_accepts`, `Hegemon.Consensus.versionPolicy_rejects_unknown_initial`, `Hegemon.Consensus.versionPolicy_rejects_before_activation`, `Hegemon.Consensus.versionPolicy_accepts_at_activation`, `Hegemon.Consensus.versionPolicy_accepts_before_retirement`, `Hegemon.Consensus.versionPolicy_rejects_at_retirement`, `Hegemon.Consensus.versionPolicy_retirement_wins_same_height`, and `Hegemon.Consensus.versionPolicy_reports_first_unsupported_in_tx_order` prove representative executable facts about the version schedule admission table. `gen_version_policy_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `VersionSchedule::validate_versions` helper used by both `PowConsensus::apply_block` and `BftConsensus::apply_block`.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/VersionPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVersionPolicyVectors.lean",
+        "consensus/src/version_policy.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/bft.rs",
+        "consensus/tests/version_policy.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/VersionPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVersionPolicyVectors.lean",
+        "consensus/src/version_policy.rs",
+        "consensus/src/pow.rs",
+        "consensus/src/bft.rs",
+        "consensus/tests/version_policy.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus version admission. Protocol governance and per-version proof soundness remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-version-policy-theorem",
+          "description": "Removing or weakening the version-policy theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-version-policy-conformance",
+          "description": "Changing production version-schedule admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_VERSION_POLICY_VECTORS=<generated-json> cargo test -p consensus lean_generated_version_policy_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "version-policy-regression",
+          "description": "The existing consensus integration test must continue rejecting unsupported versions before activation and accepting them at activation.",
+          "gate": "cargo test -p consensus --test version_policy -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks schedule admission semantics only. It does not prove social upgrade governance, protocol manifest correctness, proof-system soundness for each version, transaction-proof backend security, or full native-node equivalence."
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "claim_id": "bridge.long-range-proof-shape",
       "kind": "target_claim",

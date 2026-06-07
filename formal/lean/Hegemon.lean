@@ -8,6 +8,7 @@ import Hegemon.Consensus.MinerIdentity
 import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.Supply
+import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.TxLeafArtifact

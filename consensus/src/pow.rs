@@ -300,15 +300,15 @@ impl<V: ProofVerifier> PowConsensus<V> {
         block.header.ensure_structure()?;
         self.verify_pow_miner_signature(&block.header)?;
         verify_commitments(&block)?;
-        if let Some(version) = self.version_schedule.first_unsupported(
-            block.header.height,
-            block.transactions.iter().map(|tx| tx.version),
-        ) {
-            return Err(ConsensusError::UnsupportedVersion {
+        self.version_schedule
+            .validate_versions(
+                block.header.height,
+                block.transactions.iter().map(|tx| tx.version),
+            )
+            .map_err(|version| ConsensusError::UnsupportedVersion {
                 version,
                 height: block.header.height,
-            });
-        }
+            })?;
 
         let pow = block
             .header

@@ -304,6 +304,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
+        "formal/lean/Hegemon/Consensus/VersionPolicy.lean",
+        "formal/lean/Hegemon/Consensus/GenerateVersionPolicyVectors.lean",
         "formal/lean/Hegemon/Native/ActionOrder.lean",
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
