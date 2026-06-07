@@ -1,5 +1,6 @@
 import Hegemon.Bytes
 import Hegemon.Bridge.Encoding
+import Hegemon.Bridge.FlyClient
 import Hegemon.Bridge.HeaderMmr
 import Hegemon.Bridge.LongRange
 import Hegemon.Bridge.MessageRoot

@@ -1549,24 +1549,75 @@ pub fn flyclient_sample_indices(
     if start_inclusive >= end_exclusive || sample_count == 0 {
         return Vec::new();
     }
-    let span = end_exclusive - start_inclusive;
     let mut out = Vec::with_capacity(sample_count as usize);
     for sample_index in 0..sample_count {
-        let digest = hash32_with_parts(&[
-            b"hegemon.flyclient.sample-v1",
-            &mmr_root,
-            &tip_hash,
-            &message_header_hash,
-            &start_inclusive.to_le_bytes(),
-            &end_exclusive.to_le_bytes(),
-            &sample_index.to_le_bytes(),
-        ]);
+        let preimage = flyclient_sample_transcript_preimage_v1(
+            mmr_root,
+            tip_hash,
+            message_header_hash,
+            start_inclusive,
+            end_exclusive,
+            sample_index,
+        );
+        let digest = hash32_with_parts(&[&preimage]);
         let mut value_bytes = [0u8; 8];
         value_bytes.copy_from_slice(&digest[..8]);
-        let offset = u64::from_le_bytes(value_bytes) % span;
-        out.push(start_inclusive + offset);
+        let prefix = u64::from_le_bytes(value_bytes);
+        out.push(
+            flyclient_sample_height_from_digest_prefix(start_inclusive, end_exclusive, prefix)
+                .expect("range already checked"),
+        );
     }
     out
+}
+
+pub fn flyclient_sample_transcript_preimage_v1(
+    mmr_root: Hash32,
+    tip_hash: Hash32,
+    message_header_hash: Hash32,
+    start_inclusive: u64,
+    end_exclusive: u64,
+    sample_index: u32,
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(143);
+    preimage.extend_from_slice(b"hegemon.flyclient.sample-v1");
+    preimage.extend_from_slice(&mmr_root);
+    preimage.extend_from_slice(&tip_hash);
+    preimage.extend_from_slice(&message_header_hash);
+    preimage.extend_from_slice(&start_inclusive.to_le_bytes());
+    preimage.extend_from_slice(&end_exclusive.to_le_bytes());
+    preimage.extend_from_slice(&sample_index.to_le_bytes());
+    preimage
+}
+
+pub fn flyclient_sample_height_from_digest_prefix(
+    start_inclusive: u64,
+    end_exclusive: u64,
+    digest_prefix: u64,
+) -> Option<u64> {
+    if start_inclusive >= end_exclusive {
+        return None;
+    }
+    let span = end_exclusive - start_inclusive;
+    Some(start_inclusive + (digest_prefix % span))
+}
+
+pub fn flyclient_sample_indices_from_digest_prefixes(
+    start_inclusive: u64,
+    end_exclusive: u64,
+    sample_count: u32,
+    digest_prefixes: &[u64],
+) -> Vec<u64> {
+    if start_inclusive >= end_exclusive || sample_count == 0 {
+        return Vec::new();
+    }
+    digest_prefixes
+        .iter()
+        .take(sample_count as usize)
+        .filter_map(|prefix| {
+            flyclient_sample_height_from_digest_prefix(start_inclusive, end_exclusive, *prefix)
+        })
+        .collect()
 }
 
 fn verify_long_range_header_shape(
@@ -1743,6 +1794,14 @@ mod tests {
         header_mmr_shape_cases: Vec<LeanHeaderMmrShapeCase>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanFlyClientVectorFile {
+        schema_version: u32,
+        flyclient_transcript_cases: Vec<LeanFlyClientTranscriptCase>,
+        flyclient_index_cases: Vec<LeanFlyClientIndexCase>,
+    }
+
     #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1812,6 +1871,31 @@ mod tests {
         expected_siblings: Option<usize>,
         expected_local_index: Option<u64>,
         expected_current_is_left: Option<Vec<bool>>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanFlyClientTranscriptCase {
+        name: String,
+        mmr_root_hex: String,
+        tip_hash_hex: String,
+        message_header_hash_hex: String,
+        start_inclusive: u64,
+        end_exclusive: u64,
+        sample_index: u32,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanFlyClientIndexCase {
+        name: String,
+        start_inclusive: u64,
+        end_exclusive: u64,
+        sample_count: u32,
+        digest_prefix_values: Vec<u64>,
+        expected_sample_heights: Vec<u64>,
     }
 
     fn checkpoint(pow_bits: u32) -> TrustedCheckpointV1 {
@@ -2144,6 +2228,136 @@ mod tests {
             ),
             _ => panic!("{} has inconsistent Lean validity metadata", case.name),
         }
+    }
+
+    #[test]
+    fn lean_generated_flyclient_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_FLYCLIENT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_FLYCLIENT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean FlyClient vectors");
+        let vectors: LeanFlyClientVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean FlyClient vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.flyclient_transcript_cases.is_empty(),
+            "Lean FlyClient transcript cases must not be empty"
+        );
+        assert!(
+            !vectors.flyclient_index_cases.is_empty(),
+            "Lean FlyClient index cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.flyclient_transcript_cases {
+            assert!(names.insert(format!("transcript:{}", case.name)));
+            verify_lean_flyclient_transcript_case(case);
+        }
+        for case in &vectors.flyclient_index_cases {
+            assert!(names.insert(format!("index:{}", case.name)));
+            verify_lean_flyclient_index_case(case);
+        }
+    }
+
+    fn verify_lean_flyclient_transcript_case(case: &LeanFlyClientTranscriptCase) {
+        let preimage = flyclient_sample_transcript_preimage_v1(
+            hash32_from_hex(&case.mmr_root_hex),
+            hash32_from_hex(&case.tip_hash_hex),
+            hash32_from_hex(&case.message_header_hash_hex),
+            case.start_inclusive,
+            case.end_exclusive,
+            case.sample_index,
+        );
+        assert_eq!(
+            preimage.len(),
+            case.expected_preimage_len,
+            "{} FlyClient preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            hex_string(&preimage),
+            case.expected_preimage_hex,
+            "{} FlyClient preimage bytes drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_flyclient_index_case(case: &LeanFlyClientIndexCase) {
+        let actual = flyclient_sample_indices_from_digest_prefixes(
+            case.start_inclusive,
+            case.end_exclusive,
+            case.sample_count,
+            &case.digest_prefix_values,
+        );
+        assert_eq!(
+            actual, case.expected_sample_heights,
+            "{} FlyClient digest-prefix reduction drifted from Lean spec",
+            case.name
+        );
+        if case.start_inclusive < case.end_exclusive && case.sample_count > 0 {
+            for (prefix, expected_height) in case
+                .digest_prefix_values
+                .iter()
+                .take(case.sample_count as usize)
+                .zip(case.expected_sample_heights.iter())
+            {
+                assert_eq!(
+                    flyclient_sample_height_from_digest_prefix(
+                        case.start_inclusive,
+                        case.end_exclusive,
+                        *prefix
+                    ),
+                    Some(*expected_height),
+                    "{} single FlyClient sample reduction drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    fn hash32_from_hex(raw: &str) -> Hash32 {
+        let bytes = bytes_from_hex(raw);
+        assert_eq!(bytes.len(), 32, "expected 32-byte hash hex");
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        out
+    }
+
+    fn bytes_from_hex(raw: &str) -> Vec<u8> {
+        let stripped = raw.strip_prefix("0x").unwrap_or(raw);
+        assert!(stripped.len() % 2 == 0, "hex string length must be even");
+        stripped
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let high = hex_nibble(pair[0]);
+                let low = hex_nibble(pair[1]);
+                (high << 4) | low
+            })
+            .collect()
+    }
+
+    fn hex_nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => panic!("invalid hex byte {}", byte as char),
+        }
+    }
+
+    fn hex_string(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(2 + bytes.len() * 2);
+        out.push_str("0x");
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for byte in bytes {
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        out
     }
 
     fn light_client_error_from_lean(raw: &str) -> LightClientError {

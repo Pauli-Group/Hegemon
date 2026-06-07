@@ -406,7 +406,7 @@
       "assumptions": [
         "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
         "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
-        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape."
+        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Bridge/LongRange.lean",
@@ -419,6 +419,34 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "bridge.flyclient-sampling-transcript",
+      "component": "bridge FlyClient sampling transcript and index derivation",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean FlyClient kernel proves executable transcript-byte and digest-prefix reduction facts for deterministic sample index derivation; generated Lean vectors are checked against the production helpers called by the bridge long-range verifier before sample openings are verified.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the sample transcript byte grammar and digest-prefix-to-height arithmetic over already-computed BLAKE3 digest prefixes.",
+        "Generated Lean conformance vectors cover exact domain/preimage bytes, u64/u32 little-endian bounds and sample indices, modulo reduction, max-u64 digest prefixes, duplicate sample preservation, sample-count truncation, zero sample count, and invalid empty/reversed ranges.",
+        "The theorem covers executable FlyClient sample-index derivation semantics, not BLAKE3 cryptographic security or implementation equivalence, probabilistic FlyClient sampling soundness, MMR hash binding, PoW hash security, or complete long-range light-client soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/FlyClient.lean",
+        "formal/lean/Hegemon/Bridge/GenerateFlyClientVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_FLYCLIENT_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_flyclient_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

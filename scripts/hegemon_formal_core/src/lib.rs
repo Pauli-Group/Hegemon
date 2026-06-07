@@ -289,6 +289,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bytes.lean",
         "formal/lean/Hegemon.lean",
         "formal/lean/Hegemon/Bridge/Encoding.lean",
+        "formal/lean/Hegemon/Bridge/FlyClient.lean",
+        "formal/lean/Hegemon/Bridge/GenerateFlyClientVectors.lean",
         "formal/lean/Hegemon/Bridge/HeaderMmr.lean",
         "formal/lean/Hegemon/Bridge/GenerateHeaderMmrVectors.lean",
         "formal/lean/Hegemon/Bridge/LongRange.lean",
