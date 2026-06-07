@@ -296,6 +296,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
         "formal/lean/Hegemon/Consensus/ForkChoice.lean",
         "formal/lean/Hegemon/Consensus/GenerateVectors.lean",
+        "formal/lean/Hegemon/Consensus/MinerIdentity.lean",
+        "formal/lean/Hegemon/Consensus/GenerateMinerIdentityVectors.lean",
         "formal/lean/Hegemon/Consensus/PowRules.lean",
         "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",

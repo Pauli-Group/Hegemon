@@ -83,6 +83,58 @@ impl PowAdmissionRejection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PowMinerIdentityInput {
+    has_signature_bitmap: bool,
+    miner_registered: bool,
+    signature_len: usize,
+    signature_bytes_parse: bool,
+    signature_verifies: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PowMinerIdentityRejection {
+    PowHeaderSignatureBitmap,
+    UnregisteredPowMiner,
+    InvalidPowMinerSignatureLength,
+    InvalidPowMinerSignatureBytes,
+    PowMinerSignatureVerificationFailed,
+}
+
+#[cfg(test)]
+impl PowMinerIdentityRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PowHeaderSignatureBitmap => "pow_header_signature_bitmap",
+            Self::UnregisteredPowMiner => "unregistered_pow_miner",
+            Self::InvalidPowMinerSignatureLength => "invalid_pow_miner_signature_length",
+            Self::InvalidPowMinerSignatureBytes => "invalid_pow_miner_signature_bytes",
+            Self::PowMinerSignatureVerificationFailed => "pow_miner_signature_verification_failed",
+        }
+    }
+}
+
+fn evaluate_pow_miner_identity(
+    input: PowMinerIdentityInput,
+) -> Result<(), PowMinerIdentityRejection> {
+    if input.has_signature_bitmap {
+        return Err(PowMinerIdentityRejection::PowHeaderSignatureBitmap);
+    }
+    if !input.miner_registered {
+        return Err(PowMinerIdentityRejection::UnregisteredPowMiner);
+    }
+    if input.signature_len != ML_DSA_SIGNATURE_LEN {
+        return Err(PowMinerIdentityRejection::InvalidPowMinerSignatureLength);
+    }
+    if !input.signature_bytes_parse {
+        return Err(PowMinerIdentityRejection::InvalidPowMinerSignatureBytes);
+    }
+    if !input.signature_verifies {
+        return Err(PowMinerIdentityRejection::PowMinerSignatureVerificationFailed);
+    }
+    Ok(())
+}
+
 fn evaluate_pow_admission(
     input: PowAdmissionInput<'_>,
 ) -> Result<PowAdmission, PowAdmissionRejection> {
@@ -395,32 +447,54 @@ impl<V: ProofVerifier> PowConsensus<V> {
         &self,
         header: &crate::header::BlockHeader,
     ) -> Result<(), ConsensusError> {
-        if header.signature_bitmap.is_some() {
-            return Err(ConsensusError::InvalidHeader(
-                "pow header must not carry a signature bitmap",
-            ));
-        }
+        let miner = self.miners.get(&header.validator_set_commitment);
+        let mut signature_bytes_parse = false;
+        let mut signature_verifies = false;
+        let mut signing_hash_error = None;
 
-        let (miner_id, miner_key) = self
-            .miners
-            .get(&header.validator_set_commitment)
-            .ok_or(ConsensusError::ValidatorSetMismatch)?;
-
-        if header.signature_aggregate.len() != ML_DSA_SIGNATURE_LEN {
-            return Err(ConsensusError::InvalidHeader(
-                "invalid pow miner signature length",
-            ));
-        }
-
-        let signature = MlDsaSignature::from_bytes(&header.signature_aggregate).map_err(|_| {
-            ConsensusError::SignatureVerificationFailed {
-                validator: *miner_id,
+        if header.signature_bitmap.is_none()
+            && header.signature_aggregate.len() == ML_DSA_SIGNATURE_LEN
+        {
+            if let Some((_, miner_key)) = miner {
+                if let Ok(signature) = MlDsaSignature::from_bytes(&header.signature_aggregate) {
+                    signature_bytes_parse = true;
+                    match header.signing_hash() {
+                        Ok(signing_hash) => {
+                            signature_verifies =
+                                miner_key.verify(&signing_hash, &signature).is_ok();
+                        }
+                        Err(err) => {
+                            signing_hash_error = Some(err);
+                        }
+                    }
+                }
             }
-        })?;
-        let signing_hash = header.signing_hash()?;
-        miner_key.verify(&signing_hash, &signature).map_err(|_| {
-            ConsensusError::SignatureVerificationFailed {
-                validator: *miner_id,
+        }
+
+        evaluate_pow_miner_identity(PowMinerIdentityInput {
+            has_signature_bitmap: header.signature_bitmap.is_some(),
+            miner_registered: miner.is_some(),
+            signature_len: header.signature_aggregate.len(),
+            signature_bytes_parse,
+            signature_verifies,
+        })
+        .map_err(|rejection| match rejection {
+            PowMinerIdentityRejection::PowHeaderSignatureBitmap => {
+                ConsensusError::InvalidHeader("pow header must not carry a signature bitmap")
+            }
+            PowMinerIdentityRejection::UnregisteredPowMiner => ConsensusError::ValidatorSetMismatch,
+            PowMinerIdentityRejection::InvalidPowMinerSignatureLength => {
+                ConsensusError::InvalidHeader("invalid pow miner signature length")
+            }
+            PowMinerIdentityRejection::InvalidPowMinerSignatureBytes
+            | PowMinerIdentityRejection::PowMinerSignatureVerificationFailed => {
+                if let Some(err) = signing_hash_error {
+                    err
+                } else {
+                    ConsensusError::SignatureVerificationFailed {
+                        validator: miner.map(|(id, _)| *id).unwrap_or_default(),
+                    }
+                }
             }
         })
     }
@@ -589,6 +663,27 @@ mod tests {
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMinerIdentityVectorFile {
+        schema_version: u32,
+        miner_identity_cases: Vec<LeanMinerIdentityCase>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMinerIdentityCase {
+        name: String,
+        has_signature_bitmap: bool,
+        miner_registered: bool,
+        signature_len: usize,
+        signature_bytes_parse: bool,
+        signature_verifies: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -609,6 +704,56 @@ mod tests {
         expected_block_work: Option<String>,
         expected_cumulative_work: Option<String>,
         expected_result: String,
+    }
+
+    #[test]
+    fn lean_generated_miner_identity_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_MINER_IDENTITY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_MINER_IDENTITY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean miner identity vectors");
+        let vectors: LeanMinerIdentityVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean miner identity vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            vectors.miner_identity_cases.len() >= 7,
+            "Lean miner identity cases cover too few policy branches"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.miner_identity_cases {
+            assert!(names.insert(case.name.clone()));
+            let result = evaluate_pow_miner_identity(PowMinerIdentityInput {
+                has_signature_bitmap: case.has_signature_bitmap,
+                miner_registered: case.miner_registered,
+                signature_len: case.signature_len,
+                signature_bytes_parse: case.signature_bytes_parse,
+                signature_verifies: case.signature_verifies,
+            });
+            assert_eq!(
+                result.is_ok(),
+                case.expected_valid,
+                "{} production validity drifted from Lean spec",
+                case.name
+            );
+            match result {
+                Ok(()) => assert_eq!(
+                    None, case.expected_rejection,
+                    "{} production accepted a case Lean rejected",
+                    case.name
+                ),
+                Err(rejection) => assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} production rejection drifted from Lean spec",
+                    case.name
+                ),
+            }
+        }
     }
 
     #[test]

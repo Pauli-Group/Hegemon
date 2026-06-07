@@ -280,6 +280,34 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.pow-miner-identity",
+      "component": "PoW miner identity and signature-shape admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean miner-identity kernel proves that PoW headers are accepted only when they carry no BFT signature bitmap, bind a registered miner key, carry exactly one ML-DSA-65-sized signature, parse the signature bytes, and pass the real verifier result; generated Lean vectors are checked against the production PowConsensus helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats ML-DSA signature parsing and verification as boolean results from the production cryptography implementation.",
+        "Generated Lean conformance vectors cover the accepted case, forbidden BFT bitmap rejection, unregistered miner rejection, missing and oversized signature rejection, invalid signature byte rejection, and failed signature-verification rejection.",
+        "The theorem covers executable miner identity and signature admission ordering, not ML-DSA unforgeability, ML-DSA implementation equivalence, header signing-hash serialization, key-registration governance, or miner key compromise."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/MinerIdentity.lean",
+        "formal/lean/Hegemon/Consensus/GenerateMinerIdentityVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/tests/pow_rules.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_MINER_IDENTITY_VECTORS=<generated-json> cargo test -p consensus lean_generated_miner_identity_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "component": "bridge long-range light-client proof shape",
       "claim_class": "lean_theorem",
