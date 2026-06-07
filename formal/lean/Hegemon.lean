@@ -12,6 +12,7 @@ import Hegemon.Consensus.DaRoot
 import Hegemon.Consensus.ForkChoice
 import Hegemon.Consensus.Header
 import Hegemon.Consensus.MinerIdentity
+import Hegemon.Consensus.NativeTxLeafAdmission
 import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.ProvenBatchBinding

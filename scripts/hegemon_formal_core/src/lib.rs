@@ -312,6 +312,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/GenerateHeaderVectors.lean",
         "formal/lean/Hegemon/Consensus/MinerIdentity.lean",
         "formal/lean/Hegemon/Consensus/GenerateMinerIdentityVectors.lean",
+        "formal/lean/Hegemon/Consensus/NativeTxLeafAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateNativeTxLeafAdmissionVectors.lean",
         "formal/lean/Hegemon/Consensus/PowRules.lean",
         "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",

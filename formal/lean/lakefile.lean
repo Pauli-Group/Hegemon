@@ -43,6 +43,9 @@ lean_exe gen_header_vectors where
 lean_exe gen_miner_identity_vectors where
   root := `Hegemon.Consensus.GenerateMinerIdentityVectors
 
+lean_exe gen_native_tx_leaf_admission_vectors where
+  root := `Hegemon.Consensus.GenerateNativeTxLeafAdmissionVectors
+
 lean_exe gen_pow_vectors where
   root := `Hegemon.Consensus.GeneratePowVectors
 

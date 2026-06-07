@@ -196,6 +196,141 @@ fn proof_policy_rejection_to_error(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeTxLeafAdmissionInput {
+    has_envelope: bool,
+    envelope_kind: ProofArtifactKind,
+    envelope_verifier_profile_matches: bool,
+    artifact_bytes_len: usize,
+    max_artifact_bytes: usize,
+    receipt_verifier_profile_matches: bool,
+    has_expected_artifact_hash: bool,
+    expected_artifact_hash_matches: bool,
+    has_cache_entry: bool,
+    cache_receipt_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTxLeafAdmissionOutcome {
+    NeedsBackendVerification,
+    CacheHit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTxLeafAdmissionRejection {
+    MissingEnvelope,
+    ArtifactKindMismatch,
+    EnvelopeVerifierProfileMismatch,
+    ArtifactTooLarge,
+    ReceiptVerifierProfileMismatch,
+    ArtifactHashMismatch,
+    CacheReceiptMismatch,
+}
+
+impl NativeTxLeafAdmissionOutcome {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::NeedsBackendVerification => "needs_backend_verification",
+            Self::CacheHit => "cache_hit",
+        }
+    }
+}
+
+impl NativeTxLeafAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::MissingEnvelope => "missing_envelope",
+            Self::ArtifactKindMismatch => "artifact_kind_mismatch",
+            Self::EnvelopeVerifierProfileMismatch => "envelope_verifier_profile_mismatch",
+            Self::ArtifactTooLarge => "artifact_too_large",
+            Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
+            Self::ArtifactHashMismatch => "artifact_hash_mismatch",
+            Self::CacheReceiptMismatch => "cache_receipt_mismatch",
+        }
+    }
+}
+
+fn evaluate_native_tx_leaf_admission(
+    input: NativeTxLeafAdmissionInput,
+) -> Result<NativeTxLeafAdmissionOutcome, NativeTxLeafAdmissionRejection> {
+    if !input.has_envelope {
+        return Err(NativeTxLeafAdmissionRejection::MissingEnvelope);
+    }
+    if input.envelope_kind != ProofArtifactKind::TxLeaf {
+        return Err(NativeTxLeafAdmissionRejection::ArtifactKindMismatch);
+    }
+    if !input.envelope_verifier_profile_matches {
+        return Err(NativeTxLeafAdmissionRejection::EnvelopeVerifierProfileMismatch);
+    }
+    if input.artifact_bytes_len > input.max_artifact_bytes {
+        return Err(NativeTxLeafAdmissionRejection::ArtifactTooLarge);
+    }
+    if !input.receipt_verifier_profile_matches {
+        return Err(NativeTxLeafAdmissionRejection::ReceiptVerifierProfileMismatch);
+    }
+    if input.has_expected_artifact_hash && !input.expected_artifact_hash_matches {
+        return Err(NativeTxLeafAdmissionRejection::ArtifactHashMismatch);
+    }
+    if input.has_cache_entry {
+        if input.cache_receipt_matches {
+            Ok(NativeTxLeafAdmissionOutcome::CacheHit)
+        } else {
+            Err(NativeTxLeafAdmissionRejection::CacheReceiptMismatch)
+        }
+    } else {
+        Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
+    }
+}
+
+fn native_tx_leaf_admission_error(
+    input: NativeTxLeafAdmissionInput,
+    rejection: NativeTxLeafAdmissionRejection,
+) -> ProofError {
+    match rejection {
+        NativeTxLeafAdmissionRejection::MissingEnvelope => ProofError::MissingTransactionProofs,
+        NativeTxLeafAdmissionRejection::ArtifactKindMismatch => {
+            ProofError::UnsupportedProofArtifact(format!(
+                "expected tx_leaf proof envelope, got {}",
+                input.envelope_kind.label()
+            ))
+        }
+        NativeTxLeafAdmissionRejection::EnvelopeVerifierProfileMismatch => {
+            ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "native tx-leaf verifier profile mismatch".to_string(),
+            }
+        }
+        NativeTxLeafAdmissionRejection::ArtifactTooLarge => {
+            ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: format!(
+                    "native tx-leaf artifact size {} exceeds {}",
+                    input.artifact_bytes_len, input.max_artifact_bytes
+                ),
+            }
+        }
+        NativeTxLeafAdmissionRejection::ReceiptVerifierProfileMismatch => {
+            ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "native tx-leaf receipt verifier profile mismatch".to_string(),
+            }
+        }
+        NativeTxLeafAdmissionRejection::ArtifactHashMismatch => {
+            ProofError::AggregationProofInputsMismatch(
+                "receipt accumulation artifact hash mismatch".to_string(),
+            )
+        }
+        NativeTxLeafAdmissionRejection::CacheReceiptMismatch => {
+            ProofError::TransactionProofInputsMismatch {
+                index: 0,
+                message: "native tx-leaf cache entry receipt mismatch".to_string(),
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
     receipt: TxValidityReceipt,
@@ -675,56 +810,49 @@ fn verify_native_tx_leaf_artifact_record(
     artifact: &TxValidityArtifact,
     expected_hash: Option<[u8; 48]>,
 ) -> Result<VerifiedNativeTxLeaf, ProofError> {
-    let envelope = artifact
-        .proof
-        .as_ref()
-        .ok_or(ProofError::MissingTransactionProofs)?;
-    if envelope.kind != ProofArtifactKind::TxLeaf {
-        return Err(ProofError::UnsupportedProofArtifact(format!(
-            "expected tx_leaf proof envelope, got {}",
-            envelope.kind.label()
-        )));
+    let envelope = artifact.proof.as_ref();
+    let native_profile = experimental_native_tx_leaf_verifier_profile();
+    let max_artifact_bytes = max_native_tx_leaf_artifact_bytes();
+    let artifact_hash = envelope.and_then(|envelope| {
+        let cheap_checks_pass = envelope.kind == ProofArtifactKind::TxLeaf
+            && envelope.verifier_profile == native_profile
+            && envelope.artifact_bytes.len() <= max_artifact_bytes
+            && artifact.receipt.verifier_profile == native_profile;
+        cheap_checks_pass.then(|| native_tx_leaf_artifact_hash(&envelope.artifact_bytes))
+    });
+    let cached_record = artifact_hash.and_then(|hash| NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(hash));
+    let admission_input = NativeTxLeafAdmissionInput {
+        has_envelope: envelope.is_some(),
+        envelope_kind: envelope
+            .map(|envelope| envelope.kind)
+            .unwrap_or(ProofArtifactKind::InlineTx),
+        envelope_verifier_profile_matches: envelope
+            .map(|envelope| envelope.verifier_profile == native_profile)
+            .unwrap_or(false),
+        artifact_bytes_len: envelope
+            .map(|envelope| envelope.artifact_bytes.len())
+            .unwrap_or(0),
+        max_artifact_bytes,
+        receipt_verifier_profile_matches: artifact.receipt.verifier_profile == native_profile,
+        has_expected_artifact_hash: expected_hash.is_some(),
+        expected_artifact_hash_matches: match (expected_hash, artifact_hash) {
+            (Some(expected), Some(observed)) => expected == observed,
+            (Some(_), None) => false,
+            (None, _) => true,
+        },
+        has_cache_entry: cached_record.is_some(),
+        cache_receipt_matches: cached_record
+            .as_ref()
+            .map(|record| record.receipt == artifact.receipt)
+            .unwrap_or(true),
+    };
+    let admission = evaluate_native_tx_leaf_admission(admission_input)
+        .map_err(|rejection| native_tx_leaf_admission_error(admission_input, rejection))?;
+    if admission == NativeTxLeafAdmissionOutcome::CacheHit {
+        return Ok(cached_record.expect("cache-hit admission has cached record"));
     }
-    if envelope.verifier_profile != experimental_native_tx_leaf_verifier_profile() {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index: 0,
-            message: "native tx-leaf verifier profile mismatch".to_string(),
-        });
-    }
-    if envelope.artifact_bytes.len() > max_native_tx_leaf_artifact_bytes() {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index: 0,
-            message: format!(
-                "native tx-leaf artifact size {} exceeds {}",
-                envelope.artifact_bytes.len(),
-                max_native_tx_leaf_artifact_bytes()
-            ),
-        });
-    }
-    if artifact.receipt.verifier_profile != experimental_native_tx_leaf_verifier_profile() {
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index: 0,
-            message: "native tx-leaf receipt verifier profile mismatch".to_string(),
-        });
-    }
-
-    let artifact_hash = native_tx_leaf_artifact_hash(&envelope.artifact_bytes);
-    if let Some(expected_hash) = expected_hash
-        && expected_hash != artifact_hash
-    {
-        return Err(ProofError::AggregationProofInputsMismatch(
-            "receipt accumulation artifact hash mismatch".to_string(),
-        ));
-    }
-    if let Some(record) = NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(artifact_hash) {
-        if record.receipt == artifact.receipt {
-            return Ok(record);
-        }
-        return Err(ProofError::TransactionProofInputsMismatch {
-            index: 0,
-            message: "native tx-leaf cache entry receipt mismatch".to_string(),
-        });
-    }
+    let envelope = envelope.expect("native tx-leaf admission requires an envelope");
+    let artifact_hash = artifact_hash.expect("native tx-leaf admission requires artifact hash");
 
     let canonical = canonical_receipt_from_tx_receipt(&artifact.receipt);
     let tx_view = tx_leaf_public_tx_from_consensus_tx(tx);
@@ -2307,6 +2435,32 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanNativeTxLeafAdmissionVectorFile {
+        schema_version: u32,
+        native_tx_leaf_admission_cases: Vec<LeanNativeTxLeafAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeTxLeafAdmissionCase {
+        name: String,
+        has_envelope: bool,
+        envelope_kind: String,
+        envelope_verifier_profile_matches: bool,
+        artifact_bytes_len: usize,
+        max_artifact_bytes: usize,
+        receipt_verifier_profile_matches: bool,
+        has_expected_artifact_hash: bool,
+        expected_artifact_hash_matches: bool,
+        has_cache_entry: bool,
+        cache_receipt_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_outcome: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProvenBatchBindingVectorFile {
         schema_version: u32,
         proven_batch_binding_cases: Vec<LeanProvenBatchBindingCase>,
@@ -2584,6 +2738,31 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_native_tx_leaf_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_TX_LEAF_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NATIVE_TX_LEAF_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean native tx-leaf admission vectors");
+        let vectors: LeanNativeTxLeafAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean native tx-leaf admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.native_tx_leaf_admission_cases.is_empty(),
+            "Lean native tx-leaf admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.native_tx_leaf_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_native_tx_leaf_admission_case(case);
+        }
+    }
+
+    #[test]
     fn lean_generated_proven_batch_binding_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS") else {
             eprintln!(
@@ -2728,6 +2907,45 @@ mod tests {
             actual_rejection.as_deref(),
             case.expected_rejection.as_deref(),
             "{} proof policy rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_native_tx_leaf_admission_case(case: &LeanNativeTxLeafAdmissionCase) {
+        let input = NativeTxLeafAdmissionInput {
+            has_envelope: case.has_envelope,
+            envelope_kind: parse_lean_proof_artifact_kind(&case.envelope_kind),
+            envelope_verifier_profile_matches: case.envelope_verifier_profile_matches,
+            artifact_bytes_len: case.artifact_bytes_len,
+            max_artifact_bytes: case.max_artifact_bytes,
+            receipt_verifier_profile_matches: case.receipt_verifier_profile_matches,
+            has_expected_artifact_hash: case.has_expected_artifact_hash,
+            expected_artifact_hash_matches: case.expected_artifact_hash_matches,
+            has_cache_entry: case.has_cache_entry,
+            cache_receipt_matches: case.cache_receipt_matches,
+        };
+        let result = evaluate_native_tx_leaf_admission(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} native tx-leaf admission validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_string());
+        let actual_outcome = result.ok().map(|outcome| outcome.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} native tx-leaf admission rejection label drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_outcome.as_deref(),
+            case.expected_outcome.as_deref(),
+            "{} native tx-leaf admission outcome label drifted from Lean spec",
             case.name
         );
     }
