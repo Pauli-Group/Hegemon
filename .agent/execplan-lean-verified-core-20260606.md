@@ -81,6 +81,7 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T00:18:00Z) Added a Lean transaction statement-hash preimage kernel proving representative accept/reject facts for exact byte layout, fixed/padded digest vectors, signed magnitudes, stablecoin payloads, and oversized vector rejection.
 - [x] (2026-06-07T00:18:00Z) Added `gen_statement_hash_vectors`, a consensus conformance test for exact Lean-generated statement preimage bytes, and a shared production `transaction_statement_preimage_from_parts` helper used by transaction receipts and consensus transaction-leaf binding.
 - [x] (2026-06-07T00:18:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 18 claims, 16 production-eligible claims, 18 blueprint nodes, and 44 falsification cases.
+- [x] (2026-06-07T00:26:00Z) Validated branch tip `ad6c9184` on `hegemon-dev`: the expanded formal-core gate passed with transaction statement-hash conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404098`, mining advanced from height `404100` to `404102`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `404106`.
 
 ## Surprises & Discoveries
 
@@ -209,6 +210,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Observation: The expanded formal-core gate now includes transaction statement-hash preimage conformance.
   Evidence: Local `bash scripts/check_formal_core.sh` passed after adding transaction statement-hash binding, ran the generated statement-hash vectors alongside the existing Lean-to-Rust conformance checks, and reported `claims = 18`, `production_eligible = 16`, `nodes = 18`, and `falsification_cases = 44`.
+
+- Observation: `hegemon-dev` can run the transaction statement-hash proof/conformance gate and the rebuilt node remains live.
+  Evidence: Remote `bash scripts/check_formal_core.sh` at `ad6c9184` built 67 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, and transaction statement-hash conformance, and reported `claims = 18`, `production_eligible = 16`, `nodes = 18`, and `falsification_cases = 44`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404098`; a 25-second height sample advanced from `404100` to `404102`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404106`.
 
 ## Decision Log
 
@@ -423,3 +427,5 @@ Revision note 2026-06-06T21:17:00Z: Recorded `hegemon-dev` validation for commit
 Revision note 2026-06-06T21:48:00Z: Added the Lean consensus PoW-admission kernel, generated PoW vectors, consensus/light-client Rust conformance tests, strict consensus timestamp/compact-target hardening, metadata/docs updates, and local validation. Remote `hegemon-dev` validation is still pending.
 
 Revision note 2026-06-07T00:18:00Z: Added the Lean transaction statement-hash preimage kernel, generated exact preimage vectors, shared Rust preimage/hash helpers, consensus conformance tests, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
+
+Revision note 2026-06-07T00:26:00Z: Recorded `hegemon-dev` validation for commit `ad6c9184`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
