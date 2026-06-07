@@ -1625,6 +1625,86 @@
       "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.action-scope-admission",
+      "claim_id": "native.action-scope-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-scope admission transition, a native action is routed to bridge, candidate-artifact, coinbase, or shielded-transfer validation only when candidate-artifact payload scoping, route-specific state-delta scope, candidate payload presence, and transfer public metadata shape predicates satisfy the route's preconditions; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionScopeAdmission.accepts_iff_scope_preconditions` proves the complete executable route/scope predicate, with companion theorems for all rejection routes and wrong-candidate-artifact-route precedence. `gen_action_scope_admission_vectors` emits Lean-derived route and reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_scope_admission` helper now called by native mempool and block action validation. Native regressions reject candidate artifacts on the wrong route, bridge/candidate/coinbase state-delta smuggling, missing candidate payloads, unsupported transfer routes, and malformed transfer public metadata.",
+      "depends_on": [
+        "native.block-action-hash-admission",
+        "native.block-action-ordering",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionScopeAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionScopeAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionScopeAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionScopeAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action route/scope admission. Scope is the cheap route and public metadata-shape table before deep action payload validation."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-scope-admission-theorem",
+          "description": "Removing or weakening the action-scope admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-scope-admission-conformance",
+          "description": "Changing the production action-scope admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "candidate-artifact-wrong-route-regression",
+          "description": "Native block-action validation must reject candidate artifact payloads carried by non-candidate actions.",
+          "gate": "cargo test -p hegemon-node candidate_artifact_payload_is_candidate_action_scoped --lib --no-default-features"
+        },
+        {
+          "id": "bridge-state-delta-regression",
+          "description": "Native block-action validation must reject bridge actions that carry shielded state deltas.",
+          "gate": "cargo test -p hegemon-node bridge_action_carries_no_state_deltas --lib --no-default-features"
+        },
+        {
+          "id": "candidate-state-delta-regression",
+          "description": "Native block-action validation must reject candidate artifact actions that carry shielded state deltas.",
+          "gate": "cargo test -p hegemon-node candidate_artifact_action_carries_no_state_deltas --lib --no-default-features"
+        },
+        {
+          "id": "candidate-missing-payload-regression",
+          "description": "Native block-action validation must reject candidate artifact routes without a candidate payload.",
+          "gate": "cargo test -p hegemon-node candidate_artifact_action_requires_payload --lib --no-default-features"
+        },
+        {
+          "id": "coinbase-state-shape-regression",
+          "description": "Native block-action validation must reject coinbase actions that carry nullifiers or extra state deltas.",
+          "gate": "cargo test -p hegemon-node coinbase_action_carries_no_extra_state_deltas --lib --no-default-features"
+        },
+        {
+          "id": "transfer-metadata-shape-regression",
+          "description": "Native block-action validation must reject transfer actions whose public ciphertext metadata shape no longer matches commitments.",
+          "gate": "cargo test -p hegemon-node transfer_action_requires_ciphertext_metadata_shape --lib --no-default-features"
+        },
+        {
+          "id": "unsupported-transfer-route-regression",
+          "description": "Native block-action validation must reject non-shielded families before treating them as transfers.",
+          "gate": "cargo test -p hegemon-node transfer_action_validation_requires_shielded_family --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native action route/scope admission only. It does not prove SCALE payload decoding, bridge receipt soundness, candidate artifact proof soundness, coinbase ciphertext hash/size binding, transfer binding-hash validation, nullifier replay, tx leaf proof soundness, action ordering, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-commitment-admission",
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
@@ -1632,6 +1712,7 @@
       "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
       "depends_on": [
         "native.block-action-hash-admission",
+        "native.action-scope-admission",
         "native.block-action-ordering",
         "shielded.nullifier-state",
         "bridge.message-root-replay",

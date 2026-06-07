@@ -340,6 +340,66 @@ impl NativeActionHashAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeActionScopeAdmissionInput {
+    candidate_artifact_payload_scoped: bool,
+    bridge_route: bool,
+    bridge_scope_valid: bool,
+    candidate_artifact_route: bool,
+    candidate_scope_valid: bool,
+    candidate_payload_present: bool,
+    coinbase_route: bool,
+    coinbase_scope_valid: bool,
+    transfer_route: bool,
+    transfer_scope_valid: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionScopeAdmissionRoute {
+    Bridge,
+    CandidateArtifact,
+    Coinbase,
+    Transfer,
+}
+
+impl NativeActionScopeAdmissionRoute {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::Bridge => "bridge",
+            Self::CandidateArtifact => "candidate_artifact",
+            Self::Coinbase => "coinbase",
+            Self::Transfer => "transfer",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionScopeAdmissionRejection {
+    CandidateArtifactPayloadWrongRoute,
+    BridgeScopeInvalid,
+    CandidateScopeInvalid,
+    CandidatePayloadMissing,
+    CoinbaseScopeInvalid,
+    UnsupportedActionRoute,
+    TransferScopeInvalid,
+}
+
+impl NativeActionScopeAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::CandidateArtifactPayloadWrongRoute => "candidate_artifact_payload_wrong_route",
+            Self::BridgeScopeInvalid => "bridge_scope_invalid",
+            Self::CandidateScopeInvalid => "candidate_scope_invalid",
+            Self::CandidatePayloadMissing => "candidate_payload_missing",
+            Self::CoinbaseScopeInvalid => "coinbase_scope_invalid",
+            Self::UnsupportedActionRoute => "unsupported_action_route",
+            Self::TransferScopeInvalid => "transfer_scope_invalid",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBlockCommitmentAdmissionInput {
     tx_count_matches: bool,
     state_root_matches: bool,
@@ -1615,95 +1675,96 @@ impl NativeNode {
     }
 
     fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
-        if action.candidate_artifact.is_some() && !is_candidate_artifact_action(action) {
-            return Err(anyhow!(
-                "candidate artifact payload is only valid on candidate artifact actions"
-            ));
-        }
-        if action.family_id == FAMILY_BRIDGE {
-            validate_bridge_action_payload(action)?;
-            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                let state = self.state.read();
-                let mut replay_state = inbound_replay_state_for_mempool(&state)?;
-                match replay_state.stage(replay_key) {
-                    Ok(()) => {}
-                    Err(InboundReplayReject::AlreadyConsumed) => {
-                        return Err(anyhow!("inbound bridge message already consumed"));
-                    }
-                    Err(InboundReplayReject::AlreadyPending) => {
-                        return Err(anyhow!("inbound bridge message already pending"));
-                    }
-                }
-            }
-            return Ok(());
-        }
-        if is_candidate_artifact_action(action) {
-            validate_candidate_action_payload(action)?;
-            return Ok(());
-        }
-        if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
-            validate_coinbase_action_payload(action)?;
-            return Ok(());
-        }
-
-        validate_transfer_action_payload(action)?;
-
-        let state = self.state.read();
-        if !state.commitment_tree.contains_root(&action.anchor) {
-            return Err(anyhow!("unknown shielded anchor"));
-        }
-
-        let mut nullifier_state = shielded_nullifier_state_for_mempool(&state);
-        let mut action_seen = BTreeSet::new();
-        for nullifier in &action.nullifiers {
-            let duplicate_in_action = !action_seen.insert(*nullifier);
-            match nullifier_state.stage(*nullifier) {
-                Ok(()) => {}
-                Err(NullifierReject::Zero) => return Err(anyhow!("zero nullifier rejected")),
-                Err(NullifierReject::AlreadySpent) => {
-                    return Err(anyhow!("nullifier already spent"));
-                }
-                Err(NullifierReject::AlreadyPending) if duplicate_in_action => {
-                    return Err(anyhow!("duplicate nullifier in action"));
-                }
-                Err(NullifierReject::AlreadyPending) => {
-                    return Err(anyhow!("nullifier already pending"));
-                }
-            }
-        }
-
-        for commitment in &action.commitments {
-            if *commitment == [0u8; 48] {
-                return Err(anyhow!("zero commitment rejected"));
-            }
-        }
-
-        if action.family_id == FAMILY_SHIELDED_POOL
-            && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
+        match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
+            .map_err(native_action_scope_admission_error)?
         {
-            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                let observed = state
-                    .staged_ciphertexts
-                    .get(&hex48(hash))
-                    .copied()
-                    .ok_or_else(|| anyhow!("missing staged ciphertext {}", hex48(hash)))?;
-                let expected = action
-                    .ciphertext_sizes
-                    .get(idx)
-                    .copied()
-                    .ok_or_else(|| anyhow!("missing ciphertext size for {}", hex48(hash)))?;
-                if observed != expected {
-                    return Err(anyhow!(
-                        "staged ciphertext size mismatch for {}: expected {}, observed {}",
-                        hex48(hash),
-                        expected,
-                        observed
-                    ));
+            NativeActionScopeAdmissionRoute::Bridge => {
+                validate_bridge_action_payload(action)?;
+                if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                    let state = self.state.read();
+                    let mut replay_state = inbound_replay_state_for_mempool(&state)?;
+                    match replay_state.stage(replay_key) {
+                        Ok(()) => {}
+                        Err(InboundReplayReject::AlreadyConsumed) => {
+                            return Err(anyhow!("inbound bridge message already consumed"));
+                        }
+                        Err(InboundReplayReject::AlreadyPending) => {
+                            return Err(anyhow!("inbound bridge message already pending"));
+                        }
+                    }
                 }
+                Ok(())
+            }
+            NativeActionScopeAdmissionRoute::CandidateArtifact => {
+                validate_candidate_action_payload(action)?;
+                Ok(())
+            }
+            NativeActionScopeAdmissionRoute::Coinbase => {
+                validate_coinbase_action_payload(action)?;
+                Ok(())
+            }
+            NativeActionScopeAdmissionRoute::Transfer => {
+                validate_transfer_action_payload(action)?;
+
+                let state = self.state.read();
+                if !state.commitment_tree.contains_root(&action.anchor) {
+                    return Err(anyhow!("unknown shielded anchor"));
+                }
+
+                let mut nullifier_state = shielded_nullifier_state_for_mempool(&state);
+                let mut action_seen = BTreeSet::new();
+                for nullifier in &action.nullifiers {
+                    let duplicate_in_action = !action_seen.insert(*nullifier);
+                    match nullifier_state.stage(*nullifier) {
+                        Ok(()) => {}
+                        Err(NullifierReject::Zero) => {
+                            return Err(anyhow!("zero nullifier rejected"))
+                        }
+                        Err(NullifierReject::AlreadySpent) => {
+                            return Err(anyhow!("nullifier already spent"));
+                        }
+                        Err(NullifierReject::AlreadyPending) if duplicate_in_action => {
+                            return Err(anyhow!("duplicate nullifier in action"));
+                        }
+                        Err(NullifierReject::AlreadyPending) => {
+                            return Err(anyhow!("nullifier already pending"));
+                        }
+                    }
+                }
+
+                for commitment in &action.commitments {
+                    if *commitment == [0u8; 48] {
+                        return Err(anyhow!("zero commitment rejected"));
+                    }
+                }
+
+                if action.family_id == FAMILY_SHIELDED_POOL
+                    && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
+                {
+                    for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                        let observed = state
+                            .staged_ciphertexts
+                            .get(&hex48(hash))
+                            .copied()
+                            .ok_or_else(|| anyhow!("missing staged ciphertext {}", hex48(hash)))?;
+                        let expected =
+                            action.ciphertext_sizes.get(idx).copied().ok_or_else(|| {
+                                anyhow!("missing ciphertext size for {}", hex48(hash))
+                            })?;
+                        if observed != expected {
+                            return Err(anyhow!(
+                                "staged ciphertext size mismatch for {}: expected {}, observed {}",
+                                hex48(hash),
+                                expected,
+                                observed
+                            ));
+                        }
+                    }
+                }
+
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     fn submit_transaction(&self, _bundle: Value) -> Value {
@@ -3612,6 +3673,124 @@ fn native_action_hash_admission_error(
     }
 }
 
+fn action_has_no_shielded_state_deltas(action: &PendingAction) -> bool {
+    action.nullifiers.is_empty()
+        && action.commitments.is_empty()
+        && action.ciphertext_hashes.is_empty()
+        && action.ciphertext_sizes.is_empty()
+        && action.fee == 0
+        && action.anchor == [0u8; 48]
+}
+
+fn bridge_action_scope_valid(action: &PendingAction) -> bool {
+    action_has_no_shielded_state_deltas(action) && action.candidate_artifact.is_none()
+}
+
+fn candidate_artifact_action_scope_valid(action: &PendingAction) -> bool {
+    action_has_no_shielded_state_deltas(action)
+}
+
+fn coinbase_action_scope_valid(action: &PendingAction) -> bool {
+    action.nullifiers.is_empty()
+        && action.commitments.len() == 1
+        && action.ciphertext_hashes.len() == 1
+        && action.ciphertext_sizes.len() == 1
+        && action.fee == 0
+        && action.anchor == [0u8; 48]
+        && action.candidate_artifact.is_none()
+}
+
+fn transfer_action_scope_valid(action: &PendingAction) -> bool {
+    !action.nullifiers.is_empty()
+        && action.nullifiers.len() <= transaction_core::constants::MAX_INPUTS
+        && !action.commitments.is_empty()
+        && action.commitments.len() <= transaction_core::constants::MAX_OUTPUTS
+        && action.ciphertext_hashes.len() == action.commitments.len()
+        && action.ciphertext_sizes.len() == action.commitments.len()
+        && action
+            .ciphertext_sizes
+            .iter()
+            .all(|size| *size as usize <= MAX_CIPHERTEXT_BYTES)
+}
+
+fn native_action_scope_admission_input(action: &PendingAction) -> NativeActionScopeAdmissionInput {
+    NativeActionScopeAdmissionInput {
+        candidate_artifact_payload_scoped: action.candidate_artifact.is_none()
+            || is_candidate_artifact_action(action),
+        bridge_route: action.family_id == FAMILY_BRIDGE,
+        bridge_scope_valid: bridge_action_scope_valid(action),
+        candidate_artifact_route: is_candidate_artifact_action(action),
+        candidate_scope_valid: candidate_artifact_action_scope_valid(action),
+        candidate_payload_present: action.candidate_artifact.is_some(),
+        coinbase_route: is_coinbase_action(action),
+        coinbase_scope_valid: coinbase_action_scope_valid(action),
+        transfer_route: is_shielded_transfer_action(action),
+        transfer_scope_valid: transfer_action_scope_valid(action),
+    }
+}
+
+fn evaluate_native_action_scope_admission(
+    input: NativeActionScopeAdmissionInput,
+) -> Result<NativeActionScopeAdmissionRoute, NativeActionScopeAdmissionRejection> {
+    if !input.candidate_artifact_payload_scoped {
+        Err(NativeActionScopeAdmissionRejection::CandidateArtifactPayloadWrongRoute)
+    } else if input.bridge_route {
+        if !input.bridge_scope_valid {
+            Err(NativeActionScopeAdmissionRejection::BridgeScopeInvalid)
+        } else {
+            Ok(NativeActionScopeAdmissionRoute::Bridge)
+        }
+    } else if input.candidate_artifact_route {
+        if !input.candidate_scope_valid {
+            Err(NativeActionScopeAdmissionRejection::CandidateScopeInvalid)
+        } else if !input.candidate_payload_present {
+            Err(NativeActionScopeAdmissionRejection::CandidatePayloadMissing)
+        } else {
+            Ok(NativeActionScopeAdmissionRoute::CandidateArtifact)
+        }
+    } else if input.coinbase_route {
+        if !input.coinbase_scope_valid {
+            Err(NativeActionScopeAdmissionRejection::CoinbaseScopeInvalid)
+        } else {
+            Ok(NativeActionScopeAdmissionRoute::Coinbase)
+        }
+    } else if !input.transfer_route {
+        Err(NativeActionScopeAdmissionRejection::UnsupportedActionRoute)
+    } else if !input.transfer_scope_valid {
+        Err(NativeActionScopeAdmissionRejection::TransferScopeInvalid)
+    } else {
+        Ok(NativeActionScopeAdmissionRoute::Transfer)
+    }
+}
+
+fn native_action_scope_admission_error(
+    rejection: NativeActionScopeAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeActionScopeAdmissionRejection::CandidateArtifactPayloadWrongRoute => {
+            anyhow!("candidate artifact payload is only valid on candidate artifact actions")
+        }
+        NativeActionScopeAdmissionRejection::BridgeScopeInvalid => {
+            anyhow!("bridge actions must not carry shielded state deltas")
+        }
+        NativeActionScopeAdmissionRejection::CandidateScopeInvalid => {
+            anyhow!("candidate artifact actions must not carry shielded state deltas")
+        }
+        NativeActionScopeAdmissionRejection::CandidatePayloadMissing => {
+            anyhow!("candidate artifact action missing payload")
+        }
+        NativeActionScopeAdmissionRejection::CoinbaseScopeInvalid => {
+            anyhow!("coinbase action must contain exactly one output and no other state deltas")
+        }
+        NativeActionScopeAdmissionRejection::UnsupportedActionRoute => {
+            anyhow!("action is not a shielded transfer")
+        }
+        NativeActionScopeAdmissionRejection::TransferScopeInvalid => {
+            anyhow!("shielded transfer action has invalid public metadata shape")
+        }
+    }
+}
+
 fn evaluate_native_block_commitment_admission(
     input: NativeBlockCommitmentAdmissionInput,
 ) -> Result<(), NativeBlockCommitmentAdmissionRejection> {
@@ -3670,68 +3849,69 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
-        if action.candidate_artifact.is_some() && !is_candidate_artifact_action(action) {
-            return Err(anyhow!(
-                "candidate artifact payload is only valid on candidate artifact actions"
-            ));
-        }
-        if action.family_id == FAMILY_BRIDGE {
-            validate_bridge_action_payload(action)?;
-            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                bridge_replay_state
-                    .import_one(replay_key)
-                    .map_err(|_| anyhow!("duplicate inbound bridge message in block"))?;
-            }
-            continue;
-        }
-        if is_candidate_artifact_action(action) {
-            validate_candidate_action_payload(action)?;
-            continue;
-        }
-        if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE {
-            validate_coinbase_action_payload(action)?;
-            let args: MintCoinbaseArgs =
-                decode_scale_exact(&action.public_args, "coinbase action args")?;
-            let bytes = encrypted_note_da_bytes(&args.reward_bundle.miner_note.encrypted_note)?;
-            if action.ciphertext_hashes[0] != ciphertext_hash_bytes(&bytes) {
-                return Err(anyhow!("coinbase ciphertext hash mismatch"));
-            }
-            if action.ciphertext_sizes[0] != u32::try_from(bytes.len()).unwrap_or(u32::MAX) {
-                return Err(anyhow!("coinbase ciphertext size mismatch"));
-            }
-            continue;
-        }
-        validate_transfer_action_payload(action)?;
-        let transfer_key = action_order_key(action);
-        if !transfer_key_extends_canonical_order(previous_transfer_key.as_ref(), &transfer_key) {
-            return Err(anyhow!(
-                "shielded transfer actions are not in canonical order"
-            ));
-        }
-        previous_transfer_key = Some(transfer_key);
-        if !state.commitment_tree.contains_root(&action.anchor) {
-            return Err(anyhow!("block action references unknown anchor"));
-        }
-        for nullifier in &action.nullifiers {
-            match nullifier_state.import_one(*nullifier) {
-                Ok(()) => {}
-                Err(NullifierReject::Zero) => {
-                    return Err(anyhow!("zero nullifier in block action"));
-                }
-                Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
-                    return Err(anyhow!("duplicate nullifier in block action"));
-                }
-            }
-        }
-        for commitment in &action.commitments {
-            if *commitment == [0u8; 48] {
-                return Err(anyhow!("zero commitment in block action"));
-            }
-        }
-        if action.ciphertext_hashes.len() != action.commitments.len()
-            || action.ciphertext_sizes.len() != action.commitments.len()
+        match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
+            .map_err(native_action_scope_admission_error)?
         {
-            return Err(anyhow!("block action ciphertext metadata mismatch"));
+            NativeActionScopeAdmissionRoute::Bridge => {
+                validate_bridge_action_payload(action)?;
+                if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                    bridge_replay_state
+                        .import_one(replay_key)
+                        .map_err(|_| anyhow!("duplicate inbound bridge message in block"))?;
+                }
+            }
+            NativeActionScopeAdmissionRoute::CandidateArtifact => {
+                validate_candidate_action_payload(action)?;
+            }
+            NativeActionScopeAdmissionRoute::Coinbase => {
+                validate_coinbase_action_payload(action)?;
+                let args: MintCoinbaseArgs =
+                    decode_scale_exact(&action.public_args, "coinbase action args")?;
+                let bytes = encrypted_note_da_bytes(&args.reward_bundle.miner_note.encrypted_note)?;
+                if action.ciphertext_hashes[0] != ciphertext_hash_bytes(&bytes) {
+                    return Err(anyhow!("coinbase ciphertext hash mismatch"));
+                }
+                if action.ciphertext_sizes[0] != u32::try_from(bytes.len()).unwrap_or(u32::MAX) {
+                    return Err(anyhow!("coinbase ciphertext size mismatch"));
+                }
+            }
+            NativeActionScopeAdmissionRoute::Transfer => {
+                validate_transfer_action_payload(action)?;
+                let transfer_key = action_order_key(action);
+                if !transfer_key_extends_canonical_order(
+                    previous_transfer_key.as_ref(),
+                    &transfer_key,
+                ) {
+                    return Err(anyhow!(
+                        "shielded transfer actions are not in canonical order"
+                    ));
+                }
+                previous_transfer_key = Some(transfer_key);
+                if !state.commitment_tree.contains_root(&action.anchor) {
+                    return Err(anyhow!("block action references unknown anchor"));
+                }
+                for nullifier in &action.nullifiers {
+                    match nullifier_state.import_one(*nullifier) {
+                        Ok(()) => {}
+                        Err(NullifierReject::Zero) => {
+                            return Err(anyhow!("zero nullifier in block action"));
+                        }
+                        Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
+                            return Err(anyhow!("duplicate nullifier in block action"));
+                        }
+                    }
+                }
+                for commitment in &action.commitments {
+                    if *commitment == [0u8; 48] {
+                        return Err(anyhow!("zero commitment in block action"));
+                    }
+                }
+                if action.ciphertext_hashes.len() != action.commitments.len()
+                    || action.ciphertext_sizes.len() != action.commitments.len()
+                {
+                    return Err(anyhow!("block action ciphertext metadata mismatch"));
+                }
+            }
         }
     }
     Ok(())
@@ -5031,6 +5211,32 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanActionScopeAdmissionVectorFile {
+        schema_version: u32,
+        action_scope_admission_cases: Vec<LeanActionScopeAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionScopeAdmissionCase {
+        name: String,
+        candidate_artifact_payload_scoped: bool,
+        bridge_route: bool,
+        bridge_scope_valid: bool,
+        candidate_artifact_route: bool,
+        candidate_scope_valid: bool,
+        candidate_payload_present: bool,
+        coinbase_route: bool,
+        coinbase_scope_valid: bool,
+        transfer_route: bool,
+        transfer_scope_valid: bool,
+        expected_valid: bool,
+        expected_route: Option<String>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockCommitmentAdmissionVectorFile {
         schema_version: u32,
         block_commitment_admission_cases: Vec<LeanBlockCommitmentAdmissionCase>,
@@ -5846,6 +6052,65 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_action_scope_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_SCOPE_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_SCOPE_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action-scope admission vectors");
+        let vectors: LeanActionScopeAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action-scope vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_scope_admission_cases.is_empty(),
+            "Lean action-scope admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_scope_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_scope_admission_case(case);
+        }
+    }
+
+    fn verify_lean_action_scope_admission_case(case: &LeanActionScopeAdmissionCase) {
+        let input = NativeActionScopeAdmissionInput {
+            candidate_artifact_payload_scoped: case.candidate_artifact_payload_scoped,
+            bridge_route: case.bridge_route,
+            bridge_scope_valid: case.bridge_scope_valid,
+            candidate_artifact_route: case.candidate_artifact_route,
+            candidate_scope_valid: case.candidate_scope_valid,
+            candidate_payload_present: case.candidate_payload_present,
+            coinbase_route: case.coinbase_route,
+            coinbase_scope_valid: case.coinbase_scope_valid,
+            transfer_route: case.transfer_route,
+            transfer_scope_valid: case.transfer_scope_valid,
+        };
+        let actual = evaluate_native_action_scope_admission(input);
+        let actual_route = actual.as_ref().ok().map(|route| route.label().to_owned());
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_route.is_some(),
+            case.expected_valid,
+            "{} native action-scope admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_route, case.expected_route,
+            "{} native action-scope admission route drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native action-scope admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_block_commitment_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS") else {
             eprintln!(
@@ -5997,6 +6262,17 @@ mod tests {
     }
 
     #[test]
+    fn candidate_artifact_action_requires_payload() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action = test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("candidate artifact action must carry a payload");
+        assert!(err.to_string().contains("missing payload"));
+    }
+
+    #[test]
     fn candidate_artifact_rejects_legacy_recursive_v1_route() {
         let mut artifact = test_candidate_artifact(1);
         artifact.proof_kind = PoolProofArtifactKind::RecursiveBlockV1;
@@ -6068,6 +6344,20 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("coinbase action must not carry nullifiers");
         assert!(err.to_string().contains("no other state deltas"));
+    }
+
+    #[test]
+    fn transfer_action_requires_ciphertext_metadata_shape() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [91u8; 48], [92u8; 48], 0);
+        action.ciphertext_sizes.clear();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("transfer action metadata shape must match commitments");
+        assert!(err.to_string().contains("invalid public metadata shape"));
     }
 
     #[test]

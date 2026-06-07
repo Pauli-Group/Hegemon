@@ -23,7 +23,10 @@ import Hegemon.Consensus.RecursiveSemanticInputs
 import Hegemon.Consensus.Supply
 import Hegemon.Consensus.TreeTransition
 import Hegemon.Consensus.VersionPolicy
+import Hegemon.Native.ActionHashAdmission
 import Hegemon.Native.ActionOrder
+import Hegemon.Native.ActionScopeAdmission
+import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Shielded.Nullifier

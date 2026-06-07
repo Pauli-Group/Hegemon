@@ -868,6 +868,40 @@
       "residual_risks": []
     },
     {
+      "id": "native.action-scope-admission",
+      "component": "native action route and public metadata scope admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-scope admission kernel proves the executable table that routes native actions into bridge, candidate-artifact, coinbase, or shielded-transfer validation only after candidate-artifact payload scoping, route-specific state-delta scope, candidate payload presence, and transfer public metadata shape predicates pass; generated Lean vectors are checked against the production native admission helper used by mempool and block validation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats route identity, route-specific state-delta scope, candidate payload presence, and transfer public metadata shape as Boolean predicates computed by production Rust; it does not prove SCALE decoding, bridge receipt verification, candidate artifact proof soundness, coinbase ciphertext binding, transaction binding-hash validation, or proof-system soundness.",
+        "Generated Lean conformance vectors cover valid bridge, candidate-artifact, coinbase, and transfer routes; wrong candidate-artifact payload route; bridge, candidate, coinbase, unsupported, and transfer-scope rejection; missing candidate payload; and wrong-candidate-route-before-bridge-scope precedence.",
+        "The theorem covers the executable route/scope admission table called before deep action payload validation in native mempool and block import, not complete native action semantics, action ordering, nullifier replay, bridge message replay, tx leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionScopeAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionScopeAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_SCOPE_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_scope_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node candidate_artifact_payload_is_candidate_action_scoped --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node bridge_action_carries_no_state_deltas --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node candidate_artifact_action_carries_no_state_deltas --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node candidate_artifact_action_requires_payload --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node coinbase_action_carries_no_extra_state_deltas --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_action_requires_ciphertext_metadata_shape --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_action_validation_requires_shielded_family --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-commitment-admission",
       "component": "native block derived commitment admission",
       "claim_class": "lean_theorem",

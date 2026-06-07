@@ -338,6 +338,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
         "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/ActionScopeAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionScopeAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
