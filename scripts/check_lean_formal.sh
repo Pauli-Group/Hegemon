@@ -25,7 +25,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
 
 (
   cd "$LEAN_ROOT"
-  lake build Hegemon gen_bridge_vectors gen_bridge_checkpoint_output_vectors gen_bridge_long_range_vectors gen_bridge_header_mmr_vectors gen_bridge_header_mmr_transcript_vectors gen_bridge_flyclient_vectors gen_aggregation_v5_vectors gen_shielded_vectors gen_consensus_vectors gen_header_vectors gen_miner_identity_vectors gen_pow_vectors gen_proof_policy_vectors gen_proven_batch_binding_vectors gen_supply_vectors gen_version_policy_vectors gen_action_order_vectors gen_native_tx_leaf_artifact_vectors gen_native_receipt_root_vectors gen_transaction_vectors gen_merkle_vectors gen_public_input_vectors gen_public_input_binding_vectors gen_statement_hash_vectors
+  lake build Hegemon gen_bridge_vectors gen_bridge_checkpoint_output_vectors gen_bridge_long_range_vectors gen_bridge_header_mmr_vectors gen_bridge_header_mmr_transcript_vectors gen_bridge_flyclient_vectors gen_aggregation_v5_vectors gen_da_root_vectors gen_shielded_vectors gen_consensus_vectors gen_header_vectors gen_miner_identity_vectors gen_pow_vectors gen_proof_policy_vectors gen_proven_batch_binding_vectors gen_supply_vectors gen_version_policy_vectors gen_action_order_vectors gen_native_tx_leaf_artifact_vectors gen_native_receipt_root_vectors gen_transaction_vectors gen_merkle_vectors gen_public_input_vectors gen_public_input_binding_vectors gen_statement_hash_vectors
   lake env lean Hegemon/Bytes.lean
   lake env lean Hegemon/Bridge/CheckpointOutput.lean
   lake env lean Hegemon/Bridge/Encoding.lean
@@ -43,6 +43,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Bridge/GenerateVectors.lean
   lake env lean Hegemon/Consensus/AggregationV5.lean
   lake env lean Hegemon/Consensus/GenerateAggregationV5Vectors.lean
+  lake env lean Hegemon/Consensus/DaRoot.lean
+  lake env lean Hegemon/Consensus/GenerateDaRootVectors.lean
   lake env lean Hegemon/Consensus/ForkChoice.lean
   lake env lean Hegemon/Consensus/GenerateVectors.lean
   lake env lean Hegemon/Consensus/Header.lean

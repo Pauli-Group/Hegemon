@@ -534,6 +534,34 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.da-root-byte-binding",
+      "component": "data-availability root byte grammar and shard-count admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean DA-root kernel proves executable byte and arithmetic facts for transaction ciphertext blob serialization, DA parameter rejection, data/parity/total shard counts, BLAKE3 leaf/node preimage domains, and Merkle proof-step orientation; generated Lean vectors are checked against production consensus and state-da helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the deterministic bytes and shard-count arithmetic that consensus uses before hashing and comparing a block's DA root.",
+        "Generated Lean conformance vectors cover empty and multi-transaction DA blobs, empty ciphertext length-prefixing, leaf preimages for index zero and max u32, ordered and reversed node preimages, empty/partial/max shard counts, zero chunk-size rejection, zero sample-count rejection, too-many-shards rejection, and even/odd Merkle proof-step orientation.",
+        "The theorem covers executable DA byte grammar and shard-count admission only. It does not prove Reed-Solomon erasure-code correctness, BLAKE3 security or implementation equivalence, chunk network availability, sampling probability, ciphertext sidecar availability, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/DaRoot.lean",
+        "formal/lean/Hegemon/Consensus/GenerateDaRootVectors.lean",
+        "consensus/src/types.rs",
+        "state/da/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_DA_ROOT_VECTORS=<generated-json> cargo test -p consensus lean_generated_da_root_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.proven-batch-binding",
       "component": "proven batch block/header/proof artifact binding",
       "claim_class": "lean_theorem",
@@ -544,7 +572,7 @@
       "assumptions": [
         "The Lean model represents the cheap proven-batch binding gate after DA root computation succeeds and before recursive block or receipt-root proof verification.",
         "Generated Lean conformance vectors cover valid recursive_block_v2 and receipt_root bindings plus incompatible routes, tx-count mismatch, statement-commitment mismatch, DA-root mismatch, zero DA chunk count, artifact kind mismatch, artifact verifier-profile mismatch, recursive-block receipt-root payload rejection, missing-artifact envelope skipping, recursive_block_v1 route compatibility, and tx_leaf route rejection.",
-        "The theorem covers executable proven-batch binding only. It does not prove DA codec/hash implementation equivalence, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity."
+        "The theorem covers executable proven-batch binding only. It does not prove DA erasure-code soundness, BLAKE3 security, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity. DA byte grammar and shard-count binding are covered separately by consensus.da-root-byte-binding."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",

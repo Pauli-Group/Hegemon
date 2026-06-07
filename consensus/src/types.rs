@@ -519,6 +519,220 @@ pub fn compute_version_commitment(transactions: &[Transaction]) -> VersionCommit
 mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaRootVectorFile {
+        schema_version: u32,
+        da_blob_cases: Vec<LeanDaBlobCase>,
+        da_leaf_preimage_cases: Vec<LeanDaLeafPreimageCase>,
+        da_node_preimage_cases: Vec<LeanDaNodePreimageCase>,
+        da_shard_count_cases: Vec<LeanDaShardCountCase>,
+        da_merkle_step_cases: Vec<LeanDaMerkleStepCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaBlobCase {
+        name: String,
+        ciphertexts_hex: Vec<Vec<String>>,
+        expected_blob_hex: String,
+        expected_blob_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaLeafPreimageCase {
+        name: String,
+        index: u32,
+        data_hex: String,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaNodePreimageCase {
+        name: String,
+        left_hex: String,
+        right_hex: String,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaShardCountCase {
+        name: String,
+        blob_len: usize,
+        chunk_size: u32,
+        sample_count: u32,
+        expected_valid: bool,
+        expected_data_shards: u64,
+        expected_parity_shards: u64,
+        expected_total_shards: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaMerkleStepCase {
+        name: String,
+        node_index: u32,
+        current_hex: String,
+        sibling_hex: String,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
+    }
+
+    #[test]
+    fn lean_generated_da_root_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_DA_ROOT_VECTORS") else {
+            eprintln!("HEGEMON_LEAN_DA_ROOT_VECTORS not set; skipping generated Lean vector check");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean DA-root vectors");
+        let vectors: LeanDaRootVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean DA-root vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.da_blob_cases {
+            assert!(names.insert(case.name.clone()));
+            let transactions = case
+                .ciphertexts_hex
+                .iter()
+                .map(|tx_ciphertexts| {
+                    let ciphertexts = tx_ciphertexts
+                        .iter()
+                        .map(|value| decode_hex_vec(value))
+                        .collect::<Vec<_>>();
+                    Transaction::new(
+                        Vec::new(),
+                        Vec::new(),
+                        [0u8; 48],
+                        DEFAULT_VERSION_BINDING,
+                        ciphertexts,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let actual_blob = build_da_blob(&transactions);
+            assert_eq!(
+                actual_blob,
+                decode_hex_vec(&case.expected_blob_hex),
+                "{} DA blob bytes drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_blob.len(),
+                case.expected_blob_len,
+                "{} DA blob length drifted from Lean spec",
+                case.name
+            );
+        }
+
+        for case in &vectors.da_leaf_preimage_cases {
+            assert!(names.insert(case.name.clone()));
+            let data = decode_hex_vec(&case.data_hex);
+            let actual_preimage = state_da::da_leaf_preimage(case.index, &data);
+            assert_eq!(
+                actual_preimage,
+                decode_hex_vec(&case.expected_preimage_hex),
+                "{} DA leaf preimage drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_preimage.len(),
+                case.expected_preimage_len,
+                "{} DA leaf preimage length drifted from Lean spec",
+                case.name
+            );
+        }
+
+        for case in &vectors.da_node_preimage_cases {
+            assert!(names.insert(case.name.clone()));
+            let left = decode_fixed_hex::<48>(&case.left_hex);
+            let right = decode_fixed_hex::<48>(&case.right_hex);
+            let actual_preimage = state_da::da_node_preimage(&left, &right);
+            assert_eq!(
+                actual_preimage.as_slice(),
+                decode_hex_vec(&case.expected_preimage_hex).as_slice(),
+                "{} DA node preimage drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_preimage.len(),
+                case.expected_preimage_len,
+                "{} DA node preimage length drifted from Lean spec",
+                case.name
+            );
+        }
+
+        for case in &vectors.da_shard_count_cases {
+            assert!(names.insert(case.name.clone()));
+            let params = DaParams {
+                chunk_size: case.chunk_size,
+                sample_count: case.sample_count,
+            };
+            let blob = vec![0u8; case.blob_len];
+            let chunk_count = state_da::chunk_count_for_blob(case.blob_len, params);
+            assert_eq!(
+                chunk_count.is_ok(),
+                case.expected_valid,
+                "{} DA shard-count validity drifted from Lean spec: {chunk_count:?}",
+                case.name
+            );
+            if case.expected_valid {
+                let encoding = state_da::encode_da_blob(&blob, params)
+                    .expect("valid Lean shard-count case must encode");
+                assert_eq!(
+                    encoding.data_shards(),
+                    case.expected_data_shards,
+                    "{} DA data-shard count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    encoding.parity_shards(),
+                    case.expected_parity_shards,
+                    "{} DA parity-shard count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    encoding.chunks().len(),
+                    case.expected_total_shards,
+                    "{} DA total-shard count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    chunk_count.expect("valid chunk count"),
+                    case.expected_total_shards,
+                    "{} public DA chunk count drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+
+        for case in &vectors.da_merkle_step_cases {
+            assert!(names.insert(case.name.clone()));
+            let current = decode_fixed_hex::<48>(&case.current_hex);
+            let sibling = decode_fixed_hex::<48>(&case.sibling_hex);
+            let actual_preimage =
+                state_da::da_merkle_step_preimage(case.node_index, &current, &sibling);
+            assert_eq!(
+                actual_preimage.as_slice(),
+                decode_hex_vec(&case.expected_preimage_hex).as_slice(),
+                "{} DA Merkle step orientation drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_preimage.len(),
+                case.expected_preimage_len,
+                "{} DA Merkle step preimage length drifted from Lean spec",
+                case.name
+            );
+        }
+    }
 
     #[test]
     fn transaction_id_is_deterministic() {
@@ -659,5 +873,17 @@ mod tests {
             ProofArtifactKind::RecursiveBlockV2,
         );
         assert!(!invalid_route.is_compatible_with_mode());
+    }
+
+    fn decode_hex_vec(value: &str) -> Vec<u8> {
+        let trimmed = value.strip_prefix("0x").unwrap_or(value);
+        hex::decode(trimmed).expect("valid hex")
+    }
+
+    fn decode_fixed_hex<const N: usize>(value: &str) -> [u8; N] {
+        let bytes = decode_hex_vec(value);
+        bytes
+            .try_into()
+            .unwrap_or_else(|bytes: Vec<u8>| panic!("expected {N} hex bytes, got {}", bytes.len()))
     }
 }

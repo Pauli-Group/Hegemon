@@ -28,6 +28,9 @@ lean_exe gen_bridge_flyclient_vectors where
 lean_exe gen_aggregation_v5_vectors where
   root := `Hegemon.Consensus.GenerateAggregationV5Vectors
 
+lean_exe gen_da_root_vectors where
+  root := `Hegemon.Consensus.GenerateDaRootVectors
+
 lean_exe gen_shielded_vectors where
   root := `Hegemon.Shielded.GenerateVectors
 

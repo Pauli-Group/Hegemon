@@ -468,21 +468,39 @@ fn verify_page_root(
 }
 
 fn hash_leaf(index: u32, data: &[u8]) -> DaRoot {
-    let mut input = Vec::with_capacity(LEAF_DOMAIN.len() + 4 + data.len());
-    input.extend_from_slice(LEAF_DOMAIN);
-    input.extend_from_slice(&index.to_le_bytes());
-    input.extend_from_slice(data);
+    let input = da_leaf_preimage(index, data);
     blake3_384(&input)
 }
 
 fn hash_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
+    let input = da_node_preimage(left, right);
+    blake3_384(&input)
+}
+
+pub fn da_leaf_preimage(index: u32, data: &[u8]) -> Vec<u8> {
+    let mut input = Vec::with_capacity(LEAF_DOMAIN.len() + 4 + data.len());
+    input.extend_from_slice(LEAF_DOMAIN);
+    input.extend_from_slice(&index.to_le_bytes());
+    input.extend_from_slice(data);
+    input
+}
+
+pub fn da_node_preimage(left: &DaRoot, right: &DaRoot) -> [u8; 48 * 2 + 7] {
     let mut input = [0u8; 48 * 2 + 7];
     input[..NODE_DOMAIN.len()].copy_from_slice(NODE_DOMAIN);
     let mut offset = NODE_DOMAIN.len();
     input[offset..offset + 48].copy_from_slice(left);
     offset += 48;
     input[offset..offset + 48].copy_from_slice(right);
-    blake3_384(&input)
+    input
+}
+
+pub fn da_merkle_step_preimage(index: u32, current: &DaRoot, sibling: &DaRoot) -> [u8; 48 * 2 + 7] {
+    if (index as usize).is_multiple_of(2) {
+        da_node_preimage(current, sibling)
+    } else {
+        da_node_preimage(sibling, current)
+    }
 }
 
 /// Generate sample indices using per-node secret + block hash.

@@ -8,6 +8,7 @@ import Hegemon.Bridge.LongRange
 import Hegemon.Bridge.MessageRoot
 import Hegemon.Bridge.Replay
 import Hegemon.Consensus.AggregationV5
+import Hegemon.Consensus.DaRoot
 import Hegemon.Consensus.ForkChoice
 import Hegemon.Consensus.Header
 import Hegemon.Consensus.MinerIdentity
