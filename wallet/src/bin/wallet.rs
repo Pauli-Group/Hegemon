@@ -94,7 +94,7 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
-    /// Sync wallet using native node WebSocket RPC
+    /// Sync wallet using native node RPC
     #[command(name = "node-sync")]
     NodeSync(NodeSyncArgs),
     /// Run daemon using native node WebSocket RPC with real-time subscriptions
@@ -108,7 +108,7 @@ enum Commands {
     /// Reset wallet sync state (keeps keys and addresses)
     #[command(name = "reset-sync")]
     ResetSync(StoreArgs),
-    /// Send using native node WebSocket RPC
+    /// Send using native node RPC
     #[command(name = "node-send")]
     NodeSend(NodeSendArgs),
     /// Send multiple transactions in a single batched proof
@@ -155,8 +155,8 @@ struct StatusArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Skip sync and show cached status
     #[arg(long, default_value_t = false)]
@@ -188,8 +188,8 @@ struct PaymentProofCreateArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Transaction hash (0x-prefixed hex)
     #[arg(long)]
@@ -207,8 +207,8 @@ struct PaymentProofVerifyArgs {
     /// Disclosure package JSON file
     #[arg(long)]
     proof: PathBuf,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Optional JSONL ledger file to append verified deposits
     #[arg(long)]
@@ -236,7 +236,7 @@ struct PaymentProofPurgeArgs {
     all: bool,
 }
 
-/// Arguments for native node WebSocket sync
+/// Arguments for native node one-shot sync
 #[derive(Parser)]
 struct NodeSyncArgs {
     /// Path to wallet store file
@@ -245,8 +245,8 @@ struct NodeSyncArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Force rescan: reset wallet sync state if chain has changed.
     /// Use this after wiping chain data to re-sync from scratch.
@@ -263,8 +263,8 @@ struct NodeDaemonArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Use block subscriptions for real-time sync (vs polling)
     #[arg(long, default_value_t = true)]
@@ -274,7 +274,7 @@ struct NodeDaemonArgs {
     finalized_only: bool,
 }
 
-/// Arguments for native node WebSocket send
+/// Arguments for native node send
 #[derive(Parser)]
 struct NodeSendArgs {
     /// Path to wallet store file
@@ -283,8 +283,8 @@ struct NodeSendArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Path to recipients JSON file
     #[arg(long)]
@@ -315,8 +315,8 @@ struct NodeBatchSendArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Paths to recipient JSON files (one per transaction, 2-16 files required)
     #[arg(long, num_args = 2..=16)]
@@ -341,8 +341,8 @@ struct StablecoinMintArgs {
     /// Wallet passphrase (prompts interactively if not provided)
     #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
     passphrase: Option<String>,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Recipient shielded address
     #[arg(long)]
@@ -1407,7 +1407,7 @@ fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
     })
 }
 
-/// Sync wallet using native node WebSocket RPC
+/// Sync wallet using native node RPC
 fn cmd_node_sync(args: NodeSyncArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
@@ -1573,7 +1573,7 @@ async fn submit_bundle_with_fallback(
     }
 }
 
-/// Send transaction using native node WebSocket RPC
+/// Send transaction using native node RPC
 fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
