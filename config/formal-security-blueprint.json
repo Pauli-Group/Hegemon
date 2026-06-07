@@ -749,12 +749,55 @@
       "scope_boundary": "This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, or full native-node equivalence beyond the node's use of the protocol-kernel replay helper."
     },
     {
+      "id": "formal.native-tx-leaf-artifact-wire",
+      "claim_id": "formal.native-tx-leaf-artifact-wire",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native tx-leaf artifact parser, valid bounded artifact bytes are accepted with the expected summary, missing backend bytes default according to the tx version/default backend rule, and malformed backend IDs, trailing bytes, over-cap counts, over-cap proof lengths, over-cap commitment rows/coefficients, and truncation are rejected.",
+      "informal_argument": "Native tx-leaf artifacts are a proof-system trust boundary before consensus consumes receipt metadata. The Lean parser models the exact byte grammar and count caps used by the production decoder. `gen_native_tx_leaf_artifact_vectors` emits accepted and rejected artifacts, and the superneo-hegemon conformance test checks production decoding and canonical re-encoding against those Lean-derived cases.",
+      "depends_on": [
+        "formal.transaction-statement-hash-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
+        "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native tx-leaf artifact parser grammar and canonical re-encoding behavior."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-native-tx-leaf-artifact-theorem",
+          "description": "Removing or weakening the native tx-leaf artifact parser theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-native-tx-leaf-artifact-conformance",
+          "description": "Changing production native tx-leaf artifact decoding or canonical re-encoding away from the Lean executable parser must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native tx-leaf artifact byte grammar, count caps, backend-byte defaulting, trailing-byte rejection, and canonical re-encoding behavior only. It does not prove lattice backend security, STARK proof soundness, receipt-root fold soundness, statement-digest collision resistance, or full native backend cryptographic acceptance."
+    },
+    {
       "id": "proof.native-backend-vectors",
       "claim_id": "proof.native-backend-vectors",
       "kind": "target_claim",
       "formal_statement": "The native backend reference-vector verifier accepts committed valid tx-leaf and receipt-root vectors and rejects malformed companions for spec digest, parameter fingerprint, proof digest, STARK proof, and trailing-byte failures.",
       "informal_argument": "Native proof artifacts are a trust boundary. The reference verifier is run by the formal-core gate to ensure canonical decoding and key binding checks keep rejecting known invalid variants.",
       "depends_on": [
+        "formal.native-tx-leaf-artifact-wire",
         "release.dependency-waivers"
       ],
       "implementation_paths": [

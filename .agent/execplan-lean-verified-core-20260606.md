@@ -82,6 +82,9 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - [x] (2026-06-07T00:18:00Z) Added `gen_statement_hash_vectors`, a consensus conformance test for exact Lean-generated statement preimage bytes, and a shared production `transaction_statement_preimage_from_parts` helper used by transaction receipts and consensus transaction-leaf binding.
 - [x] (2026-06-07T00:18:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 18 claims, 16 production-eligible claims, 18 blueprint nodes, and 44 falsification cases.
 - [x] (2026-06-07T00:26:00Z) Validated branch tip `ad6c9184` on `hegemon-dev`: the expanded formal-core gate passed with transaction statement-hash conformance, `make node` rebuilt the release binary, `hegemon-node.service` restarted cleanly, smoke RPC checks passed at height `404098`, mining advanced from height `404100` to `404102`, `scripts/test-node.sh wallet-send` passed, and final service check was active at height `404106`.
+- [x] (2026-06-07T00:59:00Z) Added a Lean native tx-leaf artifact byte-parser kernel proving representative accept/reject facts for bounded serialized STARK/public-tx counts, proof-length caps, commitment row/coeff caps, backend-byte defaulting, bad backend rejection, trailing-byte rejection, and truncation rejection.
+- [x] (2026-06-07T00:59:00Z) Added `gen_native_tx_leaf_artifact_vectors`, a `superneo-hegemon` conformance test that checks Lean-generated artifact bytes against production decoding and canonical re-encoding, and a formal claim/blueprint node for the native tx-leaf artifact wire grammar.
+- [x] (2026-06-07T00:59:00Z) Ran `bash scripts/check_lean_formal.sh`, focused `HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture`, `bash scripts/check_formal_core.sh`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`; all passed locally. The full formal-core gate reported 19 claims, 17 production-eligible claims, 19 blueprint nodes, and 46 falsification cases.
 
 ## Surprises & Discoveries
 
@@ -214,6 +217,12 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 - Observation: `hegemon-dev` can run the transaction statement-hash proof/conformance gate and the rebuilt node remains live.
   Evidence: Remote `bash scripts/check_formal_core.sh` at `ad6c9184` built 67 Lean jobs, passed bridge replay, shielded nullifier, fork-choice, PoW admission, light-client Work48, proof-policy, supply-accounting, native action-ordering, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, and transaction statement-hash conformance, and reported `claims = 18`, `production_eligible = 16`, `nodes = 18`, and `falsification_cases = 44`; remote `make node` completed; `sudo systemctl restart hegemon-node.service` returned an active service; `scripts/smoke-test.sh` passed at height `404098`; a 25-second height sample advanced from `404100` to `404102`; `scripts/test-node.sh wallet-send` passed; final service check was active at height `404106`.
 
+- Observation: The native tx-leaf artifact wire grammar now has Lean-backed executable parser evidence.
+  Evidence: `formal/lean/Hegemon/Native/TxLeafArtifact.lean` proves valid explicit backend parsing, missing-backend defaulting, legacy Plonky3 defaulting, bad backend rejection, trailing-byte rejection, serialized STARK/public-tx count cap rejection, proof-length cap rejection, commitment row/coeff cap rejection, and truncation rejection; `formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean` emits exact artifact bytes; `circuits/superneo-hegemon/src/lib.rs` checks those vectors against production decoding and canonical re-encoding.
+
+- Observation: The expanded formal-core gate now includes native tx-leaf artifact parser conformance.
+  Evidence: Local `bash scripts/check_formal_core.sh` passed after adding native tx-leaf artifact wire grammar, ran `lean_generated_native_tx_leaf_artifact_vectors_match_production`, and reported `claims = 19`, `production_eligible = 17`, `nodes = 19`, and `falsification_cases = 46`.
+
 ## Decision Log
 
 - Decision: Pin Lean to `leanprover/lean4:v4.30.0`.
@@ -274,6 +283,10 @@ After this milestone, a contributor can run `bash scripts/check_lean_formal.sh` 
 
 - Decision: Mechanize statement-hash byte preimage binding before BLAKE3 implementation equivalence or proof-system soundness.
   Rationale: The transaction statement hash is the receipt and consensus transaction-leaf binding between declared transaction data and verifier-visible artifacts. Proving the executable preimage grammar and checking exact Lean-generated bytes against the shared Rust helper closes a concrete counterfeit-style byte-layout seam now, while BLAKE3 collision resistance, BLAKE3 implementation equivalence, Poseidon2 equivalence, and full STARK/SmallWood soundness remain explicit follow-on obligations.
+  Date/Author: 2026-06-07 / Codex.
+
+- Decision: Mechanize native tx-leaf artifact wire parsing before receipt-root fold soundness or native backend cryptographic acceptance.
+  Rationale: Consensus consumes native tx-leaf artifact bytes before using the receipt metadata and leaf records. Parser drift, cap mistakes, backend-byte ambiguity, or trailing-byte acceptance are counterfeit-style seams that can be bounded and conformance-checked today. Lattice backend security, STARK proof soundness, and receipt-root fold soundness remain larger follow-on obligations.
   Date/Author: 2026-06-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -429,3 +442,5 @@ Revision note 2026-06-06T21:48:00Z: Added the Lean consensus PoW-admission kerne
 Revision note 2026-06-07T00:18:00Z: Added the Lean transaction statement-hash preimage kernel, generated exact preimage vectors, shared Rust preimage/hash helpers, consensus conformance tests, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.
 
 Revision note 2026-06-07T00:26:00Z: Recorded `hegemon-dev` validation for commit `ad6c9184`, including full formal-core, release rebuild, service restart, smoke RPC checks, mining height advance, wallet submission compatibility, and final active service status.
+
+Revision note 2026-06-07T00:59:00Z: Added the Lean native tx-leaf artifact wire parser kernel, generated artifact vectors, superneo-hegemon decoder/re-encoder conformance test, formal metadata/docs updates, and passing local Lean/formal-core/release-build validation. Remote `hegemon-dev` validation is still pending for this revision.

@@ -361,6 +361,33 @@
       "residual_risks": []
     },
     {
+      "id": "formal.native-tx-leaf-artifact-wire",
+      "component": "native tx-leaf artifact wire grammar",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native tx-leaf artifact kernel proves executable parse facts for the bounded wire grammar, including fixed headers, serialized STARK/public-tx count caps, proof-length caps, commitment row caps, backend-byte defaults, bad backend rejection, trailing-byte rejection, and truncation rejection; generated Lean vectors are checked against the production superneo-hegemon decoder and canonical encoder.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model covers the native tx-leaf artifact byte grammar and parser control flow, not lattice commitment security, STARK proof soundness, or statement-digest collision resistance.",
+        "Generated Lean conformance vectors cover valid explicit-backend artifacts, missing-backend default behavior, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, proof-length cap rejection, row/coeff caps, and truncation rejection.",
+        "The production conformance test checks decoder agreement and canonical re-encoding behavior in superneo-hegemon; consensus receipt binding and statement-hash semantics are covered by separate claims."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
+        "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
+        "circuits/superneo-hegemon/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.message-root-replay",
       "component": "protocol bridge messages",
       "claim_class": "reference_vector",
@@ -419,7 +446,8 @@
       "production_eligible": true,
       "assumptions": [
         "The native-backend-ref verifier remains independent of production verification helpers.",
-        "The vector bundle includes malformed companions for canonical decode and binding failures."
+        "The vector bundle includes malformed companions for canonical decode and binding failures.",
+        "The native tx-leaf artifact wire grammar is separately Lean-gated by formal.native-tx-leaf-artifact-wire."
       ],
       "evidence_paths": [
         "tools/native-backend-ref/src/lib.rs",

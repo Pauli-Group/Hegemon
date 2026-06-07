@@ -33,12 +33,13 @@ LEAN_POW_VECTORS="$(mktemp)"
 LEAN_PROOF_POLICY_VECTORS="$(mktemp)"
 LEAN_SUPPLY_VECTORS="$(mktemp)"
 LEAN_ACTION_ORDER_VECTORS="$(mktemp)"
+LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$(mktemp)"
 LEAN_TRANSACTION_VECTORS="$(mktemp)"
 LEAN_MERKLE_VECTORS="$(mktemp)"
 LEAN_PUBLIC_INPUT_VECTORS="$(mktemp)"
 LEAN_PUBLIC_INPUT_BINDING_VECTORS="$(mktemp)"
 LEAN_STATEMENT_HASH_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS" "$LEAN_STATEMENT_HASH_VECTORS"' EXIT
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS" "$LEAN_STATEMENT_HASH_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
@@ -48,6 +49,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VEC
   lake exe gen_proof_policy_vectors > "$LEAN_PROOF_POLICY_VECTORS"
   lake exe gen_supply_vectors > "$LEAN_SUPPLY_VECTORS"
   lake exe gen_action_order_vectors > "$LEAN_ACTION_ORDER_VECTORS"
+  lake exe gen_native_tx_leaf_artifact_vectors > "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS"
   lake exe gen_transaction_vectors > "$LEAN_TRANSACTION_VECTORS"
   lake exe gen_merkle_vectors > "$LEAN_MERKLE_VECTORS"
   lake exe gen_public_input_vectors > "$LEAN_PUBLIC_INPUT_VECTORS"
@@ -72,6 +74,8 @@ HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
   cargo test -p hegemon-node lean_generated_native_supply_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_ORDER_VECTORS="$LEAN_ACTION_ORDER_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
+  cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 HEGEMON_LEAN_MERKLE_VECTORS="$LEAN_MERKLE_VECTORS" \

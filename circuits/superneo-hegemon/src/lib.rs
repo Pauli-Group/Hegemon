@@ -5275,6 +5275,59 @@ mod tests {
 
     use super::*;
 
+    #[derive(serde::Deserialize)]
+    struct LeanNativeTxLeafArtifactVectorFile {
+        schema_version: u32,
+        native_tx_leaf_artifact_cases: Vec<LeanNativeTxLeafArtifactCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeTxLeafArtifactCase {
+        name: String,
+        artifact_hex: String,
+        expected_valid: bool,
+        expected_summary: Option<LeanNativeTxLeafArtifactSummary>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeTxLeafArtifactSummary {
+        version: u16,
+        serialized: LeanSerializedSummary,
+        public_tx: LeanPublicTxSummary,
+        stark_proof_len: usize,
+        commitment: LeanCommitmentSummary,
+        leaf_version: u16,
+        has_explicit_backend: bool,
+        proof_backend: u8,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanSerializedSummary {
+        input_flag_count: usize,
+        output_flag_count: usize,
+        balance_slot_count: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanPublicTxSummary {
+        nullifier_count: usize,
+        commitment_count: usize,
+        ciphertext_hash_count: usize,
+        circuit_version: u16,
+        crypto_suite: u16,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanCommitmentSummary {
+        row_count: usize,
+        row_coeff_counts: Vec<usize>,
+    }
+
+    fn decode_lean_hex(value: &str) -> Vec<u8> {
+        let hex = value.strip_prefix("0x").unwrap_or(value);
+        hex::decode(hex).expect("Lean vector hex must decode")
+    }
+
     #[test]
     fn toy_balance_roundtrip() {
         let relation = ToyBalanceRelation::default();
@@ -5611,6 +5664,128 @@ mod tests {
         let metadata =
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes).unwrap();
         assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
+    }
+
+    #[test]
+    fn lean_generated_native_tx_leaf_artifact_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = fs::read(&path).expect("read Lean native tx-leaf artifact vector file");
+        let vectors: LeanNativeTxLeafArtifactVectorFile =
+            serde_json::from_slice(&raw).expect("parse Lean native tx-leaf artifact vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for case in vectors.native_tx_leaf_artifact_cases {
+            let artifact_bytes = decode_lean_hex(&case.artifact_hex);
+            let decoded = decode_native_tx_leaf_artifact_bytes(&artifact_bytes);
+            assert_eq!(
+                decoded.is_ok(),
+                case.expected_valid,
+                "{}: production decode result disagreed with Lean expectation: {:?}",
+                case.name,
+                decoded.as_ref().err()
+            );
+
+            let Some(expected) = case.expected_summary else {
+                continue;
+            };
+            let artifact = decoded.expect("valid Lean vector must decode in production");
+            assert_eq!(artifact.version, expected.version, "{}", case.name);
+            assert_eq!(
+                artifact.stark_public_inputs.input_flags.len(),
+                expected.serialized.input_flag_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.stark_public_inputs.output_flags.len(),
+                expected.serialized.output_flag_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.stark_public_inputs.balance_slot_asset_ids.len(),
+                expected.serialized.balance_slot_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.tx.nullifiers.len(),
+                expected.public_tx.nullifier_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.tx.commitments.len(),
+                expected.public_tx.commitment_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.tx.ciphertext_hashes.len(),
+                expected.public_tx.ciphertext_hash_count,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.tx.version.circuit, expected.public_tx.circuit_version,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.tx.version.crypto, expected.public_tx.crypto_suite,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.stark_proof.len(),
+                expected.stark_proof_len,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.commitment.rows.len(),
+                expected.commitment.row_count,
+                "{}",
+                case.name
+            );
+            let row_coeff_counts = artifact
+                .commitment
+                .rows
+                .iter()
+                .map(|row| row.coeffs.len())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                row_coeff_counts, expected.commitment.row_coeff_counts,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.leaf.version, expected.leaf_version,
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                artifact.proof_backend.wire_id(),
+                expected.proof_backend,
+                "{}",
+                case.name
+            );
+
+            let canonical =
+                encode_native_tx_leaf_artifact_bytes(&artifact).expect("re-encode artifact");
+            if expected.has_explicit_backend {
+                assert_eq!(canonical, artifact_bytes, "{}", case.name);
+            } else {
+                let mut expected_canonical = artifact_bytes.clone();
+                expected_canonical.push(expected.proof_backend);
+                assert_eq!(canonical, expected_canonical, "{}", case.name);
+            }
+        }
     }
 
     #[test]
