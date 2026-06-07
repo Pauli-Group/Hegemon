@@ -58,6 +58,9 @@ lean_exe gen_proven_batch_binding_vectors where
 lean_exe gen_receipt_root_admission_vectors where
   root := `Hegemon.Consensus.GenerateReceiptRootAdmissionVectors
 
+lean_exe gen_recursive_block_admission_vectors where
+  root := `Hegemon.Consensus.GenerateRecursiveBlockAdmissionVectors
+
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 

@@ -616,6 +616,33 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.recursive-block-admission",
+      "component": "recursive block artifact admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean recursive-block admission kernel proves executable fail-closed facts for recursive_block_v1/v2 envelope kind, verifier-profile agreement, artifact decoding, recursive header-version agreement, tx-count agreement, statement-commitment agreement, and public replay agreement; generated Lean vectors are checked against the production consensus verifier helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the cheap consensus admission and binding table around recursive_block_v1/v2 artifact verification after the ordered tx_leaf stream has already been verified.",
+        "Generated Lean conformance vectors cover valid recursive_block_v2 and recursive_block_v1 cases plus wrong artifact kind, verifier-profile mismatch, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, and rejection-precedence for wrong kind before decode failure.",
+        "The theorem covers executable recursive-block envelope/decode/header/count/statement/public-replay admission only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockAdmissionVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.receipt-root-admission",
       "component": "receipt-root proof payload and block-artifact admission",
       "claim_class": "lean_theorem",
