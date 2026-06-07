@@ -509,6 +509,58 @@
       "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove header serialization, hash-function implementation equivalence, retarget economics, network orphan policy, or long-range finality."
     },
     {
+      "id": "bridge.long-range-proof-shape",
+      "claim_id": "bridge.long-range-proof-shape",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean bridge long-range proof-shape transition, valid proofs must bind the verifier hash, message count, header/MMR lengths, trusted/message/tip height ordering, message opening leaf, selected message source, FlyClient sample heights/opening leaves, minimum confirmations, minimum tip work, and claimed output before long-range bridge outputs are accepted.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.LongRange.valid_shape_accepts`, `Hegemon.Bridge.LongRange.rejects_bad_verifier_hash`, `Hegemon.Bridge.LongRange.rejects_message_count_mismatch`, `Hegemon.Bridge.LongRange.rejects_tip_mmr_len_mismatch`, `Hegemon.Bridge.LongRange.rejects_tip_not_after_message`, `Hegemon.Bridge.LongRange.rejects_message_not_after_trusted`, `Hegemon.Bridge.LongRange.rejects_message_opening_leaf_mismatch`, `Hegemon.Bridge.LongRange.rejects_message_index_oob`, `Hegemon.Bridge.LongRange.rejects_message_source_chain_mismatch`, `Hegemon.Bridge.LongRange.rejects_message_source_height_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_count_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_height_mismatch`, `Hegemon.Bridge.LongRange.rejects_sample_opening_leaf_mismatch`, `Hegemon.Bridge.LongRange.rejects_under_confirmed`, `Hegemon.Bridge.LongRange.rejects_insufficient_tip_work`, and `Hegemon.Bridge.LongRange.rejects_output_mismatch` prove representative executable facts about the long-range bridge admission table. `gen_bridge_long_range_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks those vectors against `evaluate_long_range_proof_shape`, the production helper called by `verify_hegemon_long_range_proof_inner` before bridge outputs are accepted.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "bridge.message-root-replay",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/LongRange.lean",
+        "formal/lean/Hegemon/Bridge/GenerateLongRangeVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/LongRange.lean",
+        "formal/lean/Hegemon/Bridge/GenerateLongRangeVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for long-range bridge proof structural admission. Cryptographic MMR/hash binding and full FlyClient sampling soundness remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-long-range-shape-theorem",
+          "description": "Removing or weakening the long-range bridge proof-shape theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-long-range-shape-conformance",
+          "description": "Changing production long-range bridge proof structural admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-long-range-shape-gate",
+          "description": "The release formal-core wrapper must generate long-range bridge vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
+    },
+    {
       "id": "consensus.self-contained-proof-policy",
       "claim_id": "consensus.self-contained-proof-policy",
       "kind": "target_claim",

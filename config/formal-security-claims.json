@@ -280,6 +280,34 @@
       "residual_risks": []
     },
     {
+      "id": "bridge.long-range-proof-shape",
+      "component": "bridge long-range light-client proof shape",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean long-range bridge kernel proves executable admission facts for verifier hash binding, message-count binding, header/MMR length shape, message-header ordering, message index/source binding, FlyClient sample height/opening-index agreement, confirmation policy, tip-work policy, and claimed-output agreement; generated Lean vectors are checked against the production helper called by the bridge long-range verifier.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
+        "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
+        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/LongRange.lean",
+        "formal/lean/Hegemon/Bridge/GenerateLongRangeVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.self-contained-proof-policy",
       "component": "block proof availability policy",
       "claim_class": "lean_theorem",

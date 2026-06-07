@@ -162,6 +162,29 @@ pub struct HegemonLongRangeProofV1 {
     pub output: BridgeCheckpointOutputV1,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LongRangeProofShapeInput<'a> {
+    pub verifier_hash_matches: bool,
+    pub message_count: u32,
+    pub messages_len: usize,
+    pub trusted_height: u64,
+    pub tip_height: u64,
+    pub tip_header_mmr_len: u64,
+    pub message_height: u64,
+    pub message_header_mmr_len: u64,
+    pub message_opening_leaf_index: u64,
+    pub message_index: u32,
+    pub message_source_chain_matches: bool,
+    pub message_source_height: u64,
+    pub expected_sample_indices: &'a [u64],
+    pub sample_header_heights: &'a [u64],
+    pub sample_opening_leaf_indices: &'a [u64],
+    pub min_confirmations: u32,
+    pub tip_work: &'a Work48,
+    pub min_tip_work: &'a Work48,
+    pub expected_output_matches: Option<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct RiscZeroBridgeReceiptV1 {
     pub proof_system_id: Hash32,
@@ -1272,6 +1295,74 @@ pub fn verify_hegemon_long_range_proof_without_claimed_output(
     verify_hegemon_long_range_proof_inner(proof, min_confirmations, min_tip_work, None)
 }
 
+pub fn long_range_confirmations_checked(tip_height: u64, message_height: u64) -> u32 {
+    tip_height
+        .saturating_sub(message_height)
+        .saturating_add(1)
+        .min(u32::MAX as u64) as u32
+}
+
+pub fn evaluate_long_range_proof_shape(
+    input: &LongRangeProofShapeInput<'_>,
+) -> Result<u32, LightClientError> {
+    if !input.verifier_hash_matches {
+        return Err(LightClientError::VerifierHashMismatch);
+    }
+    if input.messages_len > u32::MAX as usize || input.message_count != input.messages_len as u32 {
+        return Err(LightClientError::HeaderMessageCountMismatch);
+    }
+    if input.tip_header_mmr_len != input.tip_height
+        || input.message_header_mmr_len != input.message_height
+    {
+        return Err(LightClientError::HeaderMmrMismatch);
+    }
+    if input.tip_height <= input.message_height || input.message_height <= input.trusted_height {
+        return Err(LightClientError::LongRangeProofMismatch);
+    }
+    if input.message_opening_leaf_index != input.message_height {
+        return Err(LightClientError::HeaderMmrOpeningMismatch);
+    }
+    let message_index = usize::try_from(input.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    if message_index >= input.messages_len {
+        return Err(LightClientError::MessageIndexOutOfBounds);
+    }
+    if !input.message_source_chain_matches || input.message_source_height != input.message_height {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
+    if input.expected_sample_indices.len() != input.sample_header_heights.len()
+        || input.expected_sample_indices.len() != input.sample_opening_leaf_indices.len()
+    {
+        return Err(LightClientError::FlyClientSampleMismatch);
+    }
+    for ((expected_index, header_height), opening_leaf_index) in input
+        .expected_sample_indices
+        .iter()
+        .zip(input.sample_header_heights.iter())
+        .zip(input.sample_opening_leaf_indices.iter())
+    {
+        if header_height != expected_index || opening_leaf_index != expected_index {
+            return Err(LightClientError::FlyClientSampleMismatch);
+        }
+    }
+
+    let confirmations_checked =
+        long_range_confirmations_checked(input.tip_height, input.message_height);
+    if confirmations_checked < input.min_confirmations {
+        return Err(LightClientError::ConfirmationPolicyMismatch);
+    }
+    if compare_work(input.tip_work, input.min_tip_work) == Ordering::Less {
+        return Err(LightClientError::WorkPolicyMismatch);
+    }
+    if input
+        .expected_output_matches
+        .is_some_and(|expected_matches| !expected_matches)
+    {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
+    Ok(confirmations_checked)
+}
+
 fn verify_hegemon_long_range_proof_inner(
     proof: &HegemonLongRangeProofV1,
     min_confirmations: u32,
@@ -1281,7 +1372,9 @@ fn verify_hegemon_long_range_proof_inner(
     if proof.verifier_hash != HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1 {
         return Err(LightClientError::VerifierHashMismatch);
     }
-    if proof.message_header.message_count != proof.messages.len() as u32 {
+    if proof.messages.len() > u32::MAX as usize
+        || proof.message_header.message_count != proof.messages.len() as u32
+    {
         return Err(LightClientError::HeaderMessageCountMismatch);
     }
 
@@ -1303,20 +1396,67 @@ fn verify_hegemon_long_range_proof_inner(
     let message_checkpoint =
         checkpoint_from_header_hash(&proof.message_header, message_header_hash);
 
-    if proof.tip_header.header_mmr_len != proof.tip_header.height
-        || proof.tip_header.height <= proof.message_header.height
-        || proof.message_header.height <= proof.trusted_checkpoint.height
-    {
-        return Err(LightClientError::LongRangeProofMismatch);
-    }
-    if tip_checkpoint.header_hash != tip_hash
-        || message_checkpoint.header_hash != message_header_hash
-    {
-        return Err(LightClientError::LongRangeProofMismatch);
-    }
-    if proof.message_header_opening.leaf_index != proof.message_header.height {
-        return Err(LightClientError::HeaderMmrOpeningMismatch);
-    }
+    let message_index = usize::try_from(proof.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    let maybe_message = proof.messages.get(message_index);
+    let expected_indices = flyclient_sample_indices(
+        proof.tip_header.header_mmr_root,
+        tip_hash,
+        message_header_hash,
+        proof.trusted_checkpoint.height.saturating_add(1),
+        proof.tip_header.height,
+        proof.sample_count,
+    );
+    let sample_header_heights = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.header.height)
+        .collect::<Vec<_>>();
+    let sample_opening_leaf_indices = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.opening.leaf_index)
+        .collect::<Vec<_>>();
+    let confirmations_checked =
+        long_range_confirmations_checked(proof.tip_header.height, proof.message_header.height);
+    let output = maybe_message.map(|message| {
+        bridge_checkpoint_output_with_tip(
+            &message_checkpoint,
+            &tip_checkpoint,
+            proof.message_header.message_root,
+            message,
+            confirmations_checked,
+            min_tip_work,
+        )
+    });
+    let expected_output_matches =
+        expected_output.map(|expected| output.as_ref().is_some_and(|actual| actual == expected));
+    evaluate_long_range_proof_shape(&LongRangeProofShapeInput {
+        verifier_hash_matches: proof.verifier_hash == HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+        message_count: proof.message_header.message_count,
+        messages_len: proof.messages.len(),
+        trusted_height: proof.trusted_checkpoint.height,
+        tip_height: proof.tip_header.height,
+        tip_header_mmr_len: proof.tip_header.header_mmr_len,
+        message_height: proof.message_header.height,
+        message_header_mmr_len: proof.message_header.header_mmr_len,
+        message_opening_leaf_index: proof.message_header_opening.leaf_index,
+        message_index: proof.message_index,
+        message_source_chain_matches: maybe_message
+            .is_some_and(|message| message.source_chain_id == proof.trusted_checkpoint.chain_id),
+        message_source_height: maybe_message
+            .map(|message| message.source_height)
+            .unwrap_or_default(),
+        expected_sample_indices: &expected_indices,
+        sample_header_heights: &sample_header_heights,
+        sample_opening_leaf_indices: &sample_opening_leaf_indices,
+        min_confirmations,
+        tip_work: &tip_checkpoint.cumulative_work,
+        min_tip_work: &min_tip_work,
+        expected_output_matches,
+    })?;
+    let output = output.ok_or(LightClientError::MessageIndexOutOfBounds)?;
+
     let mmr_context = HeaderMmrContext::new(
         proof.tip_header.header_mmr_root,
         &proof.message_header_opening,
@@ -1326,42 +1466,12 @@ fn verify_hegemon_long_range_proof_inner(
         message_header_hash,
         &proof.message_header_opening,
     )?;
-
-    let message_index = usize::try_from(proof.message_index)
-        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
-    let Some(message) = proof.messages.get(message_index) else {
-        return Err(LightClientError::MessageIndexOutOfBounds);
-    };
-    if message.source_chain_id != proof.trusted_checkpoint.chain_id
-        || message.source_height != proof.message_header.height
-    {
-        return Err(LightClientError::ReceiptOutputMismatch);
-    }
     verify_message_inclusion(
         proof.message_header.message_root,
         &proof.messages,
         message_index,
     )?;
-
-    let expected_indices = flyclient_sample_indices(
-        proof.tip_header.header_mmr_root,
-        tip_hash,
-        message_header_hash,
-        proof.trusted_checkpoint.height.saturating_add(1),
-        proof.tip_header.height,
-        proof.sample_count,
-    );
-    if expected_indices.len() != proof.sample_headers.len() {
-        return Err(LightClientError::FlyClientSampleMismatch);
-    }
-    for (expected_index, sample) in expected_indices
-        .iter()
-        .copied()
-        .zip(proof.sample_headers.iter())
-    {
-        if sample.header.height != expected_index || sample.opening.leaf_index != expected_index {
-            return Err(LightClientError::FlyClientSampleMismatch);
-        }
+    for sample in &proof.sample_headers {
         let sample_hash = verify_long_range_header_shape(
             &proof.trusted_checkpoint,
             &sample.header,
@@ -1371,29 +1481,6 @@ fn verify_hegemon_long_range_proof_inner(
         verify_header_mmr_opening_in_context(&mmr_context, sample_hash, &sample.opening)?;
     }
 
-    let confirmations_checked = proof
-        .tip_header
-        .height
-        .saturating_sub(proof.message_header.height)
-        .saturating_add(1)
-        .min(u32::MAX as u64) as u32;
-    if confirmations_checked < min_confirmations {
-        return Err(LightClientError::ConfirmationPolicyMismatch);
-    }
-    if compare_work(&tip_checkpoint.cumulative_work, &min_tip_work) == Ordering::Less {
-        return Err(LightClientError::WorkPolicyMismatch);
-    }
-    let output = bridge_checkpoint_output_with_tip(
-        &message_checkpoint,
-        &tip_checkpoint,
-        proof.message_header.message_root,
-        message,
-        confirmations_checked,
-        min_tip_work,
-    );
-    if expected_output.is_some_and(|expected| &output != expected) {
-        return Err(LightClientError::ReceiptOutputMismatch);
-    }
     Ok(output)
 }
 
@@ -1597,6 +1684,13 @@ mod tests {
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanLongRangeShapeVectorFile {
+        schema_version: u32,
+        long_range_shape_cases: Vec<LeanLongRangeShapeCase>,
+    }
+
     #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1617,6 +1711,35 @@ mod tests {
         expected_block_work: Option<String>,
         expected_cumulative_work: Option<String>,
         expected_result: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanLongRangeShapeCase {
+        name: String,
+        verifier_hash_matches: bool,
+        message_count: u32,
+        messages_len: usize,
+        trusted_height: u64,
+        tip_height: u64,
+        tip_header_mmr_len: u64,
+        message_height: u64,
+        message_header_mmr_len: u64,
+        message_opening_leaf_index: u64,
+        message_index: u32,
+        message_source_chain_matches: bool,
+        message_source_height: u64,
+        expected_sample_indices: Vec<u64>,
+        sample_header_heights: Vec<u64>,
+        sample_opening_leaf_indices: Vec<u64>,
+        min_confirmations: u32,
+        tip_work: String,
+        min_tip_work: String,
+        expected_output_matches: Option<bool>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_confirmations_checked: Option<u32>,
     }
 
     fn checkpoint(pow_bits: u32) -> TrustedCheckpointV1 {
@@ -1795,6 +1918,91 @@ mod tests {
                 case.name
             ),
             _ => {}
+        }
+    }
+
+    #[test]
+    fn lean_generated_long_range_shape_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean long-range shape vectors");
+        let vectors: LeanLongRangeShapeVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean long-range shape vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.long_range_shape_cases.is_empty(),
+            "Lean long-range shape cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.long_range_shape_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_long_range_shape_case(case);
+        }
+    }
+
+    fn verify_lean_long_range_shape_case(case: &LeanLongRangeShapeCase) {
+        let tip_work = work48_from_decimal(&case.tip_work);
+        let min_tip_work = work48_from_decimal(&case.min_tip_work);
+        let input = LongRangeProofShapeInput {
+            verifier_hash_matches: case.verifier_hash_matches,
+            message_count: case.message_count,
+            messages_len: case.messages_len,
+            trusted_height: case.trusted_height,
+            tip_height: case.tip_height,
+            tip_header_mmr_len: case.tip_header_mmr_len,
+            message_height: case.message_height,
+            message_header_mmr_len: case.message_header_mmr_len,
+            message_opening_leaf_index: case.message_opening_leaf_index,
+            message_index: case.message_index,
+            message_source_chain_matches: case.message_source_chain_matches,
+            message_source_height: case.message_source_height,
+            expected_sample_indices: &case.expected_sample_indices,
+            sample_header_heights: &case.sample_header_heights,
+            sample_opening_leaf_indices: &case.sample_opening_leaf_indices,
+            min_confirmations: case.min_confirmations,
+            tip_work: &tip_work,
+            min_tip_work: &min_tip_work,
+            expected_output_matches: case.expected_output_matches,
+        };
+        let actual = evaluate_long_range_proof_shape(&input);
+        match (case.expected_valid, case.expected_rejection.as_deref()) {
+            (true, None) => assert_eq!(
+                actual,
+                Ok(case
+                    .expected_confirmations_checked
+                    .expect("valid Lean case has confirmations")),
+                "{}",
+                case.name
+            ),
+            (false, Some(expected_rejection)) => assert_eq!(
+                actual,
+                Err(light_client_error_from_lean(expected_rejection)),
+                "{}",
+                case.name
+            ),
+            _ => panic!("{} has inconsistent Lean validity metadata", case.name),
+        }
+    }
+
+    fn light_client_error_from_lean(raw: &str) -> LightClientError {
+        match raw {
+            "verifier_hash_mismatch" => LightClientError::VerifierHashMismatch,
+            "header_message_count_mismatch" => LightClientError::HeaderMessageCountMismatch,
+            "header_mmr_mismatch" => LightClientError::HeaderMmrMismatch,
+            "long_range_proof_mismatch" => LightClientError::LongRangeProofMismatch,
+            "header_mmr_opening_mismatch" => LightClientError::HeaderMmrOpeningMismatch,
+            "message_index_out_of_bounds" => LightClientError::MessageIndexOutOfBounds,
+            "receipt_output_mismatch" => LightClientError::ReceiptOutputMismatch,
+            "flyclient_sample_mismatch" => LightClientError::FlyClientSampleMismatch,
+            "confirmation_policy_mismatch" => LightClientError::ConfirmationPolicyMismatch,
+            "work_policy_mismatch" => LightClientError::WorkPolicyMismatch,
+            other => panic!("unknown Lean long-range rejection {other}"),
         }
     }
 
