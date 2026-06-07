@@ -616,6 +616,33 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.receipt-root-admission",
+      "component": "receipt-root proof payload and block-artifact admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean receipt-root admission kernel proves executable fail-closed facts for receipt-root payload leaf/receipt agreement, tx-validity claim agreement, transaction artifact availability, receipt_root envelope kind, native verifier-profile agreement, artifact size caps, tx-artifact count agreement, statement-commitment agreement, and verified leaf-count agreement; generated Lean vectors are checked against the production consensus helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the cheap consensus admission and binding tables around receipt-root block artifact verification, including the checks that run before native tx-leaf verification, before backend root verification, and after root metadata is returned.",
+        "Generated Lean conformance vectors cover valid payload/artifact/statement/metadata cases plus payload leaf-count mismatch, receipt-count mismatch, missing tx-validity claims, payload receipt mismatch, missing transaction artifacts, wrong artifact kind, verifier-profile mismatch, artifact size cap rejection, tx-artifact count mismatch, statement-commitment mismatch, verified leaf-count mismatch, and exact-size-limit acceptance.",
+        "The theorem covers executable receipt-root payload/envelope/size/count/statement/metadata admission only. It does not prove native tx-leaf proof soundness, native receipt-root byte parsing, native receipt-root cryptographic fold soundness, backend transcript challenge derivation, BLAKE3 security or implementation equivalence, or complete block proof validity. Native tx-leaf admission, native receipt-root wire grammar, and proven-batch binding are covered separately."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ReceiptRootAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_receipt_root_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.aggregation-v5-header-admission",
       "component": "self-contained aggregation proof V5 header admission",
       "claim_class": "lean_theorem",

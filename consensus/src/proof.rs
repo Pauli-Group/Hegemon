@@ -331,6 +331,206 @@ fn native_tx_leaf_admission_error(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReceiptRootPayloadAdmissionInput {
+    payload_leaf_count_matches: bool,
+    payload_receipt_count_matches: bool,
+    has_claim_receipts: bool,
+    payload_receipts_match_claims: bool,
+    has_tx_artifacts: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReceiptRootPayloadAdmissionRejection {
+    LeafCountMismatch,
+    ReceiptCountMismatch,
+    MissingClaimReceipts,
+    ReceiptsMismatch,
+    MissingTransactionProofs,
+}
+
+impl ReceiptRootPayloadAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::LeafCountMismatch => "leaf_count_mismatch",
+            Self::ReceiptCountMismatch => "receipt_count_mismatch",
+            Self::MissingClaimReceipts => "missing_claim_receipts",
+            Self::ReceiptsMismatch => "receipts_mismatch",
+            Self::MissingTransactionProofs => "missing_transaction_proofs",
+        }
+    }
+}
+
+fn evaluate_receipt_root_payload_admission(
+    input: ReceiptRootPayloadAdmissionInput,
+) -> Result<(), ReceiptRootPayloadAdmissionRejection> {
+    if !input.payload_leaf_count_matches {
+        return Err(ReceiptRootPayloadAdmissionRejection::LeafCountMismatch);
+    }
+    if !input.payload_receipt_count_matches {
+        return Err(ReceiptRootPayloadAdmissionRejection::ReceiptCountMismatch);
+    }
+    if !input.has_claim_receipts {
+        return Err(ReceiptRootPayloadAdmissionRejection::MissingClaimReceipts);
+    }
+    if !input.payload_receipts_match_claims {
+        return Err(ReceiptRootPayloadAdmissionRejection::ReceiptsMismatch);
+    }
+    if !input.has_tx_artifacts {
+        return Err(ReceiptRootPayloadAdmissionRejection::MissingTransactionProofs);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReceiptRootArtifactAdmissionInput {
+    envelope_kind: ProofArtifactKind,
+    envelope_verifier_profile_matches: bool,
+    artifact_bytes_len: usize,
+    max_artifact_bytes: usize,
+    has_tx_artifacts: bool,
+    tx_artifact_count_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReceiptRootArtifactAdmissionRejection {
+    ArtifactKindMismatch,
+    VerifierProfileMismatch,
+    ArtifactTooLarge,
+    MissingTransactionProofs,
+    TransactionProofCountMismatch,
+}
+
+impl ReceiptRootArtifactAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::ArtifactKindMismatch => "artifact_kind_mismatch",
+            Self::VerifierProfileMismatch => "verifier_profile_mismatch",
+            Self::ArtifactTooLarge => "artifact_too_large",
+            Self::MissingTransactionProofs => "missing_transaction_proofs",
+            Self::TransactionProofCountMismatch => "transaction_proof_count_mismatch",
+        }
+    }
+}
+
+fn evaluate_receipt_root_artifact_admission(
+    input: ReceiptRootArtifactAdmissionInput,
+) -> Result<(), ReceiptRootArtifactAdmissionRejection> {
+    if input.envelope_kind != ProofArtifactKind::ReceiptRoot {
+        return Err(ReceiptRootArtifactAdmissionRejection::ArtifactKindMismatch);
+    }
+    if !input.envelope_verifier_profile_matches {
+        return Err(ReceiptRootArtifactAdmissionRejection::VerifierProfileMismatch);
+    }
+    if input.artifact_bytes_len > input.max_artifact_bytes {
+        return Err(ReceiptRootArtifactAdmissionRejection::ArtifactTooLarge);
+    }
+    if !input.has_tx_artifacts {
+        return Err(ReceiptRootArtifactAdmissionRejection::MissingTransactionProofs);
+    }
+    if !input.tx_artifact_count_matches {
+        return Err(ReceiptRootArtifactAdmissionRejection::TransactionProofCountMismatch);
+    }
+    Ok(())
+}
+
+fn receipt_root_artifact_admission_error(
+    input: ReceiptRootArtifactAdmissionInput,
+    tx_count: usize,
+    tx_artifact_count: usize,
+    rejection: ReceiptRootArtifactAdmissionRejection,
+) -> ProofError {
+    match rejection {
+        ReceiptRootArtifactAdmissionRejection::ArtifactKindMismatch => {
+            ProofError::UnsupportedProofArtifact(format!(
+                "expected {} block artifact, got {}",
+                ProofArtifactKind::ReceiptRoot.label(),
+                input.envelope_kind.label()
+            ))
+        }
+        ReceiptRootArtifactAdmissionRejection::VerifierProfileMismatch => {
+            ProofError::AggregationProofInputsMismatch(
+                "receipt-root requires the native verifier profile".to_string(),
+            )
+        }
+        ReceiptRootArtifactAdmissionRejection::ArtifactTooLarge => {
+            ProofError::AggregationProofInputsMismatch(format!(
+                "native receipt-root artifact size {} exceeds {} for tx_count {}",
+                input.artifact_bytes_len, input.max_artifact_bytes, tx_count
+            ))
+        }
+        ReceiptRootArtifactAdmissionRejection::MissingTransactionProofs => {
+            ProofError::MissingTransactionProofs
+        }
+        ReceiptRootArtifactAdmissionRejection::TransactionProofCountMismatch => {
+            ProofError::TransactionProofCountMismatch {
+                expected: tx_count,
+                observed: tx_artifact_count,
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReceiptRootStatementBindingInput {
+    statement_commitment_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReceiptRootStatementBindingRejection {
+    StatementCommitmentMismatch,
+}
+
+impl ReceiptRootStatementBindingRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
+        }
+    }
+}
+
+fn evaluate_receipt_root_statement_binding(
+    input: ReceiptRootStatementBindingInput,
+) -> Result<(), ReceiptRootStatementBindingRejection> {
+    if input.statement_commitment_matches {
+        Ok(())
+    } else {
+        Err(ReceiptRootStatementBindingRejection::StatementCommitmentMismatch)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReceiptRootVerifiedMetadataInput {
+    verified_leaf_count_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReceiptRootVerifiedMetadataRejection {
+    VerifiedLeafCountMismatch,
+}
+
+impl ReceiptRootVerifiedMetadataRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::VerifiedLeafCountMismatch => "verified_leaf_count_mismatch",
+        }
+    }
+}
+
+fn evaluate_receipt_root_verified_metadata(
+    input: ReceiptRootVerifiedMetadataInput,
+) -> Result<(), ReceiptRootVerifiedMetadataRejection> {
+    if input.verified_leaf_count_matches {
+        Ok(())
+    } else {
+        Err(ReceiptRootVerifiedMetadataRejection::VerifiedLeafCountMismatch)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VerifiedNativeTxLeaf {
     receipt: TxValidityReceipt,
@@ -941,44 +1141,43 @@ impl ArtifactVerifier for ReceiptRootVerifier {
         expected_commitment: &[u8; 48],
         envelope: &ProofEnvelope,
     ) -> Result<BlockArtifactVerifyReport, ProofError> {
-        if envelope.kind != self.kind() {
-            return Err(ProofError::UnsupportedProofArtifact(format!(
-                "expected {} block artifact, got {}",
-                self.kind().label(),
-                envelope.kind.label()
-            )));
-        }
-        if envelope.verifier_profile != experimental_native_receipt_root_verifier_profile() {
-            return Err(ProofError::AggregationProofInputsMismatch(
-                "receipt-root requires the native verifier profile".to_string(),
-            ));
-        }
-        if envelope.artifact_bytes.len() > max_native_receipt_root_artifact_bytes(txs.len()) {
-            return Err(ProofError::AggregationProofInputsMismatch(format!(
-                "native receipt-root artifact size {} exceeds {} for tx_count {}",
-                envelope.artifact_bytes.len(),
-                max_native_receipt_root_artifact_bytes(txs.len()),
-                txs.len()
-            )));
-        }
-        let artifacts = tx_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-        if artifacts.len() != txs.len() {
-            return Err(ProofError::TransactionProofCountMismatch {
-                expected: txs.len(),
-                observed: artifacts.len(),
-            });
-        }
+        let max_artifact_bytes = max_native_receipt_root_artifact_bytes(txs.len());
+        let tx_artifact_count = tx_artifacts.map(|artifacts| artifacts.len()).unwrap_or(0);
+        let artifact_admission_input = ReceiptRootArtifactAdmissionInput {
+            envelope_kind: envelope.kind,
+            envelope_verifier_profile_matches: envelope.verifier_profile
+                == experimental_native_receipt_root_verifier_profile(),
+            artifact_bytes_len: envelope.artifact_bytes.len(),
+            max_artifact_bytes,
+            has_tx_artifacts: tx_artifacts.is_some(),
+            tx_artifact_count_matches: tx_artifact_count == txs.len(),
+        };
+        evaluate_receipt_root_artifact_admission(artifact_admission_input).map_err(
+            |rejection| {
+                receipt_root_artifact_admission_error(
+                    artifact_admission_input,
+                    txs.len(),
+                    tx_artifact_count,
+                    rejection,
+                )
+            },
+        )?;
+        let artifacts =
+            tx_artifacts.expect("receipt-root artifact admission requires tx artifacts");
         let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
         let verified_bindings = verified_records
             .iter()
             .map(|record| record.binding.clone())
             .collect::<Vec<_>>();
         let derived_statement_commitment = commitment_from_statement_bindings(&verified_bindings)?;
-        if derived_statement_commitment != *expected_commitment {
-            return Err(ProofError::AggregationProofInputsMismatch(
+        evaluate_receipt_root_statement_binding(ReceiptRootStatementBindingInput {
+            statement_commitment_matches: derived_statement_commitment == *expected_commitment,
+        })
+        .map_err(|_| {
+            ProofError::AggregationProofInputsMismatch(
                 "receipt-root statement commitment mismatch".to_string(),
-            ));
-        }
+            )
+        })?;
         let start_verify = Instant::now();
         let leaf_records = verified_records
             .iter()
@@ -1022,11 +1221,14 @@ impl ArtifactVerifier for ReceiptRootVerifier {
                 "native receipt-root verification failed: {err}"
             ))
         })?;
-        if root_metadata.leaf_count as usize != artifacts.len() {
-            return Err(ProofError::AggregationProofInputsMismatch(
+        evaluate_receipt_root_verified_metadata(ReceiptRootVerifiedMetadataInput {
+            verified_leaf_count_matches: root_metadata.leaf_count as usize == artifacts.len(),
+        })
+        .map_err(|_| {
+            ProofError::AggregationProofInputsMismatch(
                 "receipt-root verified leaf count mismatch".to_string(),
-            ));
-        }
+            )
+        })?;
         Ok(BlockArtifactVerifyReport {
             tx_count: txs.len(),
             verified_statement_commitment: *expected_commitment,
@@ -2100,29 +2302,47 @@ impl ProofVerifier for ParallelProofVerifier {
                         "missing receipt_root payload for ReceiptRoot mode".to_string(),
                     )
                 })?;
-                if receipt_root.metadata.leaf_count != tx_count as u32 {
-                    return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                        "receipt-root leaf_count mismatch (payload {}, expected {})",
-                        receipt_root.metadata.leaf_count, tx_count
-                    )));
-                }
-                if receipt_root.receipts.len() != tx_count {
-                    return Err(ProofError::ProvenBatchBindingMismatch(format!(
-                        "receipt-root receipt count mismatch (payload {}, expected {})",
-                        receipt_root.receipts.len(),
-                        tx_count
-                    )));
-                }
-                let claim_receipts = resolved_receipts
-                    .as_ref()
-                    .ok_or(ProofError::MissingTransactionValidityClaims)?;
-                if receipt_root.receipts != *claim_receipts {
-                    return Err(ProofError::ProvenBatchBindingMismatch(
-                        "receipt-root payload receipts do not match tx validity claims".to_string(),
-                    ));
-                }
-                let artifacts =
-                    tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+                let claim_receipts = resolved_receipts.as_ref();
+                let payload_admission_input = ReceiptRootPayloadAdmissionInput {
+                    payload_leaf_count_matches: receipt_root.metadata.leaf_count == tx_count as u32,
+                    payload_receipt_count_matches: receipt_root.receipts.len() == tx_count,
+                    has_claim_receipts: claim_receipts.is_some(),
+                    payload_receipts_match_claims: claim_receipts
+                        .map(|claims| receipt_root.receipts == *claims)
+                        .unwrap_or(false),
+                    has_tx_artifacts: tx_validity_artifacts.is_some(),
+                };
+                evaluate_receipt_root_payload_admission(payload_admission_input).map_err(
+                    |rejection| match rejection {
+                        ReceiptRootPayloadAdmissionRejection::LeafCountMismatch => {
+                            ProofError::ProvenBatchBindingMismatch(format!(
+                                "receipt-root leaf_count mismatch (payload {}, expected {})",
+                                receipt_root.metadata.leaf_count, tx_count
+                            ))
+                        }
+                        ReceiptRootPayloadAdmissionRejection::ReceiptCountMismatch => {
+                            ProofError::ProvenBatchBindingMismatch(format!(
+                                "receipt-root receipt count mismatch (payload {}, expected {})",
+                                receipt_root.receipts.len(),
+                                tx_count
+                            ))
+                        }
+                        ReceiptRootPayloadAdmissionRejection::MissingClaimReceipts => {
+                            ProofError::MissingTransactionValidityClaims
+                        }
+                        ReceiptRootPayloadAdmissionRejection::ReceiptsMismatch => {
+                            ProofError::ProvenBatchBindingMismatch(
+                                "receipt-root payload receipts do not match tx validity claims"
+                                    .to_string(),
+                            )
+                        }
+                        ReceiptRootPayloadAdmissionRejection::MissingTransactionProofs => {
+                            ProofError::MissingTransactionProofs
+                        }
+                    },
+                )?;
+                let artifacts = tx_validity_artifacts
+                    .expect("receipt-root payload admission requires tx artifacts");
                 let receipt_root_verifier = self
                     .verifier_registry
                     .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
@@ -2461,6 +2681,61 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanReceiptRootAdmissionVectorFile {
+        schema_version: u32,
+        payload_cases: Vec<LeanReceiptRootPayloadCase>,
+        artifact_cases: Vec<LeanReceiptRootArtifactCase>,
+        statement_cases: Vec<LeanReceiptRootStatementCase>,
+        verified_metadata_cases: Vec<LeanReceiptRootVerifiedMetadataCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanReceiptRootPayloadCase {
+        name: String,
+        payload_leaf_count_matches: bool,
+        payload_receipt_count_matches: bool,
+        has_claim_receipts: bool,
+        payload_receipts_match_claims: bool,
+        has_tx_artifacts: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanReceiptRootArtifactCase {
+        name: String,
+        envelope_kind: String,
+        envelope_verifier_profile_matches: bool,
+        artifact_bytes_len: usize,
+        max_artifact_bytes: usize,
+        has_tx_artifacts: bool,
+        tx_artifact_count_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanReceiptRootStatementCase {
+        name: String,
+        statement_commitment_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanReceiptRootVerifiedMetadataCase {
+        name: String,
+        verified_leaf_count_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProvenBatchBindingVectorFile {
         schema_version: u32,
         proven_batch_binding_cases: Vec<LeanProvenBatchBindingCase>,
@@ -2763,6 +3038,55 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_receipt_root_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean receipt-root admission vectors");
+        let vectors: LeanReceiptRootAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean receipt-root admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.payload_cases.is_empty(),
+            "Lean receipt-root payload cases must not be empty"
+        );
+        assert!(
+            !vectors.artifact_cases.is_empty(),
+            "Lean receipt-root artifact cases must not be empty"
+        );
+        assert!(
+            !vectors.statement_cases.is_empty(),
+            "Lean receipt-root statement cases must not be empty"
+        );
+        assert!(
+            !vectors.verified_metadata_cases.is_empty(),
+            "Lean receipt-root verified-metadata cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.payload_cases {
+            assert!(names.insert(format!("payload:{}", case.name)));
+            verify_lean_receipt_root_payload_case(case);
+        }
+        for case in &vectors.artifact_cases {
+            assert!(names.insert(format!("artifact:{}", case.name)));
+            verify_lean_receipt_root_artifact_case(case);
+        }
+        for case in &vectors.statement_cases {
+            assert!(names.insert(format!("statement:{}", case.name)));
+            verify_lean_receipt_root_statement_case(case);
+        }
+        for case in &vectors.verified_metadata_cases {
+            assert!(names.insert(format!("verified-metadata:{}", case.name)));
+            verify_lean_receipt_root_verified_metadata_case(case);
+        }
+    }
+
+    #[test]
     fn lean_generated_proven_batch_binding_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS") else {
             eprintln!(
@@ -2946,6 +3270,95 @@ mod tests {
             actual_outcome.as_deref(),
             case.expected_outcome.as_deref(),
             "{} native tx-leaf admission outcome label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_receipt_root_payload_case(case: &LeanReceiptRootPayloadCase) {
+        let input = ReceiptRootPayloadAdmissionInput {
+            payload_leaf_count_matches: case.payload_leaf_count_matches,
+            payload_receipt_count_matches: case.payload_receipt_count_matches,
+            has_claim_receipts: case.has_claim_receipts,
+            payload_receipts_match_claims: case.payload_receipts_match_claims,
+            has_tx_artifacts: case.has_tx_artifacts,
+        };
+        let result = evaluate_receipt_root_payload_admission(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} receipt-root payload admission validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} receipt-root payload admission rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_receipt_root_artifact_case(case: &LeanReceiptRootArtifactCase) {
+        let input = ReceiptRootArtifactAdmissionInput {
+            envelope_kind: parse_lean_proof_artifact_kind(&case.envelope_kind),
+            envelope_verifier_profile_matches: case.envelope_verifier_profile_matches,
+            artifact_bytes_len: case.artifact_bytes_len,
+            max_artifact_bytes: case.max_artifact_bytes,
+            has_tx_artifacts: case.has_tx_artifacts,
+            tx_artifact_count_matches: case.tx_artifact_count_matches,
+        };
+        let result = evaluate_receipt_root_artifact_admission(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} receipt-root artifact admission validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} receipt-root artifact admission rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_receipt_root_statement_case(case: &LeanReceiptRootStatementCase) {
+        let input = ReceiptRootStatementBindingInput {
+            statement_commitment_matches: case.statement_commitment_matches,
+        };
+        let result = evaluate_receipt_root_statement_binding(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} receipt-root statement binding validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} receipt-root statement binding rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_receipt_root_verified_metadata_case(case: &LeanReceiptRootVerifiedMetadataCase) {
+        let input = ReceiptRootVerifiedMetadataInput {
+            verified_leaf_count_matches: case.verified_leaf_count_matches,
+        };
+        let result = evaluate_receipt_root_verified_metadata(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} receipt-root verified metadata validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} receipt-root verified metadata rejection label drifted from Lean spec",
             case.name
         );
     }

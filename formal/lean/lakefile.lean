@@ -55,6 +55,9 @@ lean_exe gen_proof_policy_vectors where
 lean_exe gen_proven_batch_binding_vectors where
   root := `Hegemon.Consensus.GenerateProvenBatchBindingVectors
 
+lean_exe gen_receipt_root_admission_vectors where
+  root := `Hegemon.Consensus.GenerateReceiptRootAdmissionVectors
+
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 

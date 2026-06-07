@@ -320,6 +320,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
         "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
         "formal/lean/Hegemon/Consensus/GenerateProvenBatchBindingVectors.lean",
+        "formal/lean/Hegemon/Consensus/ReceiptRootAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
         "formal/lean/Hegemon/Consensus/VersionPolicy.lean",

@@ -1140,6 +1140,58 @@
       "scope_boundary": "This node proves and vector-checks cheap proven-batch binding only. It does not prove DA erasure-code soundness, BLAKE3 security, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity. DA byte grammar and shard-count binding are covered separately by consensus.da-root-byte-binding."
     },
     {
+      "id": "consensus.receipt-root-admission",
+      "claim_id": "consensus.receipt-root-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean receipt-root admission transitions, accepted payload inputs must have receipt-root leaf_count equal to the block tx_count, receipt payload length equal to tx_count, present tx-validity claim receipts, payload receipts matching the claims, and present transaction artifacts; accepted artifact inputs must have receipt_root envelope kind, native verifier-profile agreement, artifact bytes within the tx-count-dependent size cap, present transaction artifacts, and tx-artifact count equal to the block tx_count; accepted statement and verified-metadata bindings must have matching derived statement commitment and verified leaf count.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.ReceiptRootAdmission.payload_accepts_iff_preconditions`, `Hegemon.Consensus.ReceiptRootAdmission.artifact_accepts_iff_preconditions`, `Hegemon.Consensus.ReceiptRootAdmission.statement_accepts_iff_preconditions`, and `Hegemon.Consensus.ReceiptRootAdmission.verified_metadata_accepts_iff_preconditions` prove that each executable receipt-root admission decision is exactly its precondition predicate. Companion theorems pin representative accept/reject facts for payload leaf-count mismatch, payload receipt-count mismatch, missing tx-validity claims, payload receipt mismatch, missing transaction artifacts, wrong artifact kind, verifier-profile mismatch, artifact size overflow, tx-artifact count mismatch, statement-commitment mismatch, verified leaf-count mismatch, and exact-size-limit acceptance. `gen_receipt_root_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production helpers now called by `ParallelProofVerifier` and `ReceiptRootVerifier` around native receipt-root verification.",
+      "depends_on": [
+        "consensus.proven-batch-binding",
+        "consensus.native-tx-leaf-admission",
+        "formal.native-receipt-root-wire",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/ReceiptRootAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean",
+        "consensus/src/proof.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/ReceiptRootAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean",
+        "consensus/src/proof.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for receipt-root payload/envelope/size/count/statement/metadata admission around backend verification. Scope excludes native backend cryptographic soundness and BLAKE3 implementation equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-receipt-root-admission-theorem",
+          "description": "Removing or weakening the receipt-root admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-receipt-root-admission-conformance",
+          "description": "Changing production receipt-root admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_receipt_root_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-receipt-root-admission-gate",
+          "description": "The release formal-core wrapper must generate receipt-root admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks receipt-root payload, envelope, size, tx-artifact count, statement-commitment, and verified-metadata admission only. It does not prove native tx-leaf proof soundness, native receipt-root byte parsing, native receipt-root cryptographic fold soundness, backend transcript challenge derivation, BLAKE3 security or implementation equivalence, or complete block proof validity. Native tx-leaf admission, native receipt-root wire grammar, and proven-batch binding are covered separately."
+    },
+    {
       "id": "consensus.aggregation-v5-header-admission",
       "claim_id": "consensus.aggregation-v5-header-admission",
       "kind": "target_claim",
