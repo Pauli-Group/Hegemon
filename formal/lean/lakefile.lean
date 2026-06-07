@@ -16,6 +16,9 @@ lean_exe gen_bridge_long_range_vectors where
 lean_exe gen_bridge_header_mmr_vectors where
   root := `Hegemon.Bridge.GenerateHeaderMmrVectors
 
+lean_exe gen_bridge_header_mmr_transcript_vectors where
+  root := `Hegemon.Bridge.GenerateHeaderMmrTranscriptVectors
+
 lean_exe gen_bridge_flyclient_vectors where
   root := `Hegemon.Bridge.GenerateFlyClientVectors
 

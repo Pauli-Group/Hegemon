@@ -929,17 +929,18 @@ pub fn empty_header_mmr_root() -> Hash32 {
 }
 
 pub fn header_mmr_root_from_peaks(leaf_count: u64, peaks: &[Hash32]) -> Hash32 {
-    let peak_count = peaks.len() as u32;
-    let mut parts: Vec<&[u8]> = Vec::with_capacity(peaks.len() + 3);
-    let leaf_count_bytes = leaf_count.to_le_bytes();
-    let peak_count_bytes = peak_count.to_le_bytes();
-    parts.push(b"hegemon.header-mmr.root-v2");
-    parts.push(&leaf_count_bytes);
-    parts.push(&peak_count_bytes);
+    hash32(&header_mmr_root_preimage_v1(leaf_count, peaks))
+}
+
+pub fn header_mmr_root_preimage_v1(leaf_count: u64, peaks: &[Hash32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(26 + 8 + 4 + peaks.len().saturating_mul(32));
+    bytes.extend_from_slice(b"hegemon.header-mmr.root-v2");
+    bytes.extend_from_slice(&leaf_count.to_le_bytes());
+    bytes.extend_from_slice(&(peaks.len() as u32).to_le_bytes());
     for peak in peaks {
-        parts.push(peak);
+        bytes.extend_from_slice(peak);
     }
-    hash32_with_parts(&parts)
+    bytes
 }
 
 pub fn header_mmr_opening_from_hashes(
@@ -1153,13 +1154,17 @@ fn perfect_tree_opening(
     Ok(siblings)
 }
 
+pub fn header_mmr_parent_preimage_v1(level: u32, left: Hash32, right: Hash32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(26 + 4 + 32 + 32);
+    bytes.extend_from_slice(b"hegemon.header-mmr.node-v2");
+    bytes.extend_from_slice(&level.to_le_bytes());
+    bytes.extend_from_slice(&left);
+    bytes.extend_from_slice(&right);
+    bytes
+}
+
 fn header_mmr_parent_hash(level: u32, left: Hash32, right: Hash32) -> Hash32 {
-    hash32_with_parts(&[
-        b"hegemon.header-mmr.node-v2",
-        &level.to_le_bytes(),
-        &left,
-        &right,
-    ])
+    hash32(&header_mmr_parent_preimage_v1(level, left, right))
 }
 
 pub fn verify_message_inclusion(
@@ -1796,6 +1801,14 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanHeaderMmrTranscriptVectorFile {
+        schema_version: u32,
+        header_mmr_parent_transcript_cases: Vec<LeanHeaderMmrParentTranscriptCase>,
+        header_mmr_root_transcript_cases: Vec<LeanHeaderMmrRootTranscriptCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanFlyClientVectorFile {
         schema_version: u32,
         flyclient_transcript_cases: Vec<LeanFlyClientTranscriptCase>,
@@ -1871,6 +1884,28 @@ mod tests {
         expected_siblings: Option<usize>,
         expected_local_index: Option<u64>,
         expected_current_is_left: Option<Vec<bool>>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanHeaderMmrParentTranscriptCase {
+        name: String,
+        level: u32,
+        left_hex: String,
+        right_hex: String,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanHeaderMmrRootTranscriptCase {
+        name: String,
+        leaf_count: u64,
+        peak_hashes_hex: Vec<String>,
+        expected_peak_count: usize,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
     }
 
     #[derive(Debug, Deserialize)]
@@ -2228,6 +2263,86 @@ mod tests {
             ),
             _ => panic!("{} has inconsistent Lean validity metadata", case.name),
         }
+    }
+
+    #[test]
+    fn lean_generated_header_mmr_transcript_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean header MMR transcript vectors");
+        let vectors: LeanHeaderMmrTranscriptVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean header MMR transcript vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.header_mmr_parent_transcript_cases.is_empty(),
+            "Lean header MMR parent transcript cases must not be empty"
+        );
+        assert!(
+            !vectors.header_mmr_root_transcript_cases.is_empty(),
+            "Lean header MMR root transcript cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.header_mmr_parent_transcript_cases {
+            assert!(names.insert(format!("parent:{}", case.name)));
+            verify_lean_header_mmr_parent_transcript_case(case);
+        }
+        for case in &vectors.header_mmr_root_transcript_cases {
+            assert!(names.insert(format!("root:{}", case.name)));
+            verify_lean_header_mmr_root_transcript_case(case);
+        }
+    }
+
+    fn verify_lean_header_mmr_parent_transcript_case(case: &LeanHeaderMmrParentTranscriptCase) {
+        let preimage = header_mmr_parent_preimage_v1(
+            case.level,
+            hash32_from_hex(&case.left_hex),
+            hash32_from_hex(&case.right_hex),
+        );
+        assert_eq!(
+            preimage.len(),
+            case.expected_preimage_len,
+            "{} header MMR parent preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            hex_string(&preimage),
+            case.expected_preimage_hex,
+            "{} header MMR parent preimage bytes drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_header_mmr_root_transcript_case(case: &LeanHeaderMmrRootTranscriptCase) {
+        let peaks: Vec<Hash32> = case
+            .peak_hashes_hex
+            .iter()
+            .map(|raw| hash32_from_hex(raw))
+            .collect();
+        assert_eq!(
+            peaks.len(),
+            case.expected_peak_count,
+            "{} header MMR root peak count drifted from Lean spec",
+            case.name
+        );
+        let preimage = header_mmr_root_preimage_v1(case.leaf_count, &peaks);
+        assert_eq!(
+            preimage.len(),
+            case.expected_preimage_len,
+            "{} header MMR root preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            hex_string(&preimage),
+            case.expected_preimage_hex,
+            "{} header MMR root preimage bytes drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]

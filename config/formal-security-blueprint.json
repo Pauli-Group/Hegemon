@@ -719,7 +719,59 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks header MMR opening shape and left/right path orientation over already-computed hashes only. It does not prove SHA-256 implementation equivalence, MMR parent/root hash security, FlyClient sampling soundness, bridge message-root hashing, external-chain verifier behavior, or complete long-range light-client soundness."
+      "scope_boundary": "This node proves and vector-checks header MMR opening shape and left/right path orientation over already-computed hashes only. It does not prove SHA-256 implementation equivalence, MMR parent/root hash security, FlyClient sampling soundness, bridge message-root hashing, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR parent/root transcript byte grammar is covered separately by bridge.header-mmr-transcript-binding."
+    },
+    {
+      "id": "bridge.header-mmr-transcript-binding",
+      "claim_id": "bridge.header-mmr-transcript-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean header-MMR transcript transition, parent hash preimages must bind the exact node domain, u32 little-endian level, and ordered left/right child hashes; root hash preimages must bind the exact root domain, u64 little-endian leaf count, u32 little-endian peak count, and ordered peak hash sequence.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.HeaderMmrTranscript.parent_domain_bytes`, `Hegemon.Bridge.HeaderMmrTranscript.root_domain_bytes`, `Hegemon.Bridge.HeaderMmrTranscript.sample_parent_length`, `Hegemon.Bridge.HeaderMmrTranscript.sample_parent_hex`, `Hegemon.Bridge.HeaderMmrTranscript.max_level_parent_hex`, `Hegemon.Bridge.HeaderMmrTranscript.empty_root_length`, `Hegemon.Bridge.HeaderMmrTranscript.empty_root_hex`, `Hegemon.Bridge.HeaderMmrTranscript.two_peak_root_length`, `Hegemon.Bridge.HeaderMmrTranscript.two_peak_root_hex`, `Hegemon.Bridge.HeaderMmrTranscript.reversed_two_peak_root_hex`, and `Hegemon.Bridge.HeaderMmrTranscript.root_order_binds_peak_sequence` prove representative byte-layout facts about the parent/root transcript grammar. `gen_bridge_header_mmr_transcript_vectors` emits Lean-derived parent and root preimage cases, and the formal-core gate checks those vectors against `header_mmr_parent_preimage_v1` and `header_mmr_root_preimage_v1`, the production helpers hashed by header-MMR construction and verification.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmrTranscript.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrTranscriptVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmrTranscript.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrTranscriptVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for header MMR parent/root transcript byte grammar. BLAKE3 security/equivalence and full MMR hash binding remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-header-mmr-transcript-theorem",
+          "description": "Removing or weakening the header MMR transcript theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-header-mmr-transcript-conformance",
+          "description": "Changing production header MMR parent/root transcript bytes, endian encodings, left/right order, peak count, or peak order away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_header_mmr_transcript_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-header-mmr-transcript-gate",
+          "description": "The release formal-core wrapper must generate header MMR transcript vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks header MMR parent/root hash preimage grammar only. It does not prove BLAKE3 cryptographic security or implementation equivalence, SHA-256 header-hash implementation equivalence, MMR collision resistance, full MMR hash binding, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness."
     },
     {
       "id": "bridge.flyclient-sampling-transcript",
@@ -729,6 +781,7 @@
       "informal_argument": "The Lean theorems `Hegemon.Bridge.FlyClient.sample_domain_bytes`, `Hegemon.Bridge.FlyClient.valid_transcript_length`, `Hegemon.Bridge.FlyClient.valid_transcript_hex`, `Hegemon.Bridge.FlyClient.max_index_transcript_hex`, `Hegemon.Bridge.FlyClient.sample_height_modulo`, `Hegemon.Bridge.FlyClient.sample_height_large_prefix`, `Hegemon.Bridge.FlyClient.sample_heights_allow_duplicates`, `Hegemon.Bridge.FlyClient.sample_heights_truncate_to_sample_count`, and the companion empty-range theorems prove representative facts about the sample transcript and index arithmetic. `gen_bridge_flyclient_vectors` emits Lean-derived transcript and digest-prefix examples, and the formal-core gate checks those vectors against `flyclient_sample_transcript_preimage_v1`, `flyclient_sample_height_from_digest_prefix`, and `flyclient_sample_indices_from_digest_prefixes`, the helpers used by `flyclient_sample_indices` before long-range sample openings are verified.",
       "depends_on": [
         "bridge.header-mmr-opening-shape",
+        "bridge.header-mmr-transcript-binding",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
@@ -781,6 +834,7 @@
       "depends_on": [
         "consensus.pow-admission",
         "bridge.header-mmr-opening-shape",
+        "bridge.header-mmr-transcript-binding",
         "bridge.flyclient-sampling-transcript",
         "bridge.message-root-replay",
         "release.dependency-waivers"
@@ -824,7 +878,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
+      "scope_boundary": "This node proves and vector-checks cheap long-range bridge proof structural admission over already-computed hashes, work values, sample indices, and message metadata. It does not prove SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
     },
     {
       "id": "consensus.self-contained-proof-policy",

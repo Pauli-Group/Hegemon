@@ -396,6 +396,34 @@
       "residual_risks": []
     },
     {
+      "id": "bridge.header-mmr-transcript-binding",
+      "component": "bridge header MMR parent/root transcript binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean header-MMR transcript kernel proves executable byte-layout facts for parent-node and peak-root hash preimages; generated Lean vectors are checked byte-for-byte against the production helpers hashed by bridge MMR construction and verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents exact BLAKE3 input bytes for already-computed header hash, sibling hash, peak hash, level, leaf-count, and peak-count values.",
+        "Generated Lean conformance vectors cover the parent domain, u32 little-endian level encoding including the max-u32 case, left/right child order, root domain, u64 little-endian leaf count, u32 little-endian peak count, empty roots, ordered peak concatenation, and reversed-peak transcript distinction.",
+        "The theorem covers executable byte preimage grammar and Rust conformance to that grammar, not BLAKE3 cryptographic security, BLAKE3 implementation equivalence, SHA-256 header-hash implementation equivalence, MMR collision resistance, full MMR hash binding, FlyClient sampling soundness, or complete long-range light-client soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Bridge/HeaderMmrTranscript.lean",
+        "formal/lean/Hegemon/Bridge/GenerateHeaderMmrTranscriptVectors.lean",
+        "consensus-light-client/src/lib.rs",
+        "consensus-light-client/Cargo.toml",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_header_mmr_transcript_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "bridge.long-range-proof-shape",
       "component": "bridge long-range light-client proof shape",
       "claim_class": "lean_theorem",
@@ -406,7 +434,7 @@
       "assumptions": [
         "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
         "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
-        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
+        "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Bridge/LongRange.lean",
