@@ -1130,6 +1130,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.transfer-state-admission",
+      "component": "native shielded transfer state admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean transfer-state admission kernel proves the executable native shielded-transfer state table for known anchors, nullifier replay status, nonzero output commitments, sidecar ciphertext availability, sidecar ciphertext size presence, and staged size agreement; generated Lean vectors are checked against the production helper used by mempool and block validation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats anchor membership, nullifier status, commitment nonzeroness, sidecar route identity, and staged sidecar lookup results as production-derived predicates; it proves the executable admission table and rejection precedence.",
+        "Generated Lean conformance vectors cover valid inline and sidecar state admission, unknown anchors, zero/spent/duplicate/pending nullifiers, zero commitments, missing staged ciphertexts, missing staged ciphertext sizes, staged size mismatches, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, and inline transfer independence from sidecar staging.",
+        "The theorem covers executable native transfer state admission only. It does not prove commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, tx leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateTransferStateAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_state_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_state_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-commitment-admission",
       "component": "native block derived commitment admission",
       "claim_class": "lean_theorem",

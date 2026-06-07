@@ -36,6 +36,7 @@ import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
+import Hegemon.Native.TransferStateAdmission
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance

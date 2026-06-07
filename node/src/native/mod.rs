@@ -498,6 +498,62 @@ impl NativeTransferPayloadAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeTransferStateAdmissionInput {
+    anchor_known: bool,
+    nullifier_state: NativeTransferNullifierAdmissionState,
+    commitments_nonzero: bool,
+    sidecar_route: bool,
+    sidecar_ciphertexts_available: bool,
+    sidecar_ciphertext_sizes_present: bool,
+    sidecar_ciphertext_sizes_match: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTransferNullifierAdmissionState {
+    Valid,
+    Zero,
+    AlreadySpent,
+    Duplicate,
+    AlreadyPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTransferStateAdmissionContext {
+    Mempool,
+    Block,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTransferStateAdmissionRejection {
+    UnknownAnchor,
+    NullifierZero,
+    NullifierAlreadySpent,
+    DuplicateNullifier,
+    NullifierAlreadyPending,
+    CommitmentZero,
+    SidecarCiphertextMissing,
+    SidecarCiphertextSizeMissing,
+    SidecarCiphertextSizeMismatch,
+}
+
+impl NativeTransferStateAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::UnknownAnchor => "unknown_anchor",
+            Self::NullifierZero => "nullifier_zero",
+            Self::NullifierAlreadySpent => "nullifier_already_spent",
+            Self::DuplicateNullifier => "duplicate_nullifier",
+            Self::NullifierAlreadyPending => "nullifier_already_pending",
+            Self::CommitmentZero => "commitment_zero",
+            Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
+            Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
+            Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCoinbaseActionPayloadAdmissionInput {
     amount_nonzero: bool,
     commitment_matches: bool,
@@ -2038,60 +2094,13 @@ impl NativeNode {
                 validate_transfer_action_payload(action)?;
 
                 let state = self.state.read();
-                if !state.commitment_tree.contains_root(&action.anchor) {
-                    return Err(anyhow!("unknown shielded anchor"));
-                }
-
-                let mut nullifier_state = shielded_nullifier_state_for_mempool(&state);
-                let mut action_seen = BTreeSet::new();
-                for nullifier in &action.nullifiers {
-                    let duplicate_in_action = !action_seen.insert(*nullifier);
-                    match nullifier_state.stage(*nullifier) {
-                        Ok(()) => {}
-                        Err(NullifierReject::Zero) => {
-                            return Err(anyhow!("zero nullifier rejected"))
-                        }
-                        Err(NullifierReject::AlreadySpent) => {
-                            return Err(anyhow!("nullifier already spent"));
-                        }
-                        Err(NullifierReject::AlreadyPending) if duplicate_in_action => {
-                            return Err(anyhow!("duplicate nullifier in action"));
-                        }
-                        Err(NullifierReject::AlreadyPending) => {
-                            return Err(anyhow!("nullifier already pending"));
-                        }
-                    }
-                }
-
-                for commitment in &action.commitments {
-                    if *commitment == [0u8; 48] {
-                        return Err(anyhow!("zero commitment rejected"));
-                    }
-                }
-
-                if action.family_id == FAMILY_SHIELDED_POOL
-                    && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
-                {
-                    for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                        let observed = state
-                            .staged_ciphertexts
-                            .get(&hex48(hash))
-                            .copied()
-                            .ok_or_else(|| anyhow!("missing staged ciphertext {}", hex48(hash)))?;
-                        let expected =
-                            action.ciphertext_sizes.get(idx).copied().ok_or_else(|| {
-                                anyhow!("missing ciphertext size for {}", hex48(hash))
-                            })?;
-                        if observed != expected {
-                            return Err(anyhow!(
-                                "staged ciphertext size mismatch for {}: expected {}, observed {}",
-                                hex48(hash),
-                                expected,
-                                observed
-                            ));
-                        }
-                    }
-                }
+                let input = native_transfer_state_admission_input_for_mempool(&state, action);
+                evaluate_native_transfer_state_admission(input).map_err(|rejection| {
+                    native_transfer_state_admission_error(
+                        NativeTransferStateAdmissionContext::Mempool,
+                        rejection,
+                    )
+                })?;
 
                 Ok(())
             }
@@ -3448,6 +3457,236 @@ fn native_transfer_payload_admission_error(
     }
 }
 
+fn evaluate_native_transfer_state_admission(
+    input: NativeTransferStateAdmissionInput,
+) -> Result<(), NativeTransferStateAdmissionRejection> {
+    if !input.anchor_known {
+        Err(NativeTransferStateAdmissionRejection::UnknownAnchor)
+    } else {
+        match input.nullifier_state {
+            NativeTransferNullifierAdmissionState::Valid => {
+                if !input.commitments_nonzero {
+                    Err(NativeTransferStateAdmissionRejection::CommitmentZero)
+                } else if !input.sidecar_route {
+                    Ok(())
+                } else if !input.sidecar_ciphertexts_available {
+                    Err(NativeTransferStateAdmissionRejection::SidecarCiphertextMissing)
+                } else if !input.sidecar_ciphertext_sizes_present {
+                    Err(NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMissing)
+                } else if !input.sidecar_ciphertext_sizes_match {
+                    Err(NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMismatch)
+                } else {
+                    Ok(())
+                }
+            }
+            NativeTransferNullifierAdmissionState::Zero => {
+                Err(NativeTransferStateAdmissionRejection::NullifierZero)
+            }
+            NativeTransferNullifierAdmissionState::AlreadySpent => {
+                Err(NativeTransferStateAdmissionRejection::NullifierAlreadySpent)
+            }
+            NativeTransferNullifierAdmissionState::Duplicate => {
+                Err(NativeTransferStateAdmissionRejection::DuplicateNullifier)
+            }
+            NativeTransferNullifierAdmissionState::AlreadyPending => {
+                Err(NativeTransferStateAdmissionRejection::NullifierAlreadyPending)
+            }
+        }
+    }
+}
+
+fn native_transfer_state_admission_error(
+    context: NativeTransferStateAdmissionContext,
+    rejection: NativeTransferStateAdmissionRejection,
+) -> anyhow::Error {
+    match (context, rejection) {
+        (_, NativeTransferStateAdmissionRejection::UnknownAnchor) => match context {
+            NativeTransferStateAdmissionContext::Mempool => anyhow!("unknown shielded anchor"),
+            NativeTransferStateAdmissionContext::Block => {
+                anyhow!("block action references unknown anchor")
+            }
+        },
+        (
+            NativeTransferStateAdmissionContext::Mempool,
+            NativeTransferStateAdmissionRejection::NullifierZero,
+        ) => {
+            anyhow!("zero nullifier rejected")
+        }
+        (
+            NativeTransferStateAdmissionContext::Block,
+            NativeTransferStateAdmissionRejection::NullifierZero,
+        ) => {
+            anyhow!("zero nullifier in block action")
+        }
+        (
+            NativeTransferStateAdmissionContext::Mempool,
+            NativeTransferStateAdmissionRejection::NullifierAlreadySpent,
+        ) => {
+            anyhow!("nullifier already spent")
+        }
+        (
+            NativeTransferStateAdmissionContext::Block,
+            NativeTransferStateAdmissionRejection::NullifierAlreadySpent,
+        ) => {
+            anyhow!("duplicate nullifier in block action")
+        }
+        (
+            NativeTransferStateAdmissionContext::Mempool,
+            NativeTransferStateAdmissionRejection::DuplicateNullifier,
+        ) => {
+            anyhow!("duplicate nullifier in action")
+        }
+        (
+            NativeTransferStateAdmissionContext::Block,
+            NativeTransferStateAdmissionRejection::DuplicateNullifier,
+        ) => {
+            anyhow!("duplicate nullifier in block action")
+        }
+        (
+            NativeTransferStateAdmissionContext::Mempool,
+            NativeTransferStateAdmissionRejection::NullifierAlreadyPending,
+        ) => {
+            anyhow!("nullifier already pending")
+        }
+        (
+            NativeTransferStateAdmissionContext::Block,
+            NativeTransferStateAdmissionRejection::NullifierAlreadyPending,
+        ) => {
+            anyhow!("duplicate nullifier in block action")
+        }
+        (
+            NativeTransferStateAdmissionContext::Mempool,
+            NativeTransferStateAdmissionRejection::CommitmentZero,
+        ) => {
+            anyhow!("zero commitment rejected")
+        }
+        (
+            NativeTransferStateAdmissionContext::Block,
+            NativeTransferStateAdmissionRejection::CommitmentZero,
+        ) => {
+            anyhow!("zero commitment in block action")
+        }
+        (_, NativeTransferStateAdmissionRejection::SidecarCiphertextMissing) => {
+            anyhow!("missing staged ciphertext")
+        }
+        (_, NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMissing) => {
+            anyhow!("missing staged ciphertext size")
+        }
+        (_, NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMismatch) => {
+            anyhow!("staged ciphertext size mismatch")
+        }
+    }
+}
+
+fn mempool_transfer_nullifier_admission_state(
+    state: &NativeState,
+    action: &PendingAction,
+) -> NativeTransferNullifierAdmissionState {
+    let mut nullifier_state = shielded_nullifier_state_for_mempool(state);
+    let mut action_seen = BTreeSet::new();
+    for nullifier in &action.nullifiers {
+        let duplicate_in_action = !action_seen.insert(*nullifier);
+        match nullifier_state.stage(*nullifier) {
+            Ok(()) => {}
+            Err(NullifierReject::Zero) => return NativeTransferNullifierAdmissionState::Zero,
+            Err(NullifierReject::AlreadySpent) => {
+                return NativeTransferNullifierAdmissionState::AlreadySpent;
+            }
+            Err(NullifierReject::AlreadyPending) if duplicate_in_action => {
+                return NativeTransferNullifierAdmissionState::Duplicate;
+            }
+            Err(NullifierReject::AlreadyPending) => {
+                return NativeTransferNullifierAdmissionState::AlreadyPending;
+            }
+        }
+    }
+    NativeTransferNullifierAdmissionState::Valid
+}
+
+fn block_transfer_nullifier_admission_state(
+    nullifier_state: &mut NullifierState,
+    action: &PendingAction,
+) -> NativeTransferNullifierAdmissionState {
+    for nullifier in &action.nullifiers {
+        match nullifier_state.import_one(*nullifier) {
+            Ok(()) => {}
+            Err(NullifierReject::Zero) => return NativeTransferNullifierAdmissionState::Zero,
+            Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
+                return NativeTransferNullifierAdmissionState::Duplicate;
+            }
+        }
+    }
+    NativeTransferNullifierAdmissionState::Valid
+}
+
+fn sidecar_ciphertext_state_for_action(
+    state: &NativeState,
+    action: &PendingAction,
+) -> (bool, bool, bool) {
+    let mut all_available = true;
+    let mut all_sizes_present = true;
+    let mut all_sizes_match = true;
+    for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+        let observed = state.staged_ciphertexts.get(&hex48(hash)).copied();
+        let expected = action.ciphertext_sizes.get(idx).copied();
+        match (observed, expected) {
+            (Some(observed), Some(expected)) if observed == expected => {}
+            (Some(_), Some(_)) => all_sizes_match = false,
+            (Some(_), None) => all_sizes_present = false,
+            (None, _) => all_available = false,
+        }
+    }
+    (all_available, all_sizes_present, all_sizes_match)
+}
+
+fn native_transfer_state_admission_input_for_mempool(
+    state: &NativeState,
+    action: &PendingAction,
+) -> NativeTransferStateAdmissionInput {
+    let sidecar_route = action.family_id == FAMILY_SHIELDED_POOL
+        && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR;
+    let (
+        sidecar_ciphertexts_available,
+        sidecar_ciphertext_sizes_present,
+        sidecar_ciphertext_sizes_match,
+    ) = if sidecar_route {
+        sidecar_ciphertext_state_for_action(state, action)
+    } else {
+        (true, true, true)
+    };
+    NativeTransferStateAdmissionInput {
+        anchor_known: state.commitment_tree.contains_root(&action.anchor),
+        nullifier_state: mempool_transfer_nullifier_admission_state(state, action),
+        commitments_nonzero: action
+            .commitments
+            .iter()
+            .all(|commitment| *commitment != [0u8; 48]),
+        sidecar_route,
+        sidecar_ciphertexts_available,
+        sidecar_ciphertext_sizes_present,
+        sidecar_ciphertext_sizes_match,
+    }
+}
+
+fn native_transfer_state_admission_input_for_block(
+    state: &NativeState,
+    nullifier_state: &mut NullifierState,
+    action: &PendingAction,
+) -> NativeTransferStateAdmissionInput {
+    NativeTransferStateAdmissionInput {
+        anchor_known: state.commitment_tree.contains_root(&action.anchor),
+        nullifier_state: block_transfer_nullifier_admission_state(nullifier_state, action),
+        commitments_nonzero: action
+            .commitments
+            .iter()
+            .all(|commitment| *commitment != [0u8; 48]),
+        sidecar_route: false,
+        sidecar_ciphertexts_available: true,
+        sidecar_ciphertext_sizes_present: true,
+        sidecar_ciphertext_sizes_match: true,
+    }
+}
+
 fn inline_ciphertext_metadata(
     ciphertexts: &[protocol_shielded_pool::types::EncryptedNote],
 ) -> (usize, Option<(Vec<[u8; 48]>, Vec<u32>)>) {
@@ -4783,30 +5022,17 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
                     ));
                 }
                 previous_transfer_key = Some(transfer_key);
-                if !state.commitment_tree.contains_root(&action.anchor) {
-                    return Err(anyhow!("block action references unknown anchor"));
-                }
-                for nullifier in &action.nullifiers {
-                    match nullifier_state.import_one(*nullifier) {
-                        Ok(()) => {}
-                        Err(NullifierReject::Zero) => {
-                            return Err(anyhow!("zero nullifier in block action"));
-                        }
-                        Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
-                            return Err(anyhow!("duplicate nullifier in block action"));
-                        }
-                    }
-                }
-                for commitment in &action.commitments {
-                    if *commitment == [0u8; 48] {
-                        return Err(anyhow!("zero commitment in block action"));
-                    }
-                }
-                if action.ciphertext_hashes.len() != action.commitments.len()
-                    || action.ciphertext_sizes.len() != action.commitments.len()
-                {
-                    return Err(anyhow!("block action ciphertext metadata mismatch"));
-                }
+                let input = native_transfer_state_admission_input_for_block(
+                    state,
+                    &mut nullifier_state,
+                    action,
+                );
+                evaluate_native_transfer_state_admission(input).map_err(|rejection| {
+                    native_transfer_state_admission_error(
+                        NativeTransferStateAdmissionContext::Block,
+                        rejection,
+                    )
+                })?;
             }
         }
     }
@@ -6300,6 +6526,28 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanTransferStateAdmissionVectorFile {
+        schema_version: u32,
+        transfer_state_admission_cases: Vec<LeanTransferStateAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTransferStateAdmissionCase {
+        name: String,
+        anchor_known: bool,
+        nullifier_state: String,
+        commitments_nonzero: bool,
+        sidecar_route: bool,
+        sidecar_ciphertexts_available: bool,
+        sidecar_ciphertext_sizes_present: bool,
+        sidecar_ciphertext_sizes_match: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanCandidateArtifactAdmissionVectorFile {
         schema_version: u32,
         candidate_artifact_admission_cases: Vec<LeanCandidateArtifactAdmissionCase>,
@@ -7617,6 +7865,71 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_transfer_state_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean transfer state admission vectors");
+        let vectors: LeanTransferStateAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean transfer state admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.transfer_state_admission_cases.is_empty(),
+            "Lean transfer state admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.transfer_state_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_transfer_state_admission_case(case);
+        }
+    }
+
+    fn verify_lean_transfer_state_admission_case(case: &LeanTransferStateAdmissionCase) {
+        let input = NativeTransferStateAdmissionInput {
+            anchor_known: case.anchor_known,
+            nullifier_state: lean_transfer_nullifier_state(&case.nullifier_state, &case.name),
+            commitments_nonzero: case.commitments_nonzero,
+            sidecar_route: case.sidecar_route,
+            sidecar_ciphertexts_available: case.sidecar_ciphertexts_available,
+            sidecar_ciphertext_sizes_present: case.sidecar_ciphertext_sizes_present,
+            sidecar_ciphertext_sizes_match: case.sidecar_ciphertext_sizes_match,
+        };
+        let actual_rejection = evaluate_native_transfer_state_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native transfer state admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native transfer state admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn lean_transfer_nullifier_state(
+        state: &str,
+        case_name: &str,
+    ) -> NativeTransferNullifierAdmissionState {
+        match state {
+            "valid" => NativeTransferNullifierAdmissionState::Valid,
+            "zero" => NativeTransferNullifierAdmissionState::Zero,
+            "already_spent" => NativeTransferNullifierAdmissionState::AlreadySpent,
+            "duplicate" => NativeTransferNullifierAdmissionState::Duplicate,
+            "already_pending" => NativeTransferNullifierAdmissionState::AlreadyPending,
+            other => panic!("{case_name} has unknown transfer nullifier state {other}"),
+        }
+    }
+
+    #[test]
     fn lean_generated_candidate_artifact_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS") else {
             eprintln!(
@@ -8246,6 +8559,101 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("action fee must agree with decoded inline payload fee");
         assert!(err.to_string().contains("fee mismatch"));
+    }
+
+    #[test]
+    fn transfer_state_rejects_unknown_anchor_in_block() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action = test_inline_transfer_action([99u8; 48], [42u8; 48], [43u8; 48], 0);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("unknown transfer anchor must reject block action");
+        assert!(err.to_string().contains("unknown anchor"));
+    }
+
+    #[test]
+    fn transfer_state_rejects_duplicate_nullifier_in_block() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [44u8; 48], [45u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [44u8; 48], [46u8; 48], 0);
+        let mut actions = vec![first, second];
+        actions.sort_by_key(action_order_key);
+
+        let err = validate_block_actions_locked(&state, &actions)
+            .expect_err("duplicate transfer nullifier must reject block action");
+        assert!(err.to_string().contains("duplicate nullifier"));
+    }
+
+    #[test]
+    fn transfer_state_rejects_zero_commitment_in_block() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [47u8; 48], [0u8; 48], 0);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("zero transfer commitment must reject block action");
+        assert!(err.to_string().contains("zero commitment"));
+    }
+
+    #[test]
+    fn transfer_state_sidecar_requires_staged_ciphertext_in_mempool() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [48u8; 48], [49u8; 48], 0);
+
+        let err = node
+            .validate_action_state(&action)
+            .expect_err("sidecar transfer without staged ciphertext must reject");
+        assert!(err.to_string().contains("missing staged ciphertext"));
+    }
+
+    #[test]
+    fn transfer_state_sidecar_rejects_staged_ciphertext_size_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [50u8; 48], [51u8; 48], 0);
+        {
+            let mut state = node.state.write();
+            state.staged_ciphertexts.insert(
+                hex48(&action.ciphertext_hashes[0]),
+                action.ciphertext_sizes[0].saturating_add(1),
+            );
+        }
+
+        let err = node
+            .validate_action_state(&action)
+            .expect_err("sidecar transfer with wrong staged size must reject");
+        assert!(err.to_string().contains("staged ciphertext size mismatch"));
+    }
+
+    #[test]
+    fn transfer_state_sidecar_accepts_matching_staged_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [52u8; 48], [53u8; 48], 0);
+        {
+            let mut state = node.state.write();
+            state.staged_ciphertexts.insert(
+                hex48(&action.ciphertext_hashes[0]),
+                action.ciphertext_sizes[0],
+            );
+        }
+
+        node.validate_action_state(&action)
+            .expect("matching staged sidecar ciphertext should pass state admission");
     }
 
     #[test]
@@ -9314,6 +9722,36 @@ mod tests {
             fee,
             candidate_artifact: None,
             received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn test_sidecar_transfer_action(
+        anchor: [u8; 48],
+        nullifier: [u8; 48],
+        commitment: [u8; 48],
+        fee: u64,
+    ) -> PendingAction {
+        let inline = test_inline_transfer_action(anchor, nullifier, commitment, fee);
+        let inline_args: ShieldedTransferInlineArgs =
+            decode_scale_exact(&inline.public_args, "test inline transfer args")
+                .expect("decode inline args");
+        let args = ShieldedTransferSidecarArgs {
+            proof: inline_args.proof,
+            commitments: inline_args.commitments,
+            ciphertext_hashes: inline.ciphertext_hashes.clone(),
+            ciphertext_sizes: inline.ciphertext_sizes.clone(),
+            anchor,
+            balance_slot_asset_ids: inline_args.balance_slot_asset_ids,
+            binding_hash: inline_args.binding_hash,
+            stablecoin: inline_args.stablecoin,
+            fee,
+        };
+        let mut action = PendingAction {
+            action_id: ACTION_SHIELDED_TRANSFER_SIDECAR,
+            public_args: args.encode(),
+            ..inline
         };
         action.tx_hash = pending_action_hash(&action);
         action

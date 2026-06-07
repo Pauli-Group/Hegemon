@@ -1808,6 +1808,7 @@
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
         "native.candidate-artifact-admission",
         "consensus.proven-batch-binding",
         "consensus.recursive-block-admission",
@@ -2171,6 +2172,64 @@
       "scope_boundary": "This node proves and vector-checks decoded shielded transfer payload admission only. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, StarkVerifier binding-hash cryptographic assumptions, nullifier replay, anchor-state membership, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.transfer-state-admission",
+      "claim_id": "native.transfer-state-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean transfer-state admission transition, native shielded transfer state validation accepts only when the anchor is known, nullifiers are admissible in the current mempool or block state, all output commitments are nonzero, and sidecar transfers have staged ciphertexts whose observed sizes match the action metadata; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.TransferStateAdmission.accepts_iff_state_preconditions` proves the complete executable state-admission predicate, with companion theorems for unknown anchor, zero/spent/duplicate/pending nullifier, zero commitment, missing staged ciphertext, missing staged ciphertext size, staged ciphertext size mismatch, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, and inline transfer independence from sidecar availability. `gen_transfer_state_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_transfer_state_admission` helper now called by native mempool and block transfer validation. Native regressions reject unknown anchors, duplicate nullifiers, zero commitments, missing sidecar ciphertexts, and staged sidecar size mismatches.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "native.transfer-action-payload-admission",
+        "native.sidecar-upload-admission",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateTransferStateAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateTransferStateAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native transfer state admission. Scope is the cheap post-payload transfer state table before tx-leaf proof and recursive artifact verification."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-transfer-state-admission-theorem",
+          "description": "Removing or weakening the transfer state-admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-transfer-state-admission-conformance",
+          "description": "Changing the production transfer state-admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_state_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-transfer-state-regressions",
+          "description": "Native transfer state validation must reject unknown anchors, duplicate nullifiers, zero commitments, missing staged sidecar ciphertexts, and staged sidecar size mismatches.",
+          "gate": "cargo test -p hegemon-node transfer_state_ --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-transfer-state-gate",
+          "description": "The release formal-core wrapper must generate transfer-state admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It does not prove SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-commitment-admission",
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
@@ -2181,6 +2240,7 @@
         "native.action-scope-admission",
         "native.bridge-action-payload-admission",
         "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
         "native.candidate-artifact-admission",
         "native.candidate-artifact-coupling-admission",
         "native.block-action-ordering",
