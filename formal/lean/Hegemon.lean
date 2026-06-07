@@ -26,6 +26,7 @@ import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionHashAdmission
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ActionScopeAdmission
+import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.BridgeActionPayloadAdmission
 import Hegemon.Native.CandidateArtifactAdmission

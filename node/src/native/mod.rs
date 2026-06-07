@@ -672,6 +672,62 @@ impl NativeCandidateArtifactCouplingAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeTxLeafActionBindingAdmissionInput {
+    nullifiers_match: bool,
+    commitments_match: bool,
+    ciphertext_hashes_match: bool,
+    version_matches: bool,
+    ciphertext_payload_hashes_match: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeTxLeafActionBindingAdmissionRejection {
+    NullifiersMismatch,
+    CommitmentsMismatch,
+    CiphertextHashesMismatch,
+    VersionMismatch,
+    CiphertextPayloadHashMismatch,
+}
+
+impl NativeTxLeafActionBindingAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::NullifiersMismatch => "nullifiers_mismatch",
+            Self::CommitmentsMismatch => "commitments_mismatch",
+            Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
+            Self::VersionMismatch => "version_mismatch",
+            Self::CiphertextPayloadHashMismatch => "ciphertext_payload_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCandidateArtifactBindingAdmissionInput {
+    da_root_matches: bool,
+    tx_statements_commitment_matches: bool,
+    recursive_state_root_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCandidateArtifactBindingAdmissionRejection {
+    DaRootMismatch,
+    TxStatementCommitmentMismatch,
+    RecursiveStateRootMismatch,
+}
+
+impl NativeCandidateArtifactBindingAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::DaRootMismatch => "da_root_mismatch",
+            Self::TxStatementCommitmentMismatch => "tx_statement_commitment_mismatch",
+            Self::RecursiveStateRootMismatch => "recursive_state_root_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCoinbaseAccountingAdmissionInput {
     coinbase_count: usize,
     height: u64,
@@ -5363,6 +5419,76 @@ fn native_candidate_artifact_coupling_admission_error(
     }
 }
 
+fn evaluate_native_tx_leaf_action_binding_admission(
+    input: NativeTxLeafActionBindingAdmissionInput,
+) -> Result<(), NativeTxLeafActionBindingAdmissionRejection> {
+    if !input.nullifiers_match {
+        Err(NativeTxLeafActionBindingAdmissionRejection::NullifiersMismatch)
+    } else if !input.commitments_match {
+        Err(NativeTxLeafActionBindingAdmissionRejection::CommitmentsMismatch)
+    } else if !input.ciphertext_hashes_match {
+        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch)
+    } else if !input.version_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::VersionMismatch)
+    } else if !input.ciphertext_payload_hashes_match {
+        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_tx_leaf_action_binding_admission_error(
+    rejection: NativeTxLeafActionBindingAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeTxLeafActionBindingAdmissionRejection::NullifiersMismatch => {
+            anyhow!("native tx-leaf nullifiers mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::CommitmentsMismatch => {
+            anyhow!("native tx-leaf commitments mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch => {
+            anyhow!("native tx-leaf ciphertext hashes mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::VersionMismatch => {
+            anyhow!("native tx-leaf version mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch => {
+            anyhow!("native tx ciphertext payload hash mismatch")
+        }
+    }
+}
+
+fn evaluate_native_candidate_artifact_binding_admission(
+    input: NativeCandidateArtifactBindingAdmissionInput,
+) -> Result<(), NativeCandidateArtifactBindingAdmissionRejection> {
+    if !input.da_root_matches {
+        Err(NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch)
+    } else if !input.tx_statements_commitment_matches {
+        Err(NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch)
+    } else if !input.recursive_state_root_matches {
+        Err(NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRootMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_candidate_artifact_binding_admission_error(
+    rejection: NativeCandidateArtifactBindingAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch => {
+            anyhow!("candidate artifact DA root mismatch")
+        }
+        NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch => {
+            anyhow!("candidate artifact tx statement commitment mismatch")
+        }
+        NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRootMismatch => {
+            anyhow!("native recursive block state root mismatch")
+        }
+    }
+}
+
 fn verify_native_block_artifacts_locked(
     node: &NativeNode,
     state: &NativeState,
@@ -5408,18 +5534,29 @@ fn verify_native_block_artifacts_locked(
     let da_params = native_da_params();
     let computed_da_root = consensus::da_root(&transactions, da_params)
         .map_err(|err| anyhow!("native block DA root failed: {err}"))?;
-    if computed_da_root != artifact.da_root {
-        return Err(anyhow!("candidate artifact DA root mismatch"));
+    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+        NativeCandidateArtifactBindingAdmissionInput {
+            da_root_matches: computed_da_root == artifact.da_root,
+            tx_statements_commitment_matches: true,
+            recursive_state_root_matches: true,
+        },
+    ) {
+        return Err(native_candidate_artifact_binding_admission_error(rejection));
     }
 
     let claims = consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
         .map_err(|err| anyhow!("native tx artifact verification failed: {err}"))?;
     let tx_statements_commitment = consensus::proof::claim_statement_commitment(&claims)
         .map_err(|err| anyhow!("native tx statement commitment failed: {err}"))?;
-    if tx_statements_commitment != artifact.tx_statements_commitment {
-        return Err(anyhow!(
-            "candidate artifact tx statement commitment mismatch"
-        ));
+    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+        NativeCandidateArtifactBindingAdmissionInput {
+            da_root_matches: true,
+            tx_statements_commitment_matches: tx_statements_commitment
+                == artifact.tx_statements_commitment,
+            recursive_state_root_matches: true,
+        },
+    ) {
+        return Err(native_candidate_artifact_binding_admission_error(rejection));
     }
 
     let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfers)?;
@@ -5474,8 +5611,14 @@ fn verify_native_block_artifacts_locked(
             &state.commitment_tree,
         )
         .map_err(|err| anyhow!("native recursive block verification failed: {err}"))?;
-    if verified_tree.root() != expected_tree.root() {
-        return Err(anyhow!("native recursive block state root mismatch"));
+    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+        NativeCandidateArtifactBindingAdmissionInput {
+            da_root_matches: true,
+            tx_statements_commitment_matches: true,
+            recursive_state_root_matches: verified_tree.root() == expected_tree.root(),
+        },
+    ) {
+        return Err(native_candidate_artifact_binding_admission_error(rejection));
     }
     Ok(())
 }
@@ -5487,19 +5630,7 @@ fn consensus_tx_and_artifact_from_action(
     let (proof_bytes, ciphertexts) = transfer_proof_and_ciphertexts(node, action)?;
     let decoded = consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&proof_bytes)
         .map_err(|err| anyhow!("decode native tx-leaf artifact failed: {err}"))?;
-    if decoded.tx.nullifiers != action.nullifiers {
-        return Err(anyhow!("native tx-leaf nullifiers mismatch"));
-    }
-    if decoded.tx.commitments != action.commitments {
-        return Err(anyhow!("native tx-leaf commitments mismatch"));
-    }
-    if decoded.tx.ciphertext_hashes != action.ciphertext_hashes {
-        return Err(anyhow!("native tx-leaf ciphertext hashes mismatch"));
-    }
     let action_version: consensus::VersionBinding = action.binding.into();
-    if decoded.tx.version != action_version {
-        return Err(anyhow!("native tx-leaf version mismatch"));
-    }
     let tx = Transaction::new(
         action.nullifiers.clone(),
         action.commitments.clone(),
@@ -5507,8 +5638,16 @@ fn consensus_tx_and_artifact_from_action(
         action_version,
         ciphertexts,
     );
-    if tx.ciphertext_hashes != action.ciphertext_hashes {
-        return Err(anyhow!("native tx ciphertext payload hash mismatch"));
+    if let Err(rejection) =
+        evaluate_native_tx_leaf_action_binding_admission(NativeTxLeafActionBindingAdmissionInput {
+            nullifiers_match: decoded.tx.nullifiers == action.nullifiers,
+            commitments_match: decoded.tx.commitments == action.commitments,
+            ciphertext_hashes_match: decoded.tx.ciphertext_hashes == action.ciphertext_hashes,
+            version_matches: decoded.tx.version == action_version,
+            ciphertext_payload_hashes_match: tx.ciphertext_hashes == action.ciphertext_hashes,
+        })
+    {
+        return Err(native_tx_leaf_action_binding_admission_error(rejection));
     }
     let artifact = consensus::proof::tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes)
         .map_err(|err| anyhow!("native tx-leaf artifact build failed: {err}"))?;
@@ -6590,6 +6729,38 @@ mod tests {
         transfer_count: usize,
         candidate_artifact_count: usize,
         candidate_tx_count_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockArtifactBindingAdmissionVectorFile {
+        schema_version: u32,
+        tx_leaf_action_binding_cases: Vec<LeanTxLeafActionBindingAdmissionCase>,
+        candidate_artifact_binding_cases: Vec<LeanCandidateArtifactBindingAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTxLeafActionBindingAdmissionCase {
+        name: String,
+        nullifiers_match: bool,
+        commitments_match: bool,
+        ciphertext_hashes_match: bool,
+        version_matches: bool,
+        ciphertext_payload_hashes_match: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactBindingAdmissionCase {
+        name: String,
+        da_root_matches: bool,
+        tx_statements_commitment_matches: bool,
+        recursive_state_root_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -8036,6 +8207,160 @@ mod tests {
             actual_rejection, case.expected_rejection,
             "{} native candidate-artifact coupling admission rejection drifted from Lean spec",
             case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_block_artifact_binding_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean block artifact binding admission vectors");
+        let vectors: LeanBlockArtifactBindingAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean block artifact binding admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.tx_leaf_action_binding_cases.is_empty(),
+            "Lean tx-leaf action binding cases must not be empty"
+        );
+        assert!(
+            !vectors.candidate_artifact_binding_cases.is_empty(),
+            "Lean candidate artifact binding cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.tx_leaf_action_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_tx_leaf_action_binding_admission_case(case);
+        }
+        for case in &vectors.candidate_artifact_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_candidate_artifact_binding_admission_case(case);
+        }
+    }
+
+    fn verify_lean_tx_leaf_action_binding_admission_case(
+        case: &LeanTxLeafActionBindingAdmissionCase,
+    ) {
+        let input = NativeTxLeafActionBindingAdmissionInput {
+            nullifiers_match: case.nullifiers_match,
+            commitments_match: case.commitments_match,
+            ciphertext_hashes_match: case.ciphertext_hashes_match,
+            version_matches: case.version_matches,
+            ciphertext_payload_hashes_match: case.ciphertext_payload_hashes_match,
+        };
+        let actual_rejection = evaluate_native_tx_leaf_action_binding_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native tx-leaf action binding validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native tx-leaf action binding rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_candidate_artifact_binding_admission_case(
+        case: &LeanCandidateArtifactBindingAdmissionCase,
+    ) {
+        let input = NativeCandidateArtifactBindingAdmissionInput {
+            da_root_matches: case.da_root_matches,
+            tx_statements_commitment_matches: case.tx_statements_commitment_matches,
+            recursive_state_root_matches: case.recursive_state_root_matches,
+        };
+        let actual_rejection = evaluate_native_candidate_artifact_binding_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native candidate artifact binding validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native candidate artifact binding rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn block_artifact_binding_rejects_tx_leaf_action_mismatches_in_order() {
+        let valid = NativeTxLeafActionBindingAdmissionInput {
+            nullifiers_match: true,
+            commitments_match: true,
+            ciphertext_hashes_match: true,
+            version_matches: true,
+            ciphertext_payload_hashes_match: true,
+        };
+        assert!(evaluate_native_tx_leaf_action_binding_admission(valid).is_ok());
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    nullifiers_match: false,
+                    commitments_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("nullifier mismatch must reject")
+            .label(),
+            "nullifiers_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    version_matches: false,
+                    ciphertext_payload_hashes_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("version mismatch must reject before payload hashes")
+            .label(),
+            "version_mismatch"
+        );
+    }
+
+    #[test]
+    fn block_artifact_binding_rejects_candidate_artifact_mismatches_in_order() {
+        let valid = NativeCandidateArtifactBindingAdmissionInput {
+            da_root_matches: true,
+            tx_statements_commitment_matches: true,
+            recursive_state_root_matches: true,
+        };
+        assert!(evaluate_native_candidate_artifact_binding_admission(valid).is_ok());
+        assert_eq!(
+            evaluate_native_candidate_artifact_binding_admission(
+                NativeCandidateArtifactBindingAdmissionInput {
+                    da_root_matches: false,
+                    tx_statements_commitment_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("DA root mismatch must reject first")
+            .label(),
+            "da_root_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_candidate_artifact_binding_admission(
+                NativeCandidateArtifactBindingAdmissionInput {
+                    tx_statements_commitment_matches: false,
+                    recursive_state_root_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("statement mismatch must reject before state root")
+            .label(),
+            "tx_statement_commitment_mismatch"
         );
     }
 

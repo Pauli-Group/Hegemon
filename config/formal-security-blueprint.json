@@ -1860,6 +1860,69 @@
       "scope_boundary": "This node proves and vector-checks native transfer/candidate-artifact coupling only. It does not prove SCALE decoder correctness, action-route validation, candidate-artifact shape validation, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, mining candidate-selection fairness, or complete native-node equivalence."
     },
     {
+      "id": "native.block-artifact-binding-admission",
+      "claim_id": "native.block-artifact-binding-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, version, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions` and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers now called by native block artifact verification.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
+        "native.candidate-artifact-admission",
+        "native.candidate-artifact-coupling-admission",
+        "formal.native-tx-leaf-artifact-wire",
+        "consensus.da-root-byte-binding",
+        "consensus.recursive-semantic-inputs",
+        "consensus.block-tree-transition",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockArtifactBindingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockArtifactBindingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-07",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for deterministic block-artifact/action equality gates. Scope is binding admission after decoding and computed production predicates, not recursive proof cryptographic soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-artifact-binding-theorem",
+          "description": "Removing or weakening the block-artifact binding theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-block-artifact-binding-conformance",
+          "description": "Changing production block-artifact binding admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_artifact_binding_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-block-artifact-binding-regressions",
+          "description": "Focused native tests must reject tx-leaf/action binding mismatches and candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches in the specified order.",
+          "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-block-artifact-binding-gate",
+          "description": "The release formal-core wrapper must generate block-artifact binding vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates only. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",

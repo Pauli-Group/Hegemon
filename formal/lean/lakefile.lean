@@ -94,6 +94,9 @@ lean_exe gen_transfer_action_payload_admission_vectors where
 lean_exe gen_transfer_state_admission_vectors where
   root := `Hegemon.Native.GenerateTransferStateAdmissionVectors
 
+lean_exe gen_block_artifact_binding_admission_vectors where
+  root := `Hegemon.Native.GenerateBlockArtifactBindingAdmissionVectors
+
 lean_exe gen_block_commitment_admission_vectors where
   root := `Hegemon.Native.GenerateBlockCommitmentAdmissionVectors
 

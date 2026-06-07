@@ -983,6 +983,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-artifact-binding-admission",
+      "component": "native block artifact binding admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block-artifact binding kernel proves the executable native equality gates that bind decoded tx-leaf public fields to shielded transfer action metadata, bind ciphertext payload hashes to action ciphertext hashes, and bind recursive candidate artifacts to the computed DA root, tx statement commitment, and verified recursive state root; generated Lean vectors are checked against the production helpers used by native block artifact verification.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats decoded tx-leaf public fields, computed ciphertext hashes, computed DA roots, computed tx statement commitments, and verified recursive state roots as production-derived predicates. The hash functions and recursive verifier are covered by separate claims and residual assumptions.",
+        "Generated Lean conformance vectors cover valid tx-leaf/action binding, nullifier/commitment/ciphertext-hash/version/ciphertext-payload-hash mismatches, candidate DA-root mismatch, tx-statement commitment mismatch, recursive state-root mismatch, and rejection precedence.",
+        "The theorem covers only deterministic equality-gate admission after candidate-artifact coupling and tx-leaf decoding. It does not prove recursive proof cryptographic soundness, native tx-leaf proof soundness, DA-root hash security/equivalence, statement-commitment hash security/equivalence, ciphertext hash security/equivalence, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockArtifactBindingAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_artifact_binding_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-action-ordering",
       "component": "native shielded block action ordering",
       "claim_class": "lean_theorem",
