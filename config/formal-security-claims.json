@@ -869,6 +869,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.resource-budget-admission",
+      "component": "native mempool and sidecar resource-budget admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native resource-budget admission kernel proves the executable saturated byte-budget predicates for pending-action mempool admission and staged proof replacement; generated Lean vectors are checked against the production native helpers used by action staging and da_submitProofs.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents Rust usize saturating_add and saturating_sub behavior for already-computed encoded action bytes and staged proof byte totals.",
+        "Generated Lean conformance vectors cover empty and exact-limit mempool acceptance, mempool over-limit rejection, saturated mempool totals, staged proof exact-limit acceptance, staged proof over-limit rejection, replacement subtracting the existing proof bytes, existing-byte overcount saturation, and saturated staged-proof totals.",
+        "The theorem covers executable byte-budget admission only. It does not prove RPC authentication, public exposure safety for unsafe methods, sled durability, proof byte parsing, native tx-leaf proof soundness, DA sidecar availability, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ResourceBudgetAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_resource_budget_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node byte_budget --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.candidate-artifact-admission",
       "component": "native candidate artifact admission",
       "claim_class": "lean_theorem",

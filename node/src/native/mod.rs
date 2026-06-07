@@ -690,6 +690,37 @@ impl NativeBlockCommitmentAdmissionRejection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMempoolByteBudgetAdmissionInput {
+    pending_bytes: usize,
+    candidate_bytes: usize,
+    max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeStagedProofByteBudgetAdmissionInput {
+    staged_bytes: usize,
+    existing_bytes: usize,
+    proof_bytes: usize,
+    max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeResourceBudgetAdmissionRejection {
+    MempoolByteBudgetExceeded,
+    StagedProofByteBudgetExceeded,
+}
+
+impl NativeResourceBudgetAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::MempoolByteBudgetExceeded => "mempool_byte_budget_exceeded",
+            Self::StagedProofByteBudgetExceeded => "staged_proof_byte_budget_exceeded",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct SubmitActionRpcRequest {
     binding_circuit: u16,
@@ -3820,16 +3851,19 @@ fn validate_mempool_byte_budget(
     candidate: &PendingAction,
     max_bytes: usize,
 ) -> Result<()> {
-    let pending_bytes = pending_mempool_bytes(actions);
-    let action_bytes = pending_action_mempool_bytes(candidate);
-    if pending_bytes.saturating_add(action_bytes) > max_bytes {
-        return Err(anyhow!(
-            "native mempool byte budget exceeded: {} + {} > {}",
-            pending_bytes,
-            action_bytes,
-            max_bytes
-        ));
-    }
+    let input = NativeMempoolByteBudgetAdmissionInput {
+        pending_bytes: pending_mempool_bytes(actions),
+        candidate_bytes: pending_action_mempool_bytes(candidate),
+        max_bytes,
+    };
+    evaluate_native_mempool_byte_budget_admission(input).map_err(|rejection| {
+        native_resource_budget_admission_error(
+            input.pending_bytes,
+            input.candidate_bytes,
+            input.max_bytes,
+            rejection,
+        )
+    })?;
     Ok(())
 }
 
@@ -3845,21 +3879,71 @@ fn validate_staged_proof_byte_budget(
     proof_len: usize,
     max_bytes: usize,
 ) -> Result<()> {
-    let existing_len = staged
-        .get(binding_hash_key)
-        .map(Vec::len)
-        .unwrap_or_default();
-    let total = staged_proof_bytes(staged)
-        .saturating_sub(existing_len)
-        .saturating_add(proof_len);
-    if total > max_bytes {
-        return Err(anyhow!(
-            "staged proof byte budget exceeded: {} > {}",
-            total,
-            max_bytes
-        ));
-    }
+    let input = NativeStagedProofByteBudgetAdmissionInput {
+        staged_bytes: staged_proof_bytes(staged),
+        existing_bytes: staged
+            .get(binding_hash_key)
+            .map(Vec::len)
+            .unwrap_or_default(),
+        proof_bytes: proof_len,
+        max_bytes,
+    };
+    evaluate_native_staged_proof_byte_budget_admission(input).map_err(|rejection| {
+        native_resource_budget_admission_error(
+            input.staged_bytes.saturating_sub(input.existing_bytes),
+            input.proof_bytes,
+            input.max_bytes,
+            rejection,
+        )
+    })?;
     Ok(())
+}
+
+fn evaluate_native_mempool_byte_budget_admission(
+    input: NativeMempoolByteBudgetAdmissionInput,
+) -> Result<usize, NativeResourceBudgetAdmissionRejection> {
+    let total = input.pending_bytes.saturating_add(input.candidate_bytes);
+    if total > input.max_bytes {
+        Err(NativeResourceBudgetAdmissionRejection::MempoolByteBudgetExceeded)
+    } else {
+        Ok(total)
+    }
+}
+
+fn evaluate_native_staged_proof_byte_budget_admission(
+    input: NativeStagedProofByteBudgetAdmissionInput,
+) -> Result<usize, NativeResourceBudgetAdmissionRejection> {
+    let total = input
+        .staged_bytes
+        .saturating_sub(input.existing_bytes)
+        .saturating_add(input.proof_bytes);
+    if total > input.max_bytes {
+        Err(NativeResourceBudgetAdmissionRejection::StagedProofByteBudgetExceeded)
+    } else {
+        Ok(total)
+    }
+}
+
+fn native_resource_budget_admission_error(
+    current_bytes: usize,
+    candidate_bytes: usize,
+    max_bytes: usize,
+    rejection: NativeResourceBudgetAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeResourceBudgetAdmissionRejection::MempoolByteBudgetExceeded => anyhow!(
+            "native mempool byte budget exceeded: {} + {} > {}",
+            current_bytes,
+            candidate_bytes,
+            max_bytes
+        ),
+        NativeResourceBudgetAdmissionRejection::StagedProofByteBudgetExceeded => anyhow!(
+            "staged proof byte budget exceeded: {} + {} > {}",
+            current_bytes,
+            candidate_bytes,
+            max_bytes
+        ),
+    }
 }
 
 fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
@@ -6168,6 +6252,39 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanResourceBudgetAdmissionVectorFile {
+        schema_version: u32,
+        mempool_budget_cases: Vec<LeanMempoolBudgetCase>,
+        staged_proof_budget_cases: Vec<LeanStagedProofBudgetCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMempoolBudgetCase {
+        name: String,
+        pending_bytes: usize,
+        candidate_bytes: usize,
+        max_bytes: usize,
+        expected_total_bytes: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStagedProofBudgetCase {
+        name: String,
+        staged_bytes: usize,
+        existing_bytes: usize,
+        proof_bytes: usize,
+        max_bytes: usize,
+        expected_total_bytes: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -7425,6 +7542,97 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native coinbase action payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_resource_budget_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean resource budget admission vectors");
+        let vectors: LeanResourceBudgetAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean resource budget admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.mempool_budget_cases.is_empty(),
+            "Lean mempool budget admission cases must not be empty"
+        );
+        assert!(
+            !vectors.staged_proof_budget_cases.is_empty(),
+            "Lean staged proof budget admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.mempool_budget_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mempool_budget_case(case);
+        }
+        for case in &vectors.staged_proof_budget_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_staged_proof_budget_case(case);
+        }
+    }
+
+    fn verify_lean_mempool_budget_case(case: &LeanMempoolBudgetCase) {
+        let input = NativeMempoolByteBudgetAdmissionInput {
+            pending_bytes: case.pending_bytes,
+            candidate_bytes: case.candidate_bytes,
+            max_bytes: case.max_bytes,
+        };
+        let total = case.pending_bytes.saturating_add(case.candidate_bytes);
+        assert_eq!(
+            total, case.expected_total_bytes,
+            "{} native mempool saturated total drifted from Lean spec",
+            case.name
+        );
+        let actual = evaluate_native_mempool_byte_budget_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native mempool budget admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native mempool budget admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_staged_proof_budget_case(case: &LeanStagedProofBudgetCase) {
+        let input = NativeStagedProofByteBudgetAdmissionInput {
+            staged_bytes: case.staged_bytes,
+            existing_bytes: case.existing_bytes,
+            proof_bytes: case.proof_bytes,
+            max_bytes: case.max_bytes,
+        };
+        let total = case
+            .staged_bytes
+            .saturating_sub(case.existing_bytes)
+            .saturating_add(case.proof_bytes);
+        assert_eq!(
+            total, case.expected_total_bytes,
+            "{} native staged-proof saturated total drifted from Lean spec",
+            case.name
+        );
+        let actual = evaluate_native_staged_proof_byte_budget_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native staged-proof budget admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native staged-proof budget admission rejection drifted from Lean spec",
             case.name
         );
     }

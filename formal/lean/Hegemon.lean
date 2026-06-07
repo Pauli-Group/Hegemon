@@ -33,6 +33,7 @@ import Hegemon.Native.CandidateArtifactCouplingAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.ReceiptRoot
+import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Shielded.Nullifier
