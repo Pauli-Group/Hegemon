@@ -300,35 +300,85 @@ impl PqHandshake {
     // Helper methods to compute signing data
 
     fn compute_init_hello_signing_data(&self, msg: &InitHelloMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"init-hello");
-        hasher.update([msg.version]);
-        hasher.update(&msg.mlkem_public_key);
-        hasher.update(&msg.identity_key);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.finalize().to_vec()
+        init_hello_signing_data(msg)
     }
 
     fn compute_resp_hello_signing_data(&self, msg: &RespHelloMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"resp-hello");
-        hasher.update([msg.version]);
-        hasher.update(&msg.mlkem_public_key);
-        hasher.update(&msg.mlkem_ciphertext);
-        hasher.update(&msg.identity_key);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(self.transcript.hash());
-        hasher.finalize().to_vec()
+        let transcript_hash = self.transcript.hash();
+        resp_hello_signing_data(msg, &transcript_hash)
     }
 
     fn compute_finish_signing_data(&self, msg: &FinishMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"finish");
-        hasher.update(&msg.mlkem_ciphertext);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(self.transcript.hash());
-        hasher.finalize().to_vec()
+        let transcript_hash = self.transcript.hash();
+        finish_signing_data(msg, &transcript_hash)
     }
+}
+
+pub(crate) fn init_hello_signing_preimage(msg: &InitHelloMessage) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"init-hello".len() + 1 + msg.mlkem_public_key.len() + msg.identity_key.len() + 8,
+    );
+    preimage.extend_from_slice(b"init-hello");
+    preimage.push(msg.version);
+    preimage.extend_from_slice(&msg.mlkem_public_key);
+    preimage.extend_from_slice(&msg.identity_key);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage
+}
+
+pub(crate) fn resp_hello_signing_preimage(
+    msg: &RespHelloMessage,
+    transcript_hash: &[u8; 32],
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"resp-hello".len()
+            + 1
+            + msg.mlkem_public_key.len()
+            + msg.mlkem_ciphertext.len()
+            + msg.identity_key.len()
+            + 8
+            + transcript_hash.len(),
+    );
+    preimage.extend_from_slice(b"resp-hello");
+    preimage.push(msg.version);
+    preimage.extend_from_slice(&msg.mlkem_public_key);
+    preimage.extend_from_slice(&msg.mlkem_ciphertext);
+    preimage.extend_from_slice(&msg.identity_key);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage.extend_from_slice(transcript_hash);
+    preimage
+}
+
+pub(crate) fn finish_signing_preimage(msg: &FinishMessage, transcript_hash: &[u8; 32]) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"finish".len() + msg.mlkem_ciphertext.len() + 8 + transcript_hash.len(),
+    );
+    preimage.extend_from_slice(b"finish");
+    preimage.extend_from_slice(&msg.mlkem_ciphertext);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage.extend_from_slice(transcript_hash);
+    preimage
+}
+
+pub(crate) fn signing_digest(preimage: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(preimage);
+    hasher.finalize().to_vec()
+}
+
+pub(crate) fn init_hello_signing_data(msg: &InitHelloMessage) -> Vec<u8> {
+    signing_digest(&init_hello_signing_preimage(msg))
+}
+
+pub(crate) fn resp_hello_signing_data(
+    msg: &RespHelloMessage,
+    transcript_hash: &[u8; 32],
+) -> Vec<u8> {
+    signing_digest(&resp_hello_signing_preimage(msg, transcript_hash))
+}
+
+pub(crate) fn finish_signing_data(msg: &FinishMessage, transcript_hash: &[u8; 32]) -> Vec<u8> {
+    signing_digest(&finish_signing_preimage(msg, transcript_hash))
 }
 
 fn random_nonce() -> u64 {

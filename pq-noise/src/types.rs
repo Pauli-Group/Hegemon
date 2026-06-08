@@ -94,6 +94,54 @@ pub struct SessionKeys {
     pub session_aad: [u8; 32],
 }
 
+pub(crate) const PQ_NOISE_I2R_INFO: &[u8] = b"hegemon-pq-noise-v1-i2r";
+pub(crate) const PQ_NOISE_R2I_INFO: &[u8] = b"hegemon-pq-noise-v1-r2i";
+pub(crate) const PQ_NOISE_AAD_INFO: &[u8] = b"hegemon-pq-noise-v1-aad";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionKeySlot {
+    InitiatorToResponder,
+    ResponderToInitiator,
+}
+
+pub(crate) fn session_key_material(
+    mlkem_shared_1: &[u8; 32],
+    mlkem_shared_2: &[u8; 32],
+) -> Vec<u8> {
+    let mut combined = Vec::with_capacity(64);
+    combined.extend_from_slice(mlkem_shared_1);
+    combined.extend_from_slice(mlkem_shared_2);
+    combined
+}
+
+pub(crate) fn session_key_expand_info(slot: SessionKeySlot) -> &'static [u8] {
+    match slot {
+        SessionKeySlot::InitiatorToResponder => PQ_NOISE_I2R_INFO,
+        SessionKeySlot::ResponderToInitiator => PQ_NOISE_R2I_INFO,
+    }
+}
+
+pub(crate) fn session_key_slots(is_initiator: bool) -> (SessionKeySlot, SessionKeySlot) {
+    if is_initiator {
+        (
+            SessionKeySlot::InitiatorToResponder,
+            SessionKeySlot::ResponderToInitiator,
+        )
+    } else {
+        (
+            SessionKeySlot::ResponderToInitiator,
+            SessionKeySlot::InitiatorToResponder,
+        )
+    }
+}
+
+pub(crate) fn select_session_key(keys: &SessionKeys, slot: SessionKeySlot) -> [u8; 32] {
+    match slot {
+        SessionKeySlot::InitiatorToResponder => keys.initiator_to_responder,
+        SessionKeySlot::ResponderToInitiator => keys.responder_to_initiator,
+    }
+}
+
 impl SessionKeys {
     /// Create session keys from the combined ML-KEM key material
     pub fn derive(transcript: &[u8], mlkem_shared_1: &[u8; 32], mlkem_shared_2: &[u8; 32]) -> Self {
@@ -101,9 +149,7 @@ impl SessionKeys {
         use sha2::Sha256;
 
         // Combine ML-KEM shared secrets (pure PQ, no classical ECDH)
-        let mut combined = Vec::with_capacity(64);
-        combined.extend_from_slice(mlkem_shared_1);
-        combined.extend_from_slice(mlkem_shared_2);
+        let combined = session_key_material(mlkem_shared_1, mlkem_shared_2);
 
         // Derive keys using HKDF
         let hk = Hkdf::<Sha256>::new(Some(transcript), &combined);
@@ -112,11 +158,17 @@ impl SessionKeys {
         let mut responder_to_initiator = [0u8; 32];
         let mut session_aad = [0u8; 32];
 
-        hk.expand(b"hegemon-pq-noise-v1-i2r", &mut initiator_to_responder)
-            .expect("valid length");
-        hk.expand(b"hegemon-pq-noise-v1-r2i", &mut responder_to_initiator)
-            .expect("valid length");
-        hk.expand(b"hegemon-pq-noise-v1-aad", &mut session_aad)
+        hk.expand(
+            session_key_expand_info(SessionKeySlot::InitiatorToResponder),
+            &mut initiator_to_responder,
+        )
+        .expect("valid length");
+        hk.expand(
+            session_key_expand_info(SessionKeySlot::ResponderToInitiator),
+            &mut responder_to_initiator,
+        )
+        .expect("valid length");
+        hk.expand(PQ_NOISE_AAD_INFO, &mut session_aad)
             .expect("valid length");
 
         Self {

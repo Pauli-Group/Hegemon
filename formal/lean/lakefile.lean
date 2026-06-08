@@ -130,6 +130,9 @@ lean_exe gen_sidecar_upload_admission_vectors where
 lean_exe gen_network_secure_channel_vectors where
   root := `Hegemon.Network.GenerateSecureChannelVectors
 
+lean_exe gen_pq_noise_vectors where
+  root := `Hegemon.Network.GeneratePqNoiseVectors
+
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
 

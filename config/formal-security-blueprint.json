@@ -1854,6 +1854,65 @@
       "scope_boundary": "This node proves and vector-checks legacy network secure-channel KDF preimage labels/order, role-to-directional-key mapping, nonce layout, and counter overflow rejection only. It does not prove SHA-256 implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, full PQ Noise handshake correctness, network liveness, or complete native-node equivalence."
     },
     {
+      "id": "network.pq-noise-key-schedule",
+      "claim_id": "network.pq-noise-key-schedule",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean PQ Noise predicates, the session HKDF salt is the transcript hash, the IKM is shared_secret_1 followed by shared_secret_2, i2r/r2i/aad info labels are distinct, initiator and responder roles choose opposite send/receive key slots, AES-GCM nonces are four zero bytes followed by the big-endian u64 counter, counter overflow rejects before encrypt/decrypt advances, and InitHello, RespHello, and Finish signatures hash the exact domain-separated message fields with transcript hashes included only in RespHello and Finish.",
+      "informal_argument": "The Lean theorems `Hegemon.Network.PqNoise.hkdf_infos_distinct`, `Hegemon.Network.PqNoise.aad_info_distinct_from_i2r`, `Hegemon.Network.PqNoise.aad_info_distinct_from_r2i`, `Hegemon.Network.PqNoise.sample_hkdf_ikm_is_ordered_shared_secrets`, `Hegemon.Network.PqNoise.send_recv_slots_distinct`, `Hegemon.Network.PqNoise.nonce_from_counter_zero`, `Hegemon.Network.PqNoise.nonce_from_counter_max`, `Hegemon.Network.PqNoise.nextCounter_accepts_below_max`, `Hegemon.Network.PqNoise.nextCounter_rejects_u64_max`, `Hegemon.Network.PqNoise.init_hello_preimage_starts_with_domain`, `Hegemon.Network.PqNoise.resp_hello_preimage_starts_with_domain`, `Hegemon.Network.PqNoise.finish_preimage_starts_with_domain`, `Hegemon.Network.PqNoise.sample_resp_preimage_binds_transcript_hash`, and `Hegemon.Network.PqNoise.sample_finish_preimage_binds_transcript_hash` prove the executable control logic. `gen_pq_noise_vectors` emits Lean-derived HKDF-input, role, nonce, and signing-preimage examples, and the formal-core gate checks them against production helpers used by `SessionKeys`, `NoiseCipher`, and `PqHandshake`.",
+      "depends_on": [
+        "network.secure-channel-key-schedule",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Network/PqNoise.lean",
+        "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
+        "pq-noise/src/types.rs",
+        "pq-noise/src/noise.rs",
+        "pq-noise/src/handshake.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Network/PqNoise.lean",
+        "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
+        "pq-noise/src/types.rs",
+        "pq-noise/src/noise.rs",
+        "pq-noise/src/handshake.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-08",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for PQ Noise HKDF labels/input ordering, role mapping, nonce layout, counter-overflow gate, and handshake signing preimage grammar. Scope is byte/control logic, not primitive cryptographic security or OS RNG quality."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-pq-noise-theorem",
+          "description": "Removing or weakening the PQ Noise HKDF, role, nonce, or signing-preimage theorems or companion examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-pq-noise-conformance",
+          "description": "Changing production PQ Noise HKDF label text, shared-secret ordering, role-to-key mapping, nonce bytes, counter overflow behavior, or signing preimage field order away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "pq-noise-kem-entropy-regression",
+          "description": "Focused PQ Noise tests must keep ML-KEM response and finish ciphertexts from being reproducible from public transcript-derived seeds.",
+          "gate": "cargo test -p pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture"
+        },
+        {
+          "id": "formal-core-pq-noise-gate",
+          "description": "The release formal-core wrapper must generate PQ Noise vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks PQ Noise session HKDF input labels/order, role-to-directional-key mapping, nonce layout, counter overflow rejection, and handshake signing preimage grammar only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",

@@ -985,6 +985,36 @@
       "residual_risks": []
     },
     {
+      "id": "network.pq-noise-key-schedule",
+      "component": "PQ Noise handshake and session channel",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, and InitHello/RespHello/Finish signing preimage grammar; generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
+        "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, and InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement.",
+        "The theorem covers executable PQ Noise key-schedule, nonce admission, and signing transcript grammar only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Network/PqNoise.lean",
+        "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
+        "pq-noise/src/types.rs",
+        "pq-noise/src/noise.rs",
+        "pq-noise/src/handshake.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture",
+        "cargo test -p pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",

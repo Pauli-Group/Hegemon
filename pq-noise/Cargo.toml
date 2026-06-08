@@ -40,6 +40,7 @@ tracing = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "net"] }
 proptest = "1"
 hex = "0.4"
+serde_json = "1"
 
 [features]
 default = ["std"]

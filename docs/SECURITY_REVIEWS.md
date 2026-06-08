@@ -272,10 +272,10 @@ Keep the log chronological; when closing a finding, link the merge commit and up
     "description": "ML-KEM encapsulation seeds were derived from public transcript hashes, letting a passive observer reproduce encapsulation randomness.",
     "severity": "critical",
     "status": "patched",
-    "evidence": "pq-noise/src/handshake.rs::handshake_does_not_use_public_transcript_as_kem_seed",
-    "remediation": "Encapsulation seeds now come from OsRng; transcript bytes remain public context for signatures and key derivation only.",
-    "design_notes": "DESIGN.md and METHODS.md document secret OS randomness for protocol KEM callers.",
-    "tests": ["cargo test -p pq-noise"]
+    "evidence": "pq-noise/src/handshake.rs::handshake_does_not_use_public_transcript_as_kem_seed and formal/lean/Hegemon/Network/PqNoise.lean",
+    "remediation": "Encapsulation seeds now come from OsRng; transcript bytes remain public context for signatures and key derivation only. PQ Noise HKDF labels/input ordering, role mapping, nonce layout, and signing preimage grammar are now Lean-conformance-gated.",
+    "design_notes": "DESIGN.md and METHODS.md document secret OS randomness for protocol KEM callers and the PQ Noise Lean conformance boundary.",
+    "tests": ["cargo test -p pq-noise", "bash scripts/check_formal_core.sh"]
   },
   {
     "id": "SEC-2026-0006",

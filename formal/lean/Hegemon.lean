@@ -42,6 +42,7 @@ import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission
 import Hegemon.Native.TxLeafArtifact
+import Hegemon.Network.PqNoise
 import Hegemon.Network.SecureChannel
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance
