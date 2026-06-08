@@ -1913,6 +1913,62 @@
       "scope_boundary": "This node proves and vector-checks PQ Noise session HKDF input labels/order, role-to-directional-key mapping, nonce layout, counter overflow rejection, and handshake signing preimage grammar only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
     },
     {
+      "id": "native.sync-admission",
+      "claim_id": "native.sync-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native sync admission predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap`, `Hegemon.Native.SyncAdmission.missing_request_none_when_announced_not_ahead`, `Hegemon.Native.SyncAdmission.missing_request_none_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.missing_request_some_when_announced_ahead`, and `Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit` prove the executable native sync range and count-admission behavior. `gen_sync_admission_vectors` emits Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, and over-limit examples, and the formal-core gate checks them against production helpers used by `NativeNode::block_range`, `request_missing_blocks`, and inbound `NativeSyncMessage::Response` handling.",
+      "depends_on": [
+        "native.codec-admission",
+        "network.pq-noise-key-schedule",
+        "consensus.pow-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-08",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection. Scope is semantic sync admission after decode, not full block validity or network liveness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-sync-admission-theorem",
+          "description": "Removing or weakening the native sync admission theorems or concrete examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-sync-admission-conformance",
+          "description": "Changing production native sync response-range, missing-request, zero-cap, saturating, or response-count behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-sync-admission-regressions",
+          "description": "Focused native tests must reject oversized inbound sync responses and keep zero-cap range/request helpers fail-closed.",
+          "gate": "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture && cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-sync-admission-gate",
+          "description": "The release formal-core wrapper must generate native sync admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native sync semantic admission after bounded message decode. It does not prove SCALE codec correctness, PQ Noise transport security, PoW/header validity, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",

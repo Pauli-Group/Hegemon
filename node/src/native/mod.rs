@@ -82,6 +82,7 @@ const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
@@ -312,6 +313,46 @@ struct PendingAction {
     fee: u64,
     candidate_artifact: Option<CandidateArtifact>,
     received_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncRange {
+    from_height: u64,
+    to_height: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncResponseRangeInput {
+    from_height: u64,
+    to_height: u64,
+    best_height: u64,
+    max_blocks: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncMissingRequestInput {
+    best_height: u64,
+    announced_height: u64,
+    max_blocks: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncResponseCountAdmissionInput {
+    block_count: usize,
+    max_blocks: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSyncAdmissionRejection {
+    ResponseBlockCountTooLarge,
+}
+
+impl NativeSyncAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ResponseBlockCountTooLarge => "response_block_count_too_large",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1329,14 +1370,16 @@ impl NativeNode {
 
     fn block_range(&self, from_height: u64, to_height: u64) -> Result<Vec<NativeBlockMeta>> {
         let best_height = self.best_meta().height;
-        let capped_to = to_height
-            .min(best_height)
-            .min(from_height.saturating_add(MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1));
-        if from_height > capped_to {
+        let Some(range) = native_sync_response_range(NativeSyncResponseRangeInput {
+            from_height,
+            to_height,
+            best_height,
+            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        }) else {
             return Ok(Vec::new());
-        }
+        };
         let mut blocks = Vec::new();
-        for height in from_height..=capped_to {
+        for height in range.from_height..=range.to_height {
             let Some(hash) = self.hash_by_height(height)? else {
                 break;
             };
@@ -2452,6 +2495,20 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 best_height,
                 mut blocks,
             } => {
+                if let Err(rejection) = evaluate_native_sync_response_count_admission(
+                    NativeSyncResponseCountAdmissionInput {
+                        block_count: blocks.len(),
+                        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+                    },
+                ) {
+                    warn!(
+                        block_count = blocks.len(),
+                        max_blocks = MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+                        rejection = rejection.label(),
+                        "rejecting oversized native sync response"
+                    );
+                    continue;
+                }
                 blocks.sort_by_key(|meta| meta.height);
                 let had_blocks = !blocks.is_empty();
                 let mut imported = 0u64;
@@ -2495,21 +2552,19 @@ async fn request_missing_blocks(
     announced_height: u64,
 ) {
     let best_height = node.best_meta().height;
-    if announced_height <= best_height {
+    let Some(range) = native_sync_missing_request_range(NativeSyncMissingRequestInput {
+        best_height,
+        announced_height,
+        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+    }) else {
         return;
-    }
-    let from_height = best_height.saturating_add(1);
-    let to_height = announced_height.min(
-        best_height
-            .saturating_add(MAX_NATIVE_SYNC_RESPONSE_BLOCKS)
-            .max(from_height),
-    );
+    };
     send_sync_message(
         handle,
         peer_id,
         NativeSyncMessage::Request {
-            from_height,
-            to_height,
+            from_height: range.from_height,
+            to_height: range.to_height,
         },
     )
     .await;
@@ -4292,6 +4347,47 @@ fn native_resource_budget_admission_error(
             candidate_bytes,
             max_bytes
         ),
+    }
+}
+
+fn native_sync_response_range(input: NativeSyncResponseRangeInput) -> Option<NativeSyncRange> {
+    if input.max_blocks == 0 {
+        return None;
+    }
+    let capped_to = input
+        .to_height
+        .min(input.best_height)
+        .min(input.from_height.saturating_add(input.max_blocks - 1));
+    (input.from_height <= capped_to).then_some(NativeSyncRange {
+        from_height: input.from_height,
+        to_height: capped_to,
+    })
+}
+
+fn native_sync_missing_request_range(
+    input: NativeSyncMissingRequestInput,
+) -> Option<NativeSyncRange> {
+    if input.max_blocks == 0 || input.announced_height <= input.best_height {
+        return None;
+    }
+    let from_height = input.best_height.saturating_add(1);
+    let cap_end = input
+        .best_height
+        .saturating_add(input.max_blocks)
+        .max(from_height);
+    Some(NativeSyncRange {
+        from_height,
+        to_height: input.announced_height.min(cap_end),
+    })
+}
+
+fn evaluate_native_sync_response_count_admission(
+    input: NativeSyncResponseCountAdmissionInput,
+) -> Result<(), NativeSyncAdmissionRejection> {
+    if input.block_count > input.max_blocks {
+        Err(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
+    } else {
+        Ok(())
     }
 }
 
@@ -7043,6 +7139,49 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncAdmissionVectorFile {
+        schema_version: u32,
+        sync_response_range_cases: Vec<LeanSyncResponseRangeCase>,
+        sync_missing_request_cases: Vec<LeanSyncMissingRequestCase>,
+        sync_response_count_cases: Vec<LeanSyncResponseCountCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncResponseRangeCase {
+        name: String,
+        from_height: u64,
+        to_height: u64,
+        best_height: u64,
+        max_blocks: u64,
+        expected_has_range: bool,
+        expected_from_height: Option<u64>,
+        expected_to_height: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncMissingRequestCase {
+        name: String,
+        best_height: u64,
+        announced_height: u64,
+        max_blocks: u64,
+        expected_has_request: bool,
+        expected_from_height: Option<u64>,
+        expected_to_height: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncResponseCountCase {
+        name: String,
+        block_count: usize,
+        max_blocks: usize,
+        expected_valid: bool,
+    }
+
     #[test]
     fn native_genesis_is_stable() {
         let a = genesis_meta(NATIVE_DEV_POW_BITS).expect("genesis");
@@ -9471,6 +9610,154 @@ mod tests {
             actual_rejection, case.expected_rejection,
             "{} native proof sidecar decoded rejection drifted from Lean spec",
             case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_sync_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SYNC_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean sync admission vectors");
+        let vectors: LeanSyncAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean sync admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sync_response_range_cases.is_empty(),
+            "Lean sync response-range cases must not be empty"
+        );
+        assert!(
+            !vectors.sync_missing_request_cases.is_empty(),
+            "Lean sync missing-request cases must not be empty"
+        );
+        assert!(
+            !vectors.sync_response_count_cases.is_empty(),
+            "Lean sync response-count cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sync_response_range_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_response_range_case(case);
+        }
+        for case in &vectors.sync_missing_request_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_missing_request_case(case);
+        }
+        for case in &vectors.sync_response_count_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_response_count_case(case);
+        }
+    }
+
+    fn verify_lean_sync_response_range_case(case: &LeanSyncResponseRangeCase) {
+        let actual = native_sync_response_range(NativeSyncResponseRangeInput {
+            from_height: case.from_height,
+            to_height: case.to_height,
+            best_height: case.best_height,
+            max_blocks: case.max_blocks,
+        });
+        assert_eq!(
+            actual.is_some(),
+            case.expected_has_range,
+            "{} native sync response-range validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.map(|range| range.from_height),
+            case.expected_from_height,
+            "{} native sync response-range start drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.map(|range| range.to_height),
+            case.expected_to_height,
+            "{} native sync response-range end drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_sync_missing_request_case(case: &LeanSyncMissingRequestCase) {
+        let actual = native_sync_missing_request_range(NativeSyncMissingRequestInput {
+            best_height: case.best_height,
+            announced_height: case.announced_height,
+            max_blocks: case.max_blocks,
+        });
+        assert_eq!(
+            actual.is_some(),
+            case.expected_has_request,
+            "{} native sync missing-request validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.map(|range| range.from_height),
+            case.expected_from_height,
+            "{} native sync missing-request start drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.map(|range| range.to_height),
+            case.expected_to_height,
+            "{} native sync missing-request end drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_sync_response_count_case(case: &LeanSyncResponseCountCase) {
+        let actual =
+            evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
+                block_count: case.block_count,
+                max_blocks: case.max_blocks,
+            });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native sync response-count validity drifted from Lean spec",
+            case.name
+        );
+        if !case.expected_valid {
+            assert_eq!(
+                actual.err(),
+                Some(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge),
+                "{} native sync response-count rejection drifted from expected cap rejection",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn native_sync_admission_rejects_oversized_responses() {
+        assert_eq!(
+            evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
+                block_count: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1,
+                max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+            },),
+            Err(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
+        );
+    }
+
+    #[test]
+    fn native_sync_ranges_fail_closed_when_cap_zero() {
+        assert_eq!(
+            native_sync_response_range(NativeSyncResponseRangeInput {
+                from_height: 1,
+                to_height: 1,
+                best_height: 1,
+                max_blocks: 0,
+            }),
+            None
+        );
+        assert_eq!(
+            native_sync_missing_request_range(NativeSyncMissingRequestInput {
+                best_height: 1,
+                announced_height: 2,
+                max_blocks: 0,
+            }),
+            None
         );
     }
 

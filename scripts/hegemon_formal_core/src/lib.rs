@@ -368,6 +368,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateRpcAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
         "formal/lean/Hegemon/Network/PqNoise.lean",

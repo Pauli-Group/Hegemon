@@ -39,6 +39,7 @@ import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
+import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission
 import Hegemon.Native.TxLeafArtifact
