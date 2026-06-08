@@ -348,6 +348,12 @@ enum ChannelRole {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChannelKeySlot {
+    InitiatorToResponder,
+    ResponderToInitiator,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SessionMaterial {
     initiator_to_responder: [u8; 32],
     responder_to_initiator: [u8; 32],
@@ -356,16 +362,9 @@ struct SessionMaterial {
 
 impl SecureChannel {
     fn new(material: SessionMaterial, role: ChannelRole) -> Result<Self, NetworkError> {
-        let (send_key, recv_key) = match role {
-            ChannelRole::Initiator => (
-                material.initiator_to_responder,
-                material.responder_to_initiator,
-            ),
-            ChannelRole::Responder => (
-                material.responder_to_initiator,
-                material.initiator_to_responder,
-            ),
-        };
+        let (send_slot, recv_slot) = channel_key_slots(role);
+        let send_key = material_key(&material, send_slot);
+        let recv_key = material_key(&material, recv_slot);
         let send_cipher =
             Aes256Gcm::new_from_slice(&send_key).map_err(|_| NetworkError::Encryption)?;
         let recv_cipher =
@@ -380,11 +379,9 @@ impl SecureChannel {
     }
 
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, NetworkError> {
-        let nonce_bytes = nonce_from_u64(self.send_nonce);
-        self.send_nonce = self
-            .send_nonce
-            .checked_add(1)
-            .ok_or(NetworkError::Encryption)?;
+        let (nonce_bytes, next_nonce) =
+            nonce_step(self.send_nonce).ok_or(NetworkError::Encryption)?;
+        self.send_nonce = next_nonce;
         let nonce = Nonce::from_slice(&nonce_bytes);
         self.send_cipher
             .encrypt(
@@ -398,11 +395,9 @@ impl SecureChannel {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, NetworkError> {
-        let nonce_bytes = nonce_from_u64(self.recv_nonce);
-        self.recv_nonce = self
-            .recv_nonce
-            .checked_add(1)
-            .ok_or(NetworkError::Encryption)?;
+        let (nonce_bytes, next_nonce) =
+            nonce_step(self.recv_nonce).ok_or(NetworkError::Encryption)?;
+        self.recv_nonce = next_nonce;
         let nonce = Nonce::from_slice(&nonce_bytes);
         self.recv_cipher
             .decrypt(
@@ -413,6 +408,26 @@ impl SecureChannel {
                 },
             )
             .map_err(|_| NetworkError::Encryption)
+    }
+}
+
+fn channel_key_slots(role: ChannelRole) -> (ChannelKeySlot, ChannelKeySlot) {
+    match role {
+        ChannelRole::Initiator => (
+            ChannelKeySlot::InitiatorToResponder,
+            ChannelKeySlot::ResponderToInitiator,
+        ),
+        ChannelRole::Responder => (
+            ChannelKeySlot::ResponderToInitiator,
+            ChannelKeySlot::InitiatorToResponder,
+        ),
+    }
+}
+
+fn material_key(material: &SessionMaterial, slot: ChannelKeySlot) -> [u8; 32] {
+    match slot {
+        ChannelKeySlot::InitiatorToResponder => material.initiator_to_responder,
+        ChannelKeySlot::ResponderToInitiator => material.responder_to_initiator,
     }
 }
 
@@ -500,22 +515,264 @@ fn derive_session_key(
     secret_a: &[u8],
     secret_b: &[u8],
 ) -> [u8; 32] {
+    let preimage = session_key_preimage(label, offer, acceptance, confirmation, secret_a, secret_b);
     let mut hasher = Sha256::new();
-    hasher.update(b"hegemon-network-secure-channel-v2");
-    hasher.update(label);
-    hasher.update(offer);
-    hasher.update(acceptance);
-    hasher.update(confirmation);
-    hasher.update(secret_a);
-    hasher.update(secret_b);
+    hasher.update(&preimage);
     let digest = hasher.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
 }
 
+fn session_key_preimage(
+    label: &[u8],
+    offer: &[u8],
+    acceptance: &[u8],
+    confirmation: &[u8],
+    secret_a: &[u8],
+    secret_b: &[u8],
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"hegemon-network-secure-channel-v2".len()
+            + label.len()
+            + offer.len()
+            + acceptance.len()
+            + confirmation.len()
+            + secret_a.len()
+            + secret_b.len(),
+    );
+    preimage.extend_from_slice(b"hegemon-network-secure-channel-v2");
+    preimage.extend_from_slice(label);
+    preimage.extend_from_slice(offer);
+    preimage.extend_from_slice(acceptance);
+    preimage.extend_from_slice(confirmation);
+    preimage.extend_from_slice(secret_a);
+    preimage.extend_from_slice(secret_b);
+    preimage
+}
+
 fn nonce_from_u64(counter: u64) -> [u8; 12] {
     let mut out = [0u8; 12];
     out[4..].copy_from_slice(&counter.to_be_bytes());
     out
+}
+
+fn nonce_step(counter: u64) -> Option<([u8; 12], u64)> {
+    let nonce = nonce_from_u64(counter);
+    counter.checked_add(1).map(|next| (nonce, next))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct LeanNetworkSecureChannelVectorFile {
+        schema_version: u32,
+        key_schedule_cases: Vec<LeanKeyScheduleCase>,
+        role_cases: Vec<LeanRoleCase>,
+        nonce_cases: Vec<LeanNonceCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanKeyScheduleCase {
+        name: String,
+        offer_hex: String,
+        acceptance_hex: String,
+        confirmation_hex: String,
+        secret_a_hex: String,
+        secret_b_hex: String,
+        domain_hex: String,
+        i2r_label_hex: String,
+        r2i_label_hex: String,
+        aad_label_hex: String,
+        i2r_preimage_hex: String,
+        r2i_preimage_hex: String,
+        aad_preimage_hex: String,
+        expected_i2r_equals_r2i: bool,
+        expected_i2r_equals_aad: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanRoleCase {
+        role: String,
+        expected_send_slot: String,
+        expected_recv_slot: String,
+        expected_send_recv_distinct: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanNonceCase {
+        name: String,
+        counter: String,
+        expected_nonce_hex: String,
+        expected_valid: bool,
+        expected_next_counter: Option<String>,
+    }
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        let trimmed = value.strip_prefix("0x").unwrap_or(value);
+        hex::decode(trimmed).expect("hex vector")
+    }
+
+    fn role_from_str(value: &str) -> ChannelRole {
+        match value {
+            "initiator" => ChannelRole::Initiator,
+            "responder" => ChannelRole::Responder,
+            other => panic!("unknown role {other}"),
+        }
+    }
+
+    fn slot_name(slot: ChannelKeySlot) -> &'static str {
+        match slot {
+            ChannelKeySlot::InitiatorToResponder => "initiator_to_responder",
+            ChannelKeySlot::ResponderToInitiator => "responder_to_initiator",
+        }
+    }
+
+    #[test]
+    fn lean_generated_secure_channel_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS") else {
+            eprintln!("skipping Lean network secure-channel vectors; env var not set");
+            return;
+        };
+        let contents = std::fs::read_to_string(path).expect("read Lean network vectors");
+        let vectors: LeanNetworkSecureChannelVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean network vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for case in vectors.key_schedule_cases {
+            let offer = decode_hex(&case.offer_hex);
+            let acceptance = decode_hex(&case.acceptance_hex);
+            let confirmation = decode_hex(&case.confirmation_hex);
+            let secret_a = decode_hex(&case.secret_a_hex);
+            let secret_b = decode_hex(&case.secret_b_hex);
+            assert_eq!(
+                decode_hex(&case.domain_hex),
+                b"hegemon-network-secure-channel-v2"
+            );
+            assert_eq!(decode_hex(&case.i2r_label_hex), b"hegemon-network-v2-i2r");
+            assert_eq!(decode_hex(&case.r2i_label_hex), b"hegemon-network-v2-r2i");
+            assert_eq!(decode_hex(&case.aad_label_hex), b"hegemon-network-v2-aad");
+
+            let i2r_preimage = session_key_preimage(
+                b"hegemon-network-v2-i2r",
+                &offer,
+                &acceptance,
+                &confirmation,
+                &secret_a,
+                &secret_b,
+            );
+            let r2i_preimage = session_key_preimage(
+                b"hegemon-network-v2-r2i",
+                &offer,
+                &acceptance,
+                &confirmation,
+                &secret_a,
+                &secret_b,
+            );
+            let aad_preimage = session_key_preimage(
+                b"hegemon-network-v2-aad",
+                &offer,
+                &acceptance,
+                &confirmation,
+                &secret_a,
+                &secret_b,
+            );
+            assert_eq!(
+                i2r_preimage,
+                decode_hex(&case.i2r_preimage_hex),
+                "{} i2r preimage",
+                case.name
+            );
+            assert_eq!(
+                r2i_preimage,
+                decode_hex(&case.r2i_preimage_hex),
+                "{} r2i preimage",
+                case.name
+            );
+            assert_eq!(
+                aad_preimage,
+                decode_hex(&case.aad_preimage_hex),
+                "{} aad preimage",
+                case.name
+            );
+            assert_eq!(i2r_preimage == r2i_preimage, case.expected_i2r_equals_r2i);
+            assert_eq!(i2r_preimage == aad_preimage, case.expected_i2r_equals_aad);
+
+            let material =
+                derive_session_material(&offer, &acceptance, &confirmation, &secret_a, &secret_b);
+            assert_eq!(
+                material.initiator_to_responder,
+                derive_session_key(
+                    b"hegemon-network-v2-i2r",
+                    &offer,
+                    &acceptance,
+                    &confirmation,
+                    &secret_a,
+                    &secret_b,
+                )
+            );
+            assert_eq!(
+                material.responder_to_initiator,
+                derive_session_key(
+                    b"hegemon-network-v2-r2i",
+                    &offer,
+                    &acceptance,
+                    &confirmation,
+                    &secret_a,
+                    &secret_b,
+                )
+            );
+            assert_eq!(
+                material.aad,
+                derive_session_key(
+                    b"hegemon-network-v2-aad",
+                    &offer,
+                    &acceptance,
+                    &confirmation,
+                    &secret_a,
+                    &secret_b,
+                )
+            );
+            assert_ne!(
+                material.initiator_to_responder,
+                material.responder_to_initiator
+            );
+            assert_ne!(material.initiator_to_responder, material.aad);
+        }
+
+        for case in vectors.role_cases {
+            let role = role_from_str(&case.role);
+            let (send_slot, recv_slot) = channel_key_slots(role);
+            assert_eq!(slot_name(send_slot), case.expected_send_slot);
+            assert_eq!(slot_name(recv_slot), case.expected_recv_slot);
+            assert_eq!(send_slot != recv_slot, case.expected_send_recv_distinct);
+        }
+
+        for case in vectors.nonce_cases {
+            let counter = case.counter.parse::<u64>().expect("counter u64");
+            assert_eq!(
+                nonce_from_u64(counter).to_vec(),
+                decode_hex(&case.expected_nonce_hex),
+                "{} nonce",
+                case.name
+            );
+            let step = nonce_step(counter);
+            assert_eq!(
+                step.is_some(),
+                case.expected_valid,
+                "{} validity",
+                case.name
+            );
+            match (step, case.expected_next_counter) {
+                (Some((_, next)), Some(expected)) => {
+                    assert_eq!(next, expected.parse::<u64>().expect("next counter u64"));
+                }
+                (None, None) => {}
+                other => panic!("{} counter mismatch: {other:?}", case.name),
+            }
+        }
+    }
 }

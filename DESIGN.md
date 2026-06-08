@@ -91,7 +91,7 @@ Where they're used:
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
   * PQ network identity seeds are generated from OS entropy, persisted under the node base path (for example `pq-identity.seed`) or provided via environment override, and never derived from public peer IDs.
-  * PQ session establishment uses fresh OS-random KEM encapsulation seeds and transcript nonces for every handshake so reconnects between the same long-term identities cannot reuse AEAD key/nonce pairs. The legacy secure channel derives separate initiator-to-responder and responder-to-initiator AEAD keys, and network/PQ Noise trust-boundary frames use bounded postcard codecs (`HNW1`, `PNH1`, `PNS1`) rather than `bincode`.
+  * PQ session establishment uses fresh OS-random KEM encapsulation seeds and transcript nonces for every handshake so reconnects between the same long-term identities cannot reuse AEAD key/nonce pairs. The legacy secure channel derives separate initiator-to-responder and responder-to-initiator AEAD keys, and its KDF preimage labels, role-to-key mapping, 96-bit nonce layout, and counter overflow behavior are checked against an executable Lean model. Network/PQ Noise trust-boundary frames use bounded postcard codecs (`HNW1`, `PNH1`, `PNS1`) rather than `bincode`.
   * The PQ discovery channel (`/hegemon/discovery/pq/1`) exchanges both dialable addresses (`GetAddrs`/`Addrs`) and bounded connected-peer lists (`GetPeerGraph`/`PeerGraph`) so dashboards can visualize multi-hop peer graphs.
   * Node identity records store optional PQ session keys as protocol metadata; registrations provide PQ bundles through native governance/release tooling when that surface is reintroduced.
 * **User layer**:

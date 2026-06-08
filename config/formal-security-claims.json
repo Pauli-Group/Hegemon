@@ -957,6 +957,34 @@
       "residual_risks": []
     },
     {
+      "id": "network.secure-channel-key-schedule",
+      "component": "legacy network secure channel",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean network secure-channel kernel proves executable KDF domain and directional label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, and u64 counter overflow rejection; generated Lean vectors are checked against the production network helpers used by SecureChannel.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the legacy network SecureChannel KDF preimage grammar and role/nonce control logic, not SHA-256 or AES-GCM cryptographic security.",
+        "Generated Lean conformance vectors cover patterned and alternate handshake byte inputs, exact KDF domain and i2r/r2i/aad labels, distinct directional preimages, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, and max-counter rejection.",
+        "The theorem covers executable secure-channel key-schedule and nonce admission only. It does not prove SHA-256 implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, full PQ Noise handshake correctness, network liveness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Network/SecureChannel.lean",
+        "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
+        "network/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS=<generated-json> cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture",
+        "cargo test -p network --test adversarial -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",
