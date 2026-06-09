@@ -5994,13 +5994,31 @@ fn native_da_params() -> DaParams {
     }
 }
 
-fn actions_extrinsics_root(actions: &[PendingAction]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"hegemon-native-extrinsics-v1");
-    hasher.update(&(actions.len() as u32).to_le_bytes());
-    for action in actions {
-        hasher.update(&action.tx_hash);
+fn action_root_transcript_preimage(action_hashes: &[[u8; 32]]) -> Vec<u8> {
+    let action_count =
+        u32::try_from(action_hashes.len()).expect("native action count exceeds u32::MAX");
+    let hash_bytes = action_hashes
+        .len()
+        .checked_mul(32)
+        .expect("native action-root preimage length overflow");
+    let capacity = b"hegemon-native-extrinsics-v1"
+        .len()
+        .checked_add(4)
+        .and_then(|prefix| prefix.checked_add(hash_bytes))
+        .expect("native action-root preimage length overflow");
+    let mut preimage = Vec::with_capacity(capacity);
+    preimage.extend_from_slice(b"hegemon-native-extrinsics-v1");
+    preimage.extend_from_slice(&action_count.to_le_bytes());
+    for action_hash in action_hashes {
+        preimage.extend_from_slice(action_hash);
     }
+    preimage
+}
+
+fn actions_extrinsics_root(actions: &[PendingAction]) -> [u8; 32] {
+    let action_hashes: Vec<[u8; 32]> = actions.iter().map(|action| action.tx_hash).collect();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&action_root_transcript_preimage(&action_hashes));
     *hasher.finalize().as_bytes()
 }
 
@@ -6772,6 +6790,22 @@ mod tests {
         action_hashes_unique: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionRootTranscriptVectorFile {
+        schema_version: u32,
+        action_root_transcript_cases: Vec<LeanActionRootTranscriptCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionRootTranscriptCase {
+        name: String,
+        action_hashes_hex: Vec<String>,
+        expected_preimage_hex: String,
+        expected_preimage_len: usize,
     }
 
     #[derive(Debug, Deserialize)]
@@ -8213,6 +8247,57 @@ mod tests {
             "{} native action-hash admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_action_root_transcript_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_ROOT_TRANSCRIPT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_ROOT_TRANSCRIPT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action-root transcript vectors");
+        let vectors: LeanActionRootTranscriptVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action-root vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_root_transcript_cases.is_empty(),
+            "Lean action-root transcript cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_root_transcript_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_root_transcript_case(case);
+        }
+    }
+
+    fn verify_lean_action_root_transcript_case(case: &LeanActionRootTranscriptCase) {
+        let action_hashes = case
+            .action_hashes_hex
+            .iter()
+            .map(|raw| parse_hash32(raw).expect("Lean action hash must be 32-byte hex"))
+            .collect::<Vec<_>>();
+        let expected_preimage =
+            decode_lean_hex_bytes(&case.expected_preimage_hex).expect("decode Lean preimage hex");
+        let actual_preimage = action_root_transcript_preimage(&action_hashes);
+        assert_eq!(
+            actual_preimage.len(),
+            case.expected_preimage_len,
+            "{} native action-root preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_preimage, expected_preimage,
+            "{} native action-root preimage bytes drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn decode_lean_hex_bytes(raw: &str) -> Option<Vec<u8>> {
+        hex::decode(raw.strip_prefix("0x").unwrap_or(raw)).ok()
     }
 
     #[test]

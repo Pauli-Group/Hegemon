@@ -85,6 +85,9 @@ lean_exe gen_action_order_vectors where
 lean_exe gen_action_hash_admission_vectors where
   root := `Hegemon.Native.GenerateActionHashAdmissionVectors
 
+lean_exe gen_action_root_transcript_vectors where
+  root := `Hegemon.Native.GenerateActionRootTranscriptVectors
+
 lean_exe gen_action_scope_admission_vectors where
   root := `Hegemon.Native.GenerateActionScopeAdmissionVectors
 

@@ -2376,6 +2376,50 @@
       "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
+      "id": "native.action-root-transcript-binding",
+      "claim_id": "native.action-root-transcript-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-root transcript grammar, the native block action_root hash preimage is exactly the fixed ASCII domain `hegemon-native-extrinsics-v1`, followed by the little-endian u32 action count, followed by the ordered sequence of 32-byte action hashes; reversing distinct action hashes changes the preimage.",
+      "informal_argument": "The Lean theorems in `Hegemon.Native.ActionRootTranscript` prove the fixed domain bytes, empty/one/two-hash preimage lengths, little-endian count placement, ordered-hash binding, unmodified hash byte inclusion, and max-byte hash example. `gen_action_root_transcript_vectors` emits Lean-derived transcript examples, and the formal-core gate checks those vectors against the production `action_root_transcript_preimage` helper used by `actions_extrinsics_root` before BLAKE3 hashing.",
+      "depends_on": [
+        "native.block-action-hash-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
+        "formal/lean/Hegemon/Native/GenerateActionRootTranscriptVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
+        "formal/lean/Hegemon/Native/GenerateActionRootTranscriptVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native block action-root transcript grammar before hashing. Scope excludes BLAKE3 security and full action semantics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-root-transcript-theorem",
+          "description": "Removing or weakening the action-root transcript theorem facts or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-root-transcript-conformance",
+          "description": "Changing the production action-root preimage grammar away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native action-root preimage bytes only. It does not prove BLAKE3 collision resistance, pending_action_hash derivation, SCALE encoding implementation equivalence, full block action payload validation, transfer-key ordering, tx leaf proof soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.codec-admission",
       "claim_id": "native.codec-admission",
       "kind": "target_claim",
@@ -2705,6 +2749,7 @@
       "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
       "depends_on": [
         "native.block-action-hash-admission",
+        "native.action-root-transcript-binding",
         "native.action-scope-admission",
         "native.bridge-action-payload-admission",
         "native.transfer-action-payload-admission",

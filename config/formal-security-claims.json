@@ -1243,6 +1243,33 @@
       "residual_risks": []
     },
     {
+      "id": "native.action-root-transcript-binding",
+      "component": "native block action-root transcript",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-root transcript kernel proves the exact byte preimage grammar used before hashing native block action roots: fixed domain, little-endian action count, and ordered 32-byte action hashes; generated Lean vectors are checked against the production preimage helper used by header action_root construction.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model proves the byte transcript shape and order binding for already-computed 32-byte action hashes; it does not prove BLAKE3 collision resistance or pending_action_hash derivation.",
+        "Generated Lean conformance vectors cover empty action roots, one action hash, ordered and reversed two-hash transcripts, max-byte hashes, expected lengths, and exact preimage bytes.",
+        "The theorem covers the preimage grammar used by native action_root hashing. It does not prove full block action semantic validation, SCALE encoding implementation equivalence, tx leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
+        "formal/lean/Hegemon/Native/GenerateActionRootTranscriptVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_ROOT_TRANSCRIPT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_root_transcript_vectors_match_production --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
@@ -1401,7 +1428,7 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "assumptions": [
-        "The Lean model treats each derived commitment equality as a Boolean predicate; it does not prove commitment-tree hash security, bridge message-root collision resistance, header-MMR hash binding, or BLAKE3/Blake2 implementation equivalence.",
+        "The Lean model treats each derived commitment equality as a Boolean predicate; action-root transcript bytes are covered by native.action-root-transcript-binding, while commitment-tree hash security, bridge message-root collision resistance, header-MMR hash binding, and BLAKE3/Blake2 implementation equivalence remain out of scope.",
         "Generated Lean conformance vectors cover valid admission, every single field mismatch, and rejection precedence when state-root and supply-digest mismatches are both present.",
         "The theorem covers the executable native admission table after production code derives roots, counts, header history, and checked supply; it does not prove full action payload validation, tx proof soundness, PoW threshold validity, or complete native-node equivalence."
       ],
