@@ -2030,6 +2030,60 @@
       "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
+      "id": "native.mined-work-admission",
+      "claim_id": "native.mined-work-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean mined-work admission transition, native local mined-block import accepts work as fresh only when the current best hash equals the work parent hash and the current best height has a checked u64 next height equal to the work height; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MinedWorkAdmission.accepts_iff_mined_work_preconditions` proves the complete executable mined-work freshness predicate, with concrete theorem facts for valid admission, parent-hash mismatch, height mismatch, u64 height overflow rejection, parent-before-height rejection precedence, and accepting height u64::MAX only when the parent is u64::MAX - 1. `gen_mined_work_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_mined_work_admission` helper called by `import_mined_block` before pending-action replay, body commitment admission, supply accounting, and PoW metadata verification.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native local mined-work freshness admission. Scope excludes work-template construction, pending-action replay, body commitment replay, supply accounting, and PoW threshold verification."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-mined-work-admission-theorem",
+          "description": "Removing or weakening the mined-work admission theorem or concrete overflow/rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-mined-work-admission-conformance",
+          "description": "Changing the production mined-work freshness admission table away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_MINED_WORK_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mined_work_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-mined-work-height-overflow-regression",
+          "description": "Native local mined-work import must reject a best tip at u64::MAX instead of saturating and accepting same-height work.",
+          "gate": "cargo test -p hegemon-node mined_work_rejects_height_overflow --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-mined-work-admission-gate",
+          "description": "The release formal-core wrapper must generate native mined-work admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission only. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity, wall-clock correctness, fork-choice, storage durability, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",

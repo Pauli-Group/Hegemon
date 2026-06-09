@@ -38,6 +38,7 @@ import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.MineableActionAdmission
+import Hegemon.Native.MinedWorkAdmission
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.RpcAdmission

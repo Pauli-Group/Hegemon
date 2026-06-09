@@ -42,6 +42,8 @@ Native RPC admission is represented separately in Lean: generated vectors check 
 
 Native announced-block pre-PoW admission is represented separately in Lean: generated vectors check checked next-height arithmetic, parent-hash agreement, strict timestamp advancement, future-skew bounds, and hash/work-hash equality against the production native import helper before PoW metadata verification and body replay. This proof does not prove PoW hash-threshold validity, wall-clock correctness, fork-choice liveness, action validity, or complete native-node equivalence.
 
+Native local mined-work admission is represented separately in Lean: generated vectors check current-best parent-hash agreement and checked next-height arithmetic against the production mined-block import helper before pending-action replay, body commitment checks, supply accounting, and PoW metadata verification. This proof does not prove work-template construction, PoW hash-threshold validity, action validity, storage durability, fork-choice liveness, or complete native-node equivalence.
+
 ### 0.4 zk bridge posture
 
 Hegemon is still a pure PoW chain. Canonicality is valid-header execution plus greatest fixed-width cumulative work; zkVM receipts, bridge relayers, verifier registrations, and external-chain proofs are not fork-choice inputs. The bridge model is a zk light client over Hegemon, not a new finality layer.

@@ -393,6 +393,13 @@ struct NativeAnnouncedBlockAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMinedWorkAdmissionInput {
+    best_height: u64,
+    work_height: u64,
+    parent_hash_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeAnnouncedBlockAdmissionRejection {
     HeightNotNext,
     ParentHashMismatch,
@@ -409,6 +416,22 @@ impl NativeAnnouncedBlockAdmissionRejection {
             Self::TimestampDidNotAdvance => "timestamp_did_not_advance",
             Self::FutureSkew => "future_skew",
             Self::HashWorkHashMismatch => "hash_work_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeMinedWorkAdmissionRejection {
+    ParentHashMismatch,
+    HeightNotNext,
+}
+
+impl NativeMinedWorkAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::ParentHashMismatch => "parent_hash_mismatch",
+            Self::HeightNotNext => "height_not_next",
         }
     }
 }
@@ -1233,7 +1256,11 @@ impl NativeNode {
         seal: NativeSeal,
     ) -> Result<Option<NativeBlockMeta>> {
         let mut state = self.state.write();
-        if state.best.hash != work.parent_hash || state.best.height.saturating_add(1) != work.height
+        if evaluate_native_mined_work_admission(native_mined_work_admission_input(
+            &state.best,
+            work,
+        ))
+        .is_err()
         {
             return Ok(None);
         }
@@ -6109,6 +6136,33 @@ fn preview_pending_roots(
     ))
 }
 
+fn native_mined_work_admission_input(
+    best: &NativeBlockMeta,
+    work: &NativeWork,
+) -> NativeMinedWorkAdmissionInput {
+    NativeMinedWorkAdmissionInput {
+        best_height: best.height,
+        work_height: work.height,
+        parent_hash_matches: best.hash == work.parent_hash,
+    }
+}
+
+fn native_mined_next_height(best_height: u64) -> Option<u64> {
+    best_height.checked_add(1)
+}
+
+fn evaluate_native_mined_work_admission(
+    input: NativeMinedWorkAdmissionInput,
+) -> Result<(), NativeMinedWorkAdmissionRejection> {
+    if !input.parent_hash_matches {
+        Err(NativeMinedWorkAdmissionRejection::ParentHashMismatch)
+    } else if native_mined_next_height(input.best_height) != Some(input.work_height) {
+        Err(NativeMinedWorkAdmissionRejection::HeightNotNext)
+    } else {
+        Ok(())
+    }
+}
+
 fn native_announced_block_admission_input(
     parent: &NativeBlockMeta,
     meta: &NativeBlockMeta,
@@ -6929,6 +6983,24 @@ mod tests {
         now_ms: u64,
         max_future_skew_ms: u64,
         hash_matches_work_hash: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMinedWorkAdmissionVectorFile {
+        schema_version: u32,
+        mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMinedWorkAdmissionCase {
+        name: String,
+        best_height: u64,
+        work_height: u64,
+        parent_hash_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -7829,6 +7901,50 @@ mod tests {
     }
 
     #[test]
+    fn mined_work_rejects_height_overflow() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let mut best = node.best_meta();
+        best.height = u64::MAX;
+        best.hash = [9u8; 32];
+        best.timestamp_ms = 1000;
+        {
+            let mut state = node.state.write();
+            state.best = best.clone();
+        }
+        let work = NativeWork {
+            height: u64::MAX,
+            parent_hash: best.hash,
+            pre_hash: [0u8; 32],
+            state_root: best.state_root,
+            kernel_root: best.kernel_root,
+            nullifier_root: best.nullifier_root,
+            extrinsics_root: actions_extrinsics_root(&[]),
+            message_root: empty_bridge_message_root(),
+            message_count: 0,
+            header_mmr_root: [0u8; 32],
+            header_mmr_len: 0,
+            cumulative_work: best.cumulative_work,
+            tx_count: 0,
+            timestamp_ms: best.timestamp_ms.saturating_add(1),
+            pow_bits,
+        };
+        let imported = node
+            .import_mined_block(
+                &work,
+                NativeSeal {
+                    nonce: [0u8; 32],
+                    work_hash: [0u8; 32],
+                },
+            )
+            .expect("overflow work admission should fail closed");
+        assert!(imported.is_none());
+        assert_eq!(node.best_meta().height, u64::MAX);
+    }
+
+    #[test]
     fn announced_block_rejects_counterfeit_body_commitments() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -8491,6 +8607,53 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native announced-block admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_mined_work_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_MINED_WORK_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_MINED_WORK_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean mined-work admission vectors");
+        let vectors: LeanMinedWorkAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean mined-work vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.mined_work_admission_cases.is_empty(),
+            "Lean mined-work admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.mined_work_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mined_work_admission_case(case);
+        }
+    }
+
+    fn verify_lean_mined_work_admission_case(case: &LeanMinedWorkAdmissionCase) {
+        let input = NativeMinedWorkAdmissionInput {
+            best_height: case.best_height,
+            work_height: case.work_height,
+            parent_hash_matches: case.parent_hash_matches,
+        };
+        let actual_rejection = evaluate_native_mined_work_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native mined-work admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native mined-work admission rejection drifted from Lean spec",
             case.name
         );
     }

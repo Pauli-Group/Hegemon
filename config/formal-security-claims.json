@@ -1073,6 +1073,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.mined-work-admission",
+      "component": "native mined work freshness admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean mined-work admission kernel proves the executable local mined-block freshness table for parent-hash agreement and checked next-height progression before pending-action replay, body commitment checks, supply accounting, and PoW metadata verification; generated Lean vectors are checked against the production native helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model proves the deterministic local work-freshness admission table and checked u64 next-height behavior; it treats parent-hash equality as a production-derived Boolean predicate.",
+        "Generated Lean conformance vectors cover valid mined work, parent-hash mismatch, height mismatch, u64 height overflow rejection, rejection precedence, and accepting u64::MAX only from a u64::MAX - 1 parent.",
+        "The theorem covers native local mined-work admission only. It does not prove mining work template construction, pending-action replay, body commitment replay, supply accounting, PoW hash-threshold validity, wall-clock correctness, fork-choice, storage durability, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_MINED_WORK_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mined_work_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_work_rejects_height_overflow --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",
