@@ -2149,6 +2149,62 @@
       "scope_boundary": "This node proves and vector-checks native mining work-template admission only. It does not prove pending-action preview correctness, action validity, header preimage hash security, PoW seal search or liveness, import-time body replay, supply accounting, storage durability, fork-choice convergence, or complete native-node equivalence."
     },
     {
+      "id": "native.recursive-artifact-context-admission",
+      "claim_id": "native.recursive-artifact-context-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean recursive-artifact context admission transition, native recursive artifact verification constructs a consensus block header context only when the current best height has a checked u64 successor; otherwise max-height overflow rejects before backend verification context construction.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.RecursiveArtifactContextAdmission.accepts_iff_recursive_artifact_context_preconditions` proves the complete executable context-admission predicate, with concrete theorem facts for valid admission, u64 height overflow rejection, and accepting height u64::MAX only when the parent is u64::MAX - 1. `gen_recursive_artifact_context_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_recursive_artifact_context_admission` helper called by native recursive artifact verification before constructing the consensus block header passed to `ParallelProofVerifier`. A direct regression covers the former `saturating_add(1)` height edge.",
+      "depends_on": [
+        "release.dependency-waivers",
+        "native.candidate-artifact-coupling-admission",
+        "native.block-artifact-binding-admission"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RecursiveArtifactContextAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RecursiveArtifactContextAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native recursive artifact context admission. Scope excludes tx-leaf proof soundness, recursive proof cryptographic soundness, body replay, and full native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-recursive-artifact-context-admission-theorem",
+          "description": "Removing or weakening the recursive-artifact context admission theorem or concrete overflow facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-recursive-artifact-context-admission-conformance",
+          "description": "Changing production recursive-artifact context admission away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_recursive_artifact_context_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "recursive-artifact-context-height-overflow-regression",
+          "description": "A native best tip at u64::MAX must not produce a same-height recursive artifact verifier context.",
+          "gate": "cargo test -p hegemon-node recursive_artifact_context_rejects_height_overflow --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-recursive-artifact-context-admission-gate",
+          "description": "The release formal-core wrapper must generate native recursive-artifact context admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native recursive artifact context height admission only. It does not prove tx-leaf proof soundness, recursive proof cryptographic soundness, DA-root binding, statement-commitment hash security, body replay, supply accounting, storage durability, fork-choice convergence, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",

@@ -133,6 +133,9 @@ lean_exe gen_mined_work_admission_vectors where
 lean_exe gen_work_template_admission_vectors where
   root := `Hegemon.Native.GenerateWorkTemplateAdmissionVectors
 
+lean_exe gen_recursive_artifact_context_admission_vectors where
+  root := `Hegemon.Native.GenerateRecursiveArtifactContextAdmissionVectors
+
 lean_exe gen_resource_budget_admission_vectors where
   root := `Hegemon.Native.GenerateResourceBudgetAdmissionVectors
 

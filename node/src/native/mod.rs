@@ -406,6 +406,11 @@ struct NativeWorkTemplateAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeRecursiveArtifactContextAdmissionInput {
+    best_height: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeAnnouncedBlockAdmissionRejection {
     HeightNotNext,
     ParentHashMismatch,
@@ -453,6 +458,19 @@ impl NativeWorkTemplateAdmissionRejection {
         match self {
             Self::HeightNotNext => "height_not_next",
             Self::CumulativeWorkOverflow => "cumulative_work_overflow",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeRecursiveArtifactContextAdmissionRejection {
+    HeightNotNext,
+}
+
+impl NativeRecursiveArtifactContextAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::HeightNotNext => "height_not_next",
         }
     }
 }
@@ -5845,9 +5863,15 @@ fn verify_native_block_artifacts_locked(
         }
     }
     let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
+    let height = evaluate_native_recursive_artifact_context_admission(
+        NativeRecursiveArtifactContextAdmissionInput {
+            best_height: state.best.height,
+        },
+    )
+    .map_err(native_recursive_artifact_context_admission_error)?;
     let header = consensus::BlockHeader {
         version: 1,
-        height: state.best.height.saturating_add(1),
+        height,
         view: 0,
         timestamp_ms: current_time_ms().max(state.best.timestamp_ms.saturating_add(1)),
         parent_hash: state.best.hash,
@@ -6226,6 +6250,30 @@ fn native_work_template_admission_error(
             "native work template cumulative work overflow ({})",
             rejection.label()
         ),
+    }
+}
+
+fn native_recursive_artifact_context_next_height(best_height: u64) -> Option<u64> {
+    best_height.checked_add(1)
+}
+
+fn evaluate_native_recursive_artifact_context_admission(
+    input: NativeRecursiveArtifactContextAdmissionInput,
+) -> Result<u64, NativeRecursiveArtifactContextAdmissionRejection> {
+    native_recursive_artifact_context_next_height(input.best_height)
+        .ok_or(NativeRecursiveArtifactContextAdmissionRejection::HeightNotNext)
+}
+
+fn native_recursive_artifact_context_admission_error(
+    rejection: NativeRecursiveArtifactContextAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeRecursiveArtifactContextAdmissionRejection::HeightNotNext => {
+            anyhow!(
+                "native recursive artifact context height is not next ({})",
+                rejection.label()
+            )
+        }
     }
 }
 
@@ -7084,6 +7132,23 @@ mod tests {
         name: String,
         best_height: u64,
         cumulative_work_advances: bool,
+        expected_height: Option<u64>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRecursiveArtifactContextAdmissionVectorFile {
+        schema_version: u32,
+        recursive_artifact_context_admission_cases: Vec<LeanRecursiveArtifactContextAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRecursiveArtifactContextAdmissionCase {
+        name: String,
+        best_height: u64,
         expected_height: Option<u64>,
         expected_valid: bool,
         expected_rejection: Option<String>,
@@ -8826,6 +8891,64 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native work-template admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_recursive_artifact_context_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean recursive artifact context admission vectors");
+        let vectors: LeanRecursiveArtifactContextAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean recursive artifact context vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .recursive_artifact_context_admission_cases
+                .is_empty(),
+            "Lean recursive artifact context admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.recursive_artifact_context_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_recursive_artifact_context_admission_case(case);
+        }
+    }
+
+    fn verify_lean_recursive_artifact_context_admission_case(
+        case: &LeanRecursiveArtifactContextAdmissionCase,
+    ) {
+        let input = NativeRecursiveArtifactContextAdmissionInput {
+            best_height: case.best_height,
+        };
+        let actual = evaluate_native_recursive_artifact_context_admission(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native recursive artifact context admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.ok(),
+            case.expected_height,
+            "{} native recursive artifact context height drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native recursive artifact context rejection drifted from Lean spec",
             case.name
         );
     }
@@ -10926,6 +11049,21 @@ mod tests {
         let err = verify_native_block_artifacts_locked(&node, &state, &actions)
             .expect_err("candidate artifact tx_count mismatch must be rejected");
         assert!(err.to_string().contains("tx_count mismatch"));
+    }
+
+    #[test]
+    fn recursive_artifact_context_rejects_height_overflow() {
+        let err = evaluate_native_recursive_artifact_context_admission(
+            NativeRecursiveArtifactContextAdmissionInput {
+                best_height: u64::MAX,
+            },
+        )
+        .expect_err("max-height best state must not emit a recursive artifact context height");
+
+        assert_eq!(
+            err,
+            NativeRecursiveArtifactContextAdmissionRejection::HeightNotNext
+        );
     }
 
     #[test]

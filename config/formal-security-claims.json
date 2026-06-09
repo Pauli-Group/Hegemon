@@ -1130,6 +1130,34 @@
       "residual_risks": []
     },
     {
+      "id": "native.recursive-artifact-context-admission",
+      "component": "native recursive artifact verification context admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean recursive-artifact context admission kernel proves the executable native proof-verifier context table for checked next-height progression before the consensus block header context is constructed for recursive artifact verification; generated Lean vectors are checked against the production native helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model proves the deterministic recursive-artifact context admission table and checked u64 next-height behavior before native recursive artifact verification constructs the consensus block header passed to the backend verifier.",
+        "Generated Lean conformance vectors cover valid context construction, u64 height overflow rejection, and accepting u64::MAX only from a u64::MAX - 1 parent.",
+        "The theorem covers native recursive artifact context height admission only. It does not prove tx-leaf proof soundness, recursive proof cryptographic soundness, DA-root binding, statement-commitment hash security, body replay, supply accounting, fork-choice, storage durability, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RecursiveArtifactContextAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_recursive_artifact_context_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node recursive_artifact_context_rejects_height_overflow --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",

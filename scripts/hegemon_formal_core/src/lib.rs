@@ -372,6 +372,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/WorkTemplateAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateWorkTemplateAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/RecursiveArtifactContextAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ResourceBudgetAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/RpcAdmission.lean",

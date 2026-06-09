@@ -111,6 +111,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean
   lake env lean Hegemon/Native/WorkTemplateAdmission.lean
   lake env lean Hegemon/Native/GenerateWorkTemplateAdmissionVectors.lean
+  lake env lean Hegemon/Native/RecursiveArtifactContextAdmission.lean
+  lake env lean Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean
   lake env lean Hegemon/Native/ResourceBudgetAdmission.lean
   lake env lean Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean
   lake env lean Hegemon/Native/RpcAdmission.lean
