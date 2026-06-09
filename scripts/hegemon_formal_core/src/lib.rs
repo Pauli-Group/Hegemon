@@ -87,6 +87,8 @@ struct SecurityClaim {
     status: String,
     proof_model: String,
     production_eligible: bool,
+    #[serde(default)]
+    lean_theorems: Vec<String>,
     assumptions: Vec<String>,
     evidence_paths: Vec<String>,
     gates: Vec<String>,
@@ -505,11 +507,16 @@ fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>
 
 fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>> {
     if claim.claim_class != "lean_theorem" {
+        ensure!(
+            claim.lean_theorems.is_empty(),
+            "{} lean_theorems is only valid for lean_theorem claims",
+            claim.id
+        );
         return Ok(BTreeSet::new());
     }
 
     let mut checked_lean_sources = Vec::new();
-    let mut theorem_names = BTreeSet::new();
+    let mut declared_theorem_names = BTreeSet::new();
     for evidence in &claim.evidence_paths {
         if !is_non_generator_lean_evidence(evidence) {
             continue;
@@ -517,7 +524,7 @@ fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<
         checked_lean_sources.push(evidence.as_str());
         let path = root.join(evidence);
         for theorem in lean_theorem_names(&path)? {
-            theorem_names.insert(format!("{evidence}:{theorem}"));
+            declared_theorem_names.insert(theorem);
         }
     }
 
@@ -527,12 +534,33 @@ fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<
         claim.id
     );
     ensure!(
-        !theorem_names.is_empty(),
+        !declared_theorem_names.is_empty(),
         "{} lean_theorem claim must be backed by a named theorem declaration in non-generator Lean evidence: {:?}",
         claim.id,
         checked_lean_sources
     );
-    Ok(theorem_names)
+    ensure!(
+        !claim.lean_theorems.is_empty(),
+        "{} lean_theorem claim must list explicit lean_theorems",
+        claim.id
+    );
+    let mut listed_theorem_names = BTreeSet::new();
+    for theorem in &claim.lean_theorems {
+        validate_lean_theorem_name(&claim.id, theorem)?;
+        ensure!(
+            listed_theorem_names.insert(theorem.clone()),
+            "{} lists duplicate Lean theorem {}",
+            claim.id,
+            theorem
+        );
+        ensure!(
+            declared_theorem_names.contains(theorem),
+            "{} lists Lean theorem {} that is not declared by its non-generator Lean evidence",
+            claim.id,
+            theorem
+        );
+    }
+    Ok(listed_theorem_names)
 }
 
 fn is_non_generator_lean_evidence(raw: &str) -> bool {
@@ -548,12 +576,26 @@ fn is_non_generator_lean_evidence(raw: &str) -> bool {
 fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("read Lean theorem evidence {}", path.display()))?;
-    let mut names = Vec::new();
+    let mut names = BTreeSet::new();
+    let mut namespaces: Vec<String> = Vec::new();
     for line in source.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let trimmed = line.trim();
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
         let Some(first) = tokens.first().copied() else {
             continue;
         };
+        if first == "namespace" {
+            if let Some(namespace) = tokens.get(1).copied() {
+                namespaces.push(namespace.trim_end_matches(',').to_owned());
+            }
+            continue;
+        }
+        if first == "end" {
+            if !namespaces.is_empty() {
+                namespaces.pop();
+            }
+            continue;
+        }
         let name = if first == "theorem" {
             tokens.get(1).copied()
         } else if first == "private" && tokens.get(1).copied() == Some("theorem") {
@@ -566,10 +608,40 @@ fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
         };
         let theorem = raw_name.trim_end_matches(':');
         if !theorem.is_empty() {
-            names.push(theorem.to_owned());
+            names.insert(theorem.to_owned());
+            if !theorem.contains('.') {
+                let namespace = namespaces.join(".");
+                if !namespace.is_empty() {
+                    names.insert(format!("{namespace}.{theorem}"));
+                }
+            }
         }
     }
-    Ok(names)
+    Ok(names.into_iter().collect())
+}
+
+fn validate_lean_theorem_name(claim_id: &str, theorem: &str) -> Result<()> {
+    ensure!(
+        theorem.starts_with("Hegemon."),
+        "{} Lean theorem {} must be fully qualified under Hegemon",
+        claim_id,
+        theorem
+    );
+    ensure!(
+        theorem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.'),
+        "{} Lean theorem {} must use alphanumeric, underscore, or dot characters",
+        claim_id,
+        theorem
+    );
+    ensure!(
+        theorem.split('.').all(|part| !part.is_empty()),
+        "{} Lean theorem {} has an empty namespace segment",
+        claim_id,
+        theorem
+    );
+    Ok(())
 }
 
 fn validate_blueprint(
@@ -1266,7 +1338,10 @@ mod tests {
         let claims_path = root.join("claims.json");
         write_json(
             &claims_path,
-            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/Balance.lean"]),
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.balance_rule_accepts"],
+            ),
         );
 
         let report = check_claims_file(&claims_path).expect("named theorem evidence accepted");
@@ -1286,7 +1361,10 @@ mod tests {
         let claims_path = root.join("claims.json");
         write_json(
             &claims_path,
-            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/GenerateVectors.lean"]),
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/GenerateVectors.lean"],
+                &["Hegemon.Transaction.generated_case"],
+            ),
         );
 
         let err = check_claims_file(&claims_path).unwrap_err();
@@ -1304,11 +1382,75 @@ mod tests {
         let claims_path = root.join("claims.json");
         write_json(
             &claims_path,
-            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/Balance.lean"]),
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.balanceRuleAccepts"],
+            ),
         );
 
         let err = check_claims_file(&claims_path).unwrap_err();
         assert!(err.to_string().contains("named theorem declaration"));
+    }
+
+    #[test]
+    fn claims_reject_unlisted_lean_theorem() {
+        let root = test_root("lean-unlisted-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             theorem balance_rule_accepts : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.other_rule"],
+            ),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("is not declared"));
+    }
+
+    #[test]
+    fn claims_reject_missing_lean_theorem_list() {
+        let root = test_root("lean-missing-theorem-list-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             theorem balance_rule_accepts : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/Balance.lean"], &[]),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("explicit lean_theorems"));
+    }
+
+    #[test]
+    fn claims_reject_lean_theorems_on_non_lean_claims() {
+        let root = test_root("non-lean-theorem-list-claim");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        let claims_path = root.join("claims.json");
+        let mut claims = claims_fixture();
+        claims["claims"][0]["lean_theorems"] = json!(["Hegemon.Transaction.fake"]);
+        claims["claims"].as_array_mut().expect("claims array").pop();
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("only valid for lean_theorem claims"));
     }
 
     fn test_root(name: &str) -> PathBuf {
@@ -1375,7 +1517,7 @@ mod tests {
         })
     }
 
-    fn lean_claims_fixture(evidence_paths: &[&str]) -> Value {
+    fn lean_claims_fixture(evidence_paths: &[&str], lean_theorems: &[&str]) -> Value {
         json!({
             "schema_version": 1,
             "generated_for_branch": "codex/formal-blueprint-dag",
@@ -1388,6 +1530,7 @@ mod tests {
                     "status": "enforced",
                     "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
                     "production_eligible": true,
+                    "lean_theorems": lean_theorems,
                     "assumptions": ["test assumption"],
                     "evidence_paths": evidence_paths,
                     "gates": ["bash scripts/check_lean_formal.sh"],
