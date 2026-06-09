@@ -38,11 +38,17 @@ def expectedConsensusSupply
 def pow2 (exponent : Nat) : Nat :=
   2 ^ exponent
 
+def cappedHalvingEpoch (height : Nat) : Nat :=
+  if height = 0 then
+    0
+  else
+    Nat.min ((height - 1) / halvingInterval) 63
+
 def blockSubsidy (height : Nat) : Nat :=
   if height = 0 then
     0
   else
-    initialSubsidy / pow2 (Nat.min ((height - 1) / halvingInterval) 63)
+    initialSubsidy / pow2 (cappedHalvingEpoch height)
 
 def checkedU64Add (left right : Nat) : Option Nat :=
   let sum := left + right
@@ -96,6 +102,53 @@ theorem nativeSupplyDelta_without_coinbase
     nativeSupplyDelta height feeTotal false = some 0 := by
   unfold nativeSupplyDelta
   rfl
+
+theorem monetaryConstants_match_tokenomics :
+    coin = 100000000
+      ∧ targetBlockSeconds = 60
+      ∧ yearSeconds = 31536000
+      ∧ epochYears = 4
+      ∧ halvingInterval = 2102400
+      ∧ maxMonetarySupply = 2100000000000000
+      ∧ initialSubsidy = 499429223 := by
+  native_decide
+
+theorem blockSubsidy_zero_height :
+    blockSubsidy 0 = 0 := by
+  rfl
+
+theorem blockSubsidy_initial_height :
+    blockSubsidy 1 = initialSubsidy := by
+  rfl
+
+theorem blockSubsidy_first_epoch_last_block :
+    blockSubsidy halvingInterval = initialSubsidy := by
+  native_decide
+
+theorem blockSubsidy_first_halving_boundary :
+    blockSubsidy (halvingInterval + 1) = initialSubsidy / 2 := by
+  native_decide
+
+theorem blockSubsidy_second_halving_boundary :
+    blockSubsidy (2 * halvingInterval + 1) = initialSubsidy / 4 := by
+  native_decide
+
+theorem blockSubsidy_extinct_at_capped_shift :
+    blockSubsidy (64 * halvingInterval + 1) = 0 := by
+  native_decide
+
+theorem blockSubsidy_capped_shift_stable_after_extinction :
+    blockSubsidy (65 * halvingInterval + 1) =
+      blockSubsidy (64 * halvingInterval + 1) := by
+  native_decide
+
+theorem blockSubsidy_uses_capped_halving_epoch
+    {height : Nat}
+    (nonzero : height ≠ 0) :
+    blockSubsidy height =
+      initialSubsidy / pow2 (cappedHalvingEpoch height) := by
+  unfold blockSubsidy
+  simp [nonzero]
 
 theorem nativeSupplyDelta_with_coinbase
     {height feeTotal amount : Nat}

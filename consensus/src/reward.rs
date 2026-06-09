@@ -168,6 +168,8 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanSupplyVectorFile {
         schema_version: u32,
+        monetary_constants: LeanMonetaryConstants,
+        subsidy_schedule_cases: Vec<LeanSubsidyScheduleCase>,
         consensus_supply_cases: Vec<LeanConsensusSupplyCase>,
         native_supply_cases: Vec<serde_json::Value>,
     }
@@ -177,6 +179,27 @@ mod tests {
     struct LeanSupplyInvariantVectorFile {
         schema_version: u32,
         supply_chain_cases: Vec<LeanSupplyChainCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMonetaryConstants {
+        coin: u64,
+        target_block_seconds: u64,
+        year_seconds: u64,
+        epoch_years: u64,
+        halving_interval: u64,
+        max_monetary_supply: String,
+        initial_subsidy: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSubsidyScheduleCase {
+        name: String,
+        height: u64,
+        expected_halving_epoch: u64,
+        expected_subsidy: u64,
     }
 
     #[derive(Debug, Deserialize)]
@@ -258,6 +281,11 @@ mod tests {
         let vectors: LeanSupplyVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
         assert_eq!(vectors.schema_version, 1);
+        verify_lean_monetary_constants(&vectors.monetary_constants);
+        assert!(
+            !vectors.subsidy_schedule_cases.is_empty(),
+            "Lean subsidy schedule cases must not be empty"
+        );
         assert!(
             !vectors.consensus_supply_cases.is_empty(),
             "Lean consensus supply cases must not be empty"
@@ -268,6 +296,10 @@ mod tests {
         );
 
         let mut names = BTreeSet::new();
+        for case in &vectors.subsidy_schedule_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_subsidy_schedule_case(case);
+        }
         for case in &vectors.consensus_supply_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_consensus_supply_case(case);
@@ -321,6 +353,54 @@ mod tests {
         );
     }
 
+    fn verify_lean_monetary_constants(constants: &LeanMonetaryConstants) {
+        assert_eq!(constants.coin, COIN, "COIN drifted from Lean spec");
+        assert_eq!(
+            constants.target_block_seconds, T_BLOCK_SECONDS,
+            "T_BLOCK_SECONDS drifted from Lean spec"
+        );
+        assert_eq!(
+            constants.year_seconds, T_YEAR,
+            "T_YEAR drifted from Lean spec"
+        );
+        assert_eq!(
+            constants.epoch_years, Y_EPOCH,
+            "Y_EPOCH drifted from Lean spec"
+        );
+        assert_eq!(
+            constants.halving_interval, HALVING_INTERVAL,
+            "HALVING_INTERVAL drifted from Lean spec"
+        );
+        assert_eq!(
+            parse_u64(&constants.max_monetary_supply),
+            MAX_SUPPLY,
+            "MAX_SUPPLY drifted from Lean spec"
+        );
+        assert_eq!(
+            constants.initial_subsidy, INITIAL_SUBSIDY,
+            "INITIAL_SUBSIDY drifted from Lean spec"
+        );
+    }
+
+    fn verify_lean_subsidy_schedule_case(case: &LeanSubsidyScheduleCase) {
+        let actual_epoch = if case.height == 0 {
+            0
+        } else {
+            ((case.height - 1) / HALVING_INTERVAL).min(63)
+        };
+        assert_eq!(
+            actual_epoch, case.expected_halving_epoch,
+            "{} production halving epoch drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            block_subsidy(case.height),
+            case.expected_subsidy,
+            "{} production subsidy schedule drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn verify_lean_consensus_supply_case(case: &LeanConsensusSupplyCase) {
         let parent_supply = parse_u128(&case.parent_supply);
         let fees = parse_i64(&case.fees);
@@ -355,6 +435,11 @@ mod tests {
     fn parse_i128(raw: &str) -> i128 {
         raw.parse::<i128>()
             .expect("Lean delta value must be a decimal i128")
+    }
+
+    fn parse_u64(raw: &str) -> u64 {
+        raw.parse::<u64>()
+            .expect("Lean monetary value must be a decimal u64")
     }
 
     fn parse_i64(raw: &str) -> i64 {

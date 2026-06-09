@@ -183,10 +183,14 @@ Consensus stitches this MASP output into PoW validation by requiring a coinbase 
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
 Miners populate `CoinbaseData` with the minted amount, collected fees, and any explicit burns, and full nodes recompute the
 running `supply_digest = parent_digest + minted + fees − burns`. If the coinbase is missing, points at an invalid transaction,
-or mints more than the scheduled subsidy `R(epoch)` (~4.98 × 10⁸ base units halving every ~4 years per `TOKENOMICS_CALCULATION.md`), the block is rejected
+or mints more than the scheduled subsidy `R(epoch)` (`499429223` base units initially, halving every `2102400` blocks under the
+current 60-second target), the block is rejected
 before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
-lockstep. The executable supply-accounting rule is also represented in Lean: generated vectors check `CoinbaseData::net_native_delta`,
-`consensus::reward::update_supply_digest`, and the native node's checked no-coinbase/coinbase supply helpers, including overflow rejection.
+lockstep. The executable subsidy schedule is represented in Lean: named theorems pin the tokenomics constants, capped halving epoch,
+zero-height subsidy, first/second halving boundaries, and post-cap extinction, and generated vectors check those facts against
+`consensus::reward::block_subsidy`. The executable supply-accounting rule is also represented in Lean: generated vectors check
+`CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and the native node's checked no-coinbase/coinbase
+supply helpers, including overflow rejection.
 The accepted-chain supply invariant is represented separately in Lean: generated vectors check that every accepted claimed
 `supply_digest` equals replaying the executable checked deltas from genesis, while counterfeit claimed supply, underflow, and
 overflow are rejected by the production consensus transition helper used before PoW header acceptance.

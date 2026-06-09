@@ -1472,6 +1472,7 @@
       "formal_statement": "For the executable Lean supply-accounting transition, supply digest increases and decreases are checked against the 128-bit bound, underflow and overflow return rejection, no-coinbase native blocks leave supply unchanged, and native coinbase blocks advance supply by the checked subsidy-plus-fee amount.",
       "informal_argument": "The Lean theorems `Hegemon.Consensus.increaseSupplyDigest_ok`, `Hegemon.Consensus.increaseSupplyDigest_rejects_overflow`, `Hegemon.Consensus.decreaseSupplyDigest_ok`, `Hegemon.Consensus.decreaseSupplyDigest_rejects_underflow`, `Hegemon.Consensus.nativeSupplyDelta_without_coinbase`, `Hegemon.Consensus.nativeSupplyDelta_with_coinbase`, `Hegemon.Consensus.advanceNativeSupplyDigest_checked`, and `Hegemon.Consensus.advanceNativeSupplyDigest_rejects_supply_overflow` prove the executable accounting kernel. `gen_supply_vectors` emits Lean-derived consensus and native examples, and the formal-core gate checks them against `CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and native `advance_native_supply_digest`. The native node now rejects supply overflow instead of using saturating addition on import, replay, and mined-block metadata.",
       "depends_on": [
+        "consensus.block-subsidy-schedule",
         "formal.pow-fork-choice",
         "formal.transaction-balance",
         "release.dependency-waivers"
@@ -1520,6 +1521,58 @@
         }
       ],
       "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove PoW admission arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
+    },
+    {
+      "id": "consensus.block-subsidy-schedule",
+      "claim_id": "consensus.block-subsidy-schedule",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean block-subsidy schedule, the monetary constants equal the tokenomics inputs, height zero mints no subsidy, positive heights use a capped halving epoch, the first epoch pays the initial subsidy, the first and second halving boundaries divide that subsidy by powers of two, and the capped shift extinguishes the subsidy permanently.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.monetaryConstants_match_tokenomics`, `Hegemon.Consensus.blockSubsidy_zero_height`, `Hegemon.Consensus.blockSubsidy_initial_height`, `Hegemon.Consensus.blockSubsidy_first_epoch_last_block`, `Hegemon.Consensus.blockSubsidy_first_halving_boundary`, `Hegemon.Consensus.blockSubsidy_second_halving_boundary`, `Hegemon.Consensus.blockSubsidy_extinct_at_capped_shift`, `Hegemon.Consensus.blockSubsidy_capped_shift_stable_after_extinction`, and `Hegemon.Consensus.blockSubsidy_uses_capped_halving_epoch` pin the executable schedule. `gen_supply_vectors` emits Lean-derived constants and boundary cases, and the formal-core gate checks them against `consensus::reward::block_subsidy`, the compiled consensus constants, and the native supply-vector parser.",
+      "depends_on": [
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
+        "consensus/src/reward.rs",
+        "node/src/native/mod.rs",
+        "TOKENOMICS_CALCULATION.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
+        "consensus/src/reward.rs",
+        "node/src/native/mod.rs",
+        "TOKENOMICS_CALCULATION.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable block-subsidy schedule. Scope is the schedule helper, not the economics of the schedule."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-subsidy-schedule-theorem",
+          "description": "Removing or weakening the subsidy-schedule theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-subsidy-schedule-conformance",
+          "description": "Changing production monetary constants, halving epoch calculation, or block subsidy boundary behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_SUPPLY_VECTORS=<generated-json> cargo test -p consensus lean_generated_supply_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-subsidy-schedule-gate",
+          "description": "The release formal-core wrapper must generate supply vectors containing monetary constants and subsidy boundary cases, then run the consensus and native conformance tests.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the executable block_subsidy schedule and monetary constants. It does not prove monetary economics, timestamp honesty, retarget economics, wallet reward construction, encrypted coinbase note construction, proof-system soundness, or complete native-node equivalence."
     },
     {
       "id": "consensus.supply-chain-invariant",

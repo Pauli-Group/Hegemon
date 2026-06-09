@@ -812,6 +812,36 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.block-subsidy-schedule",
+      "component": "PoW monetary subsidy schedule",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean supply kernel proves the executable tokenomics constants, capped halving epoch, zero-height no-subsidy rule, first and second halving boundaries, and post-cap subsidy extinction; generated Lean vectors are checked against the production consensus block_subsidy helper and native supply-vector parser.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model derives the monetary constants from the checked tokenomics inputs: 21,000,000 coins, 100,000,000 base units per coin, 60-second target blocks, and 4-year epochs.",
+        "Generated Lean vectors cover zero-height subsidy rejection, first-block subsidy, the last block before the first halving, the first and second halving boundaries, capped-shift extinction, and post-cap stability.",
+        "The theorem covers the executable block subsidy schedule and Rust conformance only. It does not prove monetary economics, timestamp honesty, retarget economics, wallet reward construction, encrypted coinbase note construction, or proof-system soundness."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
+        "consensus/src/reward.rs",
+        "node/src/native/mod.rs",
+        "TOKENOMICS_CALCULATION.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_SUPPLY_VECTORS=<generated-json> cargo test -p consensus lean_generated_supply_vectors_match_production -- --nocapture",
+        "HEGEMON_LEAN_SUPPLY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_native_supply_vectors_match_production --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.supply-chain-invariant",
       "component": "PoW accepted-chain supply accounting",
       "claim_class": "lean_theorem",

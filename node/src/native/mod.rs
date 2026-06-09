@@ -7006,6 +7006,8 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanSupplyVectorFile {
         schema_version: u32,
+        monetary_constants: serde_json::Value,
+        subsidy_schedule_cases: Vec<serde_json::Value>,
         consensus_supply_cases: Vec<serde_json::Value>,
         native_supply_cases: Vec<LeanNativeSupplyCase>,
     }
@@ -12346,6 +12348,14 @@ mod tests {
         let vectors: LeanSupplyVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
         assert_eq!(vectors.schema_version, 1);
+        assert!(
+            vectors.monetary_constants.is_object(),
+            "Lean monetary constants must be present"
+        );
+        assert!(
+            !vectors.subsidy_schedule_cases.is_empty(),
+            "Lean subsidy schedule cases must not be empty"
+        );
         assert!(
             !vectors.consensus_supply_cases.is_empty(),
             "Lean consensus supply cases must not be empty"
