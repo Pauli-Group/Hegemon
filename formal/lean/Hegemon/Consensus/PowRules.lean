@@ -113,6 +113,39 @@ def retargetBits (prevBits actualMs : Nat) : Option Nat :=
   | none => none
   | some prevTarget => some (targetToCompact (retargetTarget prevTarget actualMs))
 
+def retargetAnchorSteps (parentHeight newHeight : Nat) : Option Nat :=
+  if newHeight = 0 then
+    none
+  else if retargetWindow = 0 ∨ newHeight % retargetWindow ≠ 0 then
+    none
+  else
+    match checkedNextU64 parentHeight with
+    | some nextHeight =>
+        if nextHeight < retargetWindow then none else some (retargetWindow - 1)
+    | none => some (retargetWindow - 1)
+
+inductive PowBitsScheduleReject where
+  | insufficientHistory
+  | invalidCompactTarget
+  deriving DecidableEq, Repr
+
+def expectedPowBitsSchedule
+    (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
+    (anchorTimestamp : Option Nat) :
+    Except PowBitsScheduleReject Nat :=
+  if newHeight = 0 then
+    Except.ok genesisBits
+  else
+    match retargetAnchorSteps parentHeight newHeight with
+    | none => Except.ok parentBits
+    | some _ =>
+      match anchorTimestamp with
+      | none => Except.error PowBitsScheduleReject.insufficientHistory
+      | some anchor =>
+        match retargetBits parentBits (parentTimestamp - anchor) with
+        | none => Except.error PowBitsScheduleReject.invalidCompactTarget
+        | some bits => Except.ok bits
+
 inductive PowAdmissionReject where
   | heightMismatch
   | powBitsMismatch
@@ -219,6 +252,50 @@ theorem retargetBits_expected_timespan_keeps_bits :
 theorem retargetBits_rejects_invalid_previous_bits :
     retargetBits 16777217 retargetTimespanMs = none := by
   native_decide
+
+theorem retargetAnchorSteps_genesis_none :
+    retargetAnchorSteps 0 0 = none := by
+  rfl
+
+theorem retargetAnchorSteps_non_boundary_none :
+    retargetAnchorSteps 8 9 = none := by
+  native_decide
+
+theorem retargetAnchorSteps_early_boundary_none :
+    retargetAnchorSteps 0 retargetWindow = none := by
+  native_decide
+
+theorem retargetAnchorSteps_boundary_requires_window :
+    retargetAnchorSteps 9 retargetWindow = some (retargetWindow - 1) := by
+  native_decide
+
+theorem expectedPowBitsSchedule_genesis_uses_genesis :
+    expectedPowBitsSchedule 123 456 0 0 0 none = Except.ok 123 := by
+  rfl
+
+theorem expectedPowBitsSchedule_non_boundary_inherits_parent :
+    expectedPowBitsSchedule 123 456 8 9 1000 none = Except.ok 456 := by
+  rfl
+
+theorem expectedPowBitsSchedule_missing_history_rejects :
+    expectedPowBitsSchedule 123 545259519 9 retargetWindow retargetTimespanMs none =
+      Except.error PowBitsScheduleReject.insufficientHistory := by
+  rfl
+
+theorem expectedPowBitsSchedule_expected_timespan_keeps_bits :
+    expectedPowBitsSchedule 123 545259519 9 retargetWindow retargetTimespanMs (some 0) =
+      Except.ok 545259519 := by
+  rfl
+
+theorem expectedPowBitsSchedule_invalid_previous_bits_rejects :
+    expectedPowBitsSchedule 123 16777217 9 retargetWindow retargetTimespanMs (some 0) =
+      Except.error PowBitsScheduleReject.invalidCompactTarget := by
+  rfl
+
+theorem expectedPowBitsSchedule_reversed_timestamp_saturates :
+    expectedPowBitsSchedule 123 545259519 9 retargetWindow 100 (some 200) =
+      Except.ok 538968063 := by
+  rfl
 
 theorem timestamp_rejects_parent_equal
     {parent median nowMs : Nat} :

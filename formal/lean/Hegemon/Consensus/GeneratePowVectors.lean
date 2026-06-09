@@ -18,6 +18,11 @@ def resultLabel : Except PowAdmissionReject Nat -> String
   | Except.error PowAdmissionReject.cumulativeWorkOverflow => "cumulative_work_overflow"
   | Except.error PowAdmissionReject.cumulativeWorkMismatch => "cumulative_work_mismatch"
 
+def scheduleResultLabel : Except PowBitsScheduleReject Nat -> String
+  | Except.ok _ => "accepted"
+  | Except.error PowBitsScheduleReject.insufficientHistory => "insufficient_history"
+  | Except.error PowBitsScheduleReject.invalidCompactTarget => "invalid_compact_target"
+
 def expectedCumulative : PowAdmissionInput -> Option Nat
   | input =>
     match compactTargetValue input.powBits with
@@ -89,6 +94,33 @@ def retargetBitsCaseJson
     ++ "      \"expected_encoded_target\": " ++ optionNatJson encodedTarget ++ "\n"
     ++ "    }"
 
+def powBitsScheduleCaseJson
+    (name : String)
+    (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
+    (anchorTimestamp : Option Nat) : String :=
+  let result :=
+    expectedPowBitsSchedule
+      genesisBits
+      parentBits
+      parentHeight
+      newHeight
+      parentTimestamp
+      anchorTimestamp
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"genesis_pow_bits\": " ++ toString genesisBits ++ ",\n"
+    ++ "      \"parent_pow_bits\": " ++ toString parentBits ++ ",\n"
+    ++ "      \"parent_height\": " ++ toString parentHeight ++ ",\n"
+    ++ "      \"new_height\": " ++ toString newHeight ++ ",\n"
+    ++ "      \"parent_timestamp_ms\": " ++ toString parentTimestamp ++ ",\n"
+    ++ "      \"anchor_timestamp_ms\": " ++ optionNatJson anchorTimestamp ++ ",\n"
+    ++ "      \"expected_anchor_steps\": "
+    ++ optionNatJson (retargetAnchorSteps parentHeight newHeight) ++ ",\n"
+    ++ "      \"expected_bits\": "
+    ++ optionNatJson (match result with | Except.ok bits => some bits | Except.error _ => none) ++ ",\n"
+    ++ "      \"expected_result\": \"" ++ scheduleResultLabel result ++ "\"\n"
+    ++ "    }"
+
 def easyPowBits : Nat := 545259519
 def maxPowHeightPredecessor : Nat := maxPowHeight - 1
 def invalidZeroMantissaBits : Nat := 536870912
@@ -135,6 +167,17 @@ def vectorJson : String :=
     ++ retargetBitsCaseJson "fast-timespan-reencodes-quarter-target" easyPowBits 0 ++ ",\n"
     ++ retargetBitsCaseJson "slow-timespan-reencodes-four-x-target" easyPowBits (retargetTimespanMs * 10) ++ ",\n"
     ++ retargetBitsCaseJson "invalid-previous-bits-rejected" invalidShiftedZeroTargetBits retargetTimespanMs ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"pow_bits_schedule_cases\": [\n"
+    ++ powBitsScheduleCaseJson "genesis-height-uses-genesis-bits" 123 456 0 0 0 none ++ ",\n"
+    ++ powBitsScheduleCaseJson "non-boundary-inherits-parent-bits" 123 easyPowBits 8 9 100000 none ++ ",\n"
+    ++ powBitsScheduleCaseJson "early-boundary-inherits-parent-bits" 123 easyPowBits 0 retargetWindow 100000 none ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-missing-history-rejected" 123 easyPowBits 9 retargetWindow retargetTimespanMs none ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-expected-timespan-keeps-bits" 123 easyPowBits 9 retargetWindow retargetTimespanMs (some 0) ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-fast-timespan-reencodes-bits" 123 easyPowBits 9 retargetWindow 0 (some 0) ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-slow-timespan-reencodes-bits" 123 easyPowBits 9 retargetWindow (retargetTimespanMs * 10) (some 0) ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-reversed-timestamp-saturates" 123 easyPowBits 9 retargetWindow 100 (some 200) ++ ",\n"
+    ++ powBitsScheduleCaseJson "boundary-invalid-previous-bits-rejected" 123 invalidShiftedZeroTargetBits 9 retargetWindow retargetTimespanMs (some 0) ++ "\n"
     ++ "  ],\n"
     ++ "  \"pow_admission_cases\": [\n"
     ++ powCaseJson "valid-boundary-hash-accepted" validInput ++ ",\n"

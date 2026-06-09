@@ -48,7 +48,7 @@ Native mining work-template admission is represented separately in Lean: generat
 
 Native recursive-artifact context admission is represented separately in Lean: generated vectors check checked next-height arithmetic before native recursive artifact verification builds the consensus block header context passed to the backend verifier. This proof does not prove tx-leaf proof soundness, recursive proof cryptographic soundness, DA-root binding, statement-commitment hash security, storage durability, fork-choice liveness, or complete native-node equivalence.
 
-Reusable consensus and light-client PoW admission also fail closed on u64 height overflow. The Lean PoW kernel models checked next-height arithmetic alongside compact-target, timestamp, hash-threshold, Work48 cumulative-work behavior, the consensus retarget target-adjustment clamp, and compact retarget re-encoding; generated vectors check the generic consensus admission and retarget helpers, and focused regressions cover both `PowConsensus` admission and bridge/native `verify_pow_header` so a parent at `u64::MAX` cannot admit a same-height child through saturating arithmetic.
+Reusable consensus and light-client PoW admission also fail closed on u64 height overflow. The Lean PoW kernel models checked next-height arithmetic alongside compact-target, timestamp, hash-threshold, Work48 cumulative-work behavior, the consensus retarget target-adjustment clamp, compact retarget re-encoding, and retarget-boundary scheduling/history requirements; generated vectors check the generic consensus admission and retarget helpers, and focused regressions cover both `PowConsensus` admission and bridge/native `verify_pow_header` so a parent at `u64::MAX` cannot admit a same-height child through saturating arithmetic.
 
 ### 0.4 zk bridge posture
 
@@ -371,7 +371,7 @@ The PoW fork mirrors conventional PoW mechanics so operators can reason about li
   timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 60 s` (1 minute). Honest nodes reject any block whose
   `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
   retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
-  timestamps cannot skew difficulty even after a reorg. The compact re-encoding step is Lean-conformance-checked so retarget outputs cannot drift through target truncation or zero-target edge cases. The native verifier also requires the compact difficulty bits
+  timestamps cannot skew difficulty even after a reorg. The retarget boundary schedule and compact re-encoding step are Lean-conformance-checked so retarget outputs cannot drift through skipped history, target truncation, or zero-target edge cases. The native verifier also requires the compact difficulty bits
   embedded in a PoW seal to equal the locally computed schedule exactly and checks work against that schedule target, not an attacker-supplied near match.
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces

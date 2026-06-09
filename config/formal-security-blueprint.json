@@ -595,7 +595,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for compact target encoding and retarget-bit composition. Scope excludes retarget-boundary ancestor selection and mining economics."
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for compact target encoding and retarget-bit composition. Retarget-boundary scheduling is covered by consensus.pow-retarget-schedule; mining economics remains out of scope."
       },
       "falsification_cases": [
         {
@@ -614,7 +614,60 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks executable compact target encoding and retarget-bit composition. It does not prove retarget-boundary ancestor selection, timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
+      "scope_boundary": "This node proves and vector-checks executable compact target encoding and retarget-bit composition. Retarget-boundary scheduling and history requirements are covered separately by consensus.pow-retarget-schedule. It does not prove timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
+    },
+    {
+      "id": "consensus.pow-retarget-schedule",
+      "claim_id": "consensus.pow-retarget-schedule",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean PoW retarget schedule helper, height zero uses genesis bits; non-boundary heights and early boundary candidates inherit parent pow_bits; true retarget boundaries require the RETARGET_WINDOW-1 anchor; missing history rejects; and supplied parent/anchor timestamps are converted through saturating timespan, retargetBits, and compact previous-bit validation.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.retargetAnchorSteps_genesis_none`, `Hegemon.Consensus.retargetAnchorSteps_non_boundary_none`, `Hegemon.Consensus.retargetAnchorSteps_early_boundary_none`, `Hegemon.Consensus.retargetAnchorSteps_boundary_requires_window`, `Hegemon.Consensus.expectedPowBitsSchedule_genesis_uses_genesis`, `Hegemon.Consensus.expectedPowBitsSchedule_non_boundary_inherits_parent`, `Hegemon.Consensus.expectedPowBitsSchedule_missing_history_rejects`, `Hegemon.Consensus.expectedPowBitsSchedule_expected_timespan_keeps_bits`, `Hegemon.Consensus.expectedPowBitsSchedule_invalid_previous_bits_rejects`, and `Hegemon.Consensus.expectedPowBitsSchedule_reversed_timestamp_saturates` pin representative facts about the executable pow_bits schedule. `gen_pow_vectors` emits schedule examples, and the formal-core gate checks them against the production `pow_retarget_anchor_steps` and `evaluate_pow_bits_schedule` helpers now used by `PowConsensus::expected_pow_bits`.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "consensus.pow-retarget-target",
+        "consensus.pow-retarget-compact-bits",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for retarget boundary scheduling and history requirements. Scope excludes hash-map correctness and mining economics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-retarget-schedule-theorem",
+          "description": "Removing or weakening retarget anchor-step or expected pow_bits schedule theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-retarget-schedule-conformance",
+          "description": "Changing production retarget boundary scheduling, history requirements, or timestamp-span handling away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-retarget-schedule-gate",
+          "description": "The release formal-core wrapper must generate PoW vectors containing pow_bits schedule cases and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks executable retarget-boundary scheduling and timestamp-span conversion after parent lookup. It does not prove timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, ancestor hash-map correctness, or long-range adversarial mining schedules."
     },
     {
       "id": "consensus.header-preimage-binding",

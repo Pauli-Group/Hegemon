@@ -318,7 +318,35 @@
       "assumptions": [
         "The Lean model represents compact target encoding over bounded natural-number targets and the production retarget composition after previous pow_bits decoding.",
         "Generated Lean conformance vectors cover zero-target encoding, target roundtrips for one/three-byte/easy targets, expected-timespan compact-bit preservation, fast/slow retarget re-encoding, invalid previous bits rejection, and nonzero-mantissa compact bits that decode to a zero target.",
-        "The theorem covers executable compact encoding and retarget-bit composition only. It does not prove ancestor selection at retarget boundaries, timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
+        "The theorem covers executable compact encoding and retarget-bit composition only. Retarget-boundary scheduling and history requirements are covered separately by consensus.pow-retarget-schedule. Timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, and long-range adversarial mining schedules remain outside this claim."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.pow-retarget-schedule",
+      "component": "PoW difficulty retarget boundary schedule",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean PoW retarget schedule kernel proves executable genesis, non-boundary inheritance, early-boundary inheritance, retarget-window anchor selection, missing-history rejection, invalid previous bits rejection, and timestamp-span saturation behavior; generated Lean vectors are checked against the production expected pow_bits schedule helper used by PowConsensus.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the deterministic pow_bits schedule helper after the parent node has been selected by hash and any needed anchor timestamp has been supplied by chain history.",
+        "Generated Lean conformance vectors cover genesis height, non-retarget heights, early retarget-window inheritance, boundary missing-history rejection, expected/fast/slow/reversed timestamp retarget boundaries, invalid previous compact bits, and exact anchor-step decisions.",
+        "The theorem covers executable retarget-boundary scheduling and history requirements only. It does not prove timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, ancestor hash-map correctness, or long-range adversarial mining schedules."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/PowRules.lean",

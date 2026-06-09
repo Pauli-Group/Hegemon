@@ -84,6 +84,31 @@ impl PowAdmissionRejection {
     }
 }
 
+struct PowBitsScheduleInput {
+    genesis_pow_bits: u32,
+    parent_pow_bits: u32,
+    parent_height: u64,
+    new_height: u64,
+    parent_timestamp_ms: u64,
+    anchor_timestamp_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PowBitsScheduleRejection {
+    InsufficientHistory,
+    InvalidCompactTarget,
+}
+
+#[cfg(test)]
+impl PowBitsScheduleRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::InsufficientHistory => "insufficient_history",
+            Self::InvalidCompactTarget => "invalid_compact_target",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PowMinerIdentityInput {
     has_signature_bitmap: bool,
@@ -166,6 +191,43 @@ fn evaluate_pow_admission(
     Ok(PowAdmission {
         cumulative_work: input.parent_work + block_work,
     })
+}
+
+fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
+    if new_height == 0 {
+        return None;
+    }
+    if RETARGET_WINDOW == 0 || !new_height.is_multiple_of(RETARGET_WINDOW) {
+        return None;
+    }
+    if parent_height
+        .checked_add(1)
+        .is_some_and(|next_height| next_height < RETARGET_WINDOW)
+    {
+        return None;
+    }
+    Some(RETARGET_WINDOW - 1)
+}
+
+fn evaluate_pow_bits_schedule(
+    input: PowBitsScheduleInput,
+) -> Result<u32, PowBitsScheduleRejection> {
+    if input.new_height == 0 {
+        return Ok(input.genesis_pow_bits);
+    }
+    if pow_retarget_anchor_steps(input.parent_height, input.new_height).is_none() {
+        return Ok(input.parent_pow_bits);
+    }
+    let anchor_timestamp_ms = input
+        .anchor_timestamp_ms
+        .ok_or(PowBitsScheduleRejection::InsufficientHistory)?;
+    let actual_timespan = input
+        .parent_timestamp_ms
+        .saturating_sub(anchor_timestamp_ms);
+    let prev_target = compact_to_target(input.parent_pow_bits)
+        .map_err(|_| PowBitsScheduleRejection::InvalidCompactTarget)?;
+    let new_target = retarget_target(&prev_target, actual_timespan);
+    Ok(target_to_compact(&new_target))
 }
 
 fn pow_next_height(parent_height: u64) -> Option<u64> {
@@ -563,30 +625,49 @@ impl<V: ProofVerifier> PowConsensus<V> {
             .get(&parent_hash)
             .ok_or(ConsensusError::ForkChoice("unknown parent"))?;
         if new_height == 0 {
-            return Ok(self.genesis_pow_bits);
+            return evaluate_pow_bits_schedule(PowBitsScheduleInput {
+                genesis_pow_bits: self.genesis_pow_bits,
+                parent_pow_bits: parent_node.pow_bits,
+                parent_height: parent_node.height,
+                new_height,
+                parent_timestamp_ms: parent_node.timestamp_ms,
+                anchor_timestamp_ms: None,
+            })
+            .map_err(pow_bits_schedule_rejection_to_error);
         }
-        if RETARGET_WINDOW == 0 || !new_height.is_multiple_of(RETARGET_WINDOW) {
-            return Ok(parent_node.pow_bits);
+        let anchor_timestamp_ms =
+            if let Some(anchor_steps) = pow_retarget_anchor_steps(parent_node.height, new_height) {
+                let anchor_hash = self.ancestor_hash(parent_hash, anchor_steps).ok_or(
+                    ConsensusError::ForkChoice("insufficient history for retarget"),
+                )?;
+                let anchor_node = self
+                    .nodes
+                    .get(&anchor_hash)
+                    .ok_or(ConsensusError::ForkChoice("missing anchor"))?;
+                Some(anchor_node.timestamp_ms)
+            } else {
+                None
+            };
+        evaluate_pow_bits_schedule(PowBitsScheduleInput {
+            genesis_pow_bits: self.genesis_pow_bits,
+            parent_pow_bits: parent_node.pow_bits,
+            parent_height: parent_node.height,
+            new_height,
+            parent_timestamp_ms: parent_node.timestamp_ms,
+            anchor_timestamp_ms,
+        })
+        .map_err(pow_bits_schedule_rejection_to_error)
+    }
+}
+
+fn pow_bits_schedule_rejection_to_error(rejection: PowBitsScheduleRejection) -> ConsensusError {
+    match rejection {
+        PowBitsScheduleRejection::InsufficientHistory => {
+            ConsensusError::ForkChoice("insufficient history for retarget")
         }
-        if parent_node.height + 1 < RETARGET_WINDOW {
-            return Ok(parent_node.pow_bits);
+        PowBitsScheduleRejection::InvalidCompactTarget => {
+            ConsensusError::Pow("invalid compact target".into())
         }
-        let anchor_steps = RETARGET_WINDOW - 1;
-        let anchor_hash =
-            self.ancestor_hash(parent_hash, anchor_steps)
-                .ok_or(ConsensusError::ForkChoice(
-                    "insufficient history for retarget",
-                ))?;
-        let anchor_node = self
-            .nodes
-            .get(&anchor_hash)
-            .ok_or(ConsensusError::ForkChoice("missing anchor"))?;
-        let actual_timespan = parent_node
-            .timestamp_ms
-            .saturating_sub(anchor_node.timestamp_ms);
-        let prev_target = compact_to_target(parent_node.pow_bits)?;
-        let new_target = retarget_target(&prev_target, actual_timespan);
-        Ok(target_to_compact(&new_target))
     }
 }
 
@@ -672,6 +753,7 @@ mod tests {
         compact_roundtrip_cases: Vec<LeanCompactRoundtripCase>,
         retarget_cases: Vec<LeanRetargetCase>,
         retarget_bits_cases: Vec<LeanRetargetBitsCase>,
+        pow_bits_schedule_cases: Vec<LeanPowBitsScheduleCase>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -728,6 +810,22 @@ mod tests {
         expected_target: Option<String>,
         expected_bits: Option<String>,
         expected_encoded_target: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPowBitsScheduleCase {
+        name: String,
+        genesis_pow_bits: u32,
+        parent_pow_bits: u32,
+        parent_height: u64,
+        new_height: u64,
+        parent_timestamp_ms: u64,
+        anchor_timestamp_ms: Option<String>,
+        expected_anchor_steps: Option<String>,
+        expected_bits: Option<String>,
+        expected_result: String,
     }
 
     #[allow(dead_code)]
@@ -825,6 +923,10 @@ mod tests {
             "Lean retarget bits cases must not be empty"
         );
         assert!(
+            !vectors.pow_bits_schedule_cases.is_empty(),
+            "Lean pow_bits schedule cases must not be empty"
+        );
+        assert!(
             !vectors.pow_admission_cases.is_empty(),
             "Lean PoW admission cases must not be empty"
         );
@@ -841,6 +943,10 @@ mod tests {
         for case in &vectors.retarget_bits_cases {
             assert!(names.insert(case.name.clone()));
             verify_retarget_bits_case(case);
+        }
+        for case in &vectors.pow_bits_schedule_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_pow_bits_schedule_case(case);
         }
         let mut checked_admission_cases = 0usize;
         for case in &vectors.pow_admission_cases {
@@ -882,6 +988,47 @@ mod tests {
                 "{} production rejected compact bits Lean accepted",
                 case.name
             ),
+        }
+    }
+
+    fn verify_pow_bits_schedule_case(case: &LeanPowBitsScheduleCase) {
+        assert_eq!(
+            pow_retarget_anchor_steps(case.parent_height, case.new_height),
+            case.expected_anchor_steps.as_deref().map(parse_u64_decimal),
+            "{} retarget anchor-step decision drifted from Lean spec",
+            case.name
+        );
+        let result = evaluate_pow_bits_schedule(PowBitsScheduleInput {
+            genesis_pow_bits: case.genesis_pow_bits,
+            parent_pow_bits: case.parent_pow_bits,
+            parent_height: case.parent_height,
+            new_height: case.new_height,
+            parent_timestamp_ms: case.parent_timestamp_ms,
+            anchor_timestamp_ms: case.anchor_timestamp_ms.as_deref().map(parse_u64_decimal),
+        });
+        match result {
+            Ok(bits) => {
+                assert_eq!(
+                    "accepted", case.expected_result,
+                    "{} production accepted a schedule case Lean rejected",
+                    case.name
+                );
+                assert_eq!(
+                    Some(bits),
+                    case.expected_bits.as_deref().map(parse_u32_decimal),
+                    "{} expected pow_bits drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert_eq!(
+                    rejection.label(),
+                    case.expected_result,
+                    "{} production schedule rejection drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(None, case.expected_bits.as_deref());
+            }
         }
     }
 
@@ -1046,6 +1193,11 @@ mod tests {
     fn parse_u32_decimal(raw: &str) -> u32 {
         raw.parse::<u32>()
             .expect("Lean PoW vector compact bits must fit u32")
+    }
+
+    fn parse_u64_decimal(raw: &str) -> u64 {
+        raw.parse::<u64>()
+            .expect("Lean PoW vector value must fit u64")
     }
 
     fn biguint_to_hash32(value: &BigUint) -> [u8; 32] {
