@@ -1044,6 +1044,35 @@
       "residual_risks": []
     },
     {
+      "id": "native.mineable-action-admission",
+      "component": "native block-template action selection admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean mineable-action admission kernel proves the executable native block-template selection table for selected candidate artifacts, unselected candidate rejection, and locally staged sidecar-transfer ciphertext metadata; generated Lean vectors are checked against the production helper used before native mining work and mined-block pending-action replay.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model treats candidate-artifact route identity, candidate selection, sidecar transfer identity, and staged ciphertext lookup results as production-derived Boolean predicates; it proves the executable admission table and rejection precedence.",
+        "Generated Lean conformance vectors cover plain action acceptance, selected candidate acceptance, valid sidecar transfer acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and precedence when candidate and sidecar predicates conflict.",
+        "The theorem covers executable native block-template action admission only. It does not prove ciphertext hash cryptographic security or implementation equivalence, sled/BTreeMap consistency, DA durability, recursive proof soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node prepare_work_drops_sidecar_transfer_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",

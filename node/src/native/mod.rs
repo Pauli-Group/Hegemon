@@ -713,6 +713,36 @@ impl NativeCandidateArtifactCouplingAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMineableActionAdmissionInput {
+    candidate_artifact_route: bool,
+    candidate_artifact_selected: bool,
+    sidecar_transfer_route: bool,
+    sidecar_ciphertexts_available: bool,
+    sidecar_ciphertext_sizes_present: bool,
+    sidecar_ciphertext_sizes_match: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeMineableActionAdmissionRejection {
+    UnselectedCandidateArtifact,
+    SidecarCiphertextMissing,
+    SidecarCiphertextSizeMissing,
+    SidecarCiphertextSizeMismatch,
+}
+
+impl NativeMineableActionAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::UnselectedCandidateArtifact => "unselected_candidate_artifact",
+            Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
+            Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
+            Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeTxLeafActionBindingAdmissionInput {
     nullifiers_match: bool,
     commitments_match: bool,
@@ -1078,7 +1108,7 @@ impl NativeNode {
     fn prepare_work(&self) -> NativeWork {
         let state = self.state.read();
         let best = state.best.clone();
-        let pending_actions = select_mineable_actions(ordered_pending_actions(&state));
+        let pending_actions = select_mineable_actions(&state);
         let height = best.height.saturating_add(1);
         let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
             match preview_pending_roots(&state, &pending_actions) {
@@ -1178,7 +1208,7 @@ impl NativeNode {
         let actions = if work.tx_count == 0 {
             Vec::new()
         } else {
-            select_mineable_actions(ordered_pending_actions(&state))
+            select_mineable_actions(&state)
         };
         let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
             match preview_pending_roots(&state, &actions) {
@@ -4504,10 +4534,15 @@ fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
     actions
 }
 
-fn select_mineable_actions(actions: Vec<PendingAction>) -> Vec<PendingAction> {
+fn select_mineable_actions(state: &NativeState) -> Vec<PendingAction> {
+    let actions = ordered_pending_actions(state);
     let transfer_count = actions
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
+        .filter(|action| {
+            let input = native_mineable_action_admission_input(state, action, None);
+            evaluate_native_mineable_action_admission(input).is_ok()
+        })
         .count();
     let selected_candidate_hash = if transfer_count == 0 {
         None
@@ -4526,10 +4561,64 @@ fn select_mineable_actions(actions: Vec<PendingAction>) -> Vec<PendingAction> {
     actions
         .into_iter()
         .filter(|action| {
-            !is_candidate_artifact_action(action)
-                || selected_candidate_hash.is_some_and(|hash| hash == action.tx_hash)
+            let input =
+                native_mineable_action_admission_input(state, action, selected_candidate_hash);
+            evaluate_native_mineable_action_admission(input).is_ok()
         })
         .collect()
+}
+
+fn native_mineable_action_admission_input(
+    state: &NativeState,
+    action: &PendingAction,
+    selected_candidate_hash: Option<[u8; 32]>,
+) -> NativeMineableActionAdmissionInput {
+    let candidate_artifact_route = is_candidate_artifact_action(action);
+    let candidate_artifact_selected =
+        selected_candidate_hash.is_some_and(|hash| hash == action.tx_hash);
+    let sidecar_transfer_route = action.family_id == FAMILY_SHIELDED_POOL
+        && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR;
+    let (
+        sidecar_ciphertexts_available,
+        sidecar_ciphertext_sizes_present,
+        sidecar_ciphertext_sizes_match,
+    ) = if sidecar_transfer_route {
+        sidecar_ciphertext_state_for_action(state, action)
+    } else {
+        (true, true, true)
+    };
+    NativeMineableActionAdmissionInput {
+        candidate_artifact_route,
+        candidate_artifact_selected,
+        sidecar_transfer_route,
+        sidecar_ciphertexts_available,
+        sidecar_ciphertext_sizes_present,
+        sidecar_ciphertext_sizes_match,
+    }
+}
+
+fn evaluate_native_mineable_action_admission(
+    input: NativeMineableActionAdmissionInput,
+) -> Result<(), NativeMineableActionAdmissionRejection> {
+    if input.candidate_artifact_route {
+        if input.candidate_artifact_selected {
+            Ok(())
+        } else {
+            Err(NativeMineableActionAdmissionRejection::UnselectedCandidateArtifact)
+        }
+    } else if input.sidecar_transfer_route {
+        if !input.sidecar_ciphertexts_available {
+            Err(NativeMineableActionAdmissionRejection::SidecarCiphertextMissing)
+        } else if !input.sidecar_ciphertext_sizes_present {
+            Err(NativeMineableActionAdmissionRejection::SidecarCiphertextSizeMissing)
+        } else if !input.sidecar_ciphertext_sizes_match {
+            Err(NativeMineableActionAdmissionRejection::SidecarCiphertextSizeMismatch)
+        } else {
+            Ok(())
+        }
+    } else {
+        Ok(())
+    }
 }
 
 fn is_transfer_action(action_id: u16) -> bool {
@@ -6876,6 +6965,27 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanMineableActionAdmissionVectorFile {
+        schema_version: u32,
+        mineable_action_admission_cases: Vec<LeanMineableActionAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMineableActionAdmissionCase {
+        name: String,
+        candidate_artifact_route: bool,
+        candidate_artifact_selected: bool,
+        sidecar_transfer_route: bool,
+        sidecar_ciphertexts_available: bool,
+        sidecar_ciphertext_sizes_present: bool,
+        sidecar_ciphertext_sizes_match: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockArtifactBindingAdmissionVectorFile {
         schema_version: u32,
         tx_leaf_action_binding_cases: Vec<LeanTxLeafActionBindingAdmissionCase>,
@@ -8678,6 +8788,56 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_mineable_action_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean mineable action admission vectors");
+        let vectors: LeanMineableActionAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean mineable action admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.mineable_action_admission_cases.is_empty(),
+            "Lean mineable action admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.mineable_action_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mineable_action_admission_case(case);
+        }
+    }
+
+    fn verify_lean_mineable_action_admission_case(case: &LeanMineableActionAdmissionCase) {
+        let input = NativeMineableActionAdmissionInput {
+            candidate_artifact_route: case.candidate_artifact_route,
+            candidate_artifact_selected: case.candidate_artifact_selected,
+            sidecar_transfer_route: case.sidecar_transfer_route,
+            sidecar_ciphertexts_available: case.sidecar_ciphertexts_available,
+            sidecar_ciphertext_sizes_present: case.sidecar_ciphertext_sizes_present,
+            sidecar_ciphertext_sizes_match: case.sidecar_ciphertext_sizes_match,
+        };
+        let actual_rejection = evaluate_native_mineable_action_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native mineable action admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native mineable action admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
     fn lean_generated_block_artifact_binding_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS")
         else {
@@ -10172,6 +10332,76 @@ mod tests {
 
         assert_eq!(work.tx_count, 0);
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+    }
+
+    #[test]
+    fn prepare_work_drops_sidecar_transfer_without_staged_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [24u8; 48], [25u8; 48], 0);
+        let candidate = test_candidate_artifact_action(1, 26);
+        {
+            let mut state = node.state.write();
+            state.pending_actions.insert(transfer.tx_hash, transfer);
+            state.pending_actions.insert(candidate.tx_hash, candidate);
+        }
+
+        let work = node.prepare_work();
+
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+    }
+
+    #[test]
+    fn prepare_work_drops_sidecar_transfer_with_staged_size_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [27u8; 48], [28u8; 48], 0);
+        let hash = transfer.ciphertext_hashes[0];
+        let mismatched_size = transfer.ciphertext_sizes[0].saturating_add(1);
+        let candidate = test_candidate_artifact_action(1, 29);
+        {
+            let mut state = node.state.write();
+            state
+                .staged_ciphertexts
+                .insert(hex48(&hash), mismatched_size);
+            state.pending_actions.insert(transfer.tx_hash, transfer);
+            state.pending_actions.insert(candidate.tx_hash, candidate);
+        }
+
+        let work = node.prepare_work();
+
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+    }
+
+    #[test]
+    fn prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [30u8; 48], [31u8; 48], 0);
+        let hash = transfer.ciphertext_hashes[0];
+        let size = transfer.ciphertext_sizes[0];
+        let candidate = test_candidate_artifact_action(1, 32);
+        {
+            let mut state = node.state.write();
+            state.staged_ciphertexts.insert(hex48(&hash), size);
+            state.pending_actions.insert(transfer.tx_hash, transfer);
+            state.pending_actions.insert(candidate.tx_hash, candidate);
+        }
+
+        let work = node.prepare_work();
+
+        assert_eq!(work.tx_count, 2);
     }
 
     #[test]

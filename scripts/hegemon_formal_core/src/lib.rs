@@ -362,6 +362,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ResourceBudgetAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/RpcAdmission.lean",

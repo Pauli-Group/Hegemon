@@ -1969,6 +1969,67 @@
       "scope_boundary": "This node proves and vector-checks native sync semantic admission after bounded message decode. It does not prove SCALE codec correctness, PQ Noise transport security, PoW/header validity, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
     },
     {
+      "id": "native.mineable-action-admission",
+      "claim_id": "native.mineable-action-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native mineable-action admission predicate, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. `gen_mineable_action_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against the production `evaluate_native_mineable_action_admission` helper used by native candidate selection before `prepare_work` and mined-block import replay pending actions. Native regressions show stale or mismatched sidecar transfers plus candidate artifacts produce an empty template, while matching staged sidecar metadata keeps the transfer and selected candidate in work.",
+      "depends_on": [
+        "native.action-scope-admission",
+        "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
+        "native.sidecar-upload-admission",
+        "native.candidate-artifact-admission",
+        "native.candidate-artifact-coupling-admission",
+        "native.block-action-ordering",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-08",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block-template action admission. Scope is the cheap local selection gate before mining work, not recursive proof soundness or candidate-selection fairness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-mineable-action-admission-theorem",
+          "description": "Removing or weakening the native mineable-action admission theorems or concrete examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-mineable-action-admission-conformance",
+          "description": "Changing production native mineable-action admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-stale-sidecar-template-regressions",
+          "description": "Native work preparation must drop stale or mismatched sidecar transfers before candidate artifact selection, while preserving matching staged sidecar transfers.",
+          "gate": "cargo test -p hegemon-node prepare_work_drops_sidecar_transfer_ --lib --no-default-features -- --nocapture && cargo test -p hegemon-node prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-mineable-action-admission-gate",
+          "description": "The release formal-core wrapper must generate native mineable-action admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",
