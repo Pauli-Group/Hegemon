@@ -1270,6 +1270,35 @@
       "residual_risks": []
     },
     {
+      "id": "native.announced-block-admission",
+      "component": "native announced block header admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean announced-block admission kernel proves the executable pre-PoW native import table for checked next-height progression, parent-hash binding, timestamp monotonicity, future-skew bounds, and block-hash/work-hash equality before an announced block reaches body replay; generated Lean vectors are checked against the production native admission helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model proves the deterministic pre-PoW header admission table and checked u64 next-height behavior; it does not prove PoW hash-threshold arithmetic or light-client header verification, which are covered separately by consensus.pow-admission and consensus header/light-client gates.",
+        "Generated Lean conformance vectors cover valid admission, height mismatch, height overflow at u64::MAX, parent-hash mismatch, non-advancing timestamps, future-skew rejection, hash/work-hash mismatch, rejection precedence, and saturated future-limit acceptance.",
+        "The theorem covers native announced-block pre-PoW admission only. It does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice, sync liveness, wall-clock correctness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateAnnouncedBlockAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_announced_block_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node announced_block_rejects_height_overflow --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node announced_block_rejects_future_timestamp_skew --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",

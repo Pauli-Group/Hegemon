@@ -381,6 +381,39 @@ impl NativeActionHashAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeAnnouncedBlockAdmissionInput {
+    parent_height: u64,
+    announced_height: u64,
+    parent_hash_matches: bool,
+    parent_timestamp_ms: u64,
+    announced_timestamp_ms: u64,
+    now_ms: u64,
+    max_future_skew_ms: u64,
+    hash_matches_work_hash: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeAnnouncedBlockAdmissionRejection {
+    HeightNotNext,
+    ParentHashMismatch,
+    TimestampDidNotAdvance,
+    FutureSkew,
+    HashWorkHashMismatch,
+}
+
+impl NativeAnnouncedBlockAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::HeightNotNext => "height_not_next",
+            Self::ParentHashMismatch => "parent_hash_mismatch",
+            Self::TimestampDidNotAdvance => "timestamp_did_not_advance",
+            Self::FutureSkew => "future_skew",
+            Self::HashWorkHashMismatch => "hash_work_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeActionScopeAdmissionInput {
     candidate_artifact_payload_scoped: bool,
     bridge_route: bool,
@@ -6076,22 +6109,91 @@ fn preview_pending_roots(
     ))
 }
 
+fn native_announced_block_admission_input(
+    parent: &NativeBlockMeta,
+    meta: &NativeBlockMeta,
+    now_ms: u64,
+) -> NativeAnnouncedBlockAdmissionInput {
+    NativeAnnouncedBlockAdmissionInput {
+        parent_height: parent.height,
+        announced_height: meta.height,
+        parent_hash_matches: meta.parent_hash == parent.hash,
+        parent_timestamp_ms: parent.timestamp_ms,
+        announced_timestamp_ms: meta.timestamp_ms,
+        now_ms,
+        max_future_skew_ms: consensus::reward::MAX_FUTURE_SKEW_MS,
+        hash_matches_work_hash: meta.hash == meta.work_hash,
+    }
+}
+
+fn native_announced_next_height(parent_height: u64) -> Option<u64> {
+    parent_height.checked_add(1)
+}
+
+fn native_announced_future_limit(now_ms: u64, max_future_skew_ms: u64) -> u64 {
+    now_ms.saturating_add(max_future_skew_ms)
+}
+
+fn evaluate_native_announced_block_admission(
+    input: NativeAnnouncedBlockAdmissionInput,
+) -> Result<(), NativeAnnouncedBlockAdmissionRejection> {
+    if native_announced_next_height(input.parent_height) != Some(input.announced_height) {
+        Err(NativeAnnouncedBlockAdmissionRejection::HeightNotNext)
+    } else if !input.parent_hash_matches {
+        Err(NativeAnnouncedBlockAdmissionRejection::ParentHashMismatch)
+    } else if input.announced_timestamp_ms <= input.parent_timestamp_ms {
+        Err(NativeAnnouncedBlockAdmissionRejection::TimestampDidNotAdvance)
+    } else if input.announced_timestamp_ms
+        > native_announced_future_limit(input.now_ms, input.max_future_skew_ms)
+    {
+        Err(NativeAnnouncedBlockAdmissionRejection::FutureSkew)
+    } else if !input.hash_matches_work_hash {
+        Err(NativeAnnouncedBlockAdmissionRejection::HashWorkHashMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_announced_block_admission_error(
+    rejection: NativeAnnouncedBlockAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeAnnouncedBlockAdmissionRejection::HeightNotNext => {
+            anyhow!(
+                "announced block height is not the next height ({})",
+                rejection.label()
+            )
+        }
+        NativeAnnouncedBlockAdmissionRejection::ParentHashMismatch => anyhow!(
+            "announced block parent does not match local parent ({})",
+            rejection.label()
+        ),
+        NativeAnnouncedBlockAdmissionRejection::TimestampDidNotAdvance => {
+            anyhow!(
+                "announced block timestamp did not advance ({})",
+                rejection.label()
+            )
+        }
+        NativeAnnouncedBlockAdmissionRejection::FutureSkew => anyhow!(
+            "announced block timestamp exceeds future skew bound ({})",
+            rejection.label()
+        ),
+        NativeAnnouncedBlockAdmissionRejection::HashWorkHashMismatch => {
+            anyhow!(
+                "native block hash must equal work hash ({})",
+                rejection.label()
+            )
+        }
+    }
+}
+
 fn validate_announced_block(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> Result<()> {
-    if meta.height != parent.height.saturating_add(1) {
-        return Err(anyhow!("announced block height is not the next height"));
-    }
-    if meta.parent_hash != parent.hash {
-        return Err(anyhow!("announced block parent does not match local best"));
-    }
-    if meta.timestamp_ms <= parent.timestamp_ms {
-        return Err(anyhow!("announced block timestamp did not advance"));
-    }
-    let future_limit = current_time_ms().saturating_add(consensus::reward::MAX_FUTURE_SKEW_MS);
-    if meta.timestamp_ms > future_limit {
-        return Err(anyhow!(
-            "announced block timestamp exceeds future skew bound"
-        ));
-    }
+    evaluate_native_announced_block_admission(native_announced_block_admission_input(
+        parent,
+        meta,
+        current_time_ms(),
+    ))
+    .map_err(native_announced_block_admission_error)?;
     verify_native_pow_meta(parent, meta)
 }
 
@@ -6806,6 +6908,29 @@ mod tests {
         action_hashes_hex: Vec<String>,
         expected_preimage_hex: String,
         expected_preimage_len: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAnnouncedBlockAdmissionVectorFile {
+        schema_version: u32,
+        announced_block_admission_cases: Vec<LeanAnnouncedBlockAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAnnouncedBlockAdmissionCase {
+        name: String,
+        parent_height: u64,
+        announced_height: u64,
+        parent_hash_matches: bool,
+        parent_timestamp_ms: u64,
+        announced_timestamp_ms: u64,
+        now_ms: u64,
+        max_future_skew_ms: u64,
+        hash_matches_work_hash: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -7686,6 +7811,24 @@ mod tests {
     }
 
     #[test]
+    fn announced_block_rejects_height_overflow() {
+        let pow_bits = 0x207f_ffff;
+        let mut parent = genesis_meta(pow_bits).expect("genesis");
+        parent.height = u64::MAX;
+        parent.timestamp_ms = 1000;
+        parent.hash = [3u8; 32];
+        let mut announced = parent.clone();
+        announced.parent_hash = parent.hash;
+        announced.timestamp_ms = parent.timestamp_ms + 1;
+        announced.hash = [4u8; 32];
+        announced.work_hash = announced.hash;
+
+        let err = validate_announced_block(&parent, &announced)
+            .expect_err("height overflow must fail closed");
+        assert!(err.to_string().contains("height_not_next"));
+    }
+
+    #[test]
     fn announced_block_rejects_counterfeit_body_commitments() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -8298,6 +8441,58 @@ mod tests {
 
     fn decode_lean_hex_bytes(raw: &str) -> Option<Vec<u8>> {
         hex::decode(raw.strip_prefix("0x").unwrap_or(raw)).ok()
+    }
+
+    #[test]
+    fn lean_generated_announced_block_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean announced-block admission vectors");
+        let vectors: LeanAnnouncedBlockAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean announced-block vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.announced_block_admission_cases.is_empty(),
+            "Lean announced-block admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.announced_block_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_announced_block_admission_case(case);
+        }
+    }
+
+    fn verify_lean_announced_block_admission_case(case: &LeanAnnouncedBlockAdmissionCase) {
+        let input = NativeAnnouncedBlockAdmissionInput {
+            parent_height: case.parent_height,
+            announced_height: case.announced_height,
+            parent_hash_matches: case.parent_hash_matches,
+            parent_timestamp_ms: case.parent_timestamp_ms,
+            announced_timestamp_ms: case.announced_timestamp_ms,
+            now_ms: case.now_ms,
+            max_future_skew_ms: case.max_future_skew_ms,
+            hash_matches_work_hash: case.hash_matches_work_hash,
+        };
+        let actual_rejection = evaluate_native_announced_block_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native announced-block admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native announced-block admission rejection drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]

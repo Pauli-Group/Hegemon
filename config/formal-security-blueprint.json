@@ -2420,6 +2420,61 @@
       "scope_boundary": "This node proves and vector-checks native action-root preimage bytes only. It does not prove BLAKE3 collision resistance, pending_action_hash derivation, SCALE encoding implementation equivalence, full block action payload validation, transfer-key ordering, tx leaf proof soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.announced-block-admission",
+      "claim_id": "native.announced-block-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean announced-block admission transition, native announced-block pre-PoW import accepts only when parent height has a checked u64 next height equal to the announced height, the parent hash matches, the timestamp strictly advances, the timestamp is within the saturating future-skew bound, and the claimed block hash equals the work hash; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "consensus.header-preimage-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateAnnouncedBlockAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateAnnouncedBlockAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native announced-block pre-PoW admission. Scope excludes PoW cryptographic/hash-threshold verification and body commitment replay."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-announced-block-admission-theorem",
+          "description": "Removing or weakening the announced-block admission theorem or concrete overflow/rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-announced-block-admission-conformance",
+          "description": "Changing the production announced-block pre-PoW admission table away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-announced-block-height-overflow-regression",
+          "description": "Native announced-block validation must reject a parent at u64::MAX instead of saturating and accepting a same-height child.",
+          "gate": "cargo test -p hegemon-node announced_block_rejects_height_overflow --lib --no-default-features"
+        },
+        {
+          "id": "native-announced-block-future-skew-regression",
+          "description": "Native announced-block validation must reject timestamps beyond the configured future-skew bound.",
+          "gate": "cargo test -p hegemon-node announced_block_rejects_future_timestamp_skew --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, or complete native-node equivalence."
+    },
+    {
       "id": "native.codec-admission",
       "claim_id": "native.codec-admission",
       "kind": "target_claim",
@@ -2750,6 +2805,7 @@
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-root-transcript-binding",
+        "native.announced-block-admission",
         "native.action-scope-admission",
         "native.bridge-action-payload-admission",
         "native.transfer-action-payload-admission",

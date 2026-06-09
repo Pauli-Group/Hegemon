@@ -40,6 +40,8 @@ The release native node intentionally does not embed classical TLS stacks. Its H
 
 Native RPC admission is represented separately in Lean: generated vectors check `--rpc-methods` safe/unsafe/auto resolution, safe-policy rejection and method-list hiding for unsafe RPC methods, timestamp range caps, raw and decoded base64/hex byte caps, and JSON-RPC batch-size caps against the production native RPC helpers and handler. This proof does not prove RPC authentication, host firewall posture, plaintext control-plane safety, JSON parser correctness, full handler semantics, mining liveness, or complete native-node equivalence.
 
+Native announced-block pre-PoW admission is represented separately in Lean: generated vectors check checked next-height arithmetic, parent-hash agreement, strict timestamp advancement, future-skew bounds, and hash/work-hash equality against the production native import helper before PoW metadata verification and body replay. This proof does not prove PoW hash-threshold validity, wall-clock correctness, fork-choice liveness, action validity, or complete native-node equivalence.
+
 ### 0.4 zk bridge posture
 
 Hegemon is still a pure PoW chain. Canonicality is valid-header execution plus greatest fixed-width cumulative work; zkVM receipts, bridge relayers, verifier registrations, and external-chain proofs are not fork-choice inputs. The bridge model is a zk light client over Hegemon, not a new finality layer.
