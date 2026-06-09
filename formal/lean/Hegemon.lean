@@ -47,6 +47,7 @@ import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission
 import Hegemon.Native.TxLeafArtifact
+import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.SecureChannel
 import Hegemon.Shielded.Nullifier

@@ -2089,6 +2089,66 @@
       "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission only. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity, wall-clock correctness, fork-choice, storage durability, or complete native-node equivalence."
     },
     {
+      "id": "native.work-template-admission",
+      "claim_id": "native.work-template-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean work-template admission transition, native mining template construction emits a work height only when the current best height has a checked u64 successor and the cumulative Work48 value can be advanced for the configured PoW bits; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.WorkTemplateAdmission.accepts_iff_work_template_preconditions` proves the complete executable template-admission predicate, with concrete theorem facts for valid admission, u64 height overflow rejection, cumulative-work overflow rejection, height-before-work rejection precedence, and accepting height u64::MAX only when the parent is u64::MAX - 1. `gen_work_template_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_work_template_admission` helper called by `prepare_work` before header preimage construction. Direct regressions cover the former `saturating_add(1)` height edge and the former `cumulative_work_after(...).unwrap_or(best.cumulative_work)` fallback.",
+      "depends_on": [
+        "release.dependency-waivers",
+        "consensus.pow-admission"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/WorkTemplateAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateWorkTemplateAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/WorkTemplateAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateWorkTemplateAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native mining work-template admission. Scope excludes pending-action preview, body replay, supply accounting, PoW seal liveness, and full native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-work-template-admission-theorem",
+          "description": "Removing or weakening the work-template admission theorem or concrete overflow/rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-work-template-admission-conformance",
+          "description": "Changing production work-template admission away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_WORK_TEMPLATE_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_work_template_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "prepare-work-height-overflow-regression",
+          "description": "A native best tip at u64::MAX must not produce a same-height work template.",
+          "gate": "cargo test -p hegemon-node prepare_work_rejects_height_overflow --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "prepare-work-cumulative-work-overflow-regression",
+          "description": "A best tip whose Work48 value cannot be advanced must not produce a work template with unchanged cumulative work.",
+          "gate": "cargo test -p hegemon-node prepare_work_rejects_cumulative_work_overflow --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-work-template-admission-gate",
+          "description": "The release formal-core wrapper must generate native work-template admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native mining work-template admission only. It does not prove pending-action preview correctness, action validity, header preimage hash security, PoW seal search or liveness, import-time body replay, supply accounting, storage durability, fork-choice convergence, or complete native-node equivalence."
+    },
+    {
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",

@@ -130,6 +130,9 @@ lean_exe gen_mineable_action_admission_vectors where
 lean_exe gen_mined_work_admission_vectors where
   root := `Hegemon.Native.GenerateMinedWorkAdmissionVectors
 
+lean_exe gen_work_template_admission_vectors where
+  root := `Hegemon.Native.GenerateWorkTemplateAdmissionVectors
+
 lean_exe gen_resource_budget_admission_vectors where
   root := `Hegemon.Native.GenerateResourceBudgetAdmissionVectors
 

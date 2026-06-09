@@ -400,6 +400,12 @@ struct NativeMinedWorkAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeWorkTemplateAdmissionInput {
+    best_height: u64,
+    cumulative_work_advances: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeAnnouncedBlockAdmissionRejection {
     HeightNotNext,
     ParentHashMismatch,
@@ -432,6 +438,21 @@ impl NativeMinedWorkAdmissionRejection {
         match self {
             Self::ParentHashMismatch => "parent_hash_mismatch",
             Self::HeightNotNext => "height_not_next",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeWorkTemplateAdmissionRejection {
+    HeightNotNext,
+    CumulativeWorkOverflow,
+}
+
+impl NativeWorkTemplateAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::HeightNotNext => "height_not_next",
+            Self::CumulativeWorkOverflow => "cumulative_work_overflow",
         }
     }
 }
@@ -1161,11 +1182,18 @@ impl NativeNode {
         }
     }
 
-    fn prepare_work(&self) -> NativeWork {
+    fn prepare_work(&self) -> Result<NativeWork> {
         let state = self.state.read();
         let best = state.best.clone();
         let pending_actions = select_mineable_actions(&state);
-        let height = best.height.saturating_add(1);
+        let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
+            .map_err(|_| NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow);
+        let height = evaluate_native_work_template_admission(NativeWorkTemplateAdmissionInput {
+            best_height: best.height,
+            cumulative_work_advances: cumulative_work.is_ok(),
+        })
+        .map_err(native_work_template_admission_error)?;
+        let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
         let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
             match preview_pending_roots(&state, &pending_actions) {
                 Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
@@ -1210,8 +1238,6 @@ impl NativeNode {
         });
         let header_mmr_root = header_mmr_root_from_hashes(&header_history);
         let header_mmr_len = header_history.len() as u64;
-        let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
-            .unwrap_or(best.cumulative_work);
         let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
@@ -1231,7 +1257,7 @@ impl NativeNode {
             tx_count,
         );
         let pre_hash = pre_header.pre_hash();
-        NativeWork {
+        Ok(NativeWork {
             height,
             parent_hash: best.hash,
             pre_hash,
@@ -1247,7 +1273,7 @@ impl NativeNode {
             tx_count,
             timestamp_ms,
             pow_bits: self.config.pow_bits,
-        }
+        })
     }
 
     fn import_mined_block(
@@ -3305,7 +3331,14 @@ fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV1) -> Value {
 
 async fn mining_loop(node: Arc<NativeNode>) {
     while node.mining.load(Ordering::SeqCst) {
-        let work = node.prepare_work();
+        let work = match node.prepare_work() {
+            Ok(work) => work,
+            Err(err) => {
+                warn!(error = %err, "failed to prepare native mining work");
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+        };
         let start_round = node.mining_round.fetch_add(1, Ordering::Relaxed);
         let work_for_task = work.clone();
 
@@ -6163,6 +6196,39 @@ fn evaluate_native_mined_work_admission(
     }
 }
 
+fn native_work_template_next_height(best_height: u64) -> Option<u64> {
+    best_height.checked_add(1)
+}
+
+fn evaluate_native_work_template_admission(
+    input: NativeWorkTemplateAdmissionInput,
+) -> Result<u64, NativeWorkTemplateAdmissionRejection> {
+    let Some(next_height) = native_work_template_next_height(input.best_height) else {
+        return Err(NativeWorkTemplateAdmissionRejection::HeightNotNext);
+    };
+    if !input.cumulative_work_advances {
+        return Err(NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow);
+    }
+    Ok(next_height)
+}
+
+fn native_work_template_admission_error(
+    rejection: NativeWorkTemplateAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeWorkTemplateAdmissionRejection::HeightNotNext => {
+            anyhow!(
+                "native work template height is not next ({})",
+                rejection.label()
+            )
+        }
+        NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow => anyhow!(
+            "native work template cumulative work overflow ({})",
+            rejection.label()
+        ),
+    }
+}
+
 fn native_announced_block_admission_input(
     parent: &NativeBlockMeta,
     meta: &NativeBlockMeta,
@@ -7007,6 +7073,24 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanWorkTemplateAdmissionVectorFile {
+        schema_version: u32,
+        work_template_admission_cases: Vec<LeanWorkTemplateAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanWorkTemplateAdmissionCase {
+        name: String,
+        best_height: u64,
+        cumulative_work_advances: bool,
+        expected_height: Option<u64>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanCodecAdmissionVectorFile {
         schema_version: u32,
         sync_codec_cases: Vec<LeanSyncCodecCase>,
@@ -7637,7 +7721,7 @@ mod tests {
         }))
         .expect("stage candidate artifact");
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         let seal = mine_native_round(work.clone(), 0).expect("test seal");
         let err = node
             .import_mined_block(&work, seal)
@@ -7673,7 +7757,7 @@ mod tests {
         let node = NativeNode::open(config).expect("node");
         let genesis = node.best_meta();
 
-        let canonical_work = node.prepare_work();
+        let canonical_work = node.prepare_work().expect("prepare canonical native work");
         let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
         let canonical = node
             .import_mined_block(&canonical_work, canonical_seal)
@@ -7762,7 +7846,7 @@ mod tests {
         }))
         .expect("stage coinbase");
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         let seal = mine_native_round(work.clone(), 0).expect("coinbase seal");
         let imported = node
             .import_mined_block(&work, seal)
@@ -7783,14 +7867,14 @@ mod tests {
             NativeNode::open(test_config(tmp.path(), test_pow_bits, "safe", false)).expect("node");
 
         stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [21u8; 48]);
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         let seal = mine_native_round(work.clone(), 0).expect("first seal");
         node.import_mined_block(&work, seal)
             .expect("first import")
             .expect("first block");
 
         stage_test_coinbase(&node, consensus::reward::block_subsidy(2), [22u8; 48]);
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         let seal = mine_native_round(work.clone(), 0).expect("second seal");
         node.import_mined_block(&work, seal)
             .expect("second import")
@@ -7858,7 +7942,7 @@ mod tests {
         let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
             .expect("node");
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         let seal = mine_native_round(work.clone(), 0).expect("empty seal");
         let imported = node
             .import_mined_block(&work, seal)
@@ -7942,6 +8026,40 @@ mod tests {
             .expect("overflow work admission should fail closed");
         assert!(imported.is_none());
         assert_eq!(node.best_meta().height, u64::MAX);
+    }
+
+    #[test]
+    fn prepare_work_rejects_height_overflow() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        {
+            let mut state = node.state.write();
+            state.best.height = u64::MAX;
+        }
+
+        let err = node
+            .prepare_work()
+            .expect_err("max-height tip must not produce a native work template");
+        assert!(err.to_string().contains("height_not_next"));
+    }
+
+    #[test]
+    fn prepare_work_rejects_cumulative_work_overflow() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        {
+            let mut state = node.state.write();
+            state.best.cumulative_work = [0xff; 48];
+        }
+
+        let err = node
+            .prepare_work()
+            .expect_err("work48 overflow must not produce a native work template");
+        assert!(err.to_string().contains("cumulative_work_overflow"));
     }
 
     #[test]
@@ -8654,6 +8772,60 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native mined-work admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_work_template_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_WORK_TEMPLATE_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_WORK_TEMPLATE_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean work-template admission vectors");
+        let vectors: LeanWorkTemplateAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean work-template vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.work_template_admission_cases.is_empty(),
+            "Lean work-template admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.work_template_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_work_template_admission_case(case);
+        }
+    }
+
+    fn verify_lean_work_template_admission_case(case: &LeanWorkTemplateAdmissionCase) {
+        let input = NativeWorkTemplateAdmissionInput {
+            best_height: case.best_height,
+            cumulative_work_advances: case.cumulative_work_advances,
+        };
+        let actual = evaluate_native_work_template_admission(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native work-template admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.ok(),
+            case.expected_height,
+            "{} native work-template height drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native work-template admission rejection drifted from Lean spec",
             case.name
         );
     }
@@ -10771,7 +10943,7 @@ mod tests {
             .pending_actions
             .insert(action.tx_hash, action);
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
 
         assert_eq!(work.tx_count, 0);
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
@@ -10792,7 +10964,7 @@ mod tests {
             state.pending_actions.insert(candidate.tx_hash, candidate);
         }
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
 
         assert_eq!(work.tx_count, 0);
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
@@ -10818,7 +10990,7 @@ mod tests {
             state.pending_actions.insert(candidate.tx_hash, candidate);
         }
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
 
         assert_eq!(work.tx_count, 0);
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
@@ -10842,7 +11014,7 @@ mod tests {
             state.pending_actions.insert(candidate.tx_hash, candidate);
         }
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
 
         assert_eq!(work.tx_count, 2);
     }
@@ -11062,7 +11234,7 @@ mod tests {
             state.pending_actions.insert(bridge.tx_hash, bridge);
         }
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         assert_eq!(work.tx_count, 0);
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
         assert_eq!(work.message_count, 0);
@@ -11159,7 +11331,7 @@ mod tests {
         }))
         .expect("stage outbound bridge message");
 
-        let work = node.prepare_work();
+        let work = node.prepare_work().expect("prepare native work");
         assert_eq!(work.message_count, 1);
         assert_ne!(work.message_root, empty_bridge_message_root());
         let seal = mine_native_round(work.clone(), 0).expect("bridge seal");
