@@ -576,6 +576,7 @@ fn is_non_generator_lean_evidence(raw: &str) -> bool {
 fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("read Lean theorem evidence {}", path.display()))?;
+    let source = strip_lean_comments(&source);
     let mut names = BTreeSet::new();
     let mut namespaces: Vec<String> = Vec::new();
     for line in source.lines() {
@@ -618,6 +619,81 @@ fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(names.into_iter().collect())
+}
+
+fn strip_lean_comments(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut stripped = String::with_capacity(source.len());
+    let mut index = 0usize;
+    let mut block_depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while index < chars.len() {
+        let current = chars[index];
+        let next = chars.get(index + 1).copied();
+
+        if block_depth > 0 {
+            if current == '/' && next == Some('-') {
+                block_depth += 1;
+                index += 2;
+                continue;
+            }
+            if current == '-' && next == Some('/') {
+                block_depth -= 1;
+                index += 2;
+                continue;
+            }
+            if current == '\n' {
+                stripped.push('\n');
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_string {
+            stripped.push(current);
+            if escaped {
+                escaped = false;
+            } else if current == '\\' {
+                escaped = true;
+            } else if current == '"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        if current == '"' {
+            in_string = true;
+            stripped.push(current);
+            index += 1;
+            continue;
+        }
+
+        if current == '-' && next == Some('-') {
+            index += 2;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            if index < chars.len() {
+                stripped.push('\n');
+                index += 1;
+            }
+            continue;
+        }
+
+        if current == '/' && next == Some('-') {
+            block_depth = 1;
+            index += 2;
+            continue;
+        }
+
+        stripped.push(current);
+        index += 1;
+    }
+
+    stripped
 }
 
 fn validate_lean_theorem_name(claim_id: &str, theorem: &str) -> Result<()> {
@@ -1390,6 +1466,64 @@ mod tests {
 
         let err = check_claims_file(&claims_path).unwrap_err();
         assert!(err.to_string().contains("named theorem declaration"));
+    }
+
+    #[test]
+    fn claims_reject_theorem_name_in_line_comment() {
+        let root = test_root("lean-line-comment-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             -- theorem spoofed_rule : True := by\n\
+             --   trivial\n\
+             theorem real_rule : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.spoofed_rule"],
+            ),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("is not declared"));
+    }
+
+    #[test]
+    fn claims_reject_theorem_name_in_block_comment() {
+        let root = test_root("lean-block-comment-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             /-\n\
+             theorem spoofed_rule : True := by\n\
+               trivial\n\
+             /-\n\
+             theorem nested_spoofed_rule : True := by\n\
+               trivial\n\
+             -/\n\
+             -/\n\
+             theorem real_rule : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.nested_spoofed_rule"],
+            ),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("is not declared"));
     }
 
     #[test]
