@@ -136,7 +136,8 @@ theorem node_preimage_length :
 theorem node_preimage_hex :
     hexBytes (nodePreimage sampleLeft sampleRight) =
       "0x64612d6e6f64650112233445566778899aabbccddeef00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f2002132435465768798a9bacbdcedff00112233445566778899aabbccddeef00112233445566778899aabbccddeeff1021" := by
-  native_decide
+  set_option maxRecDepth 6000 in
+  decide
 
 theorem node_preimage_order_binds_children :
     nodePreimage sampleLeft sampleRight ≠ nodePreimage sampleRight sampleLeft := by
@@ -182,12 +183,14 @@ theorem odd_merkle_step_uses_sibling_left :
 theorem even_merkle_step_hex :
     hexBytes (merkleStepPreimage 2 sampleCurrent sampleSibling) =
       "0x64612d6e6f6465031425364758697a8b9cadbecfe0f102132435465768798a9bacbdcedff00112233445566778899aabbccddeef0011220415263748596a7b8c9daebfd0e1f2031425364758697a8b9cadbecfe0f102132435465768798a9bacbdcedff0011223" := by
-  native_decide
+  set_option maxRecDepth 6000 in
+  decide
 
 theorem odd_merkle_step_hex :
     hexBytes (merkleStepPreimage 3 sampleCurrent sampleSibling) =
       "0x64612d6e6f64650415263748596a7b8c9daebfd0e1f2031425364758697a8b9cadbecfe0f102132435465768798a9bacbdcedff0011223031425364758697a8b9cadbecfe0f102132435465768798a9bacbdcedff00112233445566778899aabbccddeef001122" := by
-  native_decide
+  set_option maxRecDepth 6000 in
+  decide
 
 end DaRoot
 end Consensus

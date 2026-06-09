@@ -78,12 +78,14 @@ theorem valid_transcript_length :
 theorem valid_transcript_hex :
     hexBytes (transcriptPreimage validTranscript) =
       "0x686567656d6f6e2e666c79636c69656e742e73616d706c652d76310112233445566778899aabbccddeef00112233445566778899aabbccddeeff1002132435465768798a9bacbdcedff00112233445566778899aabbccddeef0011031425364758697a8b9cadbecfe0f102132435465768798a9bacbdcedff001120b000000000000000e0000000000000002000000" := by
-  native_decide
+  set_option maxRecDepth 5000 in
+  decide
 
 theorem max_index_transcript_hex :
     hexBytes (transcriptPreimage maxIndexTranscript) =
       "0x686567656d6f6e2e666c79636c69656e742e73616d706c652d7631091a2b3c4d5e6f8091a2b3c4d5e6f708192a3b4c5d6e7f90a1b2c3d4e5f607180a1b2c3d4e5f708192a3b4c5d6e7f8091a2b3c4d5e6f8091a2b3c4d5e6f708190b1c2d3e4f60718293a4b5c6d7e8f90a1b2c3d4e5f708192a3b4c5d6e7f8091a00000000000000000000000001000000ffffffff" := by
-  native_decide
+  set_option maxRecDepth 8000 in
+  decide
 
 theorem sample_height_modulo :
     sampleHeight 11 14 5 = some 13 := by

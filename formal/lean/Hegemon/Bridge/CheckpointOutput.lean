@@ -88,11 +88,11 @@ theorem checkpoint_output_domain_bytes :
       [104, 101, 103, 101, 109, 111, 110, 46, 98, 114, 105, 100, 103,
        101, 46, 99, 104, 101, 99, 107, 112, 111, 105, 110, 116, 45,
        111, 117, 116, 112, 117, 116, 45, 118, 49] := by
-  native_decide
+  decide
 
 theorem checkpoint_output_domain_length :
     checkpointOutputDomain.length = 35 := by
-  native_decide
+  decide
 
 theorem canonical_preimage_is_domain_prefixed_wire
     (output : OutputInput) :
@@ -101,62 +101,67 @@ theorem canonical_preimage_is_domain_prefixed_wire
 
 theorem sample_wire_length :
     (wireBytes sampleOutput).length = wireLength := by
-  native_decide
+  simp [wireBytes, sampleOutput, wireLength, patternedBytes_length, u64le_length,
+    u128le_length, u32le_length]
 
 theorem sample_canonical_length :
     (canonicalPreimage sampleOutput).length = canonicalPreimageLength := by
-  native_decide
+  simp [canonicalPreimage, canonicalPreimageLength, sample_wire_length,
+    checkpoint_output_domain_length]
 
 theorem sample_canonical_length_exact :
     (canonicalPreimage sampleOutput).length = 439 := by
-  native_decide
+  simp [canonicalPreimage, sample_wire_length, checkpoint_output_domain_length, wireLength]
 
 theorem max_scalar_wire_length :
     (wireBytes maxScalarOutput).length = wireLength := by
-  native_decide
+  simp [wireBytes, maxScalarOutput, wireLength, patternedBytes_length, u64le_length,
+    u128le_length, u32le_length]
 
 theorem max_scalar_canonical_length_exact :
     (canonicalPreimage maxScalarOutput).length = 439 := by
-  native_decide
+  simp [canonicalPreimage, max_scalar_wire_length, checkpoint_output_domain_length, wireLength]
 
 theorem sample_wire_omits_domain :
     wireBytes sampleOutput ≠ canonicalPreimage sampleOutput := by
-  native_decide
+  intro h
+  have lengths := congrArg List.length h
+  simp [sample_wire_length, canonicalPreimage, checkpoint_output_domain_length, wireLength] at lengths
 
 theorem sample_checkpoint_height_little_endian :
     u64le sampleOutput.checkpointHeight = [8, 7, 6, 5, 4, 3, 2, 1] := by
-  native_decide
+  decide
 
 theorem sample_canonical_tip_height_little_endian :
     u64le sampleOutput.canonicalTipHeight =
       [24, 23, 22, 21, 20, 19, 18, 17] := by
-  native_decide
+  decide
 
 theorem sample_message_nonce_little_endian :
     u128le sampleOutput.messageNonce =
       [255, 238, 221, 204, 187, 170, 153, 136,
        119, 102, 85, 68, 51, 34, 17, 0] := by
-  native_decide
+  decide
 
 theorem sample_confirmations_little_endian :
     u32le sampleOutput.confirmationsChecked = [4, 3, 2, 1] := by
-  native_decide
+  decide
 
 theorem max_scalar_height_little_endian :
     u64le maxScalarOutput.checkpointHeight =
       [255, 255, 255, 255, 255, 255, 255, 255] := by
-  native_decide
+  decide
 
 theorem max_scalar_nonce_little_endian :
     u128le maxScalarOutput.messageNonce =
       [255, 255, 255, 255, 255, 255, 255, 255,
        255, 255, 255, 255, 255, 255, 255, 255] := by
-  native_decide
+  decide
 
 theorem max_scalar_confirmations_little_endian :
     u32le maxScalarOutput.confirmationsChecked =
       [255, 255, 255, 255] := by
-  native_decide
+  decide
 
 end CheckpointOutput
 end Bridge

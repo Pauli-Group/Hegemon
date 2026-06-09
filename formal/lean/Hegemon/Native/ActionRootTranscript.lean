@@ -65,7 +65,8 @@ theorem action_root_hash_bytes_are_unmodified :
 theorem max_hash_preimage_hex :
     hexBytes (actionRootPreimage [maxHash]) =
       "0x686567656d6f6e2d6e61746976652d65787472696e736963732d763101000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" := by
-  native_decide
+  set_option maxRecDepth 2000 in
+  decide
 
 end ActionRootTranscript
 end Native
