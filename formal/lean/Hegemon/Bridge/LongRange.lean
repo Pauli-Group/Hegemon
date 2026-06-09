@@ -3,6 +3,7 @@ namespace Bridge
 namespace LongRange
 
 def u32Max : Nat := 4294967295
+def u64Max : Nat := 18446744073709551615
 
 inductive Reject where
   | verifierHashMismatch
@@ -65,6 +66,8 @@ def evaluateShape (input : ShapeInput) : Option Reject :=
     some Reject.headerMmrMismatch
   else if input.messageHeaderMmrLen ≠ input.messageHeight then
     some Reject.headerMmrMismatch
+  else if input.trustedHeight ≥ u64Max then
+    some Reject.longRangeProofMismatch
   else if input.tipHeight ≤ input.messageHeight then
     some Reject.longRangeProofMismatch
   else if input.messageHeight ≤ input.trustedHeight then
@@ -148,6 +151,19 @@ theorem rejects_message_not_after_trusted :
         trustedHeight := 12,
         tipHeight := 13,
         tipHeaderMmrLen := 13 } =
+      some Reject.longRangeProofMismatch := by
+  native_decide
+
+theorem rejects_trusted_height_overflow :
+    evaluateShape
+      { validShape with
+        trustedHeight := u64Max,
+        tipHeight := u64Max,
+        tipHeaderMmrLen := u64Max,
+        messageHeight := u64Max,
+        messageHeaderMmrLen := u64Max,
+        messageOpeningLeafIndex := u64Max,
+        messageSourceHeight := u64Max } =
       some Reject.longRangeProofMismatch := by
   native_decide
 

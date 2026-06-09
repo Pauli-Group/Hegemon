@@ -73,6 +73,15 @@ def vectorJson : String :=
       { validShape with tipHeight := 12, tipHeaderMmrLen := 12 } ++ ",\n"
     ++ shapeCaseJson "message-not-after-trusted-rejected"
       { validShape with trustedHeight := 12, tipHeight := 13, tipHeaderMmrLen := 13 } ++ ",\n"
+    ++ shapeCaseJson "trusted-height-overflow-rejected"
+      { validShape with
+        trustedHeight := u64Max,
+        tipHeight := u64Max,
+        tipHeaderMmrLen := u64Max,
+        messageHeight := u64Max,
+        messageHeaderMmrLen := u64Max,
+        messageOpeningLeafIndex := u64Max,
+        messageSourceHeight := u64Max } ++ ",\n"
     ++ shapeCaseJson "message-opening-leaf-mismatch-rejected"
       { validShape with messageOpeningLeafIndex := 11 } ++ ",\n"
     ++ shapeCaseJson "message-index-oob-rejected"

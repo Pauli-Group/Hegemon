@@ -1331,6 +1331,9 @@ pub fn evaluate_long_range_proof_shape(
     {
         return Err(LightClientError::HeaderMmrMismatch);
     }
+    if input.trusted_height == u64::MAX {
+        return Err(LightClientError::LongRangeProofMismatch);
+    }
     if input.tip_height <= input.message_height || input.message_height <= input.trusted_height {
         return Err(LightClientError::LongRangeProofMismatch);
     }
@@ -1455,14 +1458,21 @@ fn verify_hegemon_long_range_proof_inner(
     let message_index = usize::try_from(proof.message_index)
         .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
     let maybe_message = proof.messages.get(message_index);
-    let expected_indices = flyclient_sample_indices(
-        proof.tip_header.header_mmr_root,
-        tip_hash,
-        message_header_hash,
-        proof.trusted_checkpoint.height.saturating_add(1),
-        proof.tip_header.height,
-        proof.sample_count,
-    );
+    let expected_indices = proof
+        .trusted_checkpoint
+        .height
+        .checked_add(1)
+        .map(|sample_start| {
+            flyclient_sample_indices(
+                proof.tip_header.header_mmr_root,
+                tip_hash,
+                message_header_hash,
+                sample_start,
+                proof.tip_header.height,
+                proof.sample_count,
+            )
+        })
+        .unwrap_or_default();
     let sample_header_heights = proof
         .sample_headers
         .iter()
@@ -2215,6 +2225,33 @@ mod tests {
             ),
             _ => panic!("{} has inconsistent Lean validity metadata", case.name),
         }
+    }
+
+    #[test]
+    fn long_range_shape_rejects_trusted_height_overflow() {
+        let err = evaluate_long_range_proof_shape(&LongRangeProofShapeInput {
+            verifier_hash_matches: true,
+            message_count: 1,
+            messages_len: 1,
+            trusted_height: u64::MAX,
+            tip_height: u64::MAX,
+            tip_header_mmr_len: u64::MAX,
+            message_height: u64::MAX,
+            message_header_mmr_len: u64::MAX,
+            message_opening_leaf_index: u64::MAX,
+            message_index: 0,
+            message_source_chain_matches: true,
+            message_source_height: u64::MAX,
+            expected_sample_indices: &[],
+            sample_header_heights: &[],
+            sample_opening_leaf_indices: &[],
+            min_confirmations: 0,
+            tip_work: &zero_work(),
+            min_tip_work: &zero_work(),
+            expected_output_matches: None,
+        })
+        .expect_err("trusted checkpoint at u64::MAX cannot define a sample domain");
+        assert_eq!(err, LightClientError::LongRangeProofMismatch);
     }
 
     #[test]
