@@ -658,6 +658,7 @@ fn current_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reward::adjusted_timespan;
     use serde::Deserialize;
     use std::collections::BTreeSet;
 
@@ -665,6 +666,7 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanPowVectorFile {
         schema_version: u32,
+        retarget_cases: Vec<LeanRetargetCase>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -687,6 +689,17 @@ mod tests {
         signature_verifies: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRetargetCase {
+        name: String,
+        prev_target: String,
+        actual_timespan_ms: u64,
+        expected_adjusted_timespan_ms: u64,
+        expected_target: String,
     }
 
     #[allow(dead_code)]
@@ -772,11 +785,19 @@ mod tests {
             serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
         assert_eq!(vectors.schema_version, 1);
         assert!(
+            !vectors.retarget_cases.is_empty(),
+            "Lean retarget cases must not be empty"
+        );
+        assert!(
             !vectors.pow_admission_cases.is_empty(),
             "Lean PoW admission cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
+        for case in &vectors.retarget_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_retarget_case(case);
+        }
         let mut checked_admission_cases = 0usize;
         for case in &vectors.pow_admission_cases {
             assert!(names.insert(case.name.clone()));
@@ -793,6 +814,23 @@ mod tests {
         assert!(
             checked_admission_cases >= 8,
             "consensus PoW admission gate covered too few Lean cases"
+        );
+    }
+
+    fn verify_retarget_case(case: &LeanRetargetCase) {
+        let prev_target = parse_biguint(&case.prev_target);
+        let expected_target = parse_biguint(&case.expected_target);
+        assert_eq!(
+            adjusted_timespan(case.actual_timespan_ms),
+            case.expected_adjusted_timespan_ms,
+            "{} adjusted timespan drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            retarget_target(&prev_target, case.actual_timespan_ms),
+            expected_target,
+            "{} retarget target drifted from Lean spec",
+            case.name
         );
     }
 

@@ -280,6 +280,34 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.pow-retarget-target",
+      "component": "PoW difficulty retarget target adjustment",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean PoW retarget kernel proves the executable retarget constants, 1/4x and 4x timespan clamps, zero-target fail-closed behavior, expected-timespan target preservation, and minimum nonzero retarget output; generated Lean vectors are checked against the production adjusted_timespan and retarget_target helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents the retarget helper over natural-number targets after compact target decoding has already succeeded.",
+        "Generated Lean conformance vectors cover zero previous target, expected timespan, too-fast blocks clamped to 1/4x, too-slow blocks clamped to 4x, and the minimum nonzero retarget output.",
+        "The theorem covers executable retarget target scaling and clamping only. It does not prove compact target re-encoding, timestamp honesty, hash-rate economics, network liveness, or long-range adversarial mining schedules."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/reward.rs",
+        "consensus/src/pow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.header-preimage-binding",
       "component": "consensus block header signing and work-hash byte binding",
       "claim_class": "lean_theorem",

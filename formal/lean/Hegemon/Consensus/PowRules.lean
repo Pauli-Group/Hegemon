@@ -14,6 +14,10 @@ def twoPow256 : Nat :=
 def maxWork48 : Nat :=
   pow2Nat 384 - 1
 def maxFutureSkewMs : Nat := 90000
+def targetBlockIntervalMs : Nat := 60000
+def retargetWindow : Nat := 10
+def retargetTimespanMs : Nat := retargetWindow * targetBlockIntervalMs
+def maxAdjustmentFactor : Nat := 4
 
 def bitsExponent (bits : Nat) : Nat :=
   bits / 16777216
@@ -69,6 +73,23 @@ def timestampPolicy
 def checkedWorkAdd (parentWork blockWork : Nat) : Option Nat :=
   let total := parentWork + blockWork
   if total <= maxWork48 then some total else none
+
+def adjustedTimespan (actualMs : Nat) : Nat :=
+  let minTimespan := retargetTimespanMs / maxAdjustmentFactor
+  let maxTimespan := retargetTimespanMs * maxAdjustmentFactor
+  if actualMs < minTimespan then
+    minTimespan
+  else if maxTimespan < actualMs then
+    maxTimespan
+  else
+    actualMs
+
+def retargetTarget (prevTarget actualMs : Nat) : Nat :=
+  if prevTarget = 0 then
+    0
+  else
+    let target := prevTarget * adjustedTimespan actualMs / retargetTimespanMs
+    if target = 0 then 1 else target
 
 inductive PowAdmissionReject where
   | heightMismatch
@@ -191,6 +212,46 @@ theorem checkedWorkAdd_rejects_overflow
   unfold checkedWorkAdd
   have notBounded : ¬ parent + block <= maxWork48 := Nat.not_le.mpr overflow
   simp [notBounded]
+
+theorem retargetConstants_match_consensus :
+    targetBlockIntervalMs = 60000
+      ∧ retargetWindow = 10
+      ∧ retargetTimespanMs = 600000
+      ∧ maxAdjustmentFactor = 4 := by
+  native_decide
+
+theorem adjustedTimespan_clamps_fast_blocks :
+    adjustedTimespan 0 = retargetTimespanMs / maxAdjustmentFactor := by
+  native_decide
+
+theorem adjustedTimespan_keeps_expected_timespan :
+    adjustedTimespan retargetTimespanMs = retargetTimespanMs := by
+  native_decide
+
+theorem adjustedTimespan_clamps_slow_blocks :
+    adjustedTimespan (retargetTimespanMs * 10) =
+      retargetTimespanMs * maxAdjustmentFactor := by
+  native_decide
+
+theorem retargetTarget_zero_previous_target :
+    retargetTarget 0 retargetTimespanMs = 0 := by
+  rfl
+
+theorem retargetTarget_keeps_expected_timespan :
+    retargetTarget 1000000 retargetTimespanMs = 1000000 := by
+  native_decide
+
+theorem retargetTarget_fast_timespan_is_clamped :
+    retargetTarget 1000000 0 = 250000 := by
+  native_decide
+
+theorem retargetTarget_slow_timespan_is_clamped :
+    retargetTarget 1000000 (retargetTimespanMs * 10) = 4000000 := by
+  native_decide
+
+theorem retargetTarget_minimum_nonzero_target :
+    retargetTarget 1 0 = 1 := by
+  native_decide
 
 theorem checkedNextU64_rejects_max :
     checkedNextU64 maxPowHeight = none := by

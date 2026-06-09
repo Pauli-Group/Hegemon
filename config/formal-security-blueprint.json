@@ -514,6 +514,57 @@
       "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove SHA-256 implementation equivalence, retarget economics, network orphan policy, or long-range finality. Header preimage serialization is covered separately by consensus.header-preimage-binding."
     },
     {
+      "id": "consensus.pow-retarget-target",
+      "claim_id": "consensus.pow-retarget-target",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean PoW retarget helper, the retarget constants match the release parameters, actual timespans are clamped to the 1/4x..4x window, a zero previous target stays zero, expected-timespan retargeting preserves the target, and nonzero retargeting never returns zero after the clamp.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.retargetConstants_match_consensus`, `Hegemon.Consensus.adjustedTimespan_clamps_fast_blocks`, `Hegemon.Consensus.adjustedTimespan_keeps_expected_timespan`, `Hegemon.Consensus.adjustedTimespan_clamps_slow_blocks`, `Hegemon.Consensus.retargetTarget_zero_previous_target`, `Hegemon.Consensus.retargetTarget_keeps_expected_timespan`, `Hegemon.Consensus.retargetTarget_fast_timespan_is_clamped`, `Hegemon.Consensus.retargetTarget_slow_timespan_is_clamped`, and `Hegemon.Consensus.retargetTarget_minimum_nonzero_target` pin the executable target-adjustment rule. `gen_pow_vectors` emits Lean-derived retarget examples, and the formal-core gate checks them against `consensus::reward::adjusted_timespan` and `consensus::reward::retarget_target`, the helpers used by `PowConsensus::expected_pow_bits` at retarget boundaries.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/reward.rs",
+        "consensus/src/pow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/reward.rs",
+        "consensus/src/pow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable retarget target-adjustment helper. Scope excludes compact re-encoding and mining economics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-retarget-target-theorem",
+          "description": "Removing or weakening the retarget constants, clamp, zero-target, expected-timespan, or nonzero-output theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-retarget-conformance",
+          "description": "Changing production adjusted-timespan clamping or retarget target scaling away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-retarget-gate",
+          "description": "The release formal-core wrapper must generate PoW vectors containing retarget cases and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks executable retarget target scaling and clamping after compact target decoding. It does not prove target_to_compact re-encoding, timestamp honesty, hash-rate economics, network liveness, or long-range adversarial mining schedules."
+    },
+    {
       "id": "consensus.header-preimage-binding",
       "claim_id": "consensus.header-preimage-binding",
       "kind": "target_claim",

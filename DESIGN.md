@@ -48,7 +48,7 @@ Native mining work-template admission is represented separately in Lean: generat
 
 Native recursive-artifact context admission is represented separately in Lean: generated vectors check checked next-height arithmetic before native recursive artifact verification builds the consensus block header context passed to the backend verifier. This proof does not prove tx-leaf proof soundness, recursive proof cryptographic soundness, DA-root binding, statement-commitment hash security, storage durability, fork-choice liveness, or complete native-node equivalence.
 
-Reusable consensus and light-client PoW admission also fail closed on u64 height overflow. The Lean PoW kernel models checked next-height arithmetic alongside compact-target, timestamp, hash-threshold, and Work48 cumulative-work behavior; generated vectors check the generic consensus admission helper, and focused regressions cover both `PowConsensus` admission and bridge/native `verify_pow_header` so a parent at `u64::MAX` cannot admit a same-height child through saturating arithmetic.
+Reusable consensus and light-client PoW admission also fail closed on u64 height overflow. The Lean PoW kernel models checked next-height arithmetic alongside compact-target, timestamp, hash-threshold, Work48 cumulative-work behavior, and the consensus retarget target-adjustment clamp; generated vectors check the generic consensus admission and retarget helpers, and focused regressions cover both `PowConsensus` admission and bridge/native `verify_pow_header` so a parent at `u64::MAX` cannot admit a same-height child through saturating arithmetic.
 
 ### 0.4 zk bridge posture
 

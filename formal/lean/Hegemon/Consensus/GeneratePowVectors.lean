@@ -46,6 +46,17 @@ def powCaseJson (name : String) (input : PowAdmissionInput) : String :=
     ++ "      \"expected_result\": \"" ++ resultLabel (evaluatePowAdmission input) ++ "\"\n"
     ++ "    }"
 
+def retargetCaseJson
+    (name : String)
+    (prevTarget actualTimespanMs : Nat) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"prev_target\": \"" ++ toString prevTarget ++ "\",\n"
+    ++ "      \"actual_timespan_ms\": " ++ toString actualTimespanMs ++ ",\n"
+    ++ "      \"expected_adjusted_timespan_ms\": " ++ toString (adjustedTimespan actualTimespanMs) ++ ",\n"
+    ++ "      \"expected_target\": \"" ++ toString (retargetTarget prevTarget actualTimespanMs) ++ "\"\n"
+    ++ "    }"
+
 def easyPowBits : Nat := 545259519
 def maxPowHeightPredecessor : Nat := maxPowHeight - 1
 def invalidZeroMantissaBits : Nat := 536870912
@@ -73,6 +84,13 @@ def validInput : PowAdmissionInput := {
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
+    ++ "  \"retarget_cases\": [\n"
+    ++ retargetCaseJson "zero-previous-target-stays-zero" 0 retargetTimespanMs ++ ",\n"
+    ++ retargetCaseJson "expected-timespan-keeps-target" 1000000 retargetTimespanMs ++ ",\n"
+    ++ retargetCaseJson "fast-timespan-clamps-to-quarter" 1000000 0 ++ ",\n"
+    ++ retargetCaseJson "slow-timespan-clamps-to-four-x" 1000000 (retargetTimespanMs * 10) ++ ",\n"
+    ++ retargetCaseJson "small-target-retarget-never-drops-to-zero" 1 0 ++ "\n"
+    ++ "  ],\n"
     ++ "  \"pow_admission_cases\": [\n"
     ++ powCaseJson "valid-boundary-hash-accepted" validInput ++ ",\n"
     ++ powCaseJson "height-mismatch-rejected" { validInput with headerHeight := 43 } ++ ",\n"

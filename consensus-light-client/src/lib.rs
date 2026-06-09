@@ -1798,6 +1798,7 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanPowVectorFile {
         schema_version: u32,
+        retarget_cases: Vec<serde_json::Value>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -2057,6 +2058,10 @@ mod tests {
         let vectors: LeanPowVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
         assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.retarget_cases.is_empty(),
+            "Lean retarget cases must be present in the shared PoW vector file"
+        );
         assert!(
             !vectors.pow_admission_cases.is_empty(),
             "Lean PoW admission cases must not be empty"
