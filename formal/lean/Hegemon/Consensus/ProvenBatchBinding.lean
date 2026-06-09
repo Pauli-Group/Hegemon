@@ -141,56 +141,56 @@ def validReceiptRoot : BindingInput :=
 
 theorem valid_recursive_block_v2_accepts :
     evaluateBinding validRecursiveBlockV2 = none := by
-  native_decide
+  decide
 
 theorem valid_receipt_root_accepts :
     evaluateBinding validReceiptRoot = none := by
-  native_decide
+  decide
 
 theorem rejects_incompatible_recursive_route :
     evaluateBinding { validRecursiveBlockV2 with proofKind := ArtifactKind.receiptRoot } =
       some BindingReject.incompatibleRoute := by
-  native_decide
+  decide
 
 theorem rejects_incompatible_receipt_route :
     evaluateBinding { validReceiptRoot with proofKind := ArtifactKind.recursiveBlockV2 } =
       some BindingReject.incompatibleRoute := by
-  native_decide
+  decide
 
 theorem rejects_tx_count_mismatch :
     evaluateBinding { validRecursiveBlockV2 with txCount := 1 } =
       some BindingReject.txCountMismatch := by
-  native_decide
+  decide
 
 theorem rejects_statement_commitment_mismatch :
     evaluateBinding { validRecursiveBlockV2 with statementCommitmentMatches := false } =
       some BindingReject.statementCommitmentMismatch := by
-  native_decide
+  decide
 
 theorem rejects_da_root_mismatch :
     evaluateBinding { validRecursiveBlockV2 with daRootMatches := false } =
       some BindingReject.daRootMismatch := by
-  native_decide
+  decide
 
 theorem rejects_da_chunk_count_zero :
     evaluateBinding { validRecursiveBlockV2 with daChunkCount := 0 } =
       some BindingReject.daChunkCountZero := by
-  native_decide
+  decide
 
 theorem rejects_artifact_kind_mismatch :
     evaluateBinding { validRecursiveBlockV2 with artifactKind := ArtifactKind.recursiveBlockV1 } =
       some BindingReject.artifactKindMismatch := by
-  native_decide
+  decide
 
 theorem rejects_artifact_profile_mismatch :
     evaluateBinding { validRecursiveBlockV2 with artifactVerifierProfileMatches := false } =
       some BindingReject.artifactVerifierProfileMismatch := by
-  native_decide
+  decide
 
 theorem rejects_recursive_block_receipt_root_payload :
     evaluateBinding { validRecursiveBlockV2 with hasReceiptRoot := true } =
       some BindingReject.recursiveBlockReceiptRootPayload := by
-  native_decide
+  decide
 
 theorem skips_artifact_checks_when_no_artifact :
     evaluateBinding
@@ -199,15 +199,15 @@ theorem skips_artifact_checks_when_no_artifact :
         artifactKind := ArtifactKind.receiptRoot,
         artifactVerifierProfileMatches := false
       } = none := by
-  native_decide
+  decide
 
 theorem recursive_v1_route_is_compatible :
     routeCompatible BatchMode.recursiveBlock ArtifactKind.recursiveBlockV1 = true := by
-  native_decide
+  decide
 
 theorem tx_leaf_is_not_block_artifact_route :
     routeCompatible BatchMode.recursiveBlock ArtifactKind.txLeaf = false := by
-  native_decide
+  decide
 
 end ProvenBatchBinding
 end Consensus

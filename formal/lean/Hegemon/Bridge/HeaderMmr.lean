@@ -159,7 +159,7 @@ def fourLeafRightShape : ShapeInput :=
 
 theorem peak_ranges_six :
     peakRanges 6 = [(0, 4), (4, 2)] := by
-  native_decide
+  decide
 
 theorem valid_shape_accepts :
     acceptedShape validShape =
@@ -171,7 +171,7 @@ theorem valid_shape_accepts :
         localIndex := 1,
         currentIsLeft := [false]
       } := by
-  native_decide
+  decide
 
 theorem singleton_shape_accepts :
     acceptedShape singletonShape =
@@ -183,7 +183,7 @@ theorem singleton_shape_accepts :
         localIndex := 0,
         currentIsLeft := []
       } := by
-  native_decide
+  decide
 
 theorem four_leaf_left_orientation :
     acceptedShape fourLeafLeftShape =
@@ -195,7 +195,7 @@ theorem four_leaf_left_orientation :
         localIndex := 2,
         currentIsLeft := [true, false]
       } := by
-  native_decide
+  decide
 
 theorem four_leaf_right_orientation :
     acceptedShape fourLeafRightShape =
@@ -207,32 +207,32 @@ theorem four_leaf_right_orientation :
         localIndex := 3,
         currentIsLeft := [false, false]
       } := by
-  native_decide
+  decide
 
 theorem rejects_context_mismatch :
     rejection { validShape with contextMatches := false } =
       some Reject.headerMmrMismatch := by
-  native_decide
+  decide
 
 theorem rejects_leaf_out_of_range :
     rejection { validShape with leafIndex := 6 } =
       some Reject.leafOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_empty_leaf_set :
     rejection { singletonShape with leafCount := 0, peakCount := 0 } =
       some Reject.leafOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_peak_count_mismatch :
     rejection { validShape with peakCount := 1 } =
       some Reject.peakMismatch := by
-  native_decide
+  decide
 
 theorem rejects_sibling_count_mismatch :
     rejection { validShape with siblingCount := 2 } =
       some Reject.openingMismatch := by
-  native_decide
+  decide
 
 end HeaderMmr
 end Bridge

@@ -221,11 +221,11 @@ theorem compactTarget_rejects_large_exponent
 
 theorem compactTarget_rejects_shifted_zero_target :
     compactTargetValue 16777217 = none := by
-  native_decide
+  decide
 
 theorem compactTarget_accepts_max_valid :
     compactTargetValue 553648127 ≠ none := by
-  native_decide
+  decide
 
 theorem targetToCompact_zero :
     targetToCompact 0 = 0 := by
@@ -235,7 +235,7 @@ theorem targetToCompact_easy_roundtrip :
     targetToCompact
       57896037716911750921221705069588091649609539881711309849342236841432341020672 =
       545259519 := by
-  native_decide
+  decide
 
 theorem targetToCompact_roundtrip_easy_target :
     compactTargetValue
@@ -243,15 +243,15 @@ theorem targetToCompact_roundtrip_easy_target :
         57896037716911750921221705069588091649609539881711309849342236841432341020672) =
       some
         57896037716911750921221705069588091649609539881711309849342236841432341020672 := by
-  native_decide
+  decide
 
 theorem retargetBits_expected_timespan_keeps_bits :
     retargetBits 545259519 retargetTimespanMs = some 545259519 := by
-  native_decide
+  decide
 
 theorem retargetBits_rejects_invalid_previous_bits :
     retargetBits 16777217 retargetTimespanMs = none := by
-  native_decide
+  decide
 
 theorem retargetAnchorSteps_genesis_none :
     retargetAnchorSteps 0 0 = none := by
@@ -259,15 +259,15 @@ theorem retargetAnchorSteps_genesis_none :
 
 theorem retargetAnchorSteps_non_boundary_none :
     retargetAnchorSteps 8 9 = none := by
-  native_decide
+  decide
 
 theorem retargetAnchorSteps_early_boundary_none :
     retargetAnchorSteps 0 retargetWindow = none := by
-  native_decide
+  decide
 
 theorem retargetAnchorSteps_boundary_requires_window :
     retargetAnchorSteps 9 retargetWindow = some (retargetWindow - 1) := by
-  native_decide
+  decide
 
 theorem expectedPowBitsSchedule_genesis_uses_genesis :
     expectedPowBitsSchedule 123 456 0 0 0 none = Except.ok 123 := by
@@ -347,20 +347,20 @@ theorem retargetConstants_match_consensus :
       ∧ retargetWindow = 10
       ∧ retargetTimespanMs = 600000
       ∧ maxAdjustmentFactor = 4 := by
-  native_decide
+  decide
 
 theorem adjustedTimespan_clamps_fast_blocks :
     adjustedTimespan 0 = retargetTimespanMs / maxAdjustmentFactor := by
-  native_decide
+  decide
 
 theorem adjustedTimespan_keeps_expected_timespan :
     adjustedTimespan retargetTimespanMs = retargetTimespanMs := by
-  native_decide
+  decide
 
 theorem adjustedTimespan_clamps_slow_blocks :
     adjustedTimespan (retargetTimespanMs * 10) =
       retargetTimespanMs * maxAdjustmentFactor := by
-  native_decide
+  decide
 
 theorem retargetTarget_zero_previous_target :
     retargetTarget 0 retargetTimespanMs = 0 := by
@@ -368,19 +368,19 @@ theorem retargetTarget_zero_previous_target :
 
 theorem retargetTarget_keeps_expected_timespan :
     retargetTarget 1000000 retargetTimespanMs = 1000000 := by
-  native_decide
+  decide
 
 theorem retargetTarget_fast_timespan_is_clamped :
     retargetTarget 1000000 0 = 250000 := by
-  native_decide
+  decide
 
 theorem retargetTarget_slow_timespan_is_clamped :
     retargetTarget 1000000 (retargetTimespanMs * 10) = 4000000 := by
-  native_decide
+  decide
 
 theorem retargetTarget_minimum_nonzero_target :
     retargetTarget 1 0 = 1 := by
-  native_decide
+  decide
 
 theorem checkedNextU64_rejects_max :
     checkedNextU64 maxPowHeight = none := by
@@ -389,7 +389,7 @@ theorem checkedNextU64_rejects_max :
 
 theorem checkedNextU64_accepts_predecessor :
     checkedNextU64 (maxPowHeight - 1) = some maxPowHeight := by
-  native_decide
+  decide
 
 theorem powAdmission_rejects_height
     {input : PowAdmissionInput}

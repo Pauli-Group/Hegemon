@@ -132,42 +132,42 @@ def validCacheHit : AdmissionInput :=
 theorem valid_uncached_requires_backend_verification :
     evaluateAdmissionRejection validUncached = none ∧
       admissionOutcome validUncached = AdmissionOutcome.needsBackendVerification := by
-  native_decide
+  decide
 
 theorem valid_cache_hit_accepts :
     evaluateAdmissionRejection validCacheHit = none ∧
       admissionOutcome validCacheHit = AdmissionOutcome.cacheHit := by
-  native_decide
+  decide
 
 theorem missing_envelope_rejects :
     evaluateAdmissionRejection { validUncached with hasEnvelope := false } =
       some AdmissionReject.missingEnvelope := by
-  native_decide
+  decide
 
 theorem wrong_artifact_kind_rejects :
     evaluateAdmissionRejection { validUncached with envelopeKind := ArtifactKind.receiptRoot } =
       some AdmissionReject.artifactKindMismatch := by
-  native_decide
+  decide
 
 theorem envelope_profile_mismatch_rejects :
     evaluateAdmissionRejection { validUncached with envelopeVerifierProfileMatches := false } =
       some AdmissionReject.envelopeVerifierProfileMismatch := by
-  native_decide
+  decide
 
 theorem oversized_artifact_rejects :
     evaluateAdmissionRejection { validUncached with artifactBytesLen := 513 } =
       some AdmissionReject.artifactTooLarge := by
-  native_decide
+  decide
 
 theorem receipt_profile_mismatch_rejects :
     evaluateAdmissionRejection { validUncached with receiptVerifierProfileMatches := false } =
       some AdmissionReject.receiptVerifierProfileMismatch := by
-  native_decide
+  decide
 
 theorem expected_hash_mismatch_rejects :
     evaluateAdmissionRejection { validUncached with expectedArtifactHashMatches := false } =
       some AdmissionReject.artifactHashMismatch := by
-  native_decide
+  decide
 
 theorem missing_expected_hash_skips_hash_check :
     evaluateAdmissionRejection
@@ -175,22 +175,22 @@ theorem missing_expected_hash_skips_hash_check :
         hasExpectedArtifactHash := false,
         expectedArtifactHashMatches := false
       } = none := by
-  native_decide
+  decide
 
 theorem cache_receipt_mismatch_rejects :
     evaluateAdmissionRejection { validCacheHit with cacheReceiptMatches := false } =
       some AdmissionReject.cacheReceiptMismatch := by
-  native_decide
+  decide
 
 theorem cache_transaction_mismatch_rejects :
     evaluateAdmissionRejection { validCacheHit with cacheTransactionMatches := false } =
       some AdmissionReject.cacheTransactionMismatch := by
-  native_decide
+  decide
 
 theorem exact_size_limit_accepts :
     evaluateAdmissionRejection { validUncached with artifactBytesLen := 512, maxArtifactBytes := 512 } =
       none := by
-  native_decide
+  decide
 
 end NativeTxLeafAdmission
 end Consensus

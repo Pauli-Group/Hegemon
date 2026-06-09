@@ -107,46 +107,46 @@ def validV1Artifact : ArtifactAdmissionInput :=
 
 theorem valid_v2_artifact_accepts :
     evaluateArtifactRejection validV2Artifact = none := by
-  native_decide
+  decide
 
 theorem valid_v1_artifact_accepts :
     evaluateArtifactRejection validV1Artifact = none := by
-  native_decide
+  decide
 
 theorem wrong_kind_rejects :
     evaluateArtifactRejection { validV2Artifact with envelopeKind := ArtifactKind.receiptRoot } =
       some ArtifactReject.artifactKindMismatch := by
-  native_decide
+  decide
 
 theorem profile_mismatch_rejects :
     evaluateArtifactRejection { validV2Artifact with verifierProfileMatches := false } =
       some ArtifactReject.verifierProfileMismatch := by
-  native_decide
+  decide
 
 theorem decode_failed_rejects :
     evaluateArtifactRejection { validV2Artifact with artifactDecoded := false } =
       some ArtifactReject.artifactDecodeFailed := by
-  native_decide
+  decide
 
 theorem header_version_mismatch_rejects :
     evaluateArtifactRejection { validV2Artifact with headerVersionMatches := false } =
       some ArtifactReject.headerVersionMismatch := by
-  native_decide
+  decide
 
 theorem tx_count_mismatch_rejects :
     evaluateArtifactRejection { validV2Artifact with txCountMatches := false } =
       some ArtifactReject.txCountMismatch := by
-  native_decide
+  decide
 
 theorem statement_commitment_mismatch_rejects :
     evaluateArtifactRejection { validV2Artifact with statementCommitmentMatches := false } =
       some ArtifactReject.statementCommitmentMismatch := by
-  native_decide
+  decide
 
 theorem public_replay_mismatch_rejects :
     evaluateArtifactRejection { validV2Artifact with publicReplayMatches := false } =
       some ArtifactReject.publicReplayMismatch := by
-  native_decide
+  decide
 
 theorem kind_precedes_decode_failure :
     evaluateArtifactRejection
@@ -155,17 +155,17 @@ theorem kind_precedes_decode_failure :
           artifactDecoded := false
         } =
       some ArtifactReject.artifactKindMismatch := by
-  native_decide
+  decide
 
 theorem direct_v1_requires_semantic_replay :
     evaluateDirectVerifierRejection ArtifactKind.recursiveBlockV1 =
       some DirectVerifierReject.requiresSemanticReplay := by
-  native_decide
+  decide
 
 theorem direct_v2_requires_semantic_replay :
     evaluateDirectVerifierRejection ArtifactKind.recursiveBlockV2 =
       some DirectVerifierReject.requiresSemanticReplay := by
-  native_decide
+  decide
 
 end RecursiveBlockAdmission
 end Consensus

@@ -389,7 +389,7 @@ def validTimestampRange : TimestampRangeInput :=
 
 theorem valid_timestamp_range_accepts :
     evaluateTimestampRangeRejection validTimestampRange = none := by
-  native_decide
+  decide
 
 def overlargeTimestampRange : TimestampRangeInput :=
   {
@@ -401,7 +401,7 @@ def overlargeTimestampRange : TimestampRangeInput :=
 theorem overlarge_timestamp_range_rejects :
     evaluateTimestampRangeRejection overlargeTimestampRange =
       some TimestampRangeReject.rangeTooLarge := by
-  native_decide
+  decide
 
 def invertedTimestampRange : TimestampRangeInput :=
   {
@@ -413,7 +413,7 @@ def invertedTimestampRange : TimestampRangeInput :=
 theorem inverted_timestamp_range_rejects :
     evaluateTimestampRangeRejection invertedTimestampRange =
       some TimestampRangeReject.endBeforeStart := by
-  native_decide
+  decide
 
 def overflowTimestampRange : TimestampRangeInput :=
   {
@@ -425,7 +425,7 @@ def overflowTimestampRange : TimestampRangeInput :=
 theorem overflow_timestamp_range_rejects :
     evaluateTimestampRangeRejection overflowTimestampRange =
       some TimestampRangeReject.rangeOverflow := by
-  native_decide
+  decide
 
 def validBatch : BatchInput :=
   {
@@ -435,7 +435,7 @@ def validBatch : BatchInput :=
 
 theorem valid_batch_accepts :
     evaluateBatchRejection validBatch = none := by
-  native_decide
+  decide
 
 def emptyBatch : BatchInput :=
   {
@@ -445,7 +445,7 @@ def emptyBatch : BatchInput :=
 
 theorem empty_batch_example_rejects :
     evaluateBatchRejection emptyBatch = some BatchReject.emptyBatch := by
-  native_decide
+  decide
 
 def overlargeBatch : BatchInput :=
   {
@@ -455,7 +455,7 @@ def overlargeBatch : BatchInput :=
 
 theorem overlarge_batch_example_rejects :
     evaluateBatchRejection overlargeBatch = some BatchReject.batchTooLarge := by
-  native_decide
+  decide
 
 end RpcAdmission
 end Native

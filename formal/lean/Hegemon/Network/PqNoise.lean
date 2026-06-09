@@ -141,15 +141,15 @@ def sampleFinishSigningInput : FinishSigningInput := {
 
 theorem hkdf_infos_distinct :
     initiatorToResponderInfo ≠ responderToInitiatorInfo := by
-  native_decide
+  decide
 
 theorem aad_info_distinct_from_i2r :
     sessionAadInfo ≠ initiatorToResponderInfo := by
-  native_decide
+  decide
 
 theorem aad_info_distinct_from_r2i :
     sessionAadInfo ≠ responderToInitiatorInfo := by
-  native_decide
+  decide
 
 theorem sample_hkdf_ikm_is_ordered_shared_secrets :
     hkdfIkm sampleSessionInput =
@@ -180,12 +180,12 @@ theorem send_recv_slots_distinct
 theorem nonce_from_counter_zero :
     nonceFromCounter 0 =
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] := by
-  native_decide
+  decide
 
 theorem nonce_from_counter_max :
     nonceFromCounter u64Max =
       [0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255] := by
-  native_decide
+  decide
 
 theorem nextCounter_accepts_below_max
     {counter : Nat}
@@ -227,12 +227,12 @@ theorem finish_preimage_starts_with_domain
 theorem sample_init_resp_preimages_distinct :
     initHelloSigningPreimage sampleInitSigningInput ≠
       respHelloSigningPreimage sampleRespSigningInput := by
-  native_decide
+  decide
 
 theorem sample_resp_finish_preimages_distinct :
     respHelloSigningPreimage sampleRespSigningInput ≠
       finishSigningPreimage sampleFinishSigningInput := by
-  native_decide
+  decide
 
 theorem sample_resp_preimage_binds_transcript_hash :
     respHelloSigningPreimage sampleRespSigningInput =
@@ -243,7 +243,7 @@ theorem sample_resp_preimage_binds_transcript_hash :
         ++ sampleRespSigningInput.identityKey
         ++ u64be sampleRespSigningInput.nonce
         ++ sampleTranscriptHash := by
-  native_decide
+  decide
 
 theorem sample_finish_preimage_binds_transcript_hash :
     finishSigningPreimage sampleFinishSigningInput =
@@ -251,7 +251,7 @@ theorem sample_finish_preimage_binds_transcript_hash :
         ++ sampleFinishSigningInput.mlkemCiphertext
         ++ u64be sampleFinishSigningInput.nonce
         ++ sampleTranscriptHash := by
-  native_decide
+  decide
 
 end PqNoise
 end Network

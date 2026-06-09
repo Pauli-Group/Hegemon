@@ -37,45 +37,45 @@ def longHash : List Byte :=
 
 theorem empty_valid :
     validInput [] = true := by
-  native_decide
+  decide
 
 theorem single_valid :
     validInput [hashA] = true := by
-  native_decide
+  decide
 
 theorem ordered_pair_valid :
     validInput [hashA, hashB] = true := by
-  native_decide
+  decide
 
 theorem short_hash_rejected :
     validInput [shortHash] = false := by
-  native_decide
+  decide
 
 theorem long_hash_rejected :
     validInput [longHash] = false := by
-  native_decide
+  decide
 
 theorem empty_transcript :
     transcriptFromHashes [] = domain ++ u32le 4 ++ u32le 0 := by
-  native_decide
+  decide
 
 theorem single_transcript :
     transcriptFromHashes [hashA] = domain ++ u32le 4 ++ u32le 1 ++ u32le 48 ++ hashA := by
-  native_decide
+  decide
 
 theorem ordered_pair_transcript :
     transcriptFromHashes [hashA, hashB] =
       domain ++ u32le 4 ++ u32le 2 ++ u32le 48 ++ hashA ++ u32le 48 ++ hashB := by
-  native_decide
+  decide
 
 theorem ordered_pair_differs_from_reversed :
     transcriptFromHashes [hashA, hashB] != transcriptFromHashes [hashB, hashA] := by
-  native_decide
+  decide
 
 theorem count_binds_prefix :
     (transcriptFromHashes [hashA]).take (domain.length + 8) !=
       (transcriptFromHashes [hashA, hashB]).take (domain.length + 8) := by
-  native_decide
+  decide
 
 end MessageRoot
 end Bridge

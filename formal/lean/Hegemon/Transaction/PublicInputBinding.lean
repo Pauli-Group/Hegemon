@@ -192,81 +192,81 @@ def stablecoinSerializedFields : SerializedFields :=
 
 theorem bindPublicInputs_accepts_valid :
     bindPublicInputs validPublicFields validSerializedFields = some validBoundPublicInputs := by
-  native_decide
+  decide
 
 theorem validBinding_accepts_stablecoin :
     validBinding stablecoinPublicFields stablecoinSerializedFields = true := by
-  native_decide
+  decide
 
 theorem validBinding_accepts_omitted_balance_assets :
     validBinding validPublicFields { validSerializedFields with balanceSlotAssets := [] } = true := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_merkle_root_mismatch :
     validBinding validPublicFields { validSerializedFields with merkleRoot := 102 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_fee_mismatch :
     validBinding validPublicFields { validSerializedFields with fee := 4 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_value_balance_sign_mismatch :
     validBinding validPublicFields { validSerializedFields with valueBalanceSign := 0 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_value_balance_magnitude_mismatch :
     validBinding validPublicFields { validSerializedFields with valueBalanceMagnitude := 6 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_balance_slot_asset_mismatch :
     validBinding validPublicFields
       { validSerializedFields with balanceSlotAssets := [0, 7, 8, 10] } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_bad_balance_slot_count :
     validBinding validPublicFields
       { validSerializedFields with balanceSlotAssets := [0, 7, 8] } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_enabled_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinEnabled := 0 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_asset_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinAsset := 8 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_policy_version_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinPolicyVersion := 3 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_issuance_sign_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinIssuanceSign := 0 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_issuance_magnitude_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinIssuanceMagnitude := 14 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_policy_hash_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinPolicyHash := 204 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_oracle_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinOracleCommitment := 204 } = false := by
-  native_decide
+  decide
 
 theorem validBinding_rejects_stablecoin_attestation_mismatch :
     validBinding stablecoinPublicFields
       { stablecoinSerializedFields with stablecoinAttestationCommitment := 204 } = false := by
-  native_decide
+  decide
 
 end PublicInputBinding
 end Transaction

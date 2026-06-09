@@ -101,40 +101,40 @@ def sameHeightSchedule : VersionSchedule := {
 
 theorem versionPolicy_initial_accepts :
     versionPolicyAccepts activationSchedule 0 [baseVersion] = true := by
-  native_decide
+  decide
 
 theorem versionPolicy_rejects_unknown_initial :
     firstUnsupportedVersion activationSchedule 0 [nextCryptoVersion] =
       some nextCryptoVersion := by
-  native_decide
+  decide
 
 theorem versionPolicy_rejects_before_activation :
     firstUnsupportedVersion activationSchedule 9 [nextCircuitVersion] =
       some nextCircuitVersion := by
-  native_decide
+  decide
 
 theorem versionPolicy_accepts_at_activation :
     versionPolicyAccepts activationSchedule 10 [baseVersion, nextCircuitVersion] = true := by
-  native_decide
+  decide
 
 theorem versionPolicy_accepts_before_retirement :
     versionPolicyAccepts retirementSchedule 19 [baseVersion, nextCircuitVersion] = true := by
-  native_decide
+  decide
 
 theorem versionPolicy_rejects_at_retirement :
     firstUnsupportedVersion retirementSchedule 20 [baseVersion] =
       some baseVersion := by
-  native_decide
+  decide
 
 theorem versionPolicy_retirement_wins_same_height :
     firstUnsupportedVersion sameHeightSchedule 10 [nextCircuitVersion] =
       some nextCircuitVersion := by
-  native_decide
+  decide
 
 theorem versionPolicy_reports_first_unsupported_in_tx_order :
     firstUnsupportedVersion activationSchedule 0 [baseVersion, nextCryptoVersion, nextCircuitVersion] =
       some nextCryptoVersion := by
-  native_decide
+  decide
 
 end Consensus
 end Hegemon

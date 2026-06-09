@@ -119,31 +119,31 @@ def validShape : ShapeInput :=
 
 theorem valid_shape_accepts :
     evaluateShape validShape = none := by
-  native_decide
+  decide
 
 theorem valid_shape_confirmations :
     confirmationsChecked validShape = 3 := by
-  native_decide
+  decide
 
 theorem rejects_bad_verifier_hash :
     evaluateShape { validShape with verifierHashMatches := false } =
       some Reject.verifierHashMismatch := by
-  native_decide
+  decide
 
 theorem rejects_message_count_mismatch :
     evaluateShape { validShape with messageCount := 3 } =
       some Reject.headerMessageCountMismatch := by
-  native_decide
+  decide
 
 theorem rejects_tip_mmr_len_mismatch :
     evaluateShape { validShape with tipHeaderMmrLen := 13 } =
       some Reject.headerMmrMismatch := by
-  native_decide
+  decide
 
 theorem rejects_tip_not_after_message :
     evaluateShape { validShape with tipHeight := 12, tipHeaderMmrLen := 12 } =
       some Reject.longRangeProofMismatch := by
-  native_decide
+  decide
 
 theorem rejects_message_not_after_trusted :
     evaluateShape
@@ -152,7 +152,7 @@ theorem rejects_message_not_after_trusted :
         tipHeight := 13,
         tipHeaderMmrLen := 13 } =
       some Reject.longRangeProofMismatch := by
-  native_decide
+  decide
 
 theorem rejects_trusted_height_overflow :
     evaluateShape
@@ -165,57 +165,57 @@ theorem rejects_trusted_height_overflow :
         messageOpeningLeafIndex := u64Max,
         messageSourceHeight := u64Max } =
       some Reject.longRangeProofMismatch := by
-  native_decide
+  decide
 
 theorem rejects_message_opening_leaf_mismatch :
     evaluateShape { validShape with messageOpeningLeafIndex := 11 } =
       some Reject.headerMmrOpeningMismatch := by
-  native_decide
+  decide
 
 theorem rejects_message_index_oob :
     evaluateShape { validShape with messageIndex := 2 } =
       some Reject.messageIndexOutOfBounds := by
-  native_decide
+  decide
 
 theorem rejects_message_source_chain_mismatch :
     evaluateShape { validShape with messageSourceChainMatches := false } =
       some Reject.receiptOutputMismatch := by
-  native_decide
+  decide
 
 theorem rejects_message_source_height_mismatch :
     evaluateShape { validShape with messageSourceHeight := 13 } =
       some Reject.receiptOutputMismatch := by
-  native_decide
+  decide
 
 theorem rejects_sample_count_mismatch :
     evaluateShape { validShape with sampleHeaderHeights := [11, 12] } =
       some Reject.flyClientSampleMismatch := by
-  native_decide
+  decide
 
 theorem rejects_sample_height_mismatch :
     evaluateShape { validShape with sampleHeaderHeights := [11, 13, 13] } =
       some Reject.flyClientSampleMismatch := by
-  native_decide
+  decide
 
 theorem rejects_sample_opening_leaf_mismatch :
     evaluateShape { validShape with sampleOpeningLeafIndices := [11, 12, 12] } =
       some Reject.flyClientSampleMismatch := by
-  native_decide
+  decide
 
 theorem rejects_under_confirmed :
     evaluateShape { validShape with minConfirmations := 4 } =
       some Reject.confirmationPolicyMismatch := by
-  native_decide
+  decide
 
 theorem rejects_insufficient_tip_work :
     evaluateShape { validShape with minTipWork := 1001 } =
       some Reject.workPolicyMismatch := by
-  native_decide
+  decide
 
 theorem rejects_output_mismatch :
     evaluateShape { validShape with expectedOutputMatches := some false } =
       some Reject.receiptOutputMismatch := by
-  native_decide
+  decide
 
 end LongRange
 end Bridge

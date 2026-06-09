@@ -109,7 +109,7 @@ def mempoolExactLimitInput : MempoolBudgetInput :=
 
 theorem mempool_exact_limit_accepts :
     evaluateMempoolBudgetRejection mempoolExactLimitInput = none := by
-  native_decide
+  decide
 
 def mempoolOverLimitInput : MempoolBudgetInput :=
   {
@@ -121,7 +121,7 @@ def mempoolOverLimitInput : MempoolBudgetInput :=
 theorem mempool_over_limit_example_rejects :
     evaluateMempoolBudgetRejection mempoolOverLimitInput =
       some BudgetReject.mempoolByteBudgetExceeded := by
-  native_decide
+  decide
 
 def mempoolSaturatedOverflowInput : MempoolBudgetInput :=
   {
@@ -133,7 +133,7 @@ def mempoolSaturatedOverflowInput : MempoolBudgetInput :=
 theorem mempool_saturated_overflow_rejects :
     evaluateMempoolBudgetRejection mempoolSaturatedOverflowInput =
       some BudgetReject.mempoolByteBudgetExceeded := by
-  native_decide
+  decide
 
 def stagedProofReplacementInput : StagedProofBudgetInput :=
   {
@@ -145,11 +145,11 @@ def stagedProofReplacementInput : StagedProofBudgetInput :=
 
 theorem staged_proof_replacement_subtracts_existing :
     stagedProofBudgetTotal stagedProofReplacementInput = 5 := by
-  native_decide
+  decide
 
 theorem staged_proof_replacement_accepts :
     evaluateStagedProofBudgetRejection stagedProofReplacementInput = none := by
-  native_decide
+  decide
 
 def stagedProofOverLimitInput : StagedProofBudgetInput :=
   {
@@ -162,7 +162,7 @@ def stagedProofOverLimitInput : StagedProofBudgetInput :=
 theorem staged_proof_over_limit_example_rejects :
     evaluateStagedProofBudgetRejection stagedProofOverLimitInput =
       some BudgetReject.stagedProofByteBudgetExceeded := by
-  native_decide
+  decide
 
 def stagedProofExistingOvercountInput : StagedProofBudgetInput :=
   {
@@ -174,7 +174,7 @@ def stagedProofExistingOvercountInput : StagedProofBudgetInput :=
 
 theorem staged_proof_existing_overcount_saturates_to_zero :
     stagedProofBudgetTotal stagedProofExistingOvercountInput = 5 := by
-  native_decide
+  decide
 
 def stagedProofSaturatedOverflowInput : StagedProofBudgetInput :=
   {
@@ -187,7 +187,7 @@ def stagedProofSaturatedOverflowInput : StagedProofBudgetInput :=
 theorem staged_proof_saturated_overflow_rejects :
     evaluateStagedProofBudgetRejection stagedProofSaturatedOverflowInput =
       some BudgetReject.stagedProofByteBudgetExceeded := by
-  native_decide
+  decide
 
 end ResourceBudgetAdmission
 end Native

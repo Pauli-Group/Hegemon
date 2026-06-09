@@ -65,7 +65,7 @@ def validInput : TreeTransitionInput :=
 
 theorem valid_transition_accepts :
     evaluateTreeTransition validInput = none := by
-  native_decide
+  decide
 
 theorem accepted_transition_returns_applied_root
     (input : TreeTransitionInput)
@@ -76,17 +76,17 @@ theorem accepted_transition_returns_applied_root
 theorem starting_root_mismatch_rejects :
     evaluateTreeTransition { validInput with proofStartingRoot := 99 } =
       some TreeTransitionReject.startingRootMismatch := by
-  native_decide
+  decide
 
 theorem apply_failure_rejects :
     evaluateTreeTransition { validInput with applyCommitmentsSucceeds := false } =
       some TreeTransitionReject.applyFailed := by
-  native_decide
+  decide
 
 theorem ending_root_mismatch_rejects :
     evaluateTreeTransition { validInput with proofEndingRoot := 99 } =
       some TreeTransitionReject.endingRootMismatch := by
-  native_decide
+  decide
 
 theorem starting_root_mismatch_precedes_apply_failure :
     evaluateTreeTransition
@@ -95,7 +95,7 @@ theorem starting_root_mismatch_precedes_apply_failure :
           applyCommitmentsSucceeds := false
         } =
       some TreeTransitionReject.startingRootMismatch := by
-  native_decide
+  decide
 
 theorem apply_failure_precedes_ending_root_mismatch :
     evaluateTreeTransition
@@ -104,7 +104,7 @@ theorem apply_failure_precedes_ending_root_mismatch :
           proofEndingRoot := 99
         } =
       some TreeTransitionReject.applyFailed := by
-  native_decide
+  decide
 
 theorem empty_valid_transition_accepts :
     evaluateTreeTransition
@@ -115,7 +115,7 @@ theorem empty_valid_transition_accepts :
           proofEndingRoot := 22,
           applyCommitmentsSucceeds := true
         } = none := by
-  native_decide
+  decide
 
 end TreeTransition
 end Consensus

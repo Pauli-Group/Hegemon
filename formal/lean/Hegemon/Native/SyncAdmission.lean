@@ -135,7 +135,7 @@ def responseRangeValid : SyncResponseRangeInput :=
 
 theorem response_range_valid_keeps_requested_end :
     responseRange responseRangeValid = some (10, 20) := by
-  native_decide
+  decide
 
 def responseRangeCapsAtBest : SyncResponseRangeInput :=
   {
@@ -147,7 +147,7 @@ def responseRangeCapsAtBest : SyncResponseRangeInput :=
 
 theorem response_range_caps_at_best :
     responseRange responseRangeCapsAtBest = some (10, 25) := by
-  native_decide
+  decide
 
 def responseRangeCapsAtMaxBlocks : SyncResponseRangeInput :=
   {
@@ -159,7 +159,7 @@ def responseRangeCapsAtMaxBlocks : SyncResponseRangeInput :=
 
 theorem response_range_caps_at_max_blocks :
     responseRange responseRangeCapsAtMaxBlocks = some (10, 521) := by
-  native_decide
+  decide
 
 def responseRangeEmptyWhenFromPastBest : SyncResponseRangeInput :=
   {
@@ -171,7 +171,7 @@ def responseRangeEmptyWhenFromPastBest : SyncResponseRangeInput :=
 
 theorem response_range_empty_when_from_past_best :
     responseRange responseRangeEmptyWhenFromPastBest = none := by
-  native_decide
+  decide
 
 def responseRangeSaturatingInput : SyncResponseRangeInput :=
   {
@@ -183,7 +183,7 @@ def responseRangeSaturatingInput : SyncResponseRangeInput :=
 
 theorem response_range_saturating_cap :
     responseRange responseRangeSaturatingInput = some (u64Max - 5, u64Max) := by
-  native_decide
+  decide
 
 def missingRequestNoop : SyncMissingRequestInput :=
   {
@@ -194,7 +194,7 @@ def missingRequestNoop : SyncMissingRequestInput :=
 
 theorem missing_request_noop_when_not_ahead :
     missingRequestRange missingRequestNoop = none := by
-  native_decide
+  decide
 
 def missingRequestShort : SyncMissingRequestInput :=
   {
@@ -205,7 +205,7 @@ def missingRequestShort : SyncMissingRequestInput :=
 
 theorem missing_request_short :
     missingRequestRange missingRequestShort = some (51, 55) := by
-  native_decide
+  decide
 
 def missingRequestCapsAtMaxBlocks : SyncMissingRequestInput :=
   {
@@ -216,7 +216,7 @@ def missingRequestCapsAtMaxBlocks : SyncMissingRequestInput :=
 
 theorem missing_request_caps_at_max_blocks :
     missingRequestRange missingRequestCapsAtMaxBlocks = some (51, 562) := by
-  native_decide
+  decide
 
 def missingRequestAtU64Max : SyncMissingRequestInput :=
   {
@@ -227,7 +227,7 @@ def missingRequestAtU64Max : SyncMissingRequestInput :=
 
 theorem missing_request_at_u64_max_noop :
     missingRequestRange missingRequestAtU64Max = none := by
-  native_decide
+  decide
 
 def responseCountExactLimit : SyncResponseCountInput :=
   {
@@ -237,7 +237,7 @@ def responseCountExactLimit : SyncResponseCountInput :=
 
 theorem response_count_exact_limit_accepts :
     responseCountAccepts responseCountExactLimit = true := by
-  native_decide
+  decide
 
 def responseCountOverLimit : SyncResponseCountInput :=
   {
@@ -247,7 +247,7 @@ def responseCountOverLimit : SyncResponseCountInput :=
 
 theorem response_count_over_limit_rejects :
     responseCountRejects responseCountOverLimit = true := by
-  native_decide
+  decide
 
 end SyncAdmission
 end Native

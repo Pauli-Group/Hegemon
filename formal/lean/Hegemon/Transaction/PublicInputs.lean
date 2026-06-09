@@ -107,47 +107,47 @@ def validShape : PublicInputShape :=
 
 theorem validPublicInputShape_accepts_valid :
     validPublicInputShape validShape = true := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_bad_input_flag :
     validPublicInputShape { validShape with inputFlags := [2, 0] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_inactive_input_nonzero :
     validPublicInputShape { validShape with inputFlags := [0, 0], nullifiers := [11, 0] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_active_input_zero :
     validPublicInputShape { validShape with inputFlags := [1, 0], nullifiers := [0, 0] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_inactive_output_nonzero_commitment :
     validPublicInputShape { validShape with outputFlags := [0, 0], commitments := [22, 0] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_empty_transaction :
     validPublicInputShape { validShape with inputFlags := [0, 0], outputFlags := [0, 0], nullifiers := [0, 0], commitments := [0, 0], ciphertextHashes := [0, 0] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_bad_slot_zero :
     validPublicInputShape { validShape with balanceSlotAssets := [1, 7, paddingAsset, paddingAsset] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_padding_not_suffix :
     validPublicInputShape { validShape with balanceSlotAssets := [0, paddingAsset, 7, paddingAsset] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_duplicate_asset :
     validPublicInputShape { validShape with balanceSlotAssets := [0, 7, 7, paddingAsset] } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_rejects_stablecoin_missing_asset :
     validPublicInputShape { validShape with stablecoinEnabled := 1, stablecoinAsset := 42 } = false := by
-  native_decide
+  decide
 
 theorem validPublicInputShape_accepts_stablecoin_present :
     validPublicInputShape { validShape with stablecoinEnabled := 1, stablecoinAsset := 7 } = true := by
-  native_decide
+  decide
 
 end PublicInputs
 end Transaction

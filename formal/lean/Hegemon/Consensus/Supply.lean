@@ -111,7 +111,7 @@ theorem monetaryConstants_match_tokenomics :
       ∧ halvingInterval = 2102400
       ∧ maxMonetarySupply = 2100000000000000
       ∧ initialSubsidy = 499429223 := by
-  native_decide
+  decide
 
 theorem blockSubsidy_zero_height :
     blockSubsidy 0 = 0 := by
@@ -123,24 +123,24 @@ theorem blockSubsidy_initial_height :
 
 theorem blockSubsidy_first_epoch_last_block :
     blockSubsidy halvingInterval = initialSubsidy := by
-  native_decide
+  decide
 
 theorem blockSubsidy_first_halving_boundary :
     blockSubsidy (halvingInterval + 1) = initialSubsidy / 2 := by
-  native_decide
+  decide
 
 theorem blockSubsidy_second_halving_boundary :
     blockSubsidy (2 * halvingInterval + 1) = initialSubsidy / 4 := by
-  native_decide
+  decide
 
 theorem blockSubsidy_extinct_at_capped_shift :
     blockSubsidy (64 * halvingInterval + 1) = 0 := by
-  native_decide
+  decide
 
 theorem blockSubsidy_capped_shift_stable_after_extinction :
     blockSubsidy (65 * halvingInterval + 1) =
       blockSubsidy (64 * halvingInterval + 1) := by
-  native_decide
+  decide
 
 theorem blockSubsidy_uses_capped_halving_epoch
     {height : Nat}

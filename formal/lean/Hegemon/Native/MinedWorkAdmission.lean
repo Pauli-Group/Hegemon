@@ -55,7 +55,7 @@ def valid : MinedWorkInput :=
 
 theorem valid_accepts :
     evaluateMinedWorkRejection valid = none := by
-  native_decide
+  decide
 
 def parentMismatch : MinedWorkInput :=
   { valid with parentHashMatches := false }
@@ -63,7 +63,7 @@ def parentMismatch : MinedWorkInput :=
 theorem parent_mismatch_rejects :
     evaluateMinedWorkRejection parentMismatch =
       some MinedWorkReject.parentHashMismatch := by
-  native_decide
+  decide
 
 def heightMismatch : MinedWorkInput :=
   { valid with workHeight := 43 }
@@ -71,7 +71,7 @@ def heightMismatch : MinedWorkInput :=
 theorem height_mismatch_rejects :
     evaluateMinedWorkRejection heightMismatch =
       some MinedWorkReject.heightNotNext := by
-  native_decide
+  decide
 
 def heightOverflow : MinedWorkInput :=
   {
@@ -83,7 +83,7 @@ def heightOverflow : MinedWorkInput :=
 theorem height_overflow_rejects :
     evaluateMinedWorkRejection heightOverflow =
       some MinedWorkReject.heightNotNext := by
-  native_decide
+  decide
 
 def parent_mismatch_precedes_height_failure_input : MinedWorkInput :=
   {
@@ -95,7 +95,7 @@ def parent_mismatch_precedes_height_failure_input : MinedWorkInput :=
 theorem parent_mismatch_precedes_height_failure :
     evaluateMinedWorkRejection parent_mismatch_precedes_height_failure_input =
       some MinedWorkReject.parentHashMismatch := by
-  native_decide
+  decide
 
 def maxPredecessorAcceptsMaxHeight : MinedWorkInput :=
   {
@@ -106,7 +106,7 @@ def maxPredecessorAcceptsMaxHeight : MinedWorkInput :=
 
 theorem max_predecessor_accepts_max_height :
     evaluateMinedWorkRejection maxPredecessorAcceptsMaxHeight = none := by
-  native_decide
+  decide
 
 end MinedWorkAdmission
 end Native

@@ -300,6 +300,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/lakefile.lean",
         "formal/lean/Hegemon/Bytes.lean",
         "formal/lean/Hegemon.lean",
+        "scripts/check_lean_claim_axioms.py",
+        "config/lean-axiom-waivers.json",
         "formal/lean/Hegemon/Bridge/CheckpointOutput.lean",
         "formal/lean/Hegemon/Bridge/GenerateCheckpointOutputVectors.lean",
         "formal/lean/Hegemon/Bridge/Encoding.lean",

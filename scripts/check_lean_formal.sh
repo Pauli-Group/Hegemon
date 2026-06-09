@@ -142,3 +142,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/StatementHash.lean
   lake env lean Hegemon/Transaction/GenerateStatementHashVectors.lean
 )
+
+python3 "$ROOT/scripts/check_lean_claim_axioms.py" \
+  --claims "$ROOT/config/formal-security-claims.json" \
+  --waivers "$ROOT/config/lean-axiom-waivers.json"

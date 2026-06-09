@@ -129,37 +129,37 @@ def sampleSource : SemanticSourceFields :=
 
 theorem valid_semantic_derivation_accepts :
     evaluateSemanticRejection validInput = none := by
-  native_decide
+  decide
 
 theorem empty_block_rejects :
     evaluateSemanticRejection { validInput with txCount := 0 } =
       some SemanticReject.emptyBlock := by
-  native_decide
+  decide
 
 theorem excessive_nullifiers_rejects :
     evaluateSemanticRejection { validInput with nullifierCountsWithinMax := false } =
       some SemanticReject.excessiveNullifiers := by
-  native_decide
+  decide
 
 theorem zero_nullifier_rejects :
     evaluateSemanticRejection { validInput with hasZeroNullifier := true } =
       some SemanticReject.zeroNullifier := by
-  native_decide
+  decide
 
 theorem missing_nonzero_nullifier_rejects :
     evaluateSemanticRejection { validInput with hasAnyNonzeroNullifier := false } =
       some SemanticReject.missingNonzeroNullifier := by
-  native_decide
+  decide
 
 theorem duplicate_nullifier_rejects :
     evaluateSemanticRejection { validInput with hasDuplicateNonzeroNullifier := true } =
       some SemanticReject.duplicateNullifier := by
-  native_decide
+  decide
 
 theorem da_encoding_rejects :
     evaluateSemanticRejection { validInput with daEncodingValid := false } =
       some SemanticReject.daEncoding := by
-  native_decide
+  decide
 
 theorem valid_semantic_fields_match_sources
     (input : SemanticDerivationInput)
@@ -187,7 +187,7 @@ theorem rejection_precedes_da_encoding :
           daEncodingValid := false
         } =
       some SemanticReject.duplicateNullifier := by
-  native_decide
+  decide
 
 end RecursiveSemanticInputs
 end Consensus

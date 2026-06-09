@@ -154,23 +154,23 @@ theorem accepts_iff_contiguous (txIndices : List Nat) :
 
 theorem zero_based_contiguous_accepts :
     evaluateReplayRejection [0, 1, 2] = none := by
-  native_decide
+  decide
 
 theorem nonzero_start_contiguous_accepts :
     evaluateReplayRejection [5, 6, 7] = none := by
-  native_decide
+  decide
 
 theorem gap_rejects :
     evaluateReplayRejection [0, 2, 3] = some ReplayReject.txIndexGap := by
-  native_decide
+  decide
 
 theorem duplicate_rejects :
     evaluateReplayRejection [0, 1, 1] = some ReplayReject.txIndexGap := by
-  native_decide
+  decide
 
 theorem decreasing_rejects :
     evaluateReplayRejection [2, 1, 0] = some ReplayReject.txIndexGap := by
-  native_decide
+  decide
 
 theorem valid_v1_public_fields_match_semantic :
     buildPublicV1 [0, 1, 2] sampleSemantic 170 187 =
@@ -189,7 +189,7 @@ theorem valid_v1_public_fields_match_semantic :
         startTreeCommitment := sampleSemantic.startTreeCommitment,
         endTreeCommitment := sampleSemantic.endTreeCommitment
       } := by
-  native_decide
+  decide
 
 theorem valid_v2_public_fields_match_semantic :
     buildPublicV2 [0, 1, 2] sampleSemantic 128 129 130 131 132 =
@@ -210,15 +210,15 @@ theorem valid_v2_public_fields_match_semantic :
         startTreeCommitment := sampleSemantic.startTreeCommitment,
         endTreeCommitment := sampleSemantic.endTreeCommitment
       } := by
-  native_decide
+  decide
 
 theorem v1_public_byte_length :
     v1PublicBytesLen = 580 := by
-  native_decide
+  decide
 
 theorem v2_public_byte_length :
     v2PublicBytesLen = 676 := by
-  native_decide
+  decide
 
 end RecursivePublicReplay
 end Consensus

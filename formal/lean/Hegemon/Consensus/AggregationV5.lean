@@ -173,72 +173,72 @@ def validMergeHeader : HeaderInput :=
 
 theorem valid_leaf_singleton_header_accepts :
     evaluateHeader validLeafSingletonHeader = none := by
-  native_decide
+  decide
 
 theorem valid_merge_header_accepts :
     evaluateHeader validMergeHeader = none := by
-  native_decide
+  decide
 
 theorem rejects_bad_version :
     evaluateHeader { validLeafSingletonHeader with version := 4 } =
       some HeaderReject.unsupportedVersion := by
-  native_decide
+  decide
 
 theorem rejects_bad_proof_format :
     evaluateHeader { validLeafSingletonHeader with proofFormat := 4 } =
       some HeaderReject.unsupportedProofFormat := by
-  native_decide
+  decide
 
 theorem rejects_bad_public_values_encoding :
     evaluateHeader { validLeafSingletonHeader with publicValuesEncoding := 1 } =
       some HeaderReject.unsupportedPublicValuesEncoding := by
-  native_decide
+  decide
 
 theorem rejects_statement_commitment_length :
     evaluateHeader { validLeafSingletonHeader with statementCommitmentLen := 47 } =
       some HeaderReject.statementCommitmentLength := by
-  native_decide
+  decide
 
 theorem rejects_statement_commitment_mismatch :
     evaluateHeader { validLeafSingletonHeader with statementCommitmentMatches := false } =
       some HeaderReject.statementCommitmentMismatch := by
-  native_decide
+  decide
 
 theorem rejects_zero_child_count :
     evaluateHeader { validLeafSingletonHeader with childCount := 0 } =
       some HeaderReject.childCountOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_child_count_above_fan_in :
     evaluateHeader { validLeafSingletonHeader with childCount := 2 } =
       some HeaderReject.childCountOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_subtree_tx_count_mismatch :
     evaluateHeader { validLeafSingletonHeader with subtreeTxCount := 2 } =
       some HeaderReject.subtreeTxCountMismatch := by
-  native_decide
+  decide
 
 theorem rejects_tree_levels_mismatch :
     evaluateHeader { validMergeHeader with treeLevels := 2 } =
       some HeaderReject.treeLevelsMismatch := by
-  native_decide
+  decide
 
 theorem rejects_root_level_out_of_range :
     evaluateHeader { validLeafSingletonHeader with rootLevel := 1 } =
       some HeaderReject.rootLevelOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_zero_fan_in_after_child_bounds :
     evaluateHeader { validLeafSingletonHeader with fanIn := 0, childCount := 0 } =
       some HeaderReject.childCountOutOfRange := by
-  native_decide
+  decide
 
 theorem rejects_leaf_fan_in_above_configured :
     evaluateHeader
       { validMergeHeader with nodeKind := NodeKind.leaf, fanIn := 2, childCount := 2 } =
       some HeaderReject.leafFanInExceedsConfigured := by
-  native_decide
+  decide
 
 theorem rejects_multilevel_leaf_fan_in_mismatch :
     evaluateHeader
@@ -251,25 +251,25 @@ theorem rejects_multilevel_leaf_fan_in_mismatch :
         configuredLeafFanIn := 2
       } =
       some HeaderReject.multilevelLeafFanInMismatch := by
-  native_decide
+  decide
 
 theorem rejects_merge_fan_in_mismatch :
     evaluateHeader { validMergeHeader with fanIn := 1, childCount := 1 } =
       some HeaderReject.mergeFanInMismatch := by
-  native_decide
+  decide
 
 theorem rejects_inner_public_inputs_len_mismatch :
     evaluateHeader { validLeafSingletonHeader with packedPublicValuesLen := 2 } =
       some HeaderReject.innerPublicInputsLenMismatch := by
-  native_decide
+  decide
 
 theorem merge_fan_in_floor_is_binary_minimum :
     mergeFanInFloor 1 = 2 := by
-  native_decide
+  decide
 
 theorem tree_levels_use_binary_merge_floor :
     treeLevelsForTxCount 4 1 1 = 3 := by
-  native_decide
+  decide
 
 end AggregationV5
 end Consensus

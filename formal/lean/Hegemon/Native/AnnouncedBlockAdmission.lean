@@ -93,7 +93,7 @@ def valid : AnnouncedBlockInput :=
 
 theorem valid_accepts :
     evaluateAnnouncedBlockRejection valid = none := by
-  native_decide
+  decide
 
 def heightMismatch : AnnouncedBlockInput :=
   { valid with announcedHeight := 43 }
@@ -101,7 +101,7 @@ def heightMismatch : AnnouncedBlockInput :=
 theorem height_mismatch_rejects :
     evaluateAnnouncedBlockRejection heightMismatch =
       some AnnouncedBlockReject.heightNotNext := by
-  native_decide
+  decide
 
 def heightOverflow : AnnouncedBlockInput :=
   {
@@ -118,7 +118,7 @@ def heightOverflow : AnnouncedBlockInput :=
 theorem height_overflow_rejects :
     evaluateAnnouncedBlockRejection heightOverflow =
       some AnnouncedBlockReject.heightNotNext := by
-  native_decide
+  decide
 
 def parentMismatch : AnnouncedBlockInput :=
   { valid with parentHashMatches := false }
@@ -126,7 +126,7 @@ def parentMismatch : AnnouncedBlockInput :=
 theorem parent_mismatch_rejects :
     evaluateAnnouncedBlockRejection parentMismatch =
       some AnnouncedBlockReject.parentHashMismatch := by
-  native_decide
+  decide
 
 def timestampDidNotAdvance : AnnouncedBlockInput :=
   { valid with announcedTimestampMs := valid.parentTimestampMs }
@@ -134,7 +134,7 @@ def timestampDidNotAdvance : AnnouncedBlockInput :=
 theorem timestamp_did_not_advance_rejects :
     evaluateAnnouncedBlockRejection timestampDidNotAdvance =
       some AnnouncedBlockReject.timestampDidNotAdvance := by
-  native_decide
+  decide
 
 def futureSkew : AnnouncedBlockInput :=
   {
@@ -151,7 +151,7 @@ def futureSkew : AnnouncedBlockInput :=
 theorem future_skew_rejects :
     evaluateAnnouncedBlockRejection futureSkew =
       some AnnouncedBlockReject.futureSkew := by
-  native_decide
+  decide
 
 def hashWorkHashMismatch : AnnouncedBlockInput :=
   { valid with hashMatchesWorkHash := false }
@@ -159,7 +159,7 @@ def hashWorkHashMismatch : AnnouncedBlockInput :=
 theorem hash_work_hash_mismatch_rejects :
     evaluateAnnouncedBlockRejection hashWorkHashMismatch =
       some AnnouncedBlockReject.hashWorkHashMismatch := by
-  native_decide
+  decide
 
 def parent_mismatch_precedes_timestamp_failure_input : AnnouncedBlockInput :=
   { valid with parentHashMatches := false, announcedTimestampMs := valid.parentTimestampMs }
@@ -167,7 +167,7 @@ def parent_mismatch_precedes_timestamp_failure_input : AnnouncedBlockInput :=
 theorem parent_mismatch_precedes_timestamp_failure :
     evaluateAnnouncedBlockRejection parent_mismatch_precedes_timestamp_failure_input =
       some AnnouncedBlockReject.parentHashMismatch := by
-  native_decide
+  decide
 
 def saturatedFutureLimitAcceptsMaxTimestamp : AnnouncedBlockInput :=
   {
@@ -183,7 +183,7 @@ def saturatedFutureLimitAcceptsMaxTimestamp : AnnouncedBlockInput :=
 
 theorem saturated_future_limit_accepts_max_timestamp :
     evaluateAnnouncedBlockRejection saturatedFutureLimitAcceptsMaxTimestamp = none := by
-  native_decide
+  decide
 
 end AnnouncedBlockAdmission
 end Native

@@ -210,84 +210,84 @@ def validVerifiedMetadata : VerifiedMetadataInput :=
 
 theorem valid_payload_accepts :
     evaluatePayloadRejection validPayload = none := by
-  native_decide
+  decide
 
 theorem payload_leaf_count_mismatch_rejects :
     evaluatePayloadRejection { validPayload with payloadLeafCountMatches := false } =
       some PayloadReject.leafCountMismatch := by
-  native_decide
+  decide
 
 theorem payload_receipt_count_mismatch_rejects :
     evaluatePayloadRejection { validPayload with payloadReceiptCountMatches := false } =
       some PayloadReject.receiptCountMismatch := by
-  native_decide
+  decide
 
 theorem payload_missing_claim_receipts_rejects :
     evaluatePayloadRejection { validPayload with hasClaimReceipts := false } =
       some PayloadReject.missingClaimReceipts := by
-  native_decide
+  decide
 
 theorem payload_receipts_mismatch_rejects :
     evaluatePayloadRejection { validPayload with payloadReceiptsMatchClaims := false } =
       some PayloadReject.receiptsMismatch := by
-  native_decide
+  decide
 
 theorem payload_missing_tx_artifacts_rejects :
     evaluatePayloadRejection { validPayload with hasTxArtifacts := false } =
       some PayloadReject.missingTransactionProofs := by
-  native_decide
+  decide
 
 theorem valid_artifact_accepts :
     evaluateArtifactRejection validArtifact = none := by
-  native_decide
+  decide
 
 theorem artifact_wrong_kind_rejects :
     evaluateArtifactRejection { validArtifact with envelopeKind := ArtifactKind.recursiveBlockV2 } =
       some ArtifactReject.artifactKindMismatch := by
-  native_decide
+  decide
 
 theorem artifact_profile_mismatch_rejects :
     evaluateArtifactRejection { validArtifact with envelopeVerifierProfileMatches := false } =
       some ArtifactReject.verifierProfileMismatch := by
-  native_decide
+  decide
 
 theorem artifact_oversized_rejects :
     evaluateArtifactRejection { validArtifact with artifactBytesLen := 513 } =
       some ArtifactReject.artifactTooLarge := by
-  native_decide
+  decide
 
 theorem artifact_missing_tx_artifacts_rejects :
     evaluateArtifactRejection { validArtifact with hasTxArtifacts := false } =
       some ArtifactReject.missingTransactionProofs := by
-  native_decide
+  decide
 
 theorem artifact_tx_count_mismatch_rejects :
     evaluateArtifactRejection { validArtifact with txArtifactCountMatches := false } =
       some ArtifactReject.transactionProofCountMismatch := by
-  native_decide
+  decide
 
 theorem exact_artifact_size_limit_accepts :
     evaluateArtifactRejection { validArtifact with artifactBytesLen := 512, maxArtifactBytes := 512 } =
       none := by
-  native_decide
+  decide
 
 theorem statement_binding_accepts :
     evaluateStatementRejection validStatement = none := by
-  native_decide
+  decide
 
 theorem statement_commitment_mismatch_rejects :
     evaluateStatementRejection { statementCommitmentMatches := false } =
       some StatementReject.statementCommitmentMismatch := by
-  native_decide
+  decide
 
 theorem verified_metadata_accepts :
     evaluateVerifiedMetadataRejection validVerifiedMetadata = none := by
-  native_decide
+  decide
 
 theorem verified_leaf_count_mismatch_rejects :
     evaluateVerifiedMetadataRejection { verifiedLeafCountMatches := false } =
       some VerifiedMetadataReject.verifiedLeafCountMismatch := by
-  native_decide
+  decide
 
 end ReceiptRootAdmission
 end Consensus

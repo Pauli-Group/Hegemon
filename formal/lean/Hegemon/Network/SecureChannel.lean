@@ -76,15 +76,15 @@ def nextCounter (counter : Nat) : Option Nat :=
 
 theorem directional_labels_distinct :
     initiatorToResponderLabel ≠ responderToInitiatorLabel := by
-  native_decide
+  decide
 
 theorem aad_label_distinct_from_i2r :
     sessionAadLabel ≠ initiatorToResponderLabel := by
-  native_decide
+  decide
 
 theorem aad_label_distinct_from_r2i :
     sessionAadLabel ≠ responderToInitiatorLabel := by
-  native_decide
+  decide
 
 theorem initiator_sends_i2r :
     sendSlot Role.initiator = KeySlot.initiatorToResponder := by
@@ -129,27 +129,27 @@ def sampleInput : KeyScheduleInput := {
 theorem sample_i2r_r2i_preimages_distinct :
     initiatorToResponderPreimage sampleInput ≠
       responderToInitiatorPreimage sampleInput := by
-  native_decide
+  decide
 
 theorem sample_i2r_aad_preimages_distinct :
     initiatorToResponderPreimage sampleInput ≠
       sessionAadPreimage sampleInput := by
-  native_decide
+  decide
 
 theorem nonce_from_counter_zero :
     nonceFromCounter 0 =
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] := by
-  native_decide
+  decide
 
 theorem nonce_from_counter_one :
     nonceFromCounter 1 =
       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1] := by
-  native_decide
+  decide
 
 theorem nonce_from_counter_max :
     nonceFromCounter u64Max =
       [0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255] := by
-  native_decide
+  decide
 
 theorem nextCounter_accepts_below_max
     {counter : Nat}
