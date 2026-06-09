@@ -29,6 +29,8 @@ const TARGET_REVIEW_STATUSES: &[&str] = &["accepted", "needs_review", "blocked"]
 #[derive(Debug, Serialize)]
 pub struct ClaimsReport {
     pub claims: usize,
+    pub lean_theorem_claims: usize,
+    pub named_lean_theorems: usize,
     pub production_eligible: usize,
     pub residual_risks: usize,
     pub passed: bool,
@@ -206,11 +208,17 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
     ensure!(!ledger.claims.is_empty(), "claims ledger must not be empty");
 
     let mut ids = BTreeSet::new();
+    let mut lean_theorem_claims = 0usize;
+    let mut named_lean_theorems = BTreeSet::new();
     let mut residual_risks = 0usize;
     let mut production_eligible = 0usize;
     for claim in &ledger.claims {
-        validate_claim(&root, claim)?;
+        let theorem_names = validate_claim(&root, claim)?;
         ensure!(ids.insert(&claim.id), "duplicate claim id {}", claim.id);
+        if claim.claim_class == "lean_theorem" {
+            lean_theorem_claims += 1;
+        }
+        named_lean_theorems.extend(theorem_names);
         residual_risks += claim.residual_risks.len();
         if claim.production_eligible {
             production_eligible += 1;
@@ -219,6 +227,8 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
 
     Ok(ClaimsReport {
         claims: ledger.claims.len(),
+        lean_theorem_claims,
+        named_lean_theorems: named_lean_theorems.len(),
         production_eligible,
         residual_risks,
         passed: true,
@@ -435,7 +445,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
     })
 }
 
-fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<()> {
+fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>> {
     validate_id("claim id", &claim.id)?;
     ensure!(
         !claim.component.trim().is_empty(),
@@ -477,6 +487,7 @@ fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<()> {
     for evidence in &claim.evidence_paths {
         ensure_repo_relative_existing(root, evidence, &format!("{} evidence path", claim.id))?;
     }
+    let theorem_names = validate_lean_theorem_evidence(root, claim)?;
     if claim.production_eligible {
         production_claim_checks(claim)?;
     } else {
@@ -489,7 +500,76 @@ fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<()> {
     for risk in &claim.residual_risks {
         validate_residual_risk(&claim.id, risk)?;
     }
-    Ok(())
+    Ok(theorem_names)
+}
+
+fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>> {
+    if claim.claim_class != "lean_theorem" {
+        return Ok(BTreeSet::new());
+    }
+
+    let mut checked_lean_sources = Vec::new();
+    let mut theorem_names = BTreeSet::new();
+    for evidence in &claim.evidence_paths {
+        if !is_non_generator_lean_evidence(evidence) {
+            continue;
+        }
+        checked_lean_sources.push(evidence.as_str());
+        let path = root.join(evidence);
+        for theorem in lean_theorem_names(&path)? {
+            theorem_names.insert(format!("{evidence}:{theorem}"));
+        }
+    }
+
+    ensure!(
+        !checked_lean_sources.is_empty(),
+        "{} lean_theorem claim must list at least one non-generator Lean evidence path",
+        claim.id
+    );
+    ensure!(
+        !theorem_names.is_empty(),
+        "{} lean_theorem claim must be backed by a named theorem declaration in non-generator Lean evidence: {:?}",
+        claim.id,
+        checked_lean_sources
+    );
+    Ok(theorem_names)
+}
+
+fn is_non_generator_lean_evidence(raw: &str) -> bool {
+    if !raw.starts_with("formal/lean/") || !raw.ends_with(".lean") {
+        return false;
+    }
+    let Some(file_name) = Path::new(raw).file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    !file_name.starts_with("Generate")
+}
+
+fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
+    let source = fs::read_to_string(path)
+        .with_context(|| format!("read Lean theorem evidence {}", path.display()))?;
+    let mut names = Vec::new();
+    for line in source.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let Some(first) = tokens.first().copied() else {
+            continue;
+        };
+        let name = if first == "theorem" {
+            tokens.get(1).copied()
+        } else if first == "private" && tokens.get(1).copied() == Some("theorem") {
+            tokens.get(2).copied()
+        } else {
+            None
+        };
+        let Some(raw_name) = name else {
+            continue;
+        };
+        let theorem = raw_name.trim_end_matches(':');
+        if !theorem.is_empty() {
+            names.push(theorem.to_owned());
+        }
+    }
+    Ok(names)
 }
 
 fn validate_blueprint(
@@ -1172,6 +1252,65 @@ mod tests {
         assert!(err.to_string().contains("path traversal"));
     }
 
+    #[test]
+    fn claims_accept_named_lean_theorem_evidence() {
+        let root = test_root("lean-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             theorem balance_rule_accepts : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/Balance.lean"]),
+        );
+
+        let report = check_claims_file(&claims_path).expect("named theorem evidence accepted");
+        assert_eq!(report.claims, 1);
+        assert_eq!(report.lean_theorem_claims, 1);
+        assert_eq!(report.named_lean_theorems, 1);
+    }
+
+    #[test]
+    fn claims_reject_generator_only_lean_evidence() {
+        let root = test_root("lean-generator-only-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
+            "theorem generated_case : True := by\n  trivial\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/GenerateVectors.lean"]),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("non-generator Lean evidence"));
+    }
+
+    #[test]
+    fn claims_reject_lean_evidence_without_theorem() {
+        let root = test_root("lean-no-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "def balanceRuleAccepts : Bool := true\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(&["formal/lean/Hegemon/Transaction/Balance.lean"]),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("named theorem declaration"));
+    }
+
     fn test_root(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1230,6 +1369,28 @@ mod tests {
                     "assumptions": ["test assumption"],
                     "evidence_paths": ["evidence/target.txt"],
                     "gates": ["test target gate"],
+                    "residual_risks": []
+                }
+            ]
+        })
+    }
+
+    fn lean_claims_fixture(evidence_paths: &[&str]) -> Value {
+        json!({
+            "schema_version": 1,
+            "generated_for_branch": "codex/formal-blueprint-dag",
+            "claims": [
+                {
+                    "id": "formal.test-claim",
+                    "component": "test Lean claim",
+                    "claim_class": "lean_theorem",
+                    "summary": "Test claim.",
+                    "status": "enforced",
+                    "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+                    "production_eligible": true,
+                    "assumptions": ["test assumption"],
+                    "evidence_paths": evidence_paths,
+                    "gates": ["bash scripts/check_lean_formal.sh"],
                     "residual_risks": []
                 }
             ]
