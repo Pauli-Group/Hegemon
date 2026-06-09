@@ -44,6 +44,8 @@ Native announced-block pre-PoW admission is represented separately in Lean: gene
 
 Native local mined-work admission is represented separately in Lean: generated vectors check current-best parent-hash agreement and checked next-height arithmetic against the production mined-block import helper before pending-action replay, body commitment checks, supply accounting, and PoW metadata verification. This proof does not prove work-template construction, PoW hash-threshold validity, action validity, storage durability, fork-choice liveness, or complete native-node equivalence.
 
+Reusable consensus and light-client PoW admission also fail closed on u64 height overflow. The Lean PoW kernel models checked next-height arithmetic alongside compact-target, timestamp, hash-threshold, and Work48 cumulative-work behavior; generated vectors check the generic consensus admission helper, and focused regressions cover both `PowConsensus` admission and bridge/native `verify_pow_header` so a parent at `u64::MAX` cannot admit a same-height child through saturating arithmetic.
+
 ### 0.4 zk bridge posture
 
 Hegemon is still a pure PoW chain. Canonicality is valid-header execution plus greatest fixed-width cumulative work; zkVM receipts, bridge relayers, verifier registrations, and external-chain proofs are not fork-choice inputs. The bridge model is a zk light client over Hegemon, not a new finality layer.

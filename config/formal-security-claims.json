@@ -255,13 +255,13 @@
       "id": "consensus.pow-admission",
       "component": "PoW header admission arithmetic",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PoW admission kernel proves compact-target rejection, strict timestamp admission, hash-threshold rejection, and fixed-width cumulative-work behavior; generated Lean vectors are checked against consensus admission and light-client Work48 helpers.",
+      "summary": "The Lean PoW admission kernel proves checked u64 next-height arithmetic, compact-target rejection, strict timestamp admission, hash-threshold rejection, and fixed-width cumulative-work behavior; generated Lean vectors are checked against consensus admission and light-client Work48 helpers, with focused height-overflow regressions for both generic consensus and bridge/native header verification.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "assumptions": [
         "The Lean model represents arithmetic over already-computed PoW hash values; header preimage serialization is covered separately by consensus.header-preimage-binding, while SHA-256 implementation equivalence remains outside this claim.",
-        "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
+        "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, checked height-overflow rejection, maximum-predecessor height acceptance, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
         "The theorem covers executable target/timestamp/work admission semantics, not difficulty-retarget economics, network orphan policy, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
       ],
       "evidence_paths": [

@@ -47,6 +47,7 @@ def powCaseJson (name : String) (input : PowAdmissionInput) : String :=
     ++ "    }"
 
 def easyPowBits : Nat := 545259519
+def maxPowHeightPredecessor : Nat := maxPowHeight - 1
 def invalidZeroMantissaBits : Nat := 536870912
 def invalidLargeExponentBits : Nat := 570425343
 def easyTarget : Nat :=
@@ -75,6 +76,8 @@ def vectorJson : String :=
     ++ "  \"pow_admission_cases\": [\n"
     ++ powCaseJson "valid-boundary-hash-accepted" validInput ++ ",\n"
     ++ powCaseJson "height-mismatch-rejected" { validInput with headerHeight := 43 } ++ ",\n"
+    ++ powCaseJson "height-overflow-rejected" { validInput with parentHeight := maxPowHeight, headerHeight := maxPowHeight } ++ ",\n"
+    ++ powCaseJson "max-predecessor-height-accepted" { validInput with parentHeight := maxPowHeightPredecessor, headerHeight := maxPowHeight } ++ ",\n"
     ++ powCaseJson "pow-bits-mismatch-rejected" { validInput with powBits := 545259518 } ++ ",\n"
     ++ powCaseJson "timestamp-equal-parent-rejected" { validInput with headerTimestamp := validInput.parentTimestamp } ++ ",\n"
     ++ powCaseJson "timestamp-equal-median-rejected" { validInput with parentTimestamp := 10, medianTimePast := 20, headerTimestamp := 20 } ++ ",\n"

@@ -1,7 +1,8 @@
 namespace Hegemon
 namespace Consensus
 
-def maxTimestampMs : Nat := 18446744073709551615
+def maxPowHeight : Nat := 18446744073709551615
+def maxTimestampMs : Nat := maxPowHeight
 
 def pow2Nat (exponent : Nat) : Nat :=
   2 ^ exponent
@@ -43,6 +44,9 @@ def blockWorkFromBits (bits : Nat) : Option Nat :=
 
 def futureLimit (nowMs : Nat) : Nat :=
   Nat.min maxTimestampMs (nowMs + maxFutureSkewMs)
+
+def checkedNextU64 (height : Nat) : Option Nat :=
+  if height < maxPowHeight then some (height + 1) else none
 
 inductive TimestampReject where
   | timestampNotAdvanced
@@ -98,7 +102,7 @@ def timestampRejectToPowReject : TimestampReject -> PowAdmissionReject
   | TimestampReject.timestampFutureSkew => PowAdmissionReject.timestampFutureSkew
 
 def evaluatePowAdmission (input : PowAdmissionInput) : Except PowAdmissionReject Nat :=
-  if input.headerHeight ≠ input.parentHeight + 1 then
+  if checkedNextU64 input.parentHeight ≠ some input.headerHeight then
     Except.error PowAdmissionReject.heightMismatch
   else if input.powBits ≠ input.expectedPowBits then
     Except.error PowAdmissionReject.powBitsMismatch
@@ -188,17 +192,35 @@ theorem checkedWorkAdd_rejects_overflow
   have notBounded : ¬ parent + block <= maxWork48 := Nat.not_le.mpr overflow
   simp [notBounded]
 
+theorem checkedNextU64_rejects_max :
+    checkedNextU64 maxPowHeight = none := by
+  unfold checkedNextU64 maxPowHeight
+  simp
+
+theorem checkedNextU64_accepts_predecessor :
+    checkedNextU64 (maxPowHeight - 1) = some maxPowHeight := by
+  native_decide
+
 theorem powAdmission_rejects_height
     {input : PowAdmissionInput}
-    (heightMismatch : input.headerHeight ≠ input.parentHeight + 1) :
+    (heightMismatch : checkedNextU64 input.parentHeight ≠ some input.headerHeight) :
     evaluatePowAdmission input =
       Except.error PowAdmissionReject.heightMismatch := by
   unfold evaluatePowAdmission
   simp [heightMismatch]
 
+theorem powAdmission_rejects_height_overflow
+    {input : PowAdmissionInput}
+    (parentMax : input.parentHeight = maxPowHeight) :
+    evaluatePowAdmission input =
+      Except.error PowAdmissionReject.heightMismatch := by
+  apply powAdmission_rejects_height
+  rw [parentMax, checkedNextU64_rejects_max]
+  simp
+
 theorem powAdmission_rejects_pow_bits
     {input : PowAdmissionInput}
-    (heightOk : input.headerHeight = input.parentHeight + 1)
+    (heightOk : checkedNextU64 input.parentHeight = some input.headerHeight)
     (bitsMismatch : input.powBits ≠ input.expectedPowBits) :
     evaluatePowAdmission input =
       Except.error PowAdmissionReject.powBitsMismatch := by
@@ -208,7 +230,7 @@ theorem powAdmission_rejects_pow_bits
 theorem powAdmission_rejects_insufficient_work
     {input : PowAdmissionInput}
     {target : Nat}
-    (heightOk : input.headerHeight = input.parentHeight + 1)
+    (heightOk : checkedNextU64 input.parentHeight = some input.headerHeight)
     (bitsOk : input.powBits = input.expectedPowBits)
     (timeOk :
       timestampPolicy
@@ -229,7 +251,7 @@ theorem powAdmission_rejects_insufficient_work
 theorem powAdmission_accepts_valid
     {input : PowAdmissionInput}
     {target expectedWork : Nat}
-    (heightOk : input.headerHeight = input.parentHeight + 1)
+    (heightOk : checkedNextU64 input.parentHeight = some input.headerHeight)
     (bitsOk : input.powBits = input.expectedPowBits)
     (timeOk :
       timestampPolicy

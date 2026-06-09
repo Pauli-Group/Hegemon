@@ -53,6 +53,7 @@ struct PowAdmissionInput<'a> {
     parent_work: &'a BigUint,
 }
 
+#[derive(Debug)]
 struct PowAdmission {
     cumulative_work: BigUint,
 }
@@ -138,7 +139,7 @@ fn evaluate_pow_miner_identity(
 fn evaluate_pow_admission(
     input: PowAdmissionInput<'_>,
 ) -> Result<PowAdmission, PowAdmissionRejection> {
-    if input.header_height != input.parent_height.saturating_add(1) {
+    if pow_next_height(input.parent_height) != Some(input.header_height) {
         return Err(PowAdmissionRejection::HeightMismatch);
     }
     if input.pow_bits != input.expected_pow_bits {
@@ -165,6 +166,10 @@ fn evaluate_pow_admission(
     Ok(PowAdmission {
         cumulative_work: input.parent_work + block_work,
     })
+}
+
+fn pow_next_height(parent_height: u64) -> Option<u64> {
+    parent_height.checked_add(1)
 }
 
 fn pow_admission_rejection_to_error(rejection: PowAdmissionRejection) -> ConsensusError {
@@ -860,6 +865,26 @@ mod tests {
                 case.name
             ),
         }
+    }
+
+    #[test]
+    fn pow_admission_rejects_height_overflow() {
+        let work_hash = [0u8; 32];
+        let parent_work = BigUint::zero();
+        let rejection = evaluate_pow_admission(PowAdmissionInput {
+            parent_height: u64::MAX,
+            header_height: u64::MAX,
+            expected_pow_bits: 0x207f_ffff,
+            pow_bits: 0x207f_ffff,
+            parent_timestamp_ms: 0,
+            median_time_past_ms: 0,
+            now_ms: 1,
+            header_timestamp_ms: 1,
+            work_hash: &work_hash,
+            parent_work: &parent_work,
+        })
+        .expect_err("u64::MAX parent height must not saturate into same-height acceptance");
+        assert_eq!(rejection, PowAdmissionRejection::HeightMismatch);
     }
 
     fn parse_biguint(raw: &str) -> BigUint {

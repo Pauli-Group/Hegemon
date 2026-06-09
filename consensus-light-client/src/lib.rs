@@ -727,7 +727,7 @@ pub fn verify_pow_header(
     if header.parent_hash != parent.header_hash {
         return Err(LightClientError::ParentHashMismatch);
     }
-    if header.height != parent.height.saturating_add(1) {
+    if next_height(parent.height) != Some(header.height) {
         return Err(LightClientError::HeightMismatch);
     }
     if header.timestamp_ms <= parent.timestamp_ms {
@@ -752,6 +752,10 @@ pub fn verify_pow_header(
         return Err(LightClientError::InsufficientWork);
     }
     Ok(work_hash)
+}
+
+fn next_height(parent_height: u64) -> Option<u64> {
+    parent_height.checked_add(1)
 }
 
 pub fn verify_header_chain(
@@ -2695,6 +2699,53 @@ mod tests {
         assert_eq!(
             verify_pow_header(&parent, &child),
             Err(LightClientError::CumulativeWorkMismatch)
+        );
+    }
+
+    #[test]
+    fn pow_header_rejects_height_overflow() {
+        let pow_bits = 0x207f_ffff;
+        let mut parent = checkpoint(pow_bits);
+        parent.height = u64::MAX;
+        let cumulative_work = cumulative_work_after(&parent.cumulative_work, pow_bits).unwrap();
+        let mut child = PowHeaderV1 {
+            chain_id: parent.chain_id,
+            rules_hash: parent.rules_hash,
+            height: u64::MAX,
+            timestamp_ms: parent.timestamp_ms + 1,
+            parent_hash: parent.header_hash,
+            state_root: [1u8; 48],
+            kernel_root: [2u8; 48],
+            nullifier_root: [3u8; 48],
+            proof_commitment: [0u8; 48],
+            da_root: [0u8; 48],
+            action_root: [4u8; 32],
+            tx_statements_commitment: [0u8; 48],
+            version_commitment: [0u8; 48],
+            fee_commitment: [0u8; 48],
+            supply_digest: 0,
+            tx_count: 0,
+            message_root: bridge_message_root(&[]),
+            message_count: 0,
+            header_mmr_root: [0u8; 32],
+            header_mmr_len: u64::MAX,
+            pow_bits,
+            nonce: [0u8; 32],
+            cumulative_work,
+        };
+        for nonce in 0u64..1_000_000 {
+            child.nonce[..8].copy_from_slice(&nonce.to_le_bytes());
+            if hash_meets_target(&child.pow_hash(), pow_bits).unwrap() {
+                break;
+            }
+        }
+        assert!(
+            hash_meets_target(&child.pow_hash(), pow_bits).unwrap(),
+            "test difficulty must produce a valid work hash"
+        );
+        assert_eq!(
+            verify_pow_header(&parent, &child),
+            Err(LightClientError::HeightMismatch)
         );
     }
 

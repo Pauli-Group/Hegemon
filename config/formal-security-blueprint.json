@@ -460,8 +460,8 @@
       "id": "consensus.pow-admission",
       "claim_id": "consensus.pow-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean PoW admission transition, a block candidate is rejected when height, pow_bits, timestamp, compact target, hash threshold, claimed cumulative Work48, or Work48 overflow violate the specified arithmetic policy; otherwise the expected cumulative work is accepted.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification.",
+      "formal_statement": "For the executable Lean PoW admission transition, a block candidate is rejected when checked u64 next-height, pow_bits, timestamp, compact target, hash threshold, claimed cumulative Work48, or Work48 overflow violate the specified arithmetic policy; otherwise the expected cumulative work is accepted.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.checkedNextU64_rejects_max`, `Hegemon.Consensus.checkedNextU64_accepts_predecessor`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_height_overflow`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification. Focused Rust regressions cover checked height overflow in both `evaluate_pow_admission` and `verify_pow_header`.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -487,7 +487,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for PoW target, timestamp, hash-threshold, and Work48 cumulative-work admission semantics."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for PoW checked next-height, target, timestamp, hash-threshold, and Work48 cumulative-work admission semantics."
       },
       "falsification_cases": [
         {
@@ -504,6 +504,11 @@
           "id": "pow-rule-regressions",
           "description": "Existing PoW rule tests must continue rejecting target, timestamp, and admission-arithmetic violations.",
           "gate": "cargo test -p consensus --test pow_rules -- --nocapture"
+        },
+        {
+          "id": "pow-height-overflow-regressions",
+          "description": "Generic consensus admission and bridge/native header verification must reject a u64::MAX parent height instead of accepting through saturating next-height arithmetic.",
+          "gate": "cargo test -p consensus pow_admission_rejects_height_overflow -- --nocapture && cargo test -p consensus-light-client pow_header_rejects_height_overflow -- --nocapture"
         }
       ],
       "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove SHA-256 implementation equivalence, retarget economics, network orphan policy, or long-range finality. Header preimage serialization is covered separately by consensus.header-preimage-binding."
