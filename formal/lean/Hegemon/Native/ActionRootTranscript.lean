@@ -25,41 +25,42 @@ def maxHash : List Byte :=
 
 theorem action_root_domain_hex :
     hexBytes actionRootDomain = "0x686567656d6f6e2d6e61746976652d65787472696e736963732d7631" := by
-  native_decide
+  decide
 
 theorem empty_action_root_preimage_hex :
     hexBytes (actionRootPreimage []) =
       "0x686567656d6f6e2d6e61746976652d65787472696e736963732d763100000000" := by
-  native_decide
+  decide
 
 theorem empty_action_root_preimage_length :
     (actionRootPreimage []).length = actionRootDomain.length + 4 := by
-  native_decide
+  simp [actionRootPreimage]
+  simp [u32le, littleEndianBytes]
 
 theorem one_action_root_preimage_length :
     (actionRootPreimage [sampleHashA]).length =
       actionRootDomain.length + 4 + actionHashWidth := by
-  native_decide
+  decide
 
 theorem two_action_root_preimage_length :
     (actionRootPreimage [sampleHashA, sampleHashB]).length =
       actionRootDomain.length + 4 + actionHashWidth * 2 := by
-  native_decide
+  decide
 
 theorem action_root_count_is_little_endian :
     ((actionRootPreimage [sampleHashA, sampleHashB]).drop actionRootDomain.length).take 4 =
       u32le 2 := by
-  native_decide
+  decide
 
 theorem action_root_order_binds_hashes :
     actionRootPreimage [sampleHashA, sampleHashB] ≠
       actionRootPreimage [sampleHashB, sampleHashA] := by
-  native_decide
+  decide
 
 theorem action_root_hash_bytes_are_unmodified :
     (actionRootPreimage [sampleHashA]).drop (actionRootDomain.length + 4) =
       sampleHashA := by
-  native_decide
+  decide
 
 theorem max_hash_preimage_hex :
     hexBytes (actionRootPreimage [maxHash]) =

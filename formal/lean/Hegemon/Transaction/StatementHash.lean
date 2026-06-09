@@ -134,41 +134,129 @@ def stablecoinFields : StatementFields :=
 
 def expectedPreimageLength : Nat := 600
 
+theorem statementHashDomain_length : statementHashDomain.length = 15 := by
+  decide
+
+theorem digestBytes_length (seed : Nat) : (digestBytes seed).length = digestWidth := by
+  simp [digestBytes, patternedBytes_length]
+
+theorem zeroDigestBytes_length : zeroDigestBytes.length = digestWidth := by
+  simp [zeroDigestBytes, digestWidth]
+
+theorem digestSeedsBytes_length (seeds : List Nat) :
+    (digestSeedsBytes seeds).length = seeds.length * digestWidth := by
+  induction seeds with
+  | nil => simp [digestSeedsBytes]
+  | cons seed rest ih =>
+      simp [digestSeedsBytes, digestBytes_length, ih, Nat.succ_mul, Nat.add_comm]
+
+theorem zeroDigestPadding_length (count : Nat) :
+    (zeroDigestPadding count).length = count * digestWidth := by
+  induction count with
+  | zero => simp [zeroDigestPadding]
+  | succ count ih =>
+      simp [zeroDigestPadding, zeroDigestBytes_length, ih, Nat.succ_mul, Nat.add_comm]
+
+theorem paddedDigests_length {maxCount : Nat} {seeds : List Nat} {bytes : List Byte}
+    (h : paddedDigests maxCount seeds = some bytes) :
+    bytes.length = maxCount * digestWidth := by
+  unfold paddedDigests at h
+  split at h
+  next hle =>
+    injection h with hbytes
+    rw [← hbytes]
+    simp [digestSeedsBytes_length, zeroDigestPadding_length]
+    rw [← Nat.add_mul, Nat.add_sub_of_le hle]
+  next =>
+    contradiction
+
+theorem i128le_length (value : Int) : (i128le value).length = 16 := by
+  simp [i128le, u128le_length]
+
+theorem statementPreimage_length_of_some {fields : StatementFields} {bytes : List Byte}
+    (h : statementPreimage fields = some bytes) :
+    bytes.length = expectedPreimageLength := by
+  unfold statementPreimage at h
+  cases hn : paddedDigests PublicInputs.maxInputs fields.nullifierSeeds with
+  | none => simp [hn] at h
+  | some nullifiers =>
+      cases hc : paddedDigests PublicInputs.maxOutputs fields.commitmentSeeds with
+      | none => simp [hn, hc] at h
+      | some commitments =>
+          cases hct : paddedDigests PublicInputs.maxOutputs fields.ciphertextHashSeeds with
+          | none => simp [hn, hc, hct] at h
+          | some ciphertextHashes =>
+              cases hv : decodeSignedMagnitude fields.valueBalanceSign fields.valueBalanceMagnitude with
+              | none => simp [hn, hc, hct, hv] at h
+              | some valueBalance =>
+                  cases hs :
+                      decodeSignedMagnitude
+                        fields.stablecoinIssuanceSign
+                        fields.stablecoinIssuanceMagnitude with
+                  | none => simp [hn, hc, hct, hv, hs] at h
+                  | some stablecoinIssuance =>
+                      simp [hn, hc, hct, hv, hs] at h
+                      rw [← h]
+                      have hnLen := paddedDigests_length hn
+                      have hcLen := paddedDigests_length hc
+                      have hctLen := paddedDigests_length hct
+                      simp only [List.length_append, List.length_cons,
+                        statementHashDomain_length, digestBytes_length, hnLen, hcLen,
+                        hctLen, u16le_length, u32le_length, u64le_length, i128le_length]
+                      decide
+
 theorem statementPreimage_accepts_valid :
     (statementPreimage validFields).isSome = true := by
-  native_decide
+  decide
 
 theorem statementPreimage_valid_length :
     (statementPreimage validFields).map List.length = some expectedPreimageLength := by
-  native_decide
+  cases h : statementPreimage validFields with
+  | none =>
+      have accepted := statementPreimage_accepts_valid
+      simp [h] at accepted
+  | some bytes =>
+      simp [statementPreimage_length_of_some h]
 
 theorem statementPreimage_accepts_padded_vectors :
     (statementPreimage paddedFields).map List.length = some expectedPreimageLength := by
-  native_decide
+  cases h : statementPreimage paddedFields with
+  | none =>
+      have accepted : (statementPreimage paddedFields).isSome = true := by
+        decide
+      simp [h] at accepted
+  | some bytes =>
+      simp [statementPreimage_length_of_some h]
 
 theorem statementPreimage_accepts_stablecoin :
     (statementPreimage stablecoinFields).map List.length = some expectedPreimageLength := by
-  native_decide
+  cases h : statementPreimage stablecoinFields with
+  | none =>
+      have accepted : (statementPreimage stablecoinFields).isSome = true := by
+        decide
+      simp [h] at accepted
+  | some bytes =>
+      simp [statementPreimage_length_of_some h]
 
 theorem statementPreimage_rejects_too_many_nullifiers :
     statementPreimage { validFields with nullifierSeeds := [1, 2, 3] } = none := by
-  native_decide
+  decide
 
 theorem statementPreimage_rejects_too_many_commitments :
     statementPreimage { validFields with commitmentSeeds := [1, 2, 3] } = none := by
-  native_decide
+  decide
 
 theorem statementPreimage_rejects_too_many_ciphertext_hashes :
     statementPreimage { validFields with ciphertextHashSeeds := [1, 2, 3] } = none := by
-  native_decide
+  decide
 
 theorem statementPreimage_rejects_bad_value_balance_sign :
     statementPreimage { validFields with valueBalanceSign := 2 } = none := by
-  native_decide
+  decide
 
 theorem statementPreimage_rejects_bad_stablecoin_issuance_sign :
     statementPreimage { stablecoinFields with stablecoinIssuanceSign := 2 } = none := by
-  native_decide
+  decide
 
 end StatementHash
 end Transaction

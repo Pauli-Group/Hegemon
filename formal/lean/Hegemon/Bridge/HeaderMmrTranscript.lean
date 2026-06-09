@@ -66,17 +66,17 @@ theorem parent_domain_bytes :
     parentDomain =
       [104, 101, 103, 101, 109, 111, 110, 46, 104, 101, 97, 100, 101,
        114, 45, 109, 109, 114, 46, 110, 111, 100, 101, 45, 118, 50] := by
-  native_decide
+  decide
 
 theorem root_domain_bytes :
     rootDomain =
       [104, 101, 103, 101, 109, 111, 110, 46, 104, 101, 97, 100, 101,
        114, 45, 109, 109, 114, 46, 114, 111, 111, 116, 45, 118, 50] := by
-  native_decide
+  decide
 
 theorem sample_parent_length :
     (parentPreimage sampleParent).length = 94 := by
-  native_decide
+  decide
 
 theorem sample_parent_hex :
     hexBytes (parentPreimage sampleParent) =
@@ -90,16 +90,16 @@ theorem max_level_parent_hex :
 
 theorem empty_root_length :
     (rootPreimage emptyRoot).length = 38 := by
-  native_decide
+  decide
 
 theorem empty_root_hex :
     hexBytes (rootPreimage emptyRoot) =
       "0x686567656d6f6e2e6865616465722d6d6d722e726f6f742d7632000000000000000000000000" := by
-  native_decide
+  decide
 
 theorem two_peak_root_length :
     (rootPreimage twoPeakRoot).length = 102 := by
-  native_decide
+  decide
 
 theorem two_peak_root_hex :
     hexBytes (rootPreimage twoPeakRoot) =
@@ -113,7 +113,7 @@ theorem reversed_two_peak_root_hex :
 
 theorem root_order_binds_peak_sequence :
     rootPreimage twoPeakRoot ≠ rootPreimage reversedTwoPeakRoot := by
-  native_decide
+  decide
 
 end HeaderMmrTranscript
 end Bridge

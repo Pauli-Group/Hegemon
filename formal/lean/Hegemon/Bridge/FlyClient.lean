@@ -68,11 +68,12 @@ theorem sample_domain_bytes :
     sampleDomain =
       [104, 101, 103, 101, 109, 111, 110, 46, 102, 108, 121, 99, 108, 105,
        101, 110, 116, 46, 115, 97, 109, 112, 108, 101, 45, 118, 49] := by
-  native_decide
+  decide
 
 theorem valid_transcript_length :
     (transcriptPreimage validTranscript).length = 143 := by
-  native_decide
+  simp [transcriptPreimage, validTranscript, sampleDomain, asciiBytes, patternedBytes,
+    u64le, u32le, littleEndianBytes]
 
 theorem valid_transcript_hex :
     hexBytes (transcriptPreimage validTranscript) =
@@ -86,39 +87,39 @@ theorem max_index_transcript_hex :
 
 theorem sample_height_modulo :
     sampleHeight 11 14 5 = some 13 := by
-  native_decide
+  decide
 
 theorem sample_height_zero_prefix :
     sampleHeight 10 20 0 = some 10 := by
-  native_decide
+  decide
 
 theorem sample_height_large_prefix :
     sampleHeight 10 20 18446744073709551615 = some 15 := by
-  native_decide
+  decide
 
 theorem sample_height_rejects_equal_range :
     sampleHeight 10 10 7 = none := by
-  native_decide
+  decide
 
 theorem sample_height_rejects_reversed_range :
     sampleHeight 20 10 7 = none := by
-  native_decide
+  decide
 
 theorem sample_heights_allow_duplicates :
     sampleHeightsFromPrefixes 10 20 3 [0, 10, 20] = [10, 10, 10] := by
-  native_decide
+  decide
 
 theorem sample_heights_truncate_to_sample_count :
     sampleHeightsFromPrefixes 10 20 2 [0, 1, 2] = [10, 11] := by
-  native_decide
+  decide
 
 theorem sample_heights_zero_count_empty :
     sampleHeightsFromPrefixes 10 20 0 [0, 1, 2] = [] := by
-  native_decide
+  decide
 
 theorem sample_heights_invalid_range_empty :
     sampleHeightsFromPrefixes 20 10 3 [0, 1, 2] = [] := by
-  native_decide
+  decide
 
 end FlyClient
 end Bridge

@@ -99,39 +99,39 @@ def sampleSibling : List Byte :=
 
 theorem leaf_domain_bytes :
     leafDomain = [100, 97, 45, 108, 101, 97, 102] := by
-  native_decide
+  decide
 
 theorem node_domain_bytes :
     nodeDomain = [100, 97, 45, 110, 111, 100, 101] := by
-  native_decide
+  decide
 
 theorem empty_block_blob_hex :
     hexBytes (daBlob []) = "0x00000000" := by
-  native_decide
+  decide
 
 theorem sample_blob_hex :
     hexBytes (daBlob sampleTransactions) =
       "0x02000000020000000300000001020301000000040100000005000000aabbccddee" := by
-  native_decide
+  decide
 
 theorem empty_ciphertext_blob_hex :
     hexBytes (daBlob emptyCiphertextTransaction) =
       "0x0100000002000000000000000200000000ff" := by
-  native_decide
+  decide
 
 theorem leaf_zero_preimage_hex :
     hexBytes (leafPreimage 0 [1, 2, 3]) =
       "0x64612d6c65616600000000010203" := by
-  native_decide
+  decide
 
 theorem leaf_max_index_preimage_hex :
     hexBytes (leafPreimage 4294967295 (patternedBytes 4 9)) =
       "0x64612d6c656166ffffffff091a2b3c" := by
-  native_decide
+  decide
 
 theorem node_preimage_length :
     (nodePreimage sampleLeft sampleRight).length = 103 := by
-  native_decide
+  decide
 
 theorem node_preimage_hex :
     hexBytes (nodePreimage sampleLeft sampleRight) =
@@ -140,44 +140,44 @@ theorem node_preimage_hex :
 
 theorem node_preimage_order_binds_children :
     nodePreimage sampleLeft sampleRight ≠ nodePreimage sampleRight sampleLeft := by
-  native_decide
+  decide
 
 theorem shard_count_empty_blob :
     shardCountForBlob 0 { chunkSize := 8, sampleCount := 1 } =
       some { dataShards := 1, parityShards := 1, totalShards := 2 } := by
-  native_decide
+  decide
 
 theorem shard_count_partial_third_blob :
     shardCountForBlob 17 { chunkSize := 8, sampleCount := 1 } =
       some { dataShards := 3, parityShards := 2, totalShards := 5 } := by
-  native_decide
+  decide
 
 theorem shard_count_max_accepts :
     shardCountForBlob 1360 { chunkSize := 8, sampleCount := 1 } =
       some { dataShards := 170, parityShards := 85, totalShards := 255 } := by
-  native_decide
+  decide
 
 theorem shard_count_rejects_zero_chunk :
     shardCountForBlob 1 { chunkSize := 0, sampleCount := 1 } = none := by
-  native_decide
+  decide
 
 theorem shard_count_rejects_zero_sample :
     shardCountForBlob 1 { chunkSize := 8, sampleCount := 0 } = none := by
-  native_decide
+  decide
 
 theorem shard_count_rejects_too_many :
     shardCountForBlob 1361 { chunkSize := 8, sampleCount := 1 } = none := by
-  native_decide
+  decide
 
 theorem even_merkle_step_uses_current_left :
     merkleStepPreimage 2 sampleCurrent sampleSibling =
       nodePreimage sampleCurrent sampleSibling := by
-  native_decide
+  decide
 
 theorem odd_merkle_step_uses_sibling_left :
     merkleStepPreimage 3 sampleCurrent sampleSibling =
       nodePreimage sampleSibling sampleCurrent := by
-  native_decide
+  decide
 
 theorem even_merkle_step_hex :
     hexBytes (merkleStepPreimage 2 sampleCurrent sampleSibling) =

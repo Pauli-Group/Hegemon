@@ -124,34 +124,38 @@ theorem signingPreimage_independent_of_auth_payloads
 
 theorem sample_signing_preimage_length :
     (signingPreimage sampleHeader).length = 477 := by
-  native_decide
+  simp [signingPreimage, encodeSigningFields, sampleHeader, asciiBytes, patternedBytes,
+    u32le, u64le, u128le, littleEndianBytes]
 
 theorem sample_pow_full_header_length :
     (fullHeaderPreimage sampleHeader).length = 518 := by
-  native_decide
+  simp [fullHeaderPreimage, encodeSigningFields, encodeOptionalBitmap, encodeOptionalPow,
+    sampleHeader, patternedBytes, u32le, u64le, u128le, littleEndianBytes]
 
 theorem bft_full_header_length :
     (fullHeaderPreimage bftHeader).length = 491 := by
-  native_decide
+  simp [fullHeaderPreimage, encodeSigningFields, encodeOptionalBitmap, encodeOptionalPow,
+    bftHeader, sampleHeader, patternedBytes, u32le, u64le, u128le, littleEndianBytes]
 
 theorem unsigned_full_header_length :
     (fullHeaderPreimage unsignedHeader).length = 478 := by
-  native_decide
+  simp [fullHeaderPreimage, encodeSigningFields, encodeOptionalBitmap, encodeOptionalPow,
+    unsignedHeader, sampleHeader, patternedBytes, u32le, u64le, u128le, littleEndianBytes]
 
 theorem pow_header_has_pow_tag :
     encodeOptionalPow sampleHeader.pow =
       [1] ++ patternedBytes 32 31 ++ u32le 505515503 := by
-  native_decide
+  decide
 
 theorem bft_header_has_bitmap_tag :
     encodeOptionalBitmap bftHeader.signatureBitmap =
       [1] ++ u32le 3 ++ patternedBytes 3 131 := by
-  native_decide
+  decide
 
 theorem unsigned_header_has_absent_auth_tags :
     encodeOptionalBitmap unsignedHeader.signatureBitmap
       ++ encodeOptionalPow unsignedHeader.pow = [0, 0] := by
-  native_decide
+  decide
 
 end Header
 end Consensus
