@@ -461,7 +461,7 @@
       "claim_id": "consensus.pow-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean PoW admission transition, a block candidate is rejected when checked u64 next-height, pow_bits, timestamp, compact target, hash threshold, claimed cumulative Work48, or Work48 overflow violate the specified arithmetic policy; otherwise the expected cumulative work is accepted.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.checkedNextU64_rejects_max`, `Hegemon.Consensus.checkedNextU64_accepts_predecessor`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_height_overflow`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification. Focused Rust regressions cover checked height overflow in both `evaluate_pow_admission` and `verify_pow_header`.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_shifted_zero_target`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.checkedNextU64_rejects_max`, `Hegemon.Consensus.checkedNextU64_accepts_predecessor`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_height_overflow`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification. Focused Rust regressions cover checked height overflow in both `evaluate_pow_admission` and `verify_pow_header`.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -543,7 +543,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable retarget target-adjustment helper. Scope excludes compact re-encoding and mining economics."
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable retarget target-adjustment helper. Compact re-encoding is covered by consensus.pow-retarget-compact-bits; mining economics remains out of scope."
       },
       "falsification_cases": [
         {
@@ -562,7 +562,59 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks executable retarget target scaling and clamping after compact target decoding. It does not prove target_to_compact re-encoding, timestamp honesty, hash-rate economics, network liveness, or long-range adversarial mining schedules."
+      "scope_boundary": "This node proves and vector-checks executable retarget target scaling and clamping after compact target decoding. Compact target re-encoding is covered separately by consensus.pow-retarget-compact-bits. It does not prove timestamp honesty, hash-rate economics, network liveness, or long-range adversarial mining schedules."
+    },
+    {
+      "id": "consensus.pow-retarget-compact-bits",
+      "claim_id": "consensus.pow-retarget-compact-bits",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean PoW compact retarget helper, target_to_compact returns the production compact encoding for zero, one, three-byte, and release easy targets; retargetBits rejects invalid previous pow_bits and otherwise composes compact decoding, clamped target retargeting, and compact re-encoding deterministically.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.targetToCompact_zero`, `Hegemon.Consensus.targetToCompact_easy_roundtrip`, `Hegemon.Consensus.targetToCompact_roundtrip_easy_target`, `Hegemon.Consensus.retargetBits_expected_timespan_keeps_bits`, and `Hegemon.Consensus.retargetBits_rejects_invalid_previous_bits` pin executable compact re-encoding and retarget-bit composition facts. `Hegemon.Consensus.compactTarget_rejects_shifted_zero_target` pins the hardened compact decode rejection for nonzero-mantissa encodings that shift to target zero. `gen_pow_vectors` emits compact roundtrip and retarget-bits examples, and the formal-core gate checks them against production `compact_to_target`, `target_to_compact`, `consensus::reward::adjusted_timespan`, and `consensus::reward::retarget_target`.",
+      "depends_on": [
+        "consensus.pow-admission",
+        "consensus.pow-retarget-target",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-09",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for compact target encoding and retarget-bit composition. Scope excludes retarget-boundary ancestor selection and mining economics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-retarget-compact-theorem",
+          "description": "Removing or weakening compact target encoding, retarget-bits, or shifted-zero-target rejection theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-retarget-compact-conformance",
+          "description": "Changing production compact encoding or retarget-bit composition away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-retarget-compact-gate",
+          "description": "The release formal-core wrapper must generate PoW vectors containing compact roundtrip and retarget-bits cases and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks executable compact target encoding and retarget-bit composition. It does not prove retarget-boundary ancestor selection, timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
     },
     {
       "id": "consensus.header-preimage-binding",

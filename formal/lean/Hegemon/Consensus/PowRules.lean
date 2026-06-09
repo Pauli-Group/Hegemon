@@ -38,6 +38,23 @@ def compactTargetValue (bits : Nat) : Option Nat :=
         mantissa * pow2Nat (8 * (exponent - 3))
     if target = 0 ∨ maxPowTarget < target then none else some target
 
+def compactTargetExponent (target : Nat) : Nat :=
+  match (List.range 33).find? (fun exponent => target < pow2Nat (8 * exponent)) with
+  | some exponent => exponent
+  | none => 33
+
+def targetToCompact (target : Nat) : Nat :=
+  if target = 0 then
+    0
+  else
+    let exponent := compactTargetExponent target
+    let mantissa :=
+      if exponent <= 3 then
+        target * pow2Nat (8 * (3 - exponent))
+      else
+        target / pow2Nat (8 * (exponent - 3))
+    exponent * 16777216 + mantissa % 16777216
+
 def targetWork (target : Nat) : Nat :=
   twoPow256 / (target + 1)
 
@@ -90,6 +107,11 @@ def retargetTarget (prevTarget actualMs : Nat) : Nat :=
   else
     let target := prevTarget * adjustedTimespan actualMs / retargetTimespanMs
     if target = 0 then 1 else target
+
+def retargetBits (prevBits actualMs : Nat) : Option Nat :=
+  match compactTargetValue prevBits with
+  | none => none
+  | some prevTarget => some (targetToCompact (retargetTarget prevTarget actualMs))
 
 inductive PowAdmissionReject where
   | heightMismatch
@@ -164,8 +186,38 @@ theorem compactTarget_rejects_large_exponent
   unfold compactTargetValue
   simp [h]
 
+theorem compactTarget_rejects_shifted_zero_target :
+    compactTargetValue 16777217 = none := by
+  native_decide
+
 theorem compactTarget_accepts_max_valid :
     compactTargetValue 553648127 ≠ none := by
+  native_decide
+
+theorem targetToCompact_zero :
+    targetToCompact 0 = 0 := by
+  rfl
+
+theorem targetToCompact_easy_roundtrip :
+    targetToCompact
+      57896037716911750921221705069588091649609539881711309849342236841432341020672 =
+      545259519 := by
+  native_decide
+
+theorem targetToCompact_roundtrip_easy_target :
+    compactTargetValue
+      (targetToCompact
+        57896037716911750921221705069588091649609539881711309849342236841432341020672) =
+      some
+        57896037716911750921221705069588091649609539881711309849342236841432341020672 := by
+  native_decide
+
+theorem retargetBits_expected_timespan_keeps_bits :
+    retargetBits 545259519 retargetTimespanMs = some 545259519 := by
+  native_decide
+
+theorem retargetBits_rejects_invalid_previous_bits :
+    retargetBits 16777217 retargetTimespanMs = none := by
   native_decide
 
 theorem timestamp_rejects_parent_equal

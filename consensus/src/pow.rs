@@ -602,6 +602,9 @@ fn compact_to_target(bits: u32) -> Result<BigUint, ConsensusError> {
     } else {
         target >>= 8 * (3 - exponent);
     }
+    if target.is_zero() {
+        return Err(ConsensusError::Pow("invalid compact target".into()));
+    }
     Ok(target)
 }
 
@@ -666,7 +669,9 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanPowVectorFile {
         schema_version: u32,
+        compact_roundtrip_cases: Vec<LeanCompactRoundtripCase>,
         retarget_cases: Vec<LeanRetargetCase>,
+        retarget_bits_cases: Vec<LeanRetargetBitsCase>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -694,12 +699,35 @@ mod tests {
     #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCompactRoundtripCase {
+        name: String,
+        target: String,
+        expected_bits: u32,
+        expected_roundtrip_target: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanRetargetCase {
         name: String,
         prev_target: String,
         actual_timespan_ms: u64,
         expected_adjusted_timespan_ms: u64,
         expected_target: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRetargetBitsCase {
+        name: String,
+        prev_bits: u32,
+        actual_timespan_ms: u64,
+        expected_prev_target: Option<String>,
+        expected_target: Option<String>,
+        expected_bits: Option<String>,
+        expected_encoded_target: Option<String>,
     }
 
     #[allow(dead_code)]
@@ -785,8 +813,16 @@ mod tests {
             serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
         assert_eq!(vectors.schema_version, 1);
         assert!(
+            !vectors.compact_roundtrip_cases.is_empty(),
+            "Lean compact roundtrip cases must not be empty"
+        );
+        assert!(
             !vectors.retarget_cases.is_empty(),
             "Lean retarget cases must not be empty"
+        );
+        assert!(
+            !vectors.retarget_bits_cases.is_empty(),
+            "Lean retarget bits cases must not be empty"
         );
         assert!(
             !vectors.pow_admission_cases.is_empty(),
@@ -794,9 +830,17 @@ mod tests {
         );
 
         let mut names = BTreeSet::new();
+        for case in &vectors.compact_roundtrip_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_compact_roundtrip_case(case);
+        }
         for case in &vectors.retarget_cases {
             assert!(names.insert(case.name.clone()));
             verify_retarget_case(case);
+        }
+        for case in &vectors.retarget_bits_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_retarget_bits_case(case);
         }
         let mut checked_admission_cases = 0usize;
         for case in &vectors.pow_admission_cases {
@@ -817,6 +861,30 @@ mod tests {
         );
     }
 
+    fn verify_compact_roundtrip_case(case: &LeanCompactRoundtripCase) {
+        let target = parse_biguint(&case.target);
+        let bits = target_to_compact(&target);
+        assert_eq!(
+            bits, case.expected_bits,
+            "{} target_to_compact drifted from Lean spec",
+            case.name
+        );
+        match compact_to_target(bits) {
+            Ok(roundtrip_target) => assert_eq!(
+                Some(roundtrip_target),
+                case.expected_roundtrip_target.as_deref().map(parse_biguint),
+                "{} compact roundtrip target drifted from Lean spec",
+                case.name
+            ),
+            Err(_) => assert_eq!(
+                None,
+                case.expected_roundtrip_target.as_deref(),
+                "{} production rejected compact bits Lean accepted",
+                case.name
+            ),
+        }
+    }
+
     fn verify_retarget_case(case: &LeanRetargetCase) {
         let prev_target = parse_biguint(&case.prev_target);
         let expected_target = parse_biguint(&case.expected_target);
@@ -832,6 +900,51 @@ mod tests {
             "{} retarget target drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_retarget_bits_case(case: &LeanRetargetBitsCase) {
+        match compact_to_target(case.prev_bits) {
+            Ok(prev_target) => {
+                assert_eq!(
+                    Some(prev_target.clone()),
+                    case.expected_prev_target.as_deref().map(parse_biguint),
+                    "{} previous compact target drifted from Lean spec",
+                    case.name
+                );
+                let expected_target = retarget_target(&prev_target, case.actual_timespan_ms);
+                assert_eq!(
+                    Some(expected_target.clone()),
+                    case.expected_target.as_deref().map(parse_biguint),
+                    "{} retarget target drifted from Lean spec",
+                    case.name
+                );
+                let bits = target_to_compact(&expected_target);
+                assert_eq!(
+                    Some(bits),
+                    case.expected_bits.as_deref().map(parse_u32_decimal),
+                    "{} retarget compact bits drifted from Lean spec",
+                    case.name
+                );
+                let encoded_target = compact_to_target(bits).ok();
+                assert_eq!(
+                    encoded_target,
+                    case.expected_encoded_target.as_deref().map(parse_biguint),
+                    "{} retarget encoded target drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(_) => {
+                assert_eq!(
+                    None,
+                    case.expected_prev_target.as_deref(),
+                    "{} production rejected previous bits Lean accepted",
+                    case.name
+                );
+                assert_eq!(None, case.expected_target.as_deref());
+                assert_eq!(None, case.expected_bits.as_deref());
+                assert_eq!(None, case.expected_encoded_target.as_deref());
+            }
+        }
     }
 
     fn verify_compact_target_and_work(case: &LeanPowAdmissionCase) {
@@ -928,6 +1041,11 @@ mod tests {
     fn parse_biguint(raw: &str) -> BigUint {
         raw.parse::<BigUint>()
             .expect("Lean PoW vector value must be a decimal integer")
+    }
+
+    fn parse_u32_decimal(raw: &str) -> u32 {
+        raw.parse::<u32>()
+            .expect("Lean PoW vector compact bits must fit u32")
     }
 
     fn biguint_to_hash32(value: &BigUint) -> [u8; 32] {

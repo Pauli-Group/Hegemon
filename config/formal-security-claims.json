@@ -261,7 +261,7 @@
       "production_eligible": true,
       "assumptions": [
         "The Lean model represents arithmetic over already-computed PoW hash values; header preimage serialization is covered separately by consensus.header-preimage-binding, while SHA-256 implementation equivalence remains outside this claim.",
-        "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, checked height-overflow rejection, maximum-predecessor height acceptance, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
+        "Generated Lean conformance vectors cover valid boundary hashes, height mismatch, checked height-overflow rejection, maximum-predecessor height acceptance, pow_bits mismatch, timestamp equal-parent rejection, median-time-past rejection, future-skew rejection, zero-mantissa target rejection, shifted-zero target rejection, exponent-over-32 target rejection, insufficient-work rejection, cumulative-work mismatch, and Work48 overflow.",
         "The theorem covers executable target/timestamp/work admission semantics, not difficulty-retarget economics, network orphan policy, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
       ],
       "evidence_paths": [
@@ -290,13 +290,41 @@
       "assumptions": [
         "The Lean model represents the retarget helper over natural-number targets after compact target decoding has already succeeded.",
         "Generated Lean conformance vectors cover zero previous target, expected timespan, too-fast blocks clamped to 1/4x, too-slow blocks clamped to 4x, and the minimum nonzero retarget output.",
-        "The theorem covers executable retarget target scaling and clamping only. It does not prove compact target re-encoding, timestamp honesty, hash-rate economics, network liveness, or long-range adversarial mining schedules."
+        "The theorem covers executable retarget target scaling and clamping only. Compact target re-encoding is covered separately by consensus.pow-retarget-compact-bits; timestamp honesty, hash-rate economics, network liveness, and long-range adversarial mining schedules remain outside this claim."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/PowRules.lean",
         "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
         "consensus/src/reward.rs",
         "consensus/src/pow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_POW_VECTORS=<generated-json> cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "consensus.pow-retarget-compact-bits",
+      "component": "PoW difficulty retarget compact target encoding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean PoW compact retarget kernel proves executable target_to_compact behavior for zero, tiny, three-byte, and release easy targets plus retarget-bits composition over decoded previous bits; generated Lean vectors are checked against production compact_to_target, target_to_compact, adjusted_timespan, and retarget_target helpers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "assumptions": [
+        "The Lean model represents compact target encoding over bounded natural-number targets and the production retarget composition after previous pow_bits decoding.",
+        "Generated Lean conformance vectors cover zero-target encoding, target roundtrips for one/three-byte/easy targets, expected-timespan compact-bit preservation, fast/slow retarget re-encoding, invalid previous bits rejection, and nonzero-mantissa compact bits that decode to a zero target.",
+        "The theorem covers executable compact encoding and retarget-bit composition only. It does not prove ancestor selection at retarget boundaries, timestamp honesty, hash-rate economics, network liveness, SHA-256 implementation equivalence, or long-range adversarial mining schedules."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/PowRules.lean",
+        "formal/lean/Hegemon/Consensus/GeneratePowVectors.lean",
+        "consensus/src/pow.rs",
+        "consensus/src/reward.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],

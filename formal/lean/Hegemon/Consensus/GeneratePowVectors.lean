@@ -57,9 +57,42 @@ def retargetCaseJson
     ++ "      \"expected_target\": \"" ++ toString (retargetTarget prevTarget actualTimespanMs) ++ "\"\n"
     ++ "    }"
 
+def compactRoundtripCaseJson
+    (name : String)
+    (target : Nat) : String :=
+  let bits := targetToCompact target
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"target\": \"" ++ toString target ++ "\",\n"
+    ++ "      \"expected_bits\": " ++ toString bits ++ ",\n"
+    ++ "      \"expected_roundtrip_target\": "
+    ++ optionNatJson (compactTargetValue bits) ++ "\n"
+    ++ "    }"
+
+def retargetBitsCaseJson
+    (name : String)
+    (prevBits actualTimespanMs : Nat) : String :=
+  let prevTarget := compactTargetValue prevBits
+  let newTarget := prevTarget.map (fun target => retargetTarget target actualTimespanMs)
+  let newBits := retargetBits prevBits actualTimespanMs
+  let encodedTarget :=
+    match newBits with
+    | none => none
+    | some bits => compactTargetValue bits
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"prev_bits\": " ++ toString prevBits ++ ",\n"
+    ++ "      \"actual_timespan_ms\": " ++ toString actualTimespanMs ++ ",\n"
+    ++ "      \"expected_prev_target\": " ++ optionNatJson prevTarget ++ ",\n"
+    ++ "      \"expected_target\": " ++ optionNatJson newTarget ++ ",\n"
+    ++ "      \"expected_bits\": " ++ optionNatJson newBits ++ ",\n"
+    ++ "      \"expected_encoded_target\": " ++ optionNatJson encodedTarget ++ "\n"
+    ++ "    }"
+
 def easyPowBits : Nat := 545259519
 def maxPowHeightPredecessor : Nat := maxPowHeight - 1
 def invalidZeroMantissaBits : Nat := 536870912
+def invalidShiftedZeroTargetBits : Nat := 16777217
 def invalidLargeExponentBits : Nat := 570425343
 def easyTarget : Nat :=
   match compactTargetValue easyPowBits with
@@ -84,12 +117,24 @@ def validInput : PowAdmissionInput := {
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
+    ++ "  \"compact_roundtrip_cases\": [\n"
+    ++ compactRoundtripCaseJson "zero-target-encodes-zero-bits" 0 ++ ",\n"
+    ++ compactRoundtripCaseJson "one-target-roundtrips" 1 ++ ",\n"
+    ++ compactRoundtripCaseJson "three-byte-target-roundtrips" 66051 ++ ",\n"
+    ++ compactRoundtripCaseJson "easy-target-roundtrips" easyTarget ++ "\n"
+    ++ "  ],\n"
     ++ "  \"retarget_cases\": [\n"
     ++ retargetCaseJson "zero-previous-target-stays-zero" 0 retargetTimespanMs ++ ",\n"
     ++ retargetCaseJson "expected-timespan-keeps-target" 1000000 retargetTimespanMs ++ ",\n"
     ++ retargetCaseJson "fast-timespan-clamps-to-quarter" 1000000 0 ++ ",\n"
     ++ retargetCaseJson "slow-timespan-clamps-to-four-x" 1000000 (retargetTimespanMs * 10) ++ ",\n"
     ++ retargetCaseJson "small-target-retarget-never-drops-to-zero" 1 0 ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"retarget_bits_cases\": [\n"
+    ++ retargetBitsCaseJson "expected-timespan-keeps-compact-bits" easyPowBits retargetTimespanMs ++ ",\n"
+    ++ retargetBitsCaseJson "fast-timespan-reencodes-quarter-target" easyPowBits 0 ++ ",\n"
+    ++ retargetBitsCaseJson "slow-timespan-reencodes-four-x-target" easyPowBits (retargetTimespanMs * 10) ++ ",\n"
+    ++ retargetBitsCaseJson "invalid-previous-bits-rejected" invalidShiftedZeroTargetBits retargetTimespanMs ++ "\n"
     ++ "  ],\n"
     ++ "  \"pow_admission_cases\": [\n"
     ++ powCaseJson "valid-boundary-hash-accepted" validInput ++ ",\n"
@@ -101,6 +146,7 @@ def vectorJson : String :=
     ++ powCaseJson "timestamp-equal-median-rejected" { validInput with parentTimestamp := 10, medianTimePast := 20, headerTimestamp := 20 } ++ ",\n"
     ++ powCaseJson "timestamp-future-skew-rejected" { validInput with parentTimestamp := 1000, medianTimePast := 900, nowMs := 1000, headerTimestamp := 92001 } ++ ",\n"
     ++ powCaseJson "zero-mantissa-target-rejected" { validInput with expectedPowBits := invalidZeroMantissaBits, powBits := invalidZeroMantissaBits } ++ ",\n"
+    ++ powCaseJson "shifted-zero-target-rejected" { validInput with expectedPowBits := invalidShiftedZeroTargetBits, powBits := invalidShiftedZeroTargetBits, workHashValue := 0 } ++ ",\n"
     ++ powCaseJson "large-exponent-target-rejected" { validInput with expectedPowBits := invalidLargeExponentBits, powBits := invalidLargeExponentBits } ++ ",\n"
     ++ powCaseJson "insufficient-work-rejected" { validInput with workHashValue := easyTarget + 1 } ++ ",\n"
     ++ powCaseJson "cumulative-work-mismatch-rejected" { validInput with claimedCumulativeWork := easyWork } ++ ",\n"

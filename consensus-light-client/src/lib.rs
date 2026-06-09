@@ -1798,7 +1798,9 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanPowVectorFile {
         schema_version: u32,
+        compact_roundtrip_cases: Vec<serde_json::Value>,
         retarget_cases: Vec<serde_json::Value>,
+        retarget_bits_cases: Vec<serde_json::Value>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -2059,8 +2061,16 @@ mod tests {
             serde_json::from_str(&raw).expect("parse generated Lean PoW vectors");
         assert_eq!(vectors.schema_version, 1);
         assert!(
+            !vectors.compact_roundtrip_cases.is_empty(),
+            "Lean compact roundtrip cases must be present in the shared PoW vector file"
+        );
+        assert!(
             !vectors.retarget_cases.is_empty(),
             "Lean retarget cases must be present in the shared PoW vector file"
+        );
+        assert!(
+            !vectors.retarget_bits_cases.is_empty(),
+            "Lean retarget bits cases must be present in the shared PoW vector file"
         );
         assert!(
             !vectors.pow_admission_cases.is_empty(),
