@@ -5278,10 +5278,18 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
         action_hashes_unique: true,
     })
     .map_err(native_action_hash_admission_error)?;
-    meta.action_bytes
+    let actions = meta
+        .action_bytes
         .iter()
         .map(|bytes| decode_scale_exact::<PendingAction>(bytes, "native block action"))
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
+        action_count_matches: true,
+        action_hashes_match: block_action_hashes_match(&actions),
+        action_hashes_unique: block_action_hashes_unique(&actions),
+    })
+    .map_err(native_action_hash_admission_error)?;
+    Ok(actions)
 }
 
 fn evaluate_native_action_hash_admission(
@@ -11165,6 +11173,39 @@ mod tests {
         assert!(err
             .to_string()
             .contains("block action payload count mismatch"));
+    }
+
+    #[test]
+    fn decode_block_actions_rejects_action_hash_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [23u8; 48], [123u8; 48], 0);
+        action.tx_hash[0] ^= 1;
+
+        let mut block = genesis_meta(pow_bits).expect("genesis");
+        block.tx_count = 1;
+        block.action_bytes = vec![action.encode()];
+
+        let err =
+            decode_block_actions(&block).expect_err("mutated action hash should fail admission");
+        assert!(err.to_string().contains("block action hash mismatch"));
+    }
+
+    #[test]
+    fn decode_block_actions_rejects_duplicate_hashes() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [24u8; 48], [124u8; 48], 0);
+
+        let mut block = genesis_meta(pow_bits).expect("genesis");
+        block.tx_count = 2;
+        block.action_bytes = vec![action.encode(), action.encode()];
+
+        let err =
+            decode_block_actions(&block).expect_err("duplicate action hash should fail admission");
+        assert!(err.to_string().contains("duplicate action in block"));
     }
 
     #[test]
