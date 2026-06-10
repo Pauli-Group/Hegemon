@@ -366,6 +366,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateRisc0ReleaseVerifierVectors.lean",
         "formal/lean/Hegemon/Native/NativeBackendReviewPolicy.lean",
         "formal/lean/Hegemon/Native/GenerateNativeBackendReviewPolicyVectors.lean",
+        "formal/lean/Hegemon/Native/NativeBackendReleasePosture.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendReleasePostureVectors.lean",
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean",

@@ -3533,27 +3533,36 @@
       "id": "crypto.native-backend-candidate",
       "claim_id": "crypto.native-backend-candidate",
       "kind": "residual_risk",
-      "formal_statement": "The active native lattice backend remains labeled candidate-under-review and structural-candidate unless an accepted external-review artifact deliberately changes the release posture.",
-      "informal_argument": "The repo contains theorem-grade prose, reference vectors, and a reproducible review package, but it does not yet contain machine-checked Lean proofs or accepted external-review artifacts for production cryptographic acceptance. The posture script keeps the candidate label in force.",
+      "formal_statement": "The executable Lean native-backend release-posture policy accepts the default release package exactly when review_state is candidate-under-review, maturity_label is structural-candidate, and external cryptanalysis is not marked complete; accepted release mode accepts only with review_state accepted, no known incomplete external-review marker, and a checked-in acceptance artifact that states external acceptance.",
+      "informal_argument": "The repo still does not claim machine-checked cryptographic soundness for the native lattice backend. The Lean theorem `Hegemon.Native.NativeBackendReleasePosture.accepts_iff_release_posture_preconditions` pins the release-posture decision table, companion theorems pin candidate and accepted acceptance/rejection cases, generated vectors are checked by `scripts/check_native_backend_release_posture_policy_vectors.py`, and the existing shell gate still evaluates the packaged review posture used by release workflows.",
       "depends_on": [
         "proof.native-backend-vectors",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "scripts/check_native_backend_release_posture_policy_vectors.py",
         "scripts/check_native_backend_release_posture.sh",
         "audits/native-backend-128b/KNOWN_GAPS.md"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/NativeBackendReleasePosture.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendReleasePostureVectors.lean",
         "docs/crypto/native_backend_security_analysis.md",
-        "docs/crypto/native_backend_formal_theorems.md"
+        "docs/crypto/native_backend_formal_theorems.md",
+        "audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as an explicit residual-risk node. The release checker must keep this non-production posture visible."
+        "notes": "Accepted as an explicit residual-risk node with theorem-backed release-posture gating. This does not promote the native backend to production cryptography."
       },
       "falsification_cases": [
+        {
+          "id": "lean-release-posture-policy-vector",
+          "description": "Lean-generated native-backend release-posture vectors must fail on wrong candidate posture, completed external-review marker in candidate mode, wrong accepted posture, incomplete accepted external review, missing accepted artifact, and malformed accepted artifact text.",
+          "gate": "python3 scripts/check_native_backend_release_posture_policy_vectors.py <generated-json> --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
+        },
         {
           "id": "release-posture-candidate",
           "description": "The native backend posture script must report candidate-under-review and structural-candidate for the current package.",

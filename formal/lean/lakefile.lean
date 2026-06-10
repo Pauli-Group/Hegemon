@@ -103,6 +103,9 @@ lean_exe gen_risc0_release_verifier_vectors where
 lean_exe gen_native_backend_review_policy_vectors where
   root := `Hegemon.Native.GenerateNativeBackendReviewPolicyVectors
 
+lean_exe gen_native_backend_release_posture_vectors where
+  root := `Hegemon.Native.GenerateNativeBackendReleasePostureVectors
+
 lean_exe gen_release_pq_binary_policy_vectors where
   root := `Hegemon.Release.GeneratePqBinaryPolicyVectors
 

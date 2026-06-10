@@ -2950,22 +2950,43 @@
     {
       "id": "crypto.native-backend-candidate",
       "component": "native lattice backend",
-      "claim_class": "cryptographic_assumption",
-      "summary": "The active native backend remains a candidate under external review rather than accepted production cryptography.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native-backend release-posture policy proves that default release gates accept only the candidate-under-review / structural-candidate posture unless a deliberate accepted external-review path supplies the required accepted posture and artifact evidence.",
       "status": "candidate_under_review",
-      "proof_model": "theorem_grade_prose_and_review_package",
+      "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_review_package_posture_gate",
       "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Native.NativeBackendReleasePosture.accepts_iff_release_posture_preconditions",
+        "Hegemon.Native.NativeBackendReleasePosture.candidate_package_accepts",
+        "Hegemon.Native.NativeBackendReleasePosture.candidate_without_manifest_accepts",
+        "Hegemon.Native.NativeBackendReleasePosture.candidate_wrong_review_state_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.candidate_wrong_maturity_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.candidate_external_complete_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.accepted_package_accepts",
+        "Hegemon.Native.NativeBackendReleasePosture.accepted_wrong_review_state_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.accepted_external_incomplete_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.accepted_missing_artifact_rejects",
+        "Hegemon.Native.NativeBackendReleasePosture.accepted_malformed_artifact_rejects"
+      ],
       "assumptions": [
-        "The external review package and theorem notes are evidence, not machine-checked Lean proofs.",
-        "Release posture scripts must keep the candidate label unless accepted review artifacts are deliberately added."
+        "The Lean release-posture policy proves only the candidate/accepted release decision table; it does not prove native backend cryptographic soundness.",
+        "The packaged current_claim.json and review_manifest.json remain the authoritative release posture inputs.",
+        "Accepted-mode release still requires a deliberate checked-in external acceptance artifact outside the default candidate package."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/NativeBackendReleasePosture.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendReleasePostureVectors.lean",
+        "scripts/check_native_backend_release_posture_policy_vectors.py",
         "docs/crypto/native_backend_security_analysis.md",
         "docs/crypto/native_backend_formal_theorems.md",
         "audits/native-backend-128b/KNOWN_GAPS.md",
+        "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
         "scripts/check_native_backend_release_posture.sh"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "python3 scripts/check_native_backend_release_posture_policy_vectors.py <generated-json> --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
+        "bash scripts/check_formal_core.sh",
         "bash scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
       ],
       "residual_risks": [
