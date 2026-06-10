@@ -5608,41 +5608,68 @@ fn rebuild_canonical_indexes(
     da_ciphertext_tree: &sled::Tree,
 ) -> Result<()> {
     let mut next_commitment_index = 0u64;
+    let mut nullifier_state = NullifierState::default();
+    let mut bridge_replay_state = InboundReplayState::default();
+    let mut planned_actions = Vec::new();
     for meta in chain.iter().skip(1) {
         let actions = decode_block_actions(meta)?;
         for action in actions {
             let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, &action)?;
-            if ciphertexts.len() != action.commitments.len() {
-                return Err(anyhow!("canonical ciphertext count mismatch"));
-            }
-            for commitment in &action.commitments {
-                commitment_tree
-                    .insert(next_commitment_index.to_be_bytes(), commitment.as_slice())?;
-                next_commitment_index = next_commitment_index.saturating_add(1);
-            }
-            insert_ciphertext_archive_entries(
-                ciphertext_archive_tree,
-                next_commitment_index.saturating_sub(ciphertexts.len() as u64),
-                &ciphertexts,
-            )?;
-            for nullifier in &action.nullifiers {
-                nullifier_tree.insert(nullifier.as_slice(), b"1")?;
-            }
-            if let Some(replay_key) = bridge_inbound_replay_key_from_action(&action)? {
-                bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
-            }
-            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                let size = action
-                    .ciphertext_sizes
-                    .get(idx)
-                    .copied()
-                    .unwrap_or_default();
-                let mut value = Vec::with_capacity(32 + 4 + 8);
-                value.extend_from_slice(&action.tx_hash);
-                value.extend_from_slice(&size.to_le_bytes());
-                value.extend_from_slice(&(idx as u64).to_le_bytes());
-                ciphertext_index_tree.insert(hash.as_slice(), value)?;
-            }
+            let replay_key = bridge_inbound_replay_key_from_action(&action)?;
+            let effect = evaluate_native_action_state_effect(
+                next_commitment_index,
+                action.commitments.len(),
+                ciphertexts.len(),
+                &action.nullifiers,
+                replay_key,
+                &mut nullifier_state,
+                &mut bridge_replay_state,
+            )
+            .map_err(native_action_state_effect_error)?;
+            planned_actions.push((
+                action,
+                NativePlannedActionEffect {
+                    commitment_start: next_commitment_index,
+                    ciphertexts,
+                    replay_key,
+                },
+            ));
+            next_commitment_index = effect.next_leaf_count;
+        }
+    }
+
+    for (action, effect) in planned_actions {
+        for (offset, commitment) in action.commitments.iter().enumerate() {
+            let offset =
+                u64::try_from(offset).map_err(|_| anyhow!("commitment rebuild offset overflow"))?;
+            let index = effect
+                .commitment_start
+                .checked_add(offset)
+                .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
+            commitment_tree.insert(index.to_be_bytes(), commitment.as_slice())?;
+        }
+        insert_ciphertext_archive_entries(
+            ciphertext_archive_tree,
+            effect.commitment_start,
+            &effect.ciphertexts,
+        )?;
+        for nullifier in &action.nullifiers {
+            nullifier_tree.insert(nullifier.as_slice(), b"1")?;
+        }
+        if let Some(replay_key) = effect.replay_key {
+            bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
+        }
+        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+            let size = action
+                .ciphertext_sizes
+                .get(idx)
+                .copied()
+                .unwrap_or_default();
+            let mut value = Vec::with_capacity(32 + 4 + 8);
+            value.extend_from_slice(&action.tx_hash);
+            value.extend_from_slice(&size.to_le_bytes());
+            value.extend_from_slice(&(idx as u64).to_le_bytes());
+            ciphertext_index_tree.insert(hash.as_slice(), value)?;
         }
     }
     Ok(())
@@ -11266,6 +11293,60 @@ mod tests {
         assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
         assert_eq!(state.commitment_tree.root(), before_root);
         assert_eq!(state.nullifiers, before_nullifiers);
+    }
+
+    #[test]
+    fn canonical_index_rebuild_rejects_duplicate_before_sled_mutation() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let commitment_tree = db.open_tree("commitments").expect("commitment tree");
+        let nullifier_tree = db.open_tree("nullifiers").expect("nullifier tree");
+        let bridge_inbound_tree = db.open_tree("bridge_inbound").expect("bridge inbound tree");
+        let ciphertext_index_tree = db
+            .open_tree("ciphertext_index")
+            .expect("ciphertext index tree");
+        let ciphertext_archive_tree = db
+            .open_tree("ciphertext_archive")
+            .expect("ciphertext archive tree");
+        let da_ciphertext_tree = db.open_tree("da_ciphertexts").expect("da ciphertext tree");
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let anchor = genesis.state_root;
+        let first = test_inline_transfer_action(anchor, [52u8; 48], [53u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [52u8; 48], [54u8; 48], 0);
+        let mut block = genesis.clone();
+        block.height = 1;
+        block.tx_count = 2;
+        block.action_bytes = vec![first.encode(), second.encode()];
+
+        let err = rebuild_canonical_indexes(
+            &[genesis, block],
+            &commitment_tree,
+            &nullifier_tree,
+            &bridge_inbound_tree,
+            &ciphertext_index_tree,
+            &ciphertext_archive_tree,
+            &da_ciphertext_tree,
+        )
+        .expect_err("duplicate nullifier must reject before rebuilding sled indexes");
+        assert!(err.to_string().contains("duplicate_nullifier"));
+        assert_eq!(
+            commitment_tree.len(),
+            0,
+            "failed rebuild must not partially write commitments"
+        );
+        assert_eq!(
+            nullifier_tree.len(),
+            0,
+            "failed rebuild must not partially write nullifiers"
+        );
+        assert_eq!(
+            ciphertext_archive_tree.len(),
+            0,
+            "failed rebuild must not partially write ciphertext archive entries"
+        );
     }
 
     #[test]
