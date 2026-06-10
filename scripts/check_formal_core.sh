@@ -16,16 +16,16 @@ run_formal_core() {
 
 printf '=== Hegemon formal-core gate ===\n'
 
-printf '\n[1/11] Checking formal-core checker formatting\n'
+printf '\n[1/12] Checking formal-core checker formatting\n'
 cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
 
-printf '\n[2/11] Running formal-core checker tests\n'
+printf '\n[2/12] Running formal-core checker tests\n'
 cargo test --quiet --manifest-path "$FORMAL_MANIFEST"
 
-printf '\n[3/11] Checking Lean formal proof kernel\n'
+printf '\n[3/12] Checking Lean formal proof kernel\n'
 bash "$ROOT/scripts/check_lean_formal.sh"
 
-printf '\n[4/11] Verifying Lean-generated Rust conformance vectors\n'
+printf '\n[4/12] Verifying Lean-generated Rust conformance vectors\n'
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$(mktemp)"
 LEAN_BRIDGE_LONG_RANGE_VECTORS="$(mktemp)"
@@ -259,7 +259,7 @@ HEGEMON_LEAN_PUBLIC_INPUT_BINDING_VECTORS="$LEAN_PUBLIC_INPUT_BINDING_VECTORS" \
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture
 
-printf '\n[5/11] Auditing formal-core checker dependencies\n'
+printf '\n[5/12] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then
   printf 'cargo-audit is not installed. Install with: cargo install cargo-audit --locked\n' >&2
   exit 2
@@ -269,22 +269,26 @@ fi
   cargo audit --color never
 )
 
-printf '\n[6/11] Checking formal inventory\n'
+printf '\n[6/12] Checking formal inventory\n'
 run_formal_core check-formal-inventory --root "$ROOT"
 
-printf '\n[7/11] Checking formal security claims ledger\n'
+printf '\n[7/12] Checking formal security claims ledger\n'
 run_formal_core check-claims "$ROOT/config/formal-security-claims.json"
 
-printf '\n[8/11] Checking formal security blueprint DAG\n'
+printf '\n[8/12] Checking formal security blueprint DAG\n'
 run_formal_core check-blueprint "$ROOT/config/formal-security-blueprint.json" --claims "$ROOT/config/formal-security-claims.json"
 
-printf '\n[9/11] Verifying independent bridge vectors\n'
+printf '\n[9/12] Verifying independent bridge vectors\n'
 run_formal_core verify-bridge-vectors "$ROOT/testdata/formal_core_vectors/bridge_messages.json"
 
-printf '\n[10/11] Verifying native backend reference vectors\n'
+printf '\n[10/12] Verifying native backend reference vectors\n'
 cargo run --quiet -p native-backend-ref -- verify-vectors "$ROOT/testdata/native_backend_vectors"
 
-printf '\n[11/11] Optional model checker pass\n'
+printf '\n[11/12] Checking native backend release posture\n'
+bash "$ROOT/scripts/check_native_backend_release_posture.sh" \
+  --package "$ROOT/audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
+
+printf '\n[12/12] Optional model checker pass\n'
 if [ "${HEGEMON_FORMAL_RUN_MODEL_CHECKERS:-0}" = "1" ]; then
   if command -v tlc >/dev/null 2>&1; then
     (
