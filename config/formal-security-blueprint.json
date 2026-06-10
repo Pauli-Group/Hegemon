@@ -2838,8 +2838,8 @@
       "id": "native.action-state-effect-planning",
       "claim_id": "native.action-state-effect-planning",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean action-state effect transition, native action import/replay accepts a planned mutation only when canonical ciphertext count equals commitment count, commitment leaf-count advancement is checked u64 arithmetic, nullifier import status is valid, and any inbound bridge replay key has not already been consumed; rejection precedence is count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state.",
+      "formal_statement": "For the executable Lean action-state effect transition, native action preview/import/replay accepts a planned effect only when ciphertext count equals commitment count for the relevant planner, commitment leaf-count advancement is checked u64 arithmetic, nullifier import status is valid, and any inbound bridge replay key has not already been consumed; rejection precedence is count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native pending-root preview, memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before deriving commitment/message roots or mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state.",
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-root-transcript-binding",
@@ -2865,7 +2865,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-10",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before mutation. Scope excludes storage atomicity under I/O failure and full action semantics."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Scope excludes storage atomicity under I/O failure and full action semantics."
       },
       "falsification_cases": [
         {
@@ -2889,12 +2889,17 @@
           "gate": "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features"
         },
         {
+          "id": "native-root-preview-bridge-replay-regression",
+          "description": "Native pending root preview and mining template construction must reject duplicate or already-consumed inbound bridge replay keys before deriving action/message roots.",
+          "gate": "cargo test -p hegemon-node action_state_effect_preview_ --lib --no-default-features"
+        },
+        {
           "id": "native-canonical-index-rebuild-no-partial-mutation",
           "description": "Native canonical index rebuild must reject duplicate nullifiers during the planning phase before writing rebuilt commitment, nullifier, or ciphertext indexes.",
           "gate": "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before memory replay, sled-backed import, and canonical index rebuild mutation. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
     },
     {
       "id": "native.announced-block-admission",

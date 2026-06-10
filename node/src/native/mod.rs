@@ -6419,18 +6419,26 @@ fn preview_pending_roots(
         }
     }
 
+    let planned = plan_action_effects_for_memory(state, actions)?;
     let mut tree = state.commitment_tree.clone();
     let mut nullifiers = state.nullifiers.clone();
-    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    for action in actions {
-        for commitment in &action.commitments {
+    for (action, effect) in actions.iter().zip(planned.iter()) {
+        for (offset, commitment) in action.commitments.iter().enumerate() {
+            let offset =
+                u64::try_from(offset).map_err(|_| anyhow!("preview commitment offset overflow"))?;
+            let expected_index = effect
+                .commitment_start
+                .checked_add(offset)
+                .ok_or_else(|| anyhow!("preview commitment index overflow"))?;
+            debug_assert_eq!(
+                expected_index,
+                tree.leaf_count(),
+                "planned commitment index drifted during root preview"
+            );
             tree.append(*commitment)
                 .map_err(|err| anyhow!("preview commitment append failed: {err}"))?;
         }
         for nullifier in &action.nullifiers {
-            nullifier_state
-                .import_one(*nullifier)
-                .map_err(|_| anyhow!("preview duplicate nullifier"))?;
             nullifiers.insert(*nullifier);
         }
     }
@@ -11334,6 +11342,45 @@ mod tests {
         assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
         assert_eq!(state.commitment_tree.root(), before_root);
         assert_eq!(state.nullifiers, before_nullifiers);
+    }
+
+    #[test]
+    fn action_state_effect_preview_rejects_duplicate_bridge_replay_before_roots() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let first = test_inbound_bridge_action(b"inbound replay one");
+        let second = test_inbound_bridge_action(b"inbound replay two");
+        assert_ne!(
+            first.tx_hash, second.tx_hash,
+            "test actions should differ while sharing the replay key"
+        );
+
+        let err = preview_pending_roots(&state, &[first, second])
+            .expect_err("duplicate bridge replay must reject before root preview");
+        assert!(err.to_string().contains("bridge_replay_duplicate"));
+    }
+
+    #[test]
+    fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let action = test_inbound_bridge_action(b"already consumed inbound replay");
+        let replay_key = bridge_inbound_replay_key_from_action(&action)
+            .expect("decode replay key")
+            .expect("inbound replay key");
+        {
+            let mut state = node.state.write();
+            state.consumed_bridge_messages.insert(replay_key);
+            state.pending_actions.insert(action.tx_hash, action);
+        }
+
+        let work = node.prepare_work().expect("prepare native work");
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+        assert_eq!(work.message_count, 0);
+        assert_eq!(work.message_root, empty_bridge_message_root());
     }
 
     #[test]
