@@ -4,65 +4,65 @@
 //! It keeps the existing JSON-RPC compatibility surface while the ledger,
 //! mempool, sync, and shielded state machines are native.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::extract::State;
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codec::{Decode, Encode};
 use consensus::{
-    CommitmentTreeState, DaParams, ProofEnvelope, Transaction, TxValidityArtifact,
-    COMMITMENT_TREE_DEPTH,
+    COMMITMENT_TREE_DEPTH, CommitmentTreeState, DaParams, ProofEnvelope, Transaction,
+    TxValidityArtifact,
 };
 use consensus_light_client::{
-    bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
-    canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
-    compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
-    flyclient_sample_indices, hash_meets_target, header_mmr_opening_from_hashes,
-    header_mmr_root_from_hashes, pow_hash_from_pre_hash, verify_pow_header,
-    BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
-    HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
-    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
+    BridgeCheckpointOutputV1, BridgeMessageV1, HEGEMON_CHAIN_ID_V1,
     HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
-    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1, Hash32, HeaderMmrLeafWitnessV1,
+    HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, bridge_checkpoint_output,
+    bridge_checkpoint_output_with_tip, canonical_bridge_checkpoint_output_bytes_v1,
+    canonical_trusted_checkpoint_bytes_v1, compare_work, cumulative_work_after,
+    decode_risc0_bridge_journal, empty_header_mmr_root, flyclient_sample_indices,
+    hash_meets_target, header_mmr_opening_from_hashes, header_mmr_root_from_hashes,
+    pow_hash_from_pre_hash, verify_pow_header,
 };
 use network::{
-    service::DirectedProtocolMessage, wire, GossipRouter, NatTraversalConfig, P2PService, PeerId,
-    PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
-    RelayConfig,
+    GossipRouter, NatTraversalConfig, P2PService, PeerId, PeerIdentity, PeerStore, PeerStoreConfig,
+    ProtocolHandle, ProtocolId, ProtocolMessage, RelayConfig, service::DirectedProtocolMessage,
+    wire,
 };
 use parking_lot::{Mutex, RwLock};
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
-    bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
-    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject, InboundReplayState,
-    OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
-    ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
+    ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND, ACTION_REGISTER_BRIDGE_VERIFIER,
+    BridgeVerifierRegistrationV1, FAMILY_BRIDGE, InboundBridgeArgsV1, InboundReplayReject,
+    InboundReplayState, OutboundBridgeArgsV1, bridge_message_root, bridge_payload_hash,
+    empty_bridge_message_root, inbound_replay_key,
 };
 use protocol_shielded_pool::family::{
-    MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
-    SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE,
-    ACTION_SHIELDED_TRANSFER_SIDECAR, ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL,
+    ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
+    ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL, MintCoinbaseArgs,
+    ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, SubmitCandidateArtifactArgs,
 };
 use protocol_shielded_pool::types::{
-    BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
-    BLOCK_PROOF_BUNDLE_SCHEMA, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
-    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    BLOCK_PROOF_BUNDLE_SCHEMA, BlockProofMode, CandidateArtifact, MAX_BATCH_SIZE,
+    MAX_CIPHERTEXT_BYTES, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+    ProofArtifactKind as PoolProofArtifactKind, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use protocol_shielded_pool::{NullifierReject, NullifierState};
-use rand::{rngs::OsRng, RngCore};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+use rand::{RngCore, rngs::OsRng};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -78,6 +78,7 @@ const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
 const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
 const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
+const NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED: bool = false;
 const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
@@ -579,6 +580,31 @@ impl NativeBridgeActionPayloadAdmissionRejection {
             Self::InboundReplayKeyMismatch => "inbound_replay_key_mismatch",
             Self::InboundDestinationMismatch => "inbound_destination_mismatch",
             Self::InboundPayloadHashMismatch => "inbound_payload_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeRisc0ReleaseVerifierInput {
+    image_id_matches: bool,
+    journal_decodes: bool,
+    verifier_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeRisc0ReleaseVerifierRejection {
+    ImageIdMismatch,
+    JournalDecodeFailed,
+    VerifierDisabled,
+}
+
+impl NativeRisc0ReleaseVerifierRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::ImageIdMismatch => "image_id_mismatch",
+            Self::JournalDecodeFailed => "journal_decode_failed",
+            Self::VerifierDisabled => "verifier_disabled",
         }
     }
 }
@@ -2256,7 +2282,7 @@ impl NativeNode {
                     commitments: vec![args.reward_bundle.miner_note.commitment],
                     ciphertext_hashes: vec![ciphertext_hash],
                     ciphertext_sizes: vec![
-                        u32::try_from(ciphertext_bytes).unwrap_or(ciphertext_size)
+                        u32::try_from(ciphertext_bytes).unwrap_or(ciphertext_size),
                     ],
                     public_args,
                     fee: 0,
@@ -4997,6 +5023,36 @@ fn native_bridge_action_payload_admission_error(
     }
 }
 
+fn evaluate_native_risc0_release_verifier(
+    input: NativeRisc0ReleaseVerifierInput,
+) -> Result<(), NativeRisc0ReleaseVerifierRejection> {
+    if !input.image_id_matches {
+        Err(NativeRisc0ReleaseVerifierRejection::ImageIdMismatch)
+    } else if !input.journal_decodes {
+        Err(NativeRisc0ReleaseVerifierRejection::JournalDecodeFailed)
+    } else if !input.verifier_enabled {
+        Err(NativeRisc0ReleaseVerifierRejection::VerifierDisabled)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_risc0_release_verifier_error(
+    rejection: NativeRisc0ReleaseVerifierRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeRisc0ReleaseVerifierRejection::ImageIdMismatch => {
+            anyhow!("RISC Zero bridge image id mismatch")
+        }
+        NativeRisc0ReleaseVerifierRejection::JournalDecodeFailed => {
+            anyhow!("decode RISC Zero bridge journal failed")
+        }
+        NativeRisc0ReleaseVerifierRejection::VerifierDisabled => anyhow!(
+            "RISC Zero bridge receipt verification is disabled in the PQ-only native node build"
+        ),
+    }
+}
+
 fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
     if args.source_chain_id != HEGEMON_CHAIN_ID_V1 {
         return Err(anyhow!(
@@ -5042,22 +5098,31 @@ fn verify_risc0_bridge_receipt(
     envelope: &RiscZeroBridgeReceiptV1,
     expected_image_id: [u8; 32],
 ) -> Result<BridgeCheckpointOutputV1> {
-    if envelope.image_id != expected_image_id {
-        return Err(anyhow!("RISC Zero bridge image id mismatch"));
+    let mut release_input = NativeRisc0ReleaseVerifierInput {
+        image_id_matches: envelope.image_id == expected_image_id,
+        journal_decodes: false,
+        verifier_enabled: NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED,
+    };
+    if !release_input.image_id_matches {
+        let rejection = evaluate_native_risc0_release_verifier(release_input)
+            .expect_err("image mismatch must reject");
+        return Err(native_risc0_release_verifier_error(rejection));
     }
-    let output = decode_risc0_bridge_journal(envelope)
-        .map_err(|err| anyhow!("decode RISC Zero bridge journal failed: {err:?}"))?;
-    verify_risc0_receipt_envelope(envelope, expected_image_id)?;
+    let output = match decode_risc0_bridge_journal(envelope) {
+        Ok(output) => {
+            release_input.journal_decodes = true;
+            output
+        }
+        Err(err) => {
+            let rejection = evaluate_native_risc0_release_verifier(release_input)
+                .expect_err("journal decode failure must reject");
+            let base = native_risc0_release_verifier_error(rejection);
+            return Err(anyhow!("{base}: {err:?}"));
+        }
+    };
+    evaluate_native_risc0_release_verifier(release_input)
+        .map_err(native_risc0_release_verifier_error)?;
     Ok(output)
-}
-
-fn verify_risc0_receipt_envelope(
-    _envelope: &RiscZeroBridgeReceiptV1,
-    _expected_image_id: [u8; 32],
-) -> Result<()> {
-    Err(anyhow!(
-        "RISC Zero bridge receipt verification is disabled in the PQ-only native node build"
-    ))
 }
 
 fn bridge_inbound_replay_key_from_action(action: &PendingAction) -> Result<Option<[u8; 48]>> {
@@ -7252,6 +7317,24 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanRisc0ReleaseVerifierVectorFile {
+        schema_version: u32,
+        risc0_release_verifier_cases: Vec<LeanRisc0ReleaseVerifierCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanRisc0ReleaseVerifierCase {
+        name: String,
+        image_id_matches: bool,
+        journal_decodes: bool,
+        verifier_enabled: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanTransferActionPayloadAdmissionVectorFile {
         schema_version: u32,
         transfer_action_payload_admission_cases: Vec<LeanTransferActionPayloadAdmissionCase>,
@@ -7836,9 +7919,10 @@ mod tests {
         node.import_announced_block(side_one.clone())
             .expect("side one import");
         let side_two = mined_empty_child(&side_one, 2, test_pow_bits, 2);
-        assert!(node
-            .import_announced_block(side_two.clone())
-            .expect("side two import"));
+        assert!(
+            node.import_announced_block(side_two.clone())
+                .expect("side two import")
+        );
 
         let best = node.best_meta();
         assert_eq!(best.hash, side_two.hash);
@@ -8543,10 +8627,12 @@ mod tests {
             .await
             .expect("response body");
         let decoded: Value = serde_json::from_slice(&body).expect("json body");
-        assert!(decoded["error"]["message"]
-            .as_str()
-            .expect("error message")
-            .contains("batch too large"));
+        assert!(
+            decoded["error"]["message"]
+                .as_str()
+                .expect("error message")
+                .contains("batch too large")
+        );
     }
 
     #[test]
@@ -9283,6 +9369,53 @@ mod tests {
             "unsupported" => NativeBridgeActionPayloadKind::Unsupported,
             other => panic!("{case_name} has unknown bridge action kind {other}"),
         }
+    }
+
+    #[test]
+    fn lean_generated_risc0_release_verifier_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean RISC0 release verifier vectors");
+        let vectors: LeanRisc0ReleaseVerifierVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean RISC0 verifier vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.risc0_release_verifier_cases.is_empty(),
+            "Lean RISC0 release verifier cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.risc0_release_verifier_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_risc0_release_verifier_case(case);
+        }
+    }
+
+    fn verify_lean_risc0_release_verifier_case(case: &LeanRisc0ReleaseVerifierCase) {
+        let input = NativeRisc0ReleaseVerifierInput {
+            image_id_matches: case.image_id_matches,
+            journal_decodes: case.journal_decodes,
+            verifier_enabled: case.verifier_enabled,
+        };
+        let actual_rejection = evaluate_native_risc0_release_verifier(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native RISC0 release verifier validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native RISC0 release verifier rejection drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]
@@ -10360,8 +10493,10 @@ mod tests {
                     json!("A".repeat(case.raw_text_bytes))
                 } else {
                     use base64::Engine;
-                    json!(base64::engine::general_purpose::STANDARD
-                        .encode(vec![0u8; case.decoded_bytes]))
+                    json!(
+                        base64::engine::general_purpose::STANDARD
+                            .encode(vec![0u8; case.decoded_bytes])
+                    )
                 }
             }
             "hex" => json!(format!("0x{}", "00".repeat(case.decoded_bytes))),
@@ -10693,9 +10828,10 @@ mod tests {
         block.tx_count = 1;
 
         let err = decode_block_actions(&block).expect_err("count mismatch should fail admission");
-        assert!(err
-            .to_string()
-            .contains("block action payload count mismatch"));
+        assert!(
+            err.to_string()
+                .contains("block action payload count mismatch")
+        );
     }
 
     #[test]
@@ -11007,9 +11143,10 @@ mod tests {
 
         let err = verify_native_block_artifacts_locked(&node, &state, &[transfer])
             .expect_err("non-empty shielded block without candidate artifact must be rejected");
-        assert!(err
-            .to_string()
-            .contains("requires exactly one matching recursive candidate artifact"));
+        assert!(
+            err.to_string()
+                .contains("requires exactly one matching recursive candidate artifact")
+        );
     }
 
     #[test]
@@ -11029,9 +11166,10 @@ mod tests {
 
         let err = verify_native_block_artifacts_locked(&node, &state, &actions)
             .expect_err("non-empty shielded block with multiple candidates must be rejected");
-        assert!(err
-            .to_string()
-            .contains("requires exactly one matching recursive candidate artifact"));
+        assert!(
+            err.to_string()
+                .contains("requires exactly one matching recursive candidate artifact")
+        );
     }
 
     #[test]
@@ -11501,14 +11639,18 @@ mod tests {
             witness["output"]["message_hash"],
             witness["messages"][0]["message_hash"]
         );
-        assert!(witness["canonical"]["header"]
-            .as_str()
-            .expect("canonical header hex")
-            .starts_with("0x"));
-        assert!(witness["canonical"]["output"]
-            .as_str()
-            .expect("canonical output hex")
-            .starts_with("0x"));
+        assert!(
+            witness["canonical"]["header"]
+                .as_str()
+                .expect("canonical header hex")
+                .starts_with("0x")
+        );
+        assert!(
+            witness["canonical"]["output"]
+                .as_str()
+                .expect("canonical output hex")
+                .starts_with("0x")
+        );
     }
 
     #[test]
@@ -11534,9 +11676,10 @@ mod tests {
                 }
             })
             .expect("find better same-height canonical block");
-        assert!(node
-            .import_announced_block(canonical.clone())
-            .expect("canonical reorg import"));
+        assert!(
+            node.import_announced_block(canonical.clone())
+                .expect("canonical reorg import")
+        );
         assert_eq!(node.best_meta().hash, canonical.hash);
 
         let err = export_bridge_witness(&node, json!([hex32(&side.hash), 0]))

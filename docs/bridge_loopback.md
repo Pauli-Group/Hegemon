@@ -53,7 +53,7 @@ RISC0_SKIP_BUILD_KERNELS=1 cargo check --manifest-path zk/risc0-bridge/prover/Ca
 
 Export a bridge witness from the source after the outbound message has a confirming block, then prove `canonical.long_range_proof` with `zk/risc0-bridge/prover` to measure the offline RISC Zero envelope. If no block hash is supplied, `hegemon_exportBridgeWitness` scans backward up to 4096 blocks from the current canonical tip and selects the latest canonical block containing a bridge message, so relayers do not need to race the miner before the next empty block is produced. Pass the source block hash explicitly for older messages.
 
-The inbound action still uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`, but release Hegemon rejects RISC Zero receipt staging after syntactic envelope/journal decoding. Do not treat this document as an enabled bridge runbook until the destination verifier no longer pulls classical SNARK/curve code into `hegemon-node`.
+The inbound action still uses the protocol-pinned `HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1`, but release Hegemon rejects RISC Zero receipt staging after syntactic envelope/journal decoding. The fail-closed release decision table is covered by the Lean `Risc0ReleaseVerifier` formal-core vectors. Do not treat this document as an enabled bridge runbook until the destination verifier no longer pulls classical SNARK/curve code into `hegemon-node`.
 
 ```bash
 RISC0_SKIP_BUILD_KERNELS=1 cargo run --release \

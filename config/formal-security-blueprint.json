@@ -3463,19 +3463,25 @@
       "id": "proof.risc0-release-disabled",
       "claim_id": "proof.risc0-release-disabled",
       "kind": "residual_risk",
-      "formal_statement": "The release node must fail closed for inbound RISC Zero bridge receipts after syntactic and message-binding prechecks until a PQ-clean verifier is available.",
-      "informal_argument": "RISC Zero bridge receipts remain offline experimental artifacts because the verifier path can pull classical Groth16/BN254 code into the binary. The safer release behavior is to parse and bind-check enough to reject malformed messages, then reject receipt acceptance.",
+      "formal_statement": "The executable release RISC Zero verifier predicate accepts exactly when image id, journal decoding, and verifier-enabled preconditions all hold; the shipped release configuration sets verifier-enabled false, so no release receipt can be accepted after prechecks.",
+      "informal_argument": "RISC Zero bridge receipts remain offline experimental artifacts because the verifier path can pull classical Groth16/BN254 code into the binary. The Lean theorem `Hegemon.Native.Risc0ReleaseVerifier.release_build_never_accepts` proves the release-disabled predicate is fail-closed, companion theorems pin image/journal rejection precedence, and generated Lean vectors are checked against the production helper used by `verify_risc0_bridge_receipt`. The existing node regression still checks that message-binding tampering rejects before the disabled verifier path and that a bound RISC Zero receipt is not staged.",
       "depends_on": [
         "release.pq-binary",
         "bridge.message-root-replay",
-        "bridge.inbound-replay-state"
+        "bridge.inbound-replay-state",
+        "native.bridge-action-payload-admission"
       ],
       "implementation_paths": [
         "node/src/native/mod.rs"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/Risc0ReleaseVerifier.lean",
+        "formal/lean/Hegemon/Native/GenerateRisc0ReleaseVerifierVectors.lean",
+        "node/src/native/mod.rs",
         "docs/bridge_loopback.md",
-        "DESIGN.md"
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "target_review": {
         "status": "accepted",
@@ -3487,10 +3493,15 @@
         {
           "id": "binding-tamper-reject",
           "description": "Inbound bridge message-binding tampering must be rejected by node tests.",
-          "gate": "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --no-default-features"
+          "gate": "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --lib --no-default-features"
+        },
+        {
+          "id": "lean-release-disabled-vector",
+          "description": "Lean-generated release-verifier vectors must match the production RISC Zero release-verifier helper.",
+          "gate": "HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_risc0_release_verifier_vectors_match_production --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node explicitly does not permit inbound RISC Zero receipt acceptance on the release node."
+      "scope_boundary": "This node proves and vector-checks the fail-closed release decision table only. It explicitly does not permit inbound RISC Zero receipt acceptance on the release node and does not prove future PQ bridge receipt soundness."
     },
     {
       "id": "crypto.native-backend-candidate",

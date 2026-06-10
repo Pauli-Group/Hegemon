@@ -2853,21 +2853,39 @@
     {
       "id": "proof.risc0-release-disabled",
       "component": "release node bridge verifier",
-      "claim_class": "fail_closed_runtime",
-      "summary": "Release nodes reject RISC Zero bridge receipts after syntactic and message-binding prechecks until a PQ-clean verifier exists.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean RISC Zero release-verifier kernel proves the executable fail-closed table for release bridge receipts: image-id mismatch and journal decode failure reject first, and a release build with the verifier-disabled flag cannot accept any receipt after prechecks.",
       "status": "disabled_fail_closed",
-      "proof_model": "runtime_regression_and_binary_audit",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Native.Risc0ReleaseVerifier.accepts_iff_release_preconditions",
+        "Hegemon.Native.Risc0ReleaseVerifier.disabled_rejects_after_prechecks",
+        "Hegemon.Native.Risc0ReleaseVerifier.image_id_mismatch_rejects",
+        "Hegemon.Native.Risc0ReleaseVerifier.journal_decode_failure_rejects",
+        "Hegemon.Native.Risc0ReleaseVerifier.release_build_never_accepts",
+        "Hegemon.Native.Risc0ReleaseVerifier.release_disabled_rejects",
+        "Hegemon.Native.Risc0ReleaseVerifier.valid_future_verifier_accepts"
+      ],
       "assumptions": [
-        "Rejecting the receipt is safer than linking a classical verifier surface into the release node."
+        "Rejecting the receipt is safer than linking a classical verifier surface into the release node.",
+        "The Lean model treats image-id equality and journal decoding as production-derived predicates; bridge action routing, replay-key binding, destination binding, and payload-hash binding are covered by native.bridge-action-payload-admission.",
+        "Generated Lean conformance vectors cover the future enabled verifier case, the current release-disabled case after successful prechecks, image-id mismatch precedence, journal decode failure precedence, and image-id mismatch precedence over enabled-verifier acceptance."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/Risc0ReleaseVerifier.lean",
+        "formal/lean/Hegemon/Native/GenerateRisc0ReleaseVerifierVectors.lean",
         "node/src/native/mod.rs",
         "docs/bridge_loopback.md",
-        "DESIGN.md"
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "gates": [
-        "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --no-default-features"
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_risc0_release_verifier_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {

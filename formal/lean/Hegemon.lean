@@ -42,6 +42,7 @@ import Hegemon.Native.MinedWorkAdmission
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.RecursiveArtifactContextAdmission
 import Hegemon.Native.ResourceBudgetAdmission
+import Hegemon.Native.Risc0ReleaseVerifier
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.SyncAdmission
