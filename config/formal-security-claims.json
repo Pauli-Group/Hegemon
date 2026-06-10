@@ -2368,6 +2368,48 @@
       "residual_risks": []
     },
     {
+      "id": "native.action-state-effect-planning",
+      "component": "native action state mutation planning",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-state effect kernel proves the executable mutation-precondition table for native action import/replay: canonical ciphertext count must equal commitment count, commitment leaf-index advancement must be checked u64 arithmetic, nullifier imports must be nonzero and non-duplicating, and inbound bridge replay keys must not already be consumed; generated Lean vectors are checked against the production effect planner now called before native state or sled mutation.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions",
+        "Hegemon.Native.ActionStateEffect.valid_transfer_effect_accepts",
+        "Hegemon.Native.ActionStateEffect.valid_bridge_replay_effect_accepts",
+        "Hegemon.Native.ActionStateEffect.ciphertext_count_mismatch_rejects",
+        "Hegemon.Native.ActionStateEffect.commitment_index_overflow_rejects",
+        "Hegemon.Native.ActionStateEffect.max_leaf_empty_action_accepts",
+        "Hegemon.Native.ActionStateEffect.zero_nullifier_rejects",
+        "Hegemon.Native.ActionStateEffect.duplicate_nullifier_rejects",
+        "Hegemon.Native.ActionStateEffect.bridge_replay_duplicate_rejects",
+        "Hegemon.Native.ActionStateEffect.count_mismatch_precedes_overflow",
+        "Hegemon.Native.ActionStateEffect.overflow_precedes_nullifier",
+        "Hegemon.Native.ActionStateEffect.nullifier_precedes_bridge_replay"
+      ],
+      "assumptions": [
+        "The Lean model treats nullifier import status and bridge replay status as finite predicates over already-decoded action data; it does not prove BLAKE3 action hashing, SCALE decoding, bridge message parsing, or ciphertext byte derivation.",
+        "Generated Lean conformance vectors cover valid transfer effects, valid bridge replay effects, ciphertext/commitment count mismatch, checked leaf-count overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence.",
+        "The theorem covers the pure effect-planning helper called by native memory replay and sled-backed import before state mutation. It does not prove storage atomicity under I/O failure, commitment-tree hash security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionStateEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStateEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_STATE_EFFECT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_state_effect_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",

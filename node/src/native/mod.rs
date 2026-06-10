@@ -4,65 +4,65 @@
 //! It keeps the existing JSON-RPC compatibility surface while the ledger,
 //! mempool, sync, and shielded state machines are native.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use codec::{Decode, Encode};
 use consensus::{
-    COMMITMENT_TREE_DEPTH, CommitmentTreeState, DaParams, ProofEnvelope, Transaction,
-    TxValidityArtifact,
+    CommitmentTreeState, DaParams, ProofEnvelope, Transaction, TxValidityArtifact,
+    COMMITMENT_TREE_DEPTH,
 };
 use consensus_light_client::{
-    BridgeCheckpointOutputV1, BridgeMessageV1, HEGEMON_CHAIN_ID_V1,
-    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
-    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1, Hash32, HeaderMmrLeafWitnessV1,
+    bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
+    canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
+    compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
+    flyclient_sample_indices, hash_meets_target, header_mmr_opening_from_hashes,
+    header_mmr_root_from_hashes, pow_hash_from_pre_hash, verify_pow_header,
+    BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
-    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, bridge_checkpoint_output,
-    bridge_checkpoint_output_with_tip, canonical_bridge_checkpoint_output_bytes_v1,
-    canonical_trusted_checkpoint_bytes_v1, compare_work, cumulative_work_after,
-    decode_risc0_bridge_journal, empty_header_mmr_root, flyclient_sample_indices,
-    hash_meets_target, header_mmr_opening_from_hashes, header_mmr_root_from_hashes,
-    pow_hash_from_pre_hash, verify_pow_header,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use network::{
-    GossipRouter, NatTraversalConfig, P2PService, PeerId, PeerIdentity, PeerStore, PeerStoreConfig,
-    ProtocolHandle, ProtocolId, ProtocolMessage, RelayConfig, service::DirectedProtocolMessage,
-    wire,
+    service::DirectedProtocolMessage, wire, GossipRouter, NatTraversalConfig, P2PService, PeerId,
+    PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
+    RelayConfig,
 };
 use parking_lot::{Mutex, RwLock};
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
-    ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND, ACTION_REGISTER_BRIDGE_VERIFIER,
-    BridgeVerifierRegistrationV1, FAMILY_BRIDGE, InboundBridgeArgsV1, InboundReplayReject,
-    InboundReplayState, OutboundBridgeArgsV1, bridge_message_root, bridge_payload_hash,
-    empty_bridge_message_root, inbound_replay_key,
+    bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
+    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject, InboundReplayState,
+    OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
+    ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
 };
 use protocol_shielded_pool::family::{
-    ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
-    ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL, MintCoinbaseArgs,
-    ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, SubmitCandidateArtifactArgs,
+    MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
+    SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE,
+    ACTION_SHIELDED_TRANSFER_SIDECAR, ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL,
 };
 use protocol_shielded_pool::types::{
-    BLOCK_PROOF_BUNDLE_SCHEMA, BlockProofMode, CandidateArtifact, MAX_BATCH_SIZE,
-    MAX_CIPHERTEXT_BYTES, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
-    ProofArtifactKind as PoolProofArtifactKind, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
+    BLOCK_PROOF_BUNDLE_SCHEMA, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use protocol_shielded_pool::{NullifierReject, NullifierState};
-use rand::{RngCore, rngs::OsRng};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use rand::{rngs::OsRng, RngCore};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -711,6 +711,41 @@ impl NativeTransferStateAdmissionRejection {
             Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
             Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
             Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeActionStateEffect {
+    next_leaf_count: u64,
+    imported_nullifier_count: usize,
+    imported_bridge_replay: bool,
+}
+
+#[derive(Clone, Debug)]
+struct NativePlannedActionEffect {
+    commitment_start: u64,
+    ciphertexts: Vec<Vec<u8>>,
+    replay_key: Option<[u8; 48]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionStateEffectRejection {
+    CiphertextCountMismatch,
+    CommitmentIndexOverflow,
+    NullifierZero,
+    DuplicateNullifier,
+    BridgeReplayDuplicate,
+}
+
+impl NativeActionStateEffectRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CiphertextCountMismatch => "ciphertext_count_mismatch",
+            Self::CommitmentIndexOverflow => "commitment_index_overflow",
+            Self::NullifierZero => "nullifier_zero",
+            Self::DuplicateNullifier => "duplicate_nullifier",
+            Self::BridgeReplayDuplicate => "bridge_replay_duplicate",
         }
     }
 }
@@ -1707,17 +1742,18 @@ impl NativeNode {
         state: &mut NativeState,
         actions: &[PendingAction],
     ) -> Result<()> {
-        let mut bridge_replay_state =
-            InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
-        let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-        for action in actions {
-            let start_index = state.commitment_tree.leaf_count();
-            let ciphertexts = canonical_ciphertexts_for_action(&self.da_ciphertext_tree, action)?;
-            if ciphertexts.len() != action.commitments.len() {
-                return Err(anyhow!("canonical ciphertext count mismatch"));
-            }
+        let planned = plan_pending_action_effects(&self.da_ciphertext_tree, state, actions)?;
+        for (action, effect) in actions.iter().zip(planned.iter()) {
             for (offset, commitment) in action.commitments.iter().enumerate() {
-                let index = start_index.saturating_add(offset as u64);
+                let index = effect
+                    .commitment_start
+                    .checked_add(offset as u64)
+                    .expect("planned commitment index arithmetic must not overflow");
+                debug_assert_eq!(
+                    index,
+                    state.commitment_tree.leaf_count(),
+                    "planned commitment index drifted during native import"
+                );
                 state
                     .commitment_tree
                     .append(*commitment)
@@ -1727,21 +1763,15 @@ impl NativeNode {
             }
             insert_ciphertext_archive_entries(
                 &self.ciphertext_archive_tree,
-                start_index,
-                &ciphertexts,
+                effect.commitment_start,
+                &effect.ciphertexts,
             )?;
 
             for nullifier in &action.nullifiers {
-                nullifier_state
-                    .import_one(*nullifier)
-                    .map_err(|_| anyhow!("duplicate nullifier during block import"))?;
                 state.nullifiers.insert(*nullifier);
                 self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
             }
-            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                bridge_replay_state
-                    .import_one(replay_key)
-                    .map_err(|_| anyhow!("duplicate inbound bridge message during block import"))?;
+            if let Some(replay_key) = effect.replay_key {
                 state.consumed_bridge_messages.insert(replay_key);
                 self.bridge_inbound_tree
                     .insert(replay_key.as_slice(), b"1")?;
@@ -2282,7 +2312,7 @@ impl NativeNode {
                     commitments: vec![args.reward_bundle.miner_note.commitment],
                     ciphertext_hashes: vec![ciphertext_hash],
                     ciphertext_sizes: vec![
-                        u32::try_from(ciphertext_bytes).unwrap_or(ciphertext_size),
+                        u32::try_from(ciphertext_bytes).unwrap_or(ciphertext_size)
                     ],
                     public_args,
                     fee: 0,
@@ -3854,6 +3884,56 @@ fn native_transfer_state_admission_error(
             anyhow!("staged ciphertext size mismatch")
         }
     }
+}
+
+fn native_action_state_effect_error(rejection: NativeActionStateEffectRejection) -> anyhow::Error {
+    anyhow!("native action state effect rejected: {}", rejection.label())
+}
+
+fn evaluate_native_action_state_effect(
+    leaf_start: u64,
+    commitment_count: usize,
+    ciphertext_count: usize,
+    nullifiers: &[[u8; 48]],
+    replay_key: Option<[u8; 48]>,
+    nullifier_state: &mut NullifierState,
+    bridge_replay_state: &mut InboundReplayState,
+) -> Result<NativeActionStateEffect, NativeActionStateEffectRejection> {
+    if commitment_count != ciphertext_count {
+        return Err(NativeActionStateEffectRejection::CiphertextCountMismatch);
+    }
+    let commitment_count_u64 = u64::try_from(commitment_count)
+        .map_err(|_| NativeActionStateEffectRejection::CommitmentIndexOverflow)?;
+    let next_leaf_count = leaf_start
+        .checked_add(commitment_count_u64)
+        .ok_or(NativeActionStateEffectRejection::CommitmentIndexOverflow)?;
+
+    for nullifier in nullifiers {
+        match nullifier_state.import_one(*nullifier) {
+            Ok(()) => {}
+            Err(NullifierReject::Zero) => {
+                return Err(NativeActionStateEffectRejection::NullifierZero);
+            }
+            Err(NullifierReject::AlreadySpent | NullifierReject::AlreadyPending) => {
+                return Err(NativeActionStateEffectRejection::DuplicateNullifier);
+            }
+        }
+    }
+
+    let imported_bridge_replay = if let Some(replay_key) = replay_key {
+        bridge_replay_state
+            .import_one(replay_key)
+            .map_err(|_| NativeActionStateEffectRejection::BridgeReplayDuplicate)?;
+        true
+    } else {
+        false
+    };
+
+    Ok(NativeActionStateEffect {
+        next_leaf_count,
+        imported_nullifier_count: nullifiers.len(),
+        imported_bridge_replay,
+    })
 }
 
 fn mempool_transfer_nullifier_admission_state(
@@ -5456,27 +5536,61 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
     Ok(())
 }
 
-fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
+fn plan_action_effects_for_memory(
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<NativePlannedActionEffect>> {
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
+    let mut next_leaf_count = state.commitment_tree.leaf_count();
+    let mut planned = Vec::with_capacity(actions.len());
+
     for action in actions {
-        for commitment in &action.commitments {
+        let replay_key = bridge_inbound_replay_key_from_action(action)?;
+        let effect = evaluate_native_action_state_effect(
+            next_leaf_count,
+            action.commitments.len(),
+            action.commitments.len(),
+            &action.nullifiers,
+            replay_key,
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        )
+        .map_err(native_action_state_effect_error)?;
+        planned.push(NativePlannedActionEffect {
+            commitment_start: next_leaf_count,
+            ciphertexts: Vec::new(),
+            replay_key,
+        });
+        next_leaf_count = effect.next_leaf_count;
+    }
+
+    Ok(planned)
+}
+
+fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
+    let planned = plan_action_effects_for_memory(state, actions)?;
+    for (action, effect) in actions.iter().zip(planned.iter()) {
+        for (offset, commitment) in action.commitments.iter().enumerate() {
+            let expected_index = effect
+                .commitment_start
+                .checked_add(offset as u64)
+                .expect("planned commitment index arithmetic must not overflow");
+            debug_assert_eq!(
+                expected_index,
+                state.commitment_tree.leaf_count(),
+                "planned commitment index drifted during memory replay"
+            );
             state
                 .commitment_tree
                 .append(*commitment)
                 .map_err(|err| anyhow!("append native commitment failed: {err}"))?;
         }
         for nullifier in &action.nullifiers {
-            nullifier_state
-                .import_one(*nullifier)
-                .map_err(|_| anyhow!("duplicate nullifier during replay"))?;
             state.nullifiers.insert(*nullifier);
         }
-        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-            bridge_replay_state
-                .import_one(replay_key)
-                .map_err(|_| anyhow!("duplicate inbound bridge message during replay"))?;
+        if let Some(replay_key) = effect.replay_key {
             state.consumed_bridge_messages.insert(replay_key);
         }
         state.pending_actions.remove(&action.tx_hash);
@@ -5566,6 +5680,41 @@ fn canonical_ciphertexts_for_action(
         }
         _ => Ok(Vec::new()),
     }
+}
+
+fn plan_pending_action_effects(
+    da_ciphertext_tree: &sled::Tree,
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<NativePlannedActionEffect>> {
+    let mut bridge_replay_state =
+        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
+    let mut next_leaf_count = state.commitment_tree.leaf_count();
+    let mut planned = Vec::with_capacity(actions.len());
+
+    for action in actions {
+        let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, action)?;
+        let replay_key = bridge_inbound_replay_key_from_action(action)?;
+        let effect = evaluate_native_action_state_effect(
+            next_leaf_count,
+            action.commitments.len(),
+            ciphertexts.len(),
+            &action.nullifiers,
+            replay_key,
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        )
+        .map_err(native_action_state_effect_error)?;
+        planned.push(NativePlannedActionEffect {
+            commitment_start: next_leaf_count,
+            ciphertexts,
+            replay_key,
+        });
+        next_leaf_count = effect.next_leaf_count;
+    }
+
+    Ok(planned)
 }
 
 fn insert_ciphertext_archive_entries(
@@ -7382,6 +7531,30 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanActionStateEffectVectorFile {
+        schema_version: u32,
+        action_state_effect_cases: Vec<LeanActionStateEffectCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionStateEffectCase {
+        name: String,
+        leaf_start: u64,
+        commitment_count: usize,
+        ciphertext_count: usize,
+        nullifier_count: usize,
+        nullifier_state: String,
+        bridge_replay_state: String,
+        expected_next_leaf_count: Option<u64>,
+        expected_imported_nullifier_count: Option<usize>,
+        expected_imported_bridge_replay: Option<bool>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanCandidateArtifactAdmissionVectorFile {
         schema_version: u32,
         candidate_artifact_admission_cases: Vec<LeanCandidateArtifactAdmissionCase>,
@@ -7919,10 +8092,9 @@ mod tests {
         node.import_announced_block(side_one.clone())
             .expect("side one import");
         let side_two = mined_empty_child(&side_one, 2, test_pow_bits, 2);
-        assert!(
-            node.import_announced_block(side_two.clone())
-                .expect("side two import")
-        );
+        assert!(node
+            .import_announced_block(side_two.clone())
+            .expect("side two import"));
 
         let best = node.best_meta();
         assert_eq!(best.hash, side_two.hash);
@@ -8627,12 +8799,10 @@ mod tests {
             .await
             .expect("response body");
         let decoded: Value = serde_json::from_slice(&body).expect("json body");
-        assert!(
-            decoded["error"]["message"]
-                .as_str()
-                .expect("error message")
-                .contains("batch too large")
-        );
+        assert!(decoded["error"]["message"]
+            .as_str()
+            .expect("error message")
+            .contains("batch too large"));
     }
 
     #[test]
@@ -9548,6 +9718,145 @@ mod tests {
             "already_pending" => NativeTransferNullifierAdmissionState::AlreadyPending,
             other => panic!("{case_name} has unknown transfer nullifier state {other}"),
         }
+    }
+
+    #[test]
+    fn lean_generated_action_state_effect_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_STATE_EFFECT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_STATE_EFFECT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action state effect vectors");
+        let vectors: LeanActionStateEffectVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action state effect vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_state_effect_cases.is_empty(),
+            "Lean action state effect cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_state_effect_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_state_effect_case(case);
+        }
+    }
+
+    fn verify_lean_action_state_effect_case(case: &LeanActionStateEffectCase) {
+        let (spent_nullifiers, nullifiers) = synthetic_action_effect_nullifiers(
+            &case.nullifier_state,
+            case.nullifier_count,
+            &case.name,
+        );
+        let (consumed_replays, replay_key) =
+            synthetic_action_effect_replay(&case.bridge_replay_state, &case.name);
+        let mut nullifier_state = NullifierState::new(spent_nullifiers, BTreeSet::new());
+        let mut bridge_replay_state = InboundReplayState::new(consumed_replays, BTreeSet::new());
+
+        let actual = evaluate_native_action_state_effect(
+            case.leaf_start,
+            case.commitment_count,
+            case.ciphertext_count,
+            &nullifiers,
+            replay_key,
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        );
+        match actual {
+            Ok(effect) => {
+                assert!(
+                    case.expected_valid,
+                    "{} action state effect unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.next_leaf_count),
+                    case.expected_next_leaf_count,
+                    "{} next leaf count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.imported_nullifier_count),
+                    case.expected_imported_nullifier_count,
+                    "{} imported nullifier count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.imported_bridge_replay),
+                    case.expected_imported_bridge_replay,
+                    "{} imported bridge replay flag drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} action state effect unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    fn synthetic_action_effect_nullifiers(
+        state: &str,
+        count: usize,
+        case_name: &str,
+    ) -> (BTreeSet<[u8; 48]>, Vec<[u8; 48]>) {
+        match state {
+            "valid" => (
+                BTreeSet::new(),
+                (0..count)
+                    .map(|idx| synthetic_hash48(0x20, idx, case_name))
+                    .collect(),
+            ),
+            "zero" => (BTreeSet::new(), vec![[0u8; 48]; count.max(1)]),
+            "duplicate" => {
+                let duplicate = synthetic_hash48(0x40, 0, case_name);
+                let mut spent = BTreeSet::new();
+                spent.insert(duplicate);
+                (spent, vec![duplicate; count.max(1)])
+            }
+            other => panic!("{case_name} has unknown action-effect nullifier state {other}"),
+        }
+    }
+
+    fn synthetic_action_effect_replay(
+        state: &str,
+        case_name: &str,
+    ) -> (BTreeSet<[u8; 48]>, Option<[u8; 48]>) {
+        match state {
+            "absent" => (BTreeSet::new(), None),
+            "valid" => (BTreeSet::new(), Some(synthetic_hash48(0x60, 0, case_name))),
+            "already_consumed" => {
+                let replay_key = synthetic_hash48(0x70, 0, case_name);
+                let mut consumed = BTreeSet::new();
+                consumed.insert(replay_key);
+                (consumed, Some(replay_key))
+            }
+            other => panic!("{case_name} has unknown bridge replay state {other}"),
+        }
+    }
+
+    fn synthetic_hash48(domain: u8, index: usize, case_name: &str) -> [u8; 48] {
+        let mut hash = [0u8; 48];
+        hash[0] = domain;
+        hash[1] = u8::try_from(index).unwrap_or(u8::MAX);
+        let name_bytes = case_name.as_bytes();
+        for (idx, byte) in name_bytes.iter().take(46).enumerate() {
+            hash[idx + 2] = *byte;
+        }
+        hash
     }
 
     #[test]
@@ -10493,10 +10802,8 @@ mod tests {
                     json!("A".repeat(case.raw_text_bytes))
                 } else {
                     use base64::Engine;
-                    json!(
-                        base64::engine::general_purpose::STANDARD
-                            .encode(vec![0u8; case.decoded_bytes])
-                    )
+                    json!(base64::engine::general_purpose::STANDARD
+                        .encode(vec![0u8; case.decoded_bytes]))
                 }
             }
             "hex" => json!(format!("0x{}", "00".repeat(case.decoded_bytes))),
@@ -10828,10 +11135,9 @@ mod tests {
         block.tx_count = 1;
 
         let err = decode_block_actions(&block).expect_err("count mismatch should fail admission");
-        assert!(
-            err.to_string()
-                .contains("block action payload count mismatch")
-        );
+        assert!(err
+            .to_string()
+            .contains("block action payload count mismatch"));
     }
 
     #[test]
@@ -10941,6 +11247,25 @@ mod tests {
         let err = validate_block_actions_locked(&state, &actions)
             .expect_err("duplicate transfer nullifier must reject block action");
         assert!(err.to_string().contains("duplicate nullifier"));
+    }
+
+    #[test]
+    fn action_state_effect_rejects_duplicate_before_memory_mutation() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [48u8; 48], [49u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [48u8; 48], [50u8; 48], 0);
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let before_nullifiers = state.nullifiers.clone();
+
+        let err = apply_actions_to_memory(&mut state, &[first, second])
+            .expect_err("duplicate nullifier must reject before memory mutation");
+        assert!(err.to_string().contains("duplicate_nullifier"));
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+        assert_eq!(state.nullifiers, before_nullifiers);
     }
 
     #[test]
@@ -11143,10 +11468,9 @@ mod tests {
 
         let err = verify_native_block_artifacts_locked(&node, &state, &[transfer])
             .expect_err("non-empty shielded block without candidate artifact must be rejected");
-        assert!(
-            err.to_string()
-                .contains("requires exactly one matching recursive candidate artifact")
-        );
+        assert!(err
+            .to_string()
+            .contains("requires exactly one matching recursive candidate artifact"));
     }
 
     #[test]
@@ -11166,10 +11490,9 @@ mod tests {
 
         let err = verify_native_block_artifacts_locked(&node, &state, &actions)
             .expect_err("non-empty shielded block with multiple candidates must be rejected");
-        assert!(
-            err.to_string()
-                .contains("requires exactly one matching recursive candidate artifact")
-        );
+        assert!(err
+            .to_string()
+            .contains("requires exactly one matching recursive candidate artifact"));
     }
 
     #[test]
@@ -11639,18 +11962,14 @@ mod tests {
             witness["output"]["message_hash"],
             witness["messages"][0]["message_hash"]
         );
-        assert!(
-            witness["canonical"]["header"]
-                .as_str()
-                .expect("canonical header hex")
-                .starts_with("0x")
-        );
-        assert!(
-            witness["canonical"]["output"]
-                .as_str()
-                .expect("canonical output hex")
-                .starts_with("0x")
-        );
+        assert!(witness["canonical"]["header"]
+            .as_str()
+            .expect("canonical header hex")
+            .starts_with("0x"));
+        assert!(witness["canonical"]["output"]
+            .as_str()
+            .expect("canonical output hex")
+            .starts_with("0x"));
     }
 
     #[test]
@@ -11676,10 +11995,9 @@ mod tests {
                 }
             })
             .expect("find better same-height canonical block");
-        assert!(
-            node.import_announced_block(canonical.clone())
-                .expect("canonical reorg import")
-        );
+        assert!(node
+            .import_announced_block(canonical.clone())
+            .expect("canonical reorg import"));
         assert_eq!(node.best_meta().hash, canonical.hash);
 
         let err = export_bridge_witness(&node, json!([hex32(&side.hash), 0]))

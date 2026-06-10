@@ -27,6 +27,7 @@ import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionHashAdmission
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ActionRootTranscript
+import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.AnnouncedBlockAdmission
 import Hegemon.Native.BlockArtifactBindingAdmission

@@ -2820,6 +2820,63 @@
       "scope_boundary": "This node proves and vector-checks native action-root preimage bytes only. It does not prove BLAKE3 collision resistance, pending_action_hash derivation, SCALE encoding implementation equivalence, full block action payload validation, transfer-key ordering, tx leaf proof soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.action-state-effect-planning",
+      "claim_id": "native.action-state-effect-planning",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-state effect transition, native action import/replay accepts a planned mutation only when canonical ciphertext count equals commitment count, commitment leaf-count advancement is checked u64 arithmetic, nullifier import status is valid, and any inbound bridge replay key has not already been consumed; rejection precedence is count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native memory replay and sled-backed import paths now call planning helpers before mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state.",
+      "depends_on": [
+        "native.block-action-hash-admission",
+        "native.action-root-transcript-binding",
+        "bridge.inbound-replay-state",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionStateEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStateEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionStateEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStateEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-10",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before mutation. Scope excludes storage atomicity under I/O failure and full action semantics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-state-effect-theorem",
+          "description": "Removing or weakening the action-state effect theorem facts or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-state-effect-conformance",
+          "description": "Changing the production native action-state effect planner away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-import-checked-index-regression",
+          "description": "Native import/replay must use checked commitment leaf-count advancement rather than saturating commitment index arithmetic.",
+          "gate": "HEGEMON_LEAN_ACTION_STATE_EFFECT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_state_effect_vectors_match_production --lib --no-default-features"
+        },
+        {
+          "id": "native-memory-replay-no-partial-mutation",
+          "description": "Native memory replay must reject duplicate nullifiers before appending commitments or mutating the nullifier set.",
+          "gate": "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before memory replay and sled-backed import mutation. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
+    },
+    {
       "id": "native.announced-block-admission",
       "claim_id": "native.announced-block-admission",
       "kind": "target_claim",
