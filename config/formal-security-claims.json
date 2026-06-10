@@ -5,21 +5,36 @@
     {
       "id": "release.pq-binary",
       "component": "hegemon-node release binary",
-      "claim_class": "binary_primitive_gate",
-      "summary": "Release node binaries must not link classical curve, pairing, or trusted-setup verifier surfaces.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean release PQ-binary policy kernel proves the release gate accepts exactly when source, dependency, and binary scans are all clean, and generated vectors check that policy decision table used by the release audit gate.",
       "status": "enforced",
-      "proof_model": "binary_symbol_and_dependency_scan",
+      "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_binary_symbol_dependency_scan",
       "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.PqBinaryPolicy.accepts_iff_all_scans_clean",
+        "Hegemon.Release.PqBinaryPolicy.all_scans_clean_accepts",
+        "Hegemon.Release.PqBinaryPolicy.binary_forbidden_rejects_after_source_dependency_clean",
+        "Hegemon.Release.PqBinaryPolicy.dependency_forbidden_rejects_after_source_clean",
+        "Hegemon.Release.PqBinaryPolicy.source_forbidden_rejects",
+        "Hegemon.Release.PqBinaryPolicy.source_rejection_precedes_dependency_and_binary"
+      ],
       "assumptions": [
         "The release binary under target/release/hegemon-node is the binary that operators deploy.",
-        "The audit pattern set remains synchronized with the forbidden primitive policy."
+        "The audit pattern set remains synchronized with the forbidden primitive policy.",
+        "Lean proves the release decision table over source/dependency/binary scan results; scripts/security-audit.sh remains the executable artifact scanner for the actual source tree, Cargo.lock, and release binary."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+        "formal/lean/Hegemon/Release/GeneratePqBinaryPolicyVectors.lean",
         "scripts/security-audit.sh",
+        "scripts/check_release_pq_binary_policy_vectors.py",
         "DESIGN.md",
         "METHODS.md"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake exe gen_release_pq_binary_policy_vectors > <generated-json>",
+        "python3 scripts/check_release_pq_binary_policy_vectors.py <generated-json>",
         "bash scripts/security-audit.sh",
         "bash scripts/check_formal_core.sh"
       ],

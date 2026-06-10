@@ -402,6 +402,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
         "formal/lean/Hegemon/Network/PqNoise.lean",
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
+        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+        "formal/lean/Hegemon/Release/GeneratePqBinaryPolicyVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
         "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",

@@ -56,6 +56,14 @@ echo ""
 VIOLATIONS=0
 WARNINGS=0
 
+if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
+    echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
+    echo ""
+    python3 "$PROJECT_ROOT/scripts/check_release_pq_binary_policy_vectors.py" \
+        "$HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS"
+    echo ""
+fi
+
 # ---------------------------------------------------------------------------
 # Step 1: Grep scan for forbidden primitive names in source code
 # ---------------------------------------------------------------------------

@@ -100,6 +100,9 @@ lean_exe gen_bridge_action_payload_admission_vectors where
 lean_exe gen_risc0_release_verifier_vectors where
   root := `Hegemon.Native.GenerateRisc0ReleaseVerifierVectors
 
+lean_exe gen_release_pq_binary_policy_vectors where
+  root := `Hegemon.Release.GeneratePqBinaryPolicyVectors
+
 lean_exe gen_transfer_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors
 

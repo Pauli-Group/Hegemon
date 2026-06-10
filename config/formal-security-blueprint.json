@@ -48,16 +48,19 @@
       "id": "release.pq-binary",
       "claim_id": "release.pq-binary",
       "kind": "target_claim",
-      "formal_statement": "The release `hegemon-node` binary is rejected by the release gate if forbidden classical curve, pairing, RSA, or trusted-setup verifier surfaces are detected in the linked artifact or dependency surface scanned by the policy.",
-      "informal_argument": "The binary primitive audit is the release-facing check for the design rule that the native node must stay PQ-clean. It is paired with dependency waiver accounting so both the linked symbols and known package advisories are visible before release.",
+      "formal_statement": "The release PQ-binary audit decision accepts exactly when source, dependency, and binary scans are all clean; any forbidden classical primitive hit in those scan classes rejects, with source findings taking precedence over dependency and binary findings.",
+      "informal_argument": "The binary primitive audit is the release-facing check for the design rule that the native node must stay PQ-clean. The Lean theorem `Hegemon.Release.PqBinaryPolicy.accepts_iff_all_scans_clean` pins the release decision table, companion theorems pin rejection precedence, generated vectors are checked by the release audit helper, and `scripts/security-audit.sh` remains the executable scanner for actual source, dependency, and linked-binary evidence.",
       "depends_on": [
         "release.dependency-waivers"
       ],
       "implementation_paths": [
         "scripts/security-audit.sh",
+        "scripts/check_release_pq_binary_policy_vectors.py",
         "scripts/check_formal_core.sh"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+        "formal/lean/Hegemon/Release/GeneratePqBinaryPolicyVectors.lean",
         "DESIGN.md",
         "METHODS.md"
       ],
@@ -72,9 +75,14 @@
           "id": "forbidden-symbol-scan",
           "description": "Forbidden ECC/pairing/RSA/trusted-setup symbols or dependencies must fail the security audit.",
           "gate": "bash scripts/security-audit.sh"
+        },
+        {
+          "id": "lean-release-pq-policy-vector",
+          "description": "Lean-generated release PQ-binary policy vectors must match the release audit policy helper.",
+          "gate": "python3 scripts/check_release_pq_binary_policy_vectors.py <generated-json>"
         }
       ],
-      "scope_boundary": "This node does not prove that every transitive crate is PQ-secure; it enforces the current release binary primitive policy."
+      "scope_boundary": "This node proves and vector-checks the release audit decision table. It does not prove that grep/strings discover every possible primitive implementation or that every transitive crate is PQ-secure; those remain scanner-pattern and dependency-review obligations."
     },
     {
       "id": "formal.transaction-balance",
