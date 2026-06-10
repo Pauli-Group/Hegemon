@@ -3445,8 +3445,8 @@
       "id": "proof.native-backend-vectors",
       "claim_id": "proof.native-backend-vectors",
       "kind": "target_claim",
-      "formal_statement": "The native backend reference-vector verifier accepts committed valid tx-leaf and receipt-root vectors and rejects malformed companions for spec digest, parameter fingerprint, proof digest, STARK proof, and trailing-byte failures.",
-      "informal_argument": "Native proof artifacts are a trust boundary. The reference verifier is run by the formal-core gate to ensure canonical decoding and key binding checks keep rejecting known invalid variants.",
+      "formal_statement": "The executable Lean native-backend review policy accepts a vector bundle only when the backend remains candidate-under-review / structural-candidate, claimed security metadata is not below the configured floor, case names are unique, every case kind is supported, positive cases omit expected-error evidence, negative cases include expected-error evidence, and all required tx-leaf and receipt-root valid/invalid cases are present. The independent reference verifier must then accept the committed valid artifacts and reject malformed companions for spec digest, parameter fingerprint, proof digest, STARK proof, fold-row, root-commitment, and trailing-byte failures.",
+      "informal_argument": "Native proof artifacts are a trust boundary. The Lean theorem `Hegemon.Native.NativeBackendReviewPolicy.accepts_iff_native_backend_review_preconditions` pins the review policy, companion theorems pin posture, security-floor, duplicate-name, unsupported-kind, malformed-expectation, and missing-case rejection precedence, generated vectors are checked by `scripts/check_native_backend_review_policy_vectors.py`, and `native-backend-ref` remains the byte-level independent verifier for the actual bundle.",
       "depends_on": [
         "formal.native-tx-leaf-artifact-wire",
         "consensus.native-tx-leaf-admission",
@@ -3454,10 +3454,15 @@
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "scripts/check_native_backend_review_policy_vectors.py",
         "tools/native-backend-ref/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
         "scripts/verify_native_backend_review_package.sh"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/NativeBackendReviewPolicy.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendReviewPolicyVectors.lean",
         "testdata/native_backend_vectors/bundle.json"
       ],
       "target_review": {
@@ -3471,9 +3476,14 @@
           "id": "invalid-native-vectors",
           "description": "The vector bundle includes invalid cases that must continue to be rejected by the reference verifier.",
           "gate": "cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors"
+        },
+        {
+          "id": "lean-native-backend-review-policy-vector",
+          "description": "Lean-generated native-backend review-policy vectors must fail on unsupported posture, insufficient security-floor metadata, duplicate case names, unsupported kinds, malformed expected-error flags, and missing required cases.",
+          "gate": "python3 scripts/check_native_backend_review_policy_vectors.py <generated-json> testdata/native_backend_vectors/bundle.json"
         }
       ],
-      "scope_boundary": "This node does not certify the lattice backend's security assumptions; it checks artifact canonicality and known invalid-vector rejection."
+      "scope_boundary": "This node proves and vector-checks review-policy coverage for the native backend vector bundle and then runs the independent byte verifier. It does not certify the lattice backend's security assumptions, the Module-SIS reduction, backend transcript soundness, BLAKE3 collision resistance, or full proof-system soundness."
     },
     {
       "id": "proof.risc0-release-disabled",

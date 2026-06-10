@@ -2859,24 +2859,43 @@
     {
       "id": "proof.native-backend-vectors",
       "component": "native tx leaf and receipt root artifacts",
-      "claim_class": "canonical_codec",
-      "summary": "Native backend proof artifacts are checked against fixed valid and invalid vectors by an independent reference verifier.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native-backend review policy proves that the checked native vector bundle is acceptable only when the backend remains candidate-under-review, the security-floor metadata does not undercut the claim, required valid/invalid tx-leaf and receipt-root cases are present, case names are unique, kinds are supported, and negative cases carry expected failure evidence; the independent Rust reference verifier still checks the artifact bytes.",
       "status": "enforced",
-      "proof_model": "independent_reference_vectors",
+      "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_independent_reference_vectors",
       "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.NativeBackendReviewPolicy.accepts_iff_native_backend_review_preconditions",
+        "Hegemon.Native.NativeBackendReviewPolicy.complete_review_bundle_accepts",
+        "Hegemon.Native.NativeBackendReviewPolicy.wrong_review_posture_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.insufficient_security_floor_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.duplicate_case_name_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.unsupported_case_kind_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.positive_case_with_error_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.negative_case_without_error_rejects",
+        "Hegemon.Native.NativeBackendReviewPolicy.missing_required_case_rejects"
+      ],
       "assumptions": [
+        "The Lean review policy proves case-coverage and metadata acceptance only; it does not prove native backend cryptographic soundness.",
         "The native-backend-ref verifier remains independent of production verification helpers.",
-        "The vector bundle includes malformed companions for canonical decode and binding failures.",
+        "The vector bundle includes malformed companions for canonical decode, binding, spec-digest, parameter-fingerprint, proof-digest, STARK-proof, fold-row, root-commitment, and trailing-byte failures.",
         "The native tx-leaf artifact wire grammar is separately Lean-gated by formal.native-tx-leaf-artifact-wire.",
         "The consensus native tx-leaf envelope/profile/size/hash/cache admission table is separately Lean-gated by consensus.native-tx-leaf-admission.",
         "The native receipt-root artifact wire grammar and structural fold schedule are separately Lean-gated by formal.native-receipt-root-wire."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Native/NativeBackendReviewPolicy.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendReviewPolicyVectors.lean",
+        "scripts/check_native_backend_review_policy_vectors.py",
         "tools/native-backend-ref/src/lib.rs",
         "testdata/native_backend_vectors/bundle.json",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
         "scripts/verify_native_backend_review_package.sh"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "python3 scripts/check_native_backend_review_policy_vectors.py <generated-json> testdata/native_backend_vectors/bundle.json",
         "cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors",
         "bash scripts/check_formal_core.sh"
       ],
