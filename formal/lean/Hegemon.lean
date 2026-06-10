@@ -52,6 +52,7 @@ import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.SecureChannel
+import Hegemon.Release.DependencyAuditPolicy
 import Hegemon.Release.PqBinaryPolicy
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.Balance

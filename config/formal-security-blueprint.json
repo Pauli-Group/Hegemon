@@ -12,14 +12,17 @@
       "id": "release.dependency-waivers",
       "claim_id": "release.dependency-waivers",
       "kind": "supporting_claim",
-      "formal_statement": "Every cargo-audit advisory or yanked crate that remains in release code or the formal-core checker lockfile is represented by an explicit non-expired waiver entry with policy metadata.",
-      "informal_argument": "The dependency audit gate parses cargo-audit output and the waiver file, counts waived and unwaived findings, and fails if an advisory is not accounted for. The formal-core checker crate is audited separately so the assurance tooling does not bypass the same dependency discipline.",
+      "formal_statement": "Every cargo-audit advisory or yanked crate that remains in release code or the formal-core checker lockfile is accepted only when the Lean dependency-audit policy preconditions hold: all waivers are well formed and unexpired, and every finding has an exact advisory/package/version/kind waiver match.",
+      "informal_argument": "The Lean theorem `Hegemon.Release.DependencyAuditPolicy.accepts_iff_dependency_audit_preconditions` pins the release waiver decision table, companion theorems pin exact-match acceptance and malformed/unwaived rejection precedence, generated vectors are checked by the policy helper, and `scripts/dependency-audit-gate.sh` remains the executable cargo-audit JSON and waiver-file evidence producer. The formal-core checker crate is audited separately so the assurance tooling does not bypass the same dependency discipline.",
       "depends_on": [],
       "implementation_paths": [
         "scripts/dependency-audit-gate.sh",
+        "scripts/check_dependency_audit_policy_vectors.py",
         "scripts/check_formal_core.sh"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+        "formal/lean/Hegemon/Release/GenerateDependencyAuditPolicyVectors.lean",
         "config/dependency-audit-waivers.json",
         "docs/DEPENDENCY_AUDITS.md",
         "scripts/hegemon_formal_core/Cargo.lock"
@@ -40,9 +43,14 @@
           "id": "formal-core-lock-audit",
           "description": "The formal-core checker lockfile is audited independently from the root workspace lockfile.",
           "gate": "cd scripts/hegemon_formal_core && cargo audit --color never"
+        },
+        {
+          "id": "lean-dependency-policy-vector",
+          "description": "Lean-generated dependency-audit policy vectors must fail on malformed waivers, exact-match drift, and unwaived findings.",
+          "gate": "python3 scripts/check_dependency_audit_policy_vectors.py <generated-json>"
         }
       ],
-      "scope_boundary": "This node does not claim dependency freshness; it claims enforced waiver accounting for known cargo-audit findings."
+      "scope_boundary": "This node does not claim dependency freshness, advisory database completeness, or upstream advisory quality; it claims theorem-backed waiver accounting for known cargo-audit findings."
     },
     {
       "id": "release.pq-binary",

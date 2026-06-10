@@ -103,6 +103,9 @@ lean_exe gen_risc0_release_verifier_vectors where
 lean_exe gen_release_pq_binary_policy_vectors where
   root := `Hegemon.Release.GeneratePqBinaryPolicyVectors
 
+lean_exe gen_dependency_audit_policy_vectors where
+  root := `Hegemon.Release.GenerateDependencyAuditPolicyVectors
+
 lean_exe gen_transfer_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors
 

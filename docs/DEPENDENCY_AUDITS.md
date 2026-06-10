@@ -6,6 +6,11 @@ vulnerability, warning, or yanked crate. Waivers live in
 `config/dependency-audit-waivers.json` and must include a reason, tracking id,
 package/version, kind, and expiry.
 
+The waiver decision table is represented in Lean by
+`formal/lean/Hegemon/Release/DependencyAuditPolicy.lean`. The formal-core gate
+checks Lean-generated vectors against the dependency audit policy helper, while
+`cargo audit` remains the source of actual advisory findings.
+
 Run:
 
     ./scripts/dependency-audit.sh --record
@@ -90,4 +95,3 @@ Summary:
     - RUSTSEC-2026-0097 rand 0.9.2 https://github.com/rust-random/rand/pull/1763
     yanked: 1
     - unknown keccak 0.1.5
-

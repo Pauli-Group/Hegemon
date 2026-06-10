@@ -46,6 +46,11 @@ if [[ ! -f "$POLICY" ]]; then
   exit 2
 fi
 
+if [[ -n "${HEGEMON_LEAN_DEPENDENCY_AUDIT_POLICY_VECTORS:-}" ]]; then
+  python3 "$ROOT/scripts/check_dependency_audit_policy_vectors.py" \
+    "$HEGEMON_LEAN_DEPENDENCY_AUDIT_POLICY_VECTORS"
+fi
+
 if [[ -z "$AUDIT_JSON" ]]; then
   if ! command -v cargo-audit >/dev/null 2>&1; then
     echo "cargo-audit is not installed. Install with: cargo install cargo-audit --locked" >&2

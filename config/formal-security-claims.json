@@ -43,23 +43,40 @@
     {
       "id": "release.dependency-waivers",
       "component": "cargo dependency graph and formal-core checker toolchain",
-      "claim_class": "dependency_gate",
-      "summary": "Every cargo-audit advisory or yanked crate in release code or formal-core tooling must be removed or explicitly waived with policy metadata.",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean dependency-audit policy kernel proves that every cargo-audit finding must either be absent or be matched by a well-formed, non-expired waiver with exact advisory/package/version/kind metadata.",
       "status": "enforced",
-      "proof_model": "cargo_audit_json_with_policy",
+      "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_cargo_audit_json_with_policy",
       "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.DependencyAuditPolicy.accepts_iff_dependency_audit_preconditions",
+        "Hegemon.Release.DependencyAuditPolicy.exact_waiver_accepts",
+        "Hegemon.Release.DependencyAuditPolicy.expired_waiver_rejects",
+        "Hegemon.Release.DependencyAuditPolicy.invalid_waiver_precedes_unwaived_finding",
+        "Hegemon.Release.DependencyAuditPolicy.kind_mismatch_rejects",
+        "Hegemon.Release.DependencyAuditPolicy.missing_reason_rejects",
+        "Hegemon.Release.DependencyAuditPolicy.no_findings_no_waivers_accepts",
+        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_rejects"
+      ],
       "assumptions": [
         "cargo-audit is available in release CI.",
         "Waiver metadata is reviewed before release tagging.",
-        "The standalone formal-core checker lockfile is audited separately from the root workspace lockfile."
+        "The standalone formal-core checker lockfile is audited separately from the root workspace lockfile.",
+        "Lean proves the waiver decision table over cargo-audit finding metadata; scripts/dependency-audit-gate.sh remains the executable evidence producer for the live cargo-audit JSON and waiver file."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+        "formal/lean/Hegemon/Release/GenerateDependencyAuditPolicyVectors.lean",
         "scripts/dependency-audit-gate.sh",
+        "scripts/check_dependency_audit_policy_vectors.py",
         "config/dependency-audit-waivers.json",
         "docs/DEPENDENCY_AUDITS.md",
         "scripts/hegemon_formal_core/Cargo.lock"
       ],
       "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake exe gen_dependency_audit_policy_vectors > <generated-json>",
+        "python3 scripts/check_dependency_audit_policy_vectors.py <generated-json>",
         "bash scripts/dependency-audit-gate.sh",
         "cd scripts/hegemon_formal_core && cargo audit --color never",
         "bash scripts/check_formal_core.sh"
