@@ -3597,9 +3597,29 @@ fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingA
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&key);
         let action: PendingAction = decode_scale_exact(&value, "pending action")?;
-        actions.insert(hash, action);
+        validate_loaded_pending_action_hash(hash, &action)?;
+        if actions.insert(hash, action).is_some() {
+            return Err(anyhow!("duplicate stored pending action {}", hex32(&hash)));
+        }
     }
     Ok(actions)
+}
+
+fn validate_loaded_pending_action_hash(hash: [u8; 32], action: &PendingAction) -> Result<()> {
+    if action.tx_hash != hash {
+        return Err(anyhow!(
+            "stored pending action key/hash mismatch: key={} embedded={}",
+            hex32(&hash),
+            hex32(&action.tx_hash)
+        ));
+    }
+    if action.tx_hash != pending_action_hash(action) {
+        return Err(anyhow!(
+            "stored pending action hash mismatch: key={}",
+            hex32(&hash)
+        ));
+    }
+    Ok(())
 }
 
 fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
@@ -11214,6 +11234,70 @@ mod tests {
         let err =
             decode_block_actions(&block).expect_err("duplicate action hash should fail admission");
         assert!(err.to_string().contains("duplicate action in block"));
+    }
+
+    #[test]
+    fn load_pending_actions_accepts_valid_hash_binding() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        let action = test_outbound_bridge_action(b"persisted pending action");
+        tree.insert(action.tx_hash.as_slice(), action.encode())
+            .expect("insert pending action");
+
+        let loaded = load_pending_actions(&tree).expect("load pending actions");
+        let loaded_action = loaded.get(&action.tx_hash).expect("loaded action");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded_action.tx_hash, action.tx_hash);
+        assert_eq!(pending_action_hash(loaded_action), action.tx_hash);
+    }
+
+    #[test]
+    fn load_pending_actions_rejects_key_hash_mismatch() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        let action = test_outbound_bridge_action(b"persisted wrong key");
+        let mut wrong_key = action.tx_hash;
+        wrong_key[0] ^= 0x80;
+        tree.insert(wrong_key.as_slice(), action.encode())
+            .expect("insert mismatched pending action");
+
+        let err =
+            load_pending_actions(&tree).expect_err("stored action under the wrong key must reject");
+        assert!(err
+            .to_string()
+            .contains("stored pending action key/hash mismatch"));
+    }
+
+    #[test]
+    fn load_pending_actions_rejects_stale_embedded_hash() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        let mut action = test_outbound_bridge_action(b"persisted stale body");
+        let key = action.tx_hash;
+        action.received_ms = action.received_ms.saturating_add(1);
+        tree.insert(key.as_slice(), action.encode())
+            .expect("insert stale pending action");
+
+        let err = load_pending_actions(&tree)
+            .expect_err("stored action with stale embedded hash must reject");
+        assert!(err
+            .to_string()
+            .contains("stored pending action hash mismatch"));
     }
 
     #[test]

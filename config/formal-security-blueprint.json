@@ -2727,7 +2727,7 @@
       "claim_id": "native.block-action-hash-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean action-hash admission transition, native block action decoding/import accepts only when action payload count agrees with header tx_count, every decoded action's embedded tx_hash equals the recomputed pending_action_hash(action), and all action hashes are unique; count mismatch rejects before hash mismatch, and hash mismatch rejects before duplicate-hash reporting.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionHashAdmission.accepts_iff_admission_preconditions` proves the complete executable admission predicate, with companion theorems for count mismatch, action-hash mismatch, duplicate action hash, and hash-mismatch-before-duplicate precedence. `gen_action_hash_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_hash_admission` helper called by `decode_block_actions` and `validate_block_actions_locked`, while native regressions reject mutated embedded action hashes, duplicate action hashes, and action payload count mismatches on both direct decode and import validation paths.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionHashAdmission.accepts_iff_admission_preconditions` proves the complete executable admission predicate, with companion theorems for count mismatch, action-hash mismatch, duplicate action hash, and hash-mismatch-before-duplicate precedence. `gen_action_hash_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_hash_admission` helper called by `decode_block_actions` and `validate_block_actions_locked`, while native regressions reject mutated embedded action hashes, duplicate action hashes, and action payload count mismatches on both direct decode and import validation paths. Persisted pending-action reload now checks the sled key, embedded tx_hash, and recomputed `pending_action_hash` agree before reloaded actions can be selected for mining; this is production regression evidence at the local persistence boundary, not a new theorem over sled.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -2786,9 +2786,14 @@
           "id": "native-block-action-decode-duplicate-hash-regression",
           "description": "Native block-action decoding must reject repeated action hashes before returning decoded actions.",
           "gate": "cargo test -p hegemon-node decode_block_actions_rejects_duplicate_hashes --lib --no-default-features"
+        },
+        {
+          "id": "native-pending-action-reload-hash-binding-regression",
+          "description": "Native pending-action reload must reject persisted mempool entries when the sled key, embedded tx_hash, or recomputed pending_action_hash diverge.",
+          "gate": "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. It does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. Persisted pending-action reload is covered by focused production regressions that apply the same recomputed hash equality at the local sled trust boundary. This does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, sled durability or disk integrity, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
       "id": "native.action-root-transcript-binding",
