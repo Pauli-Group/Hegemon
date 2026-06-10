@@ -67,6 +67,7 @@ enum PowAdmissionRejection {
     TimestampFutureSkew,
     InvalidCompactTarget,
     InsufficientWork,
+    CumulativeWorkOverflow,
 }
 
 #[cfg(test)]
@@ -80,6 +81,7 @@ impl PowAdmissionRejection {
             Self::TimestampFutureSkew => "timestamp_future_skew",
             Self::InvalidCompactTarget => "invalid_compact_target",
             Self::InsufficientWork => "insufficient_work",
+            Self::CumulativeWorkOverflow => "cumulative_work_overflow",
         }
     }
 }
@@ -188,9 +190,11 @@ fn evaluate_pow_admission(
         return Err(PowAdmissionRejection::InsufficientWork);
     }
     let block_work = target_to_work(&target);
-    Ok(PowAdmission {
-        cumulative_work: input.parent_work + block_work,
-    })
+    let cumulative_work = input.parent_work + &block_work;
+    if cumulative_work > max_work48() {
+        return Err(PowAdmissionRejection::CumulativeWorkOverflow);
+    }
+    Ok(PowAdmission { cumulative_work })
 }
 
 fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
@@ -245,6 +249,9 @@ fn pow_admission_rejection_to_error(rejection: PowAdmissionRejection) -> Consens
             ConsensusError::Pow("invalid compact target".into())
         }
         PowAdmissionRejection::InsufficientWork => ConsensusError::Pow("insufficient work".into()),
+        PowAdmissionRejection::CumulativeWorkOverflow => {
+            ConsensusError::Pow("cumulative work overflow".into())
+        }
     }
 }
 
@@ -725,6 +732,10 @@ fn target_to_work(target: &BigUint) -> BigUint {
     max / (target.clone() + BigUint::one())
 }
 
+fn max_work48() -> BigUint {
+    (BigUint::one() << 384u32) - BigUint::one()
+}
+
 fn current_time_ms() -> u64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => {
@@ -952,10 +963,7 @@ mod tests {
         for case in &vectors.pow_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_compact_target_and_work(case);
-            if matches!(
-                case.expected_result.as_str(),
-                "cumulative_work_mismatch" | "cumulative_work_overflow"
-            ) {
+            if case.expected_result == "cumulative_work_mismatch" {
                 continue;
             }
             checked_admission_cases += 1;
@@ -1183,6 +1191,26 @@ mod tests {
         })
         .expect_err("u64::MAX parent height must not saturate into same-height acceptance");
         assert_eq!(rejection, PowAdmissionRejection::HeightMismatch);
+    }
+
+    #[test]
+    fn pow_admission_rejects_cumulative_work_overflow() {
+        let work_hash = [0u8; 32];
+        let parent_work = max_work48();
+        let rejection = evaluate_pow_admission(PowAdmissionInput {
+            parent_height: 41,
+            header_height: 42,
+            expected_pow_bits: 0x207f_ffff,
+            pow_bits: 0x207f_ffff,
+            parent_timestamp_ms: 0,
+            median_time_past_ms: 0,
+            now_ms: 1,
+            header_timestamp_ms: 1,
+            work_hash: &work_hash,
+            parent_work: &parent_work,
+        })
+        .expect_err("Work48 cumulative work overflow must fail closed");
+        assert_eq!(rejection, PowAdmissionRejection::CumulativeWorkOverflow);
     }
 
     fn parse_biguint(raw: &str) -> BigUint {

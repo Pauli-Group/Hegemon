@@ -368,7 +368,7 @@
       "id": "consensus.pow-admission",
       "component": "PoW header admission arithmetic",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PoW admission kernel proves checked u64 next-height arithmetic, compact-target rejection, strict timestamp admission, hash-threshold rejection, and fixed-width cumulative-work behavior; generated Lean vectors are checked against consensus admission and light-client Work48 helpers, with focused height-overflow regressions for both generic consensus and bridge/native header verification.",
+      "summary": "The Lean PoW admission kernel proves checked u64 next-height arithmetic, compact-target rejection, strict timestamp admission, hash-threshold rejection, and fixed-width cumulative-work behavior; generated Lean vectors are checked against consensus admission and light-client Work48 helpers, with focused height-overflow and cumulative-work overflow regressions for generic consensus plus bridge/native height-overflow verification.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
