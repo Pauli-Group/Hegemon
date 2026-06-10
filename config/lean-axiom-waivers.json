@@ -5,15 +5,5 @@
     "Quot.sound",
     "propext"
   ],
-  "temporary_axiom_families": [
-    {
-      "family": "native_decide",
-      "axiom_regex": "^Hegemon\\..*\\._native\\.native_decide\\.ax_[0-9_]+$",
-      "max_theorems": 36,
-      "max_unique_axioms": 36,
-      "expires_on": "2026-09-01",
-      "owner": "formal-core",
-      "reason": "Existing theorem claims use Lean native_decide for executable finite examples. This is a temporary explicit trust waiver: new native_decide axiom dependencies must not be added, and the budget should only shrink as proofs are rewritten without native_decide."
-    }
-  ]
+  "temporary_axiom_families": []
 }

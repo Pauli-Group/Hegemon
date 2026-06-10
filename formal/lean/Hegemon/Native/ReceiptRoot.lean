@@ -282,87 +282,108 @@ def truncatedArtifact : List Byte :=
 
 theorem valid_single_parses :
     parseNativeReceiptRootArtifact validSingleArtifact = some validSingleSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem valid_two_parses :
     parseNativeReceiptRootArtifact validTwoArtifact = some validTwoSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem valid_three_parses :
     parseNativeReceiptRootArtifact validThreeArtifact = some validThreeSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem single_leaf_schedule_accepts :
     receiptRootScheduleAccepts 1 validSingleArtifact = true := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem two_leaf_schedule_accepts :
     receiptRootScheduleAccepts 2 validTwoArtifact = true := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem three_leaf_schedule_accepts :
     receiptRootScheduleAccepts 3 validThreeArtifact = true := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem zero_expected_leaves_rejected :
     receiptRootScheduleAccepts 0 validSingleArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem artifact_leaf_mismatch_rejected :
     receiptRootScheduleAccepts 1 leafMismatchArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem missing_fold_rejected :
     receiptRootScheduleAccepts 2 missingFoldArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem extra_fold_rejected :
     receiptRootScheduleAccepts 1 extraFoldArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_few_challenges_rejected :
     receiptRootScheduleAccepts 2 tooFewChallengesArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_many_challenges_rejected :
     parseNativeReceiptRootArtifact tooManyChallengesArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_few_rows_rejected :
     receiptRootScheduleAccepts 2 tooFewRowsArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_many_rows_rejected :
     parseNativeReceiptRootArtifact tooManyRowsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_few_coefficients_rejected :
     receiptRootScheduleAccepts 2 tooFewCoefficientsArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_many_coefficients_rejected :
     parseNativeReceiptRootArtifact tooManyCoefficientsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem zero_artifact_leaves_rejected :
     receiptRootScheduleAccepts 0 zeroLeafArtifact = false := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_many_leaves_rejected :
     parseNativeReceiptRootArtifact tooManyLeavesArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem too_many_folds_rejected :
     parseNativeReceiptRootArtifact tooManyFoldsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem trailing_bytes_rejected :
     parseNativeReceiptRootArtifact trailingArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem truncated_artifact_rejected :
     parseNativeReceiptRootArtifact truncatedArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 end ReceiptRoot
 end Native

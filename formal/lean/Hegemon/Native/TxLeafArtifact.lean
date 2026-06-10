@@ -413,63 +413,78 @@ def truncatedArtifact : List Byte :=
 
 theorem valid_artifact_parses :
     parseNativeTxLeafArtifact validArtifact = some validSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem missing_backend_defaults_to_current_backend :
     parseNativeTxLeafArtifact missingBackendArtifact = some missingBackendSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem legacy_missing_backend_defaults_to_plonky3 :
     parseNativeTxLeafArtifact legacyMissingBackendArtifact = some legacyMissingBackendSummary := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_trailing_after_backend :
     parseNativeTxLeafArtifact trailingArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_bad_backend :
     parseNativeTxLeafArtifact badBackendArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_input_flags :
     parseNativeTxLeafArtifact tooManyInputFlagsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_output_flags :
     parseNativeTxLeafArtifact tooManyOutputFlagsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_balance_slots :
     parseNativeTxLeafArtifact tooManyBalanceSlotsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_nullifiers :
     parseNativeTxLeafArtifact tooManyNullifiersArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_commitments :
     parseNativeTxLeafArtifact tooManyCommitmentsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_ciphertext_hashes :
     parseNativeTxLeafArtifact tooManyCiphertextHashesArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_rows :
     parseNativeTxLeafArtifact tooManyRowsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_too_many_row_coefficients :
     parseNativeTxLeafArtifact tooManyRowCoeffsArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_oversized_proof_len :
     parseNativeTxLeafArtifact oversizedProofLenArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 theorem rejects_truncated_artifact :
     parseNativeTxLeafArtifact truncatedArtifact = none := by
-  native_decide
+  set_option maxRecDepth 50000 in
+  decide
 
 end TxLeafArtifact
 end Native
