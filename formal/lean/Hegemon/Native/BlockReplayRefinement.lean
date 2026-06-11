@@ -118,6 +118,27 @@ def mapCommitmentReject : CommitmentReject -> BlockReplayReject
   | CommitmentReject.headerMmrLenMismatch => BlockReplayReject.headerMmrLenMismatch
   | CommitmentReject.supplyDigestMismatch => BlockReplayReject.supplyDigestMismatch
 
+def rejectLabel : BlockReplayReject -> String
+  | BlockReplayReject.ciphertextCountMismatch => "ciphertext_count_mismatch"
+  | BlockReplayReject.commitmentIndexOverflow => "commitment_index_overflow"
+  | BlockReplayReject.nullifierZero => "nullifier_zero"
+  | BlockReplayReject.duplicateNullifier => "duplicate_nullifier"
+  | BlockReplayReject.bridgeReplayDuplicate => "bridge_replay_duplicate"
+  | BlockReplayReject.supplyDeltaInvalid => "supply_delta_invalid"
+  | BlockReplayReject.txCountMismatch => "tx_count_mismatch"
+  | BlockReplayReject.stateRootMismatch => "state_root_mismatch"
+  | BlockReplayReject.kernelRootMismatch => "kernel_root_mismatch"
+  | BlockReplayReject.nullifierRootMismatch => "nullifier_root_mismatch"
+  | BlockReplayReject.extrinsicsRootMismatch => "extrinsics_root_mismatch"
+  | BlockReplayReject.messageRootMismatch => "message_root_mismatch"
+  | BlockReplayReject.messageCountMismatch => "message_count_mismatch"
+  | BlockReplayReject.headerMmrRootMismatch => "header_mmr_root_mismatch"
+  | BlockReplayReject.headerMmrLenMismatch => "header_mmr_len_mismatch"
+  | BlockReplayReject.supplyDigestMismatch => "supply_digest_mismatch"
+
+def rejectionTrace (rejection : BlockReplayReject) : String :=
+  "rejected:" ++ rejectLabel rejection
+
 def evaluateBlockReplayRefinement
     (input : BlockReplayInput) :
     Except BlockReplayReject BlockReplaySummary :=
@@ -136,6 +157,80 @@ def evaluateBlockReplayRefinement
                   importedBridgeReplayCount := effect.importedBridgeReplayCount,
                   plannedStarts := effect.plannedStarts,
                   expectedSupply := supply }
+
+def evaluateBlockReplayRefinementWithTrace
+    (input : BlockReplayInput) :
+    List String × Except BlockReplayReject BlockReplaySummary :=
+  match evaluateActionStreamEffect (streamInput input) with
+  | Except.error rejection =>
+      let mapped := mapStreamReject rejection
+      (["action_stream_effect", rejectionTrace mapped], Except.error mapped)
+  | Except.ok effect =>
+      match expectedSupply input with
+      | none =>
+          (["action_stream_effect", "expected_supply",
+            rejectionTrace BlockReplayReject.supplyDeltaInvalid],
+            Except.error BlockReplayReject.supplyDeltaInvalid)
+      | some supply =>
+          match evaluateCommitmentRejection (commitmentInput input) with
+          | some rejection =>
+              let mapped := mapCommitmentReject rejection
+              (["action_stream_effect", "expected_supply",
+                "block_commitment", rejectionTrace mapped],
+                Except.error mapped)
+          | none =>
+              (["action_stream_effect", "expected_supply",
+                "block_commitment", "accepted"],
+                Except.ok
+                  { nextLeafCount := effect.nextLeafCount,
+                    importedNullifierCount := effect.importedNullifierCount,
+                    importedBridgeReplayCount := effect.importedBridgeReplayCount,
+                    plannedStarts := effect.plannedStarts,
+                    expectedSupply := supply })
+
+theorem traced_result_matches_untraced
+    (input : BlockReplayInput) :
+    (evaluateBlockReplayRefinementWithTrace input).2 =
+      evaluateBlockReplayRefinement input := by
+  unfold evaluateBlockReplayRefinementWithTrace evaluateBlockReplayRefinement
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
+  | error streamRejection =>
+      simp [streamResult]
+  | ok effect =>
+      cases supplyResult : expectedSupply input with
+      | none =>
+          simp [streamResult, supplyResult]
+      | some supply =>
+          cases commitmentResult :
+              evaluateCommitmentRejection (commitmentInput input) with
+          | none =>
+              simp [streamResult, supplyResult, commitmentResult]
+          | some commitmentRejection =>
+              simp [streamResult, supplyResult, commitmentResult]
+
+theorem accepted_trace_is_canonical
+    {input : BlockReplayInput}
+    {summary : BlockReplaySummary}
+    (accepted :
+      (evaluateBlockReplayRefinementWithTrace input).2 = Except.ok summary) :
+    (evaluateBlockReplayRefinementWithTrace input).1 =
+      ["action_stream_effect", "expected_supply",
+        "block_commitment", "accepted"] := by
+  unfold evaluateBlockReplayRefinementWithTrace at accepted ⊢
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
+  | error streamRejection =>
+      simp [streamResult] at accepted
+  | ok effect =>
+      cases supplyResult : expectedSupply input with
+      | none =>
+          simp [streamResult, supplyResult] at accepted
+      | some supply =>
+          cases commitmentResult :
+              evaluateCommitmentRejection (commitmentInput input) with
+          | some commitmentRejection =>
+              simp [streamResult, supplyResult, commitmentResult] at accepted
+          | none =>
+              simp [streamResult, supplyResult, commitmentResult]
 
 def blockReplayAccepts (input : BlockReplayInput) : Bool :=
   match evaluateBlockReplayRefinement input with

@@ -1684,7 +1684,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "expected_native_supply_from_parts",
           "required_callers": [
-            "evaluate_native_block_replay_refinement"
+            "evaluate_native_block_replay_refinement_with_trace"
           ]
         }
       ],
@@ -4076,8 +4076,8 @@
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean block replay-refinement transition, native replay/accounting acceptance implies the ordered action-stream effect table accepted, checked native supply advancement produced the claimed supply digest, and every block commitment-admission precondition holds. In particular, an accepted multi-action replay summary cannot carry a counterfeit state-root predicate or claimed supply under the modeled production-derived predicates.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over ordered action-stream planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `valid_two_action_replay_accepts`, `duplicate_nullifier_replay_rejects`, and `cross_action_bridge_replay_duplicate_rejects` pin representative multi-action replay behavior. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against the `node/src/native/mod.rs` production helper used by mined-block import, announced-block import, and canonical replay; that helper composes the production ordered stream helper, block-commitment helper, and checked native supply advancement over height, fee total, and coinbase presence.",
+      "formal_statement": "For the executable Lean block replay-refinement transition, native replay/accounting acceptance implies the ordered action-stream effect table accepted, checked native supply advancement produced the claimed supply digest, and every block commitment-admission precondition holds. The traced Lean transition has the same result as the untraced transition, and accepted replay has the canonical stage trace action-stream, supply, block-commitment, accepted. In particular, an accepted multi-action replay summary cannot carry a counterfeit state-root predicate or claimed supply under the modeled production-derived predicates.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over ordered action-stream planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `traced_result_matches_untraced` proves that the traced evaluator used for conformance has the same result as the executable transition, and `accepted_trace_is_canonical` pins the accepted-stage order. `valid_two_action_replay_accepts`, `duplicate_nullifier_replay_rejects`, and `cross_action_bridge_replay_duplicate_rejects` pin representative multi-action replay behavior. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against the `node/src/native/mod.rs` production helper used by mined-block import, announced-block import, and canonical replay; that helper composes the production ordered stream helper, block-commitment helper, and checked native supply advancement over height, fee total, and coinbase presence while exposing the production stage trace for differential checking.",
       "depends_on": [
         "native.action-state-effect-planning",
         "native.action-stream-effect-planning",
@@ -4099,6 +4099,13 @@
         "scripts/check_lean_formal.sh"
       ],
       "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_replay_refinement_with_trace",
+          "required_callers": [
+            "evaluate_native_block_replay_refinement"
+          ]
+        },
         {
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_block_replay_refinement_for_actions",
@@ -4157,7 +4164,12 @@
         },
         {
           "id": "lean-generated-block-replay-refinement-conformance",
-      "description": "Changing the Rust composite replay/accounting helper used by mined-block import, announced-block import, and canonical replay away from the Lean executable spec must fail the generated-vector conformance step.",
+          "description": "Changing the Rust composite replay/accounting helper used by mined-block import, announced-block import, and canonical replay away from the Lean executable spec or its staged transition trace must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features"
+        },
+        {
+          "id": "lean-generated-block-replay-trace-conformance",
+          "description": "Changing the production replay helper stage order without changing the final result must fail because Rust compares its production trace to Lean-generated `expected_trace` for every replay-refinement vector.",
           "gate": "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features"
         },
         {

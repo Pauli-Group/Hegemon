@@ -7294,41 +7294,83 @@ fn evaluate_native_block_replay_refinement<'a>(
     nullifier_state: &mut NullifierState,
     bridge_replay_state: &mut InboundReplayState,
 ) -> Result<NativeBlockReplayRefinementSummary, NativeBlockReplayRefinementRejection> {
-    let action_effect = evaluate_native_action_stream_effect(
+    let (_trace, result) = evaluate_native_block_replay_refinement_with_trace(
+        input,
+        steps,
+        nullifier_state,
+        bridge_replay_state,
+    );
+    result
+}
+
+fn evaluate_native_block_replay_refinement_with_trace<'a>(
+    input: NativeBlockReplayRefinementInput,
+    steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
+    nullifier_state: &mut NullifierState,
+    bridge_replay_state: &mut InboundReplayState,
+) -> (
+    Vec<String>,
+    Result<NativeBlockReplayRefinementSummary, NativeBlockReplayRefinementRejection>,
+) {
+    let mut trace = vec!["action_stream_effect".to_owned()];
+    let action_effect = match evaluate_native_action_stream_effect(
         input.leaf_start,
         steps,
         nullifier_state,
         bridge_replay_state,
-    )
-    .map_err(native_block_replay_refinement_action_rejection)?;
-    let expected_supply = expected_native_supply_from_parts(
+    ) {
+        Ok(effect) => effect,
+        Err(rejection) => {
+            let rejection = native_block_replay_refinement_action_rejection(rejection);
+            trace.push(format!("rejected:{}", rejection.label()));
+            return (trace, Err(rejection));
+        }
+    };
+    trace.push("expected_supply".to_owned());
+    let expected_supply = match expected_native_supply_from_parts(
         input.parent_supply,
         input.height,
         input.fee_total,
         input.has_coinbase,
-    )
-    .ok_or(NativeBlockReplayRefinementRejection::SupplyDeltaInvalid)?;
-    evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
-        tx_count_matches: input.tx_count_matches,
-        state_root_matches: input.state_root_matches,
-        kernel_root_matches: input.kernel_root_matches,
-        nullifier_root_matches: input.nullifier_root_matches,
-        extrinsics_root_matches: input.extrinsics_root_matches,
-        message_root_matches: input.message_root_matches,
-        message_count_matches: input.message_count_matches,
-        header_mmr_root_matches: input.header_mmr_root_matches,
-        header_mmr_len_matches: input.header_mmr_len_matches,
-        supply_digest_matches: expected_supply == input.claimed_supply,
-    })
-    .map_err(native_block_replay_refinement_commitment_rejection)?;
+    ) {
+        Some(expected_supply) => expected_supply,
+        None => {
+            let rejection = NativeBlockReplayRefinementRejection::SupplyDeltaInvalid;
+            trace.push(format!("rejected:{}", rejection.label()));
+            return (trace, Err(rejection));
+        }
+    };
+    trace.push("block_commitment".to_owned());
+    if let Err(rejection) =
+        evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+            tx_count_matches: input.tx_count_matches,
+            state_root_matches: input.state_root_matches,
+            kernel_root_matches: input.kernel_root_matches,
+            nullifier_root_matches: input.nullifier_root_matches,
+            extrinsics_root_matches: input.extrinsics_root_matches,
+            message_root_matches: input.message_root_matches,
+            message_count_matches: input.message_count_matches,
+            header_mmr_root_matches: input.header_mmr_root_matches,
+            header_mmr_len_matches: input.header_mmr_len_matches,
+            supply_digest_matches: expected_supply == input.claimed_supply,
+        })
+    {
+        let rejection = native_block_replay_refinement_commitment_rejection(rejection);
+        trace.push(format!("rejected:{}", rejection.label()));
+        return (trace, Err(rejection));
+    }
+    trace.push("accepted".to_owned());
 
-    Ok(NativeBlockReplayRefinementSummary {
-        next_leaf_count: action_effect.next_leaf_count,
-        imported_nullifier_count: action_effect.imported_nullifier_count,
-        imported_bridge_replay_count: action_effect.imported_bridge_replay_count,
-        planned_starts: action_effect.planned_starts,
-        expected_supply,
-    })
+    (
+        trace,
+        Ok(NativeBlockReplayRefinementSummary {
+            next_leaf_count: action_effect.next_leaf_count,
+            imported_nullifier_count: action_effect.imported_nullifier_count,
+            imported_bridge_replay_count: action_effect.imported_bridge_replay_count,
+            planned_starts: action_effect.planned_starts,
+            expected_supply,
+        }),
+    )
 }
 
 fn expected_native_supply_from_parts(
@@ -10075,6 +10117,7 @@ mod tests {
         expected_supply: Option<String>,
         expected_valid: bool,
         expected_rejection: Option<String>,
+        expected_trace: Vec<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -13545,7 +13588,7 @@ mod tests {
             header_mmr_len_matches: case.header_mmr_len_matches,
         };
 
-        let actual = evaluate_native_block_replay_refinement(
+        let (actual_trace, actual) = evaluate_native_block_replay_refinement_with_trace(
             input,
             case.actions
                 .iter()
@@ -13561,6 +13604,11 @@ mod tests {
                 ),
             &mut nullifier_state,
             &mut bridge_replay_state,
+        );
+        assert_eq!(
+            actual_trace, case.expected_trace,
+            "{} replay transition trace drifted from Lean spec",
+            case.name
         );
         match actual {
             Ok(summary) => {

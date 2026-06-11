@@ -14,6 +14,14 @@ def natListJson : List Nat -> String
   | [] => "[]"
   | head :: tail => "[" ++ toString head ++ natListTailJson tail ++ "]"
 
+def stringListTailJson : List String -> String
+  | [] => ""
+  | head :: tail => ", \"" ++ head ++ "\"" ++ stringListTailJson tail
+
+def stringListJson : List String -> String
+  | [] => "[]"
+  | head :: tail => "[\"" ++ head ++ "\"" ++ stringListTailJson tail ++ "]"
+
 def optionNatJson : Option Nat -> String
   | none => "null"
   | some value => toString value
@@ -87,7 +95,8 @@ def streamActionsJson : List StreamAction -> String
 def blockReplayCaseJson
     (name : String)
     (input : BlockReplayInput) : String :=
-  let result := evaluateBlockReplayRefinement input
+  let traced := evaluateBlockReplayRefinementWithTrace input
+  let result := traced.2
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"leaf_start\": " ++ toString input.leafStart ++ ",\n"
@@ -129,7 +138,8 @@ def blockReplayCaseJson
     ++ "      \"expected_valid\": "
       ++ boolJson (match result with | Except.ok _ => true | Except.error _ => false)
       ++ ",\n"
-    ++ "      \"expected_rejection\": " ++ rejectionJson result ++ "\n"
+    ++ "      \"expected_rejection\": " ++ rejectionJson result ++ ",\n"
+    ++ "      \"expected_trace\": " ++ stringListJson traced.1 ++ "\n"
     ++ "    }"
 
 def bridgeReplayValid : BlockReplayInput :=
