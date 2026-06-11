@@ -1,5 +1,5 @@
 import Hegemon.Consensus.Supply
-import Hegemon.Native.ActionStateEffect
+import Hegemon.Native.ActionStreamEffect
 import Hegemon.Native.BlockCommitmentAdmission
 
 set_option linter.unusedSimpArgs false
@@ -9,7 +9,7 @@ namespace Native
 namespace BlockReplayRefinement
 
 open Hegemon.Consensus
-open Hegemon.Native.ActionStateEffect
+open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.BlockCommitmentAdmission
 
 inductive BlockReplayReject where
@@ -33,11 +33,9 @@ deriving DecidableEq, Repr
 
 structure BlockReplayInput where
   leafStart : Nat
-  commitmentCount : Nat
-  ciphertextCount : Nat
-  nullifierCount : Nat
-  nullifierState : NullifierImportState
-  bridgeReplayState : BridgeReplayState
+  spentNullifiers : List Nat
+  consumedBridgeReplays : List Nat
+  actions : List StreamAction
   parentSupply : Nat
   height : Nat
   feeTotal : Nat
@@ -57,18 +55,17 @@ deriving DecidableEq, Repr
 structure BlockReplaySummary where
   nextLeafCount : Nat
   importedNullifierCount : Nat
-  importedBridgeReplay : Bool
+  importedBridgeReplayCount : Nat
+  plannedStarts : List Nat
   expectedSupply : Nat
 deriving DecidableEq, Repr
 
-def actionInput (input : BlockReplayInput) : ActionStateEffectInput :=
+def streamInput (input : BlockReplayInput) : ActionStreamInput :=
   {
     leafStart := input.leafStart,
-    commitmentCount := input.commitmentCount,
-    ciphertextCount := input.ciphertextCount,
-    nullifierCount := input.nullifierCount,
-    nullifierState := input.nullifierState,
-    bridgeReplayState := input.bridgeReplayState
+    spentNullifiers := input.spentNullifiers,
+    consumedBridgeReplays := input.consumedBridgeReplays,
+    actions := input.actions
   }
 
 def expectedSupply (input : BlockReplayInput) : Option Nat :=
@@ -98,15 +95,15 @@ def commitmentInput (input : BlockReplayInput) : CommitmentInput :=
     supplyDigestMatches := supplyDigestMatches input
   }
 
-def mapActionReject : ActionStateEffectReject -> BlockReplayReject
-  | ActionStateEffectReject.ciphertextCountMismatch =>
+def mapStreamReject : ActionStreamReject -> BlockReplayReject
+  | ActionStreamReject.ciphertextCountMismatch =>
       BlockReplayReject.ciphertextCountMismatch
-  | ActionStateEffectReject.commitmentIndexOverflow =>
+  | ActionStreamReject.commitmentIndexOverflow =>
       BlockReplayReject.commitmentIndexOverflow
-  | ActionStateEffectReject.nullifierZero => BlockReplayReject.nullifierZero
-  | ActionStateEffectReject.duplicateNullifier =>
+  | ActionStreamReject.nullifierZero => BlockReplayReject.nullifierZero
+  | ActionStreamReject.duplicateNullifier =>
       BlockReplayReject.duplicateNullifier
-  | ActionStateEffectReject.bridgeReplayDuplicate =>
+  | ActionStreamReject.bridgeReplayDuplicate =>
       BlockReplayReject.bridgeReplayDuplicate
 
 def mapCommitmentReject : CommitmentReject -> BlockReplayReject
@@ -124,8 +121,8 @@ def mapCommitmentReject : CommitmentReject -> BlockReplayReject
 def evaluateBlockReplayRefinement
     (input : BlockReplayInput) :
     Except BlockReplayReject BlockReplaySummary :=
-  match evaluateActionStateEffect (actionInput input) with
-  | Except.error rejection => Except.error (mapActionReject rejection)
+  match evaluateActionStreamEffect (streamInput input) with
+  | Except.error rejection => Except.error (mapStreamReject rejection)
   | Except.ok effect =>
       match expectedSupply input with
       | none => Except.error BlockReplayReject.supplyDeltaInvalid
@@ -136,7 +133,8 @@ def evaluateBlockReplayRefinement
               Except.ok
                 { nextLeafCount := effect.nextLeafCount,
                   importedNullifierCount := effect.importedNullifierCount,
-                  importedBridgeReplay := effect.importedBridgeReplay,
+                  importedBridgeReplayCount := effect.importedBridgeReplayCount,
+                  plannedStarts := effect.plannedStarts,
                   expectedSupply := supply }
 
 def blockReplayAccepts (input : BlockReplayInput) : Bool :=
@@ -145,7 +143,7 @@ def blockReplayAccepts (input : BlockReplayInput) : Bool :=
   | Except.error _ => false
 
 def blockReplayPreconditions (input : BlockReplayInput) : Bool :=
-  actionStateEffectPreconditions (actionInput input)
+  actionStreamAccepts (streamInput input)
     &&
       (match expectedSupply input with
       | none => false
@@ -155,27 +153,13 @@ theorem accepts_iff_block_replay_preconditions
     (input : BlockReplayInput) :
     blockReplayAccepts input = blockReplayPreconditions input := by
   unfold blockReplayAccepts blockReplayPreconditions evaluateBlockReplayRefinement
-  cases actionResult : evaluateActionStateEffect (actionInput input) with
-  | error actionRejection =>
-      have actionAcceptsFalse :
-          actionStateEffectAccepts (actionInput input) = false := by
-        simp [actionStateEffectAccepts, actionResult]
-      have actionPreconditionsFalse :
-          actionStateEffectPreconditions (actionInput input) = false := by
-        rw [← accepts_iff_state_effect_preconditions (actionInput input)]
-        exact actionAcceptsFalse
-      simp [actionResult, actionPreconditionsFalse]
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
+  | error streamRejection =>
+      simp [actionStreamAccepts, streamResult]
   | ok effect =>
-      have actionAcceptsTrue :
-          actionStateEffectAccepts (actionInput input) = true := by
-        simp [actionStateEffectAccepts, actionResult]
-      have actionPreconditionsTrue :
-          actionStateEffectPreconditions (actionInput input) = true := by
-        rw [← accepts_iff_state_effect_preconditions (actionInput input)]
-        exact actionAcceptsTrue
       cases supplyResult : expectedSupply input with
       | none =>
-          simp [actionResult, actionPreconditionsTrue, supplyResult]
+          simp [actionStreamAccepts, streamResult, supplyResult]
       | some supply =>
           cases commitmentResult :
               evaluateCommitmentRejection (commitmentInput input) with
@@ -188,8 +172,8 @@ theorem accepts_iff_block_replay_preconditions
                 (accepts_iff_commitment_preconditions
                   (input := commitmentInput input)).mp commitmentAcceptsTrue
               simp [
-                actionResult,
-                actionPreconditionsTrue,
+                actionStreamAccepts,
+                streamResult,
                 supplyResult,
                 commitmentResult,
                 commitmentPreconditionsTrue
@@ -207,8 +191,8 @@ theorem accepts_iff_block_replay_preconditions
                         (input := commitmentInput input)).mpr h
                     simp [commitmentAccepts, commitmentResult] at commitmentAcceptsTrue
               simp [
-                actionResult,
-                actionPreconditionsTrue,
+                actionStreamAccepts,
+                streamResult,
                 supplyResult,
                 commitmentResult,
                 commitmentPreconditionsFalse
@@ -218,27 +202,40 @@ theorem accepted_has_action_effect
     {input : BlockReplayInput}
     {summary : BlockReplaySummary}
     (accepted : evaluateBlockReplayRefinement input = Except.ok summary) :
-    evaluateActionStateEffect (actionInput input) =
+    evaluateActionStreamEffect (streamInput input) =
       Except.ok
         { nextLeafCount := summary.nextLeafCount,
           importedNullifierCount := summary.importedNullifierCount,
-          importedBridgeReplay := summary.importedBridgeReplay } := by
+          importedBridgeReplayCount := summary.importedBridgeReplayCount,
+          plannedStarts := summary.plannedStarts } := by
   unfold evaluateBlockReplayRefinement at accepted
-  cases actionResult : evaluateActionStateEffect (actionInput input) with
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
   | error rejection =>
-      simp [actionResult] at accepted
+      simp [streamResult] at accepted
   | ok effect =>
       cases supplyResult : expectedSupply input with
       | none =>
-          simp [actionResult, supplyResult] at accepted
+          simp [streamResult, supplyResult] at accepted
       | some supply =>
           cases commitmentResult :
               evaluateCommitmentRejection (commitmentInput input) with
           | some rejection =>
-              simp [actionResult, supplyResult, commitmentResult] at accepted
+              simp [streamResult, supplyResult, commitmentResult] at accepted
           | none =>
-              simp [actionResult, supplyResult, commitmentResult] at accepted
+              simp [streamResult, supplyResult, commitmentResult] at accepted
               rw [← accepted]
+
+theorem accepted_has_action_stream_effect
+    {input : BlockReplayInput}
+    {summary : BlockReplaySummary}
+    (accepted : evaluateBlockReplayRefinement input = Except.ok summary) :
+    evaluateActionStreamEffect (streamInput input) =
+      Except.ok
+        { nextLeafCount := summary.nextLeafCount,
+          importedNullifierCount := summary.importedNullifierCount,
+          importedBridgeReplayCount := summary.importedBridgeReplayCount,
+          plannedStarts := summary.plannedStarts } :=
+  accepted_has_action_effect accepted
 
 theorem accepted_claims_expected_supply
     {input : BlockReplayInput}
@@ -247,18 +244,18 @@ theorem accepted_claims_expected_supply
     expectedSupply input = some summary.expectedSupply
       ∧ summary.expectedSupply = input.claimedSupply := by
   unfold evaluateBlockReplayRefinement at accepted
-  cases actionResult : evaluateActionStateEffect (actionInput input) with
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
   | error rejection =>
-      simp [actionResult] at accepted
+      simp [streamResult] at accepted
   | ok effect =>
       cases supplyResult : expectedSupply input with
       | none =>
-          simp [actionResult, supplyResult] at accepted
+          simp [streamResult, supplyResult] at accepted
       | some supply =>
           cases commitmentResult :
               evaluateCommitmentRejection (commitmentInput input) with
           | some rejection =>
-              simp [actionResult, supplyResult, commitmentResult] at accepted
+              simp [streamResult, supplyResult, commitmentResult] at accepted
           | none =>
               have commitmentAcceptsTrue :
                   commitmentAccepts (commitmentInput input) = true := by
@@ -278,7 +275,7 @@ theorem accepted_claims_expected_supply
                 by_cases eq : supply = input.claimedSupply
                 · exact eq
                 · simp [eq] at supplyMatchesTrue
-              simp [actionResult, supplyResult, commitmentResult] at accepted
+              simp [streamResult, supplyResult, commitmentResult] at accepted
               rw [← accepted]
               constructor
               · rfl
@@ -290,18 +287,18 @@ theorem accepted_implies_commitment_preconditions
     (accepted : evaluateBlockReplayRefinement input = Except.ok summary) :
     commitmentPreconditions (commitmentInput input) = true := by
   unfold evaluateBlockReplayRefinement at accepted
-  cases actionResult : evaluateActionStateEffect (actionInput input) with
+  cases streamResult : evaluateActionStreamEffect (streamInput input) with
   | error rejection =>
-      simp [actionResult] at accepted
+      simp [streamResult] at accepted
   | ok effect =>
       cases supplyResult : expectedSupply input with
       | none =>
-          simp [actionResult, supplyResult] at accepted
+          simp [streamResult, supplyResult] at accepted
       | some supply =>
           cases commitmentResult :
               evaluateCommitmentRejection (commitmentInput input) with
           | some rejection =>
-              simp [actionResult, supplyResult, commitmentResult] at accepted
+              simp [streamResult, supplyResult, commitmentResult] at accepted
           | none =>
               have commitmentAcceptsTrue :
                   commitmentAccepts (commitmentInput input) = true := by
@@ -323,11 +320,16 @@ theorem accepted_forbids_counterfeit_state_root
 def validReplay : BlockReplayInput :=
   {
     leafStart := 10,
-    commitmentCount := 2,
-    ciphertextCount := 2,
-    nullifierCount := 1,
-    nullifierState := NullifierImportState.valid,
-    bridgeReplayState := BridgeReplayState.absent,
+    spentNullifiers := [],
+    consumedBridgeReplays := [],
+    actions := [
+      {
+        commitmentCount := 2,
+        ciphertextCount := 2,
+        nullifiers := [1],
+        bridgeReplayKey := none
+      }
+    ],
     parentSupply := 100,
     height := 1,
     feeTotal := 0,
@@ -349,16 +351,87 @@ theorem valid_replay_accepts :
       Except.ok
         { nextLeafCount := 12,
           importedNullifierCount := 1,
-          importedBridgeReplay := false,
+          importedBridgeReplayCount := 0,
+          plannedStarts := [10],
+          expectedSupply := 100 } := by
+  rfl
+
+def validTwoActionReplay : BlockReplayInput :=
+  {
+    validReplay with
+    leafStart := 20,
+    actions := [
+      {
+        commitmentCount := 2,
+        ciphertextCount := 2,
+        nullifiers := [1],
+        bridgeReplayKey := none
+      },
+      {
+        commitmentCount := 1,
+        ciphertextCount := 1,
+        nullifiers := [2, 3],
+        bridgeReplayKey := some 7
+      }
+    ]
+  }
+
+theorem valid_two_action_replay_accepts :
+    evaluateBlockReplayRefinement validTwoActionReplay =
+      Except.ok
+        { nextLeafCount := 23,
+          importedNullifierCount := 3,
+          importedBridgeReplayCount := 1,
+          plannedStarts := [20, 22],
           expectedSupply := 100 } := by
   rfl
 
 def duplicateNullifierReplay : BlockReplayInput :=
-  { validReplay with nullifierState := NullifierImportState.duplicate }
+  {
+    validReplay with
+    actions := [
+      {
+        commitmentCount := 0,
+        ciphertextCount := 0,
+        nullifiers := [4],
+        bridgeReplayKey := none
+      },
+      {
+        commitmentCount := 0,
+        ciphertextCount := 0,
+        nullifiers := [4],
+        bridgeReplayKey := none
+      }
+    ]
+  }
 
 theorem duplicate_nullifier_replay_rejects :
     evaluateBlockReplayRefinement duplicateNullifierReplay =
       Except.error BlockReplayReject.duplicateNullifier := by
+  rfl
+
+def crossActionBridgeReplayDuplicate : BlockReplayInput :=
+  {
+    validReplay with
+    actions := [
+      {
+        commitmentCount := 0,
+        ciphertextCount := 0,
+        nullifiers := [],
+        bridgeReplayKey := some 9
+      },
+      {
+        commitmentCount := 0,
+        ciphertextCount := 0,
+        nullifiers := [],
+        bridgeReplayKey := some 9
+      }
+    ]
+  }
+
+theorem cross_action_bridge_replay_duplicate_rejects :
+    evaluateBlockReplayRefinement crossActionBridgeReplayDuplicate =
+      Except.error BlockReplayReject.bridgeReplayDuplicate := by
   rfl
 
 def supplyOverflowReplay : BlockReplayInput :=

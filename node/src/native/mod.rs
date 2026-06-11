@@ -1309,8 +1309,6 @@ struct NativeBlockCommitmentAdmissionInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBlockReplayRefinementInput {
     leaf_start: u64,
-    commitment_count: usize,
-    ciphertext_count: usize,
     parent_supply: u128,
     height: u64,
     fee_total: u64,
@@ -1328,11 +1326,12 @@ struct NativeBlockReplayRefinementInput {
 }
 
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct NativeBlockReplayRefinementSummary {
     next_leaf_count: u64,
     imported_nullifier_count: usize,
-    imported_bridge_replay: bool,
+    imported_bridge_replay_count: usize,
+    planned_starts: Vec<u64>,
     expected_supply: u128,
 }
 
@@ -6958,19 +6957,15 @@ fn native_block_commitment_admission_error(
 }
 
 #[cfg(test)]
-fn evaluate_native_block_replay_refinement(
+fn evaluate_native_block_replay_refinement<'a>(
     input: NativeBlockReplayRefinementInput,
-    nullifiers: &[[u8; 48]],
-    replay_key: Option<[u8; 48]>,
+    steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
     nullifier_state: &mut NullifierState,
     bridge_replay_state: &mut InboundReplayState,
 ) -> Result<NativeBlockReplayRefinementSummary, NativeBlockReplayRefinementRejection> {
-    let action_effect = evaluate_native_action_state_effect(
+    let action_effect = evaluate_native_action_stream_effect(
         input.leaf_start,
-        input.commitment_count,
-        input.ciphertext_count,
-        nullifiers,
-        replay_key,
+        steps,
         nullifier_state,
         bridge_replay_state,
     )
@@ -6999,7 +6994,8 @@ fn evaluate_native_block_replay_refinement(
     Ok(NativeBlockReplayRefinementSummary {
         next_leaf_count: action_effect.next_leaf_count,
         imported_nullifier_count: action_effect.imported_nullifier_count,
-        imported_bridge_replay: action_effect.imported_bridge_replay,
+        imported_bridge_replay_count: action_effect.imported_bridge_replay_count,
+        planned_starts: action_effect.planned_starts,
         expected_supply,
     })
 }
@@ -9555,11 +9551,9 @@ mod tests {
     struct LeanBlockReplayRefinementCase {
         name: String,
         leaf_start: u64,
-        commitment_count: usize,
-        ciphertext_count: usize,
-        nullifier_count: usize,
-        nullifier_state: String,
-        bridge_replay_state: String,
+        spent_nullifiers: Vec<u64>,
+        consumed_bridge_replays: Vec<u64>,
+        actions: Vec<LeanActionStreamActionCase>,
         parent_supply: String,
         height: u64,
         fee_total: u64,
@@ -9576,7 +9570,8 @@ mod tests {
         header_mmr_len_matches: bool,
         expected_next_leaf_count: Option<String>,
         expected_imported_nullifier_count: Option<String>,
-        expected_imported_bridge_replay: Option<bool>,
+        expected_imported_bridge_replay_count: Option<String>,
+        expected_planned_starts: Option<Vec<u64>>,
         expected_supply: Option<String>,
         expected_valid: bool,
         expected_rejection: Option<String>,
@@ -12766,19 +12761,40 @@ mod tests {
     }
 
     fn verify_lean_block_replay_refinement_case(case: &LeanBlockReplayRefinementCase) {
-        let (spent_nullifiers, nullifiers) = synthetic_action_effect_nullifiers(
-            &case.nullifier_state,
-            case.nullifier_count,
-            &case.name,
-        );
-        let (consumed_replays, replay_key) =
-            synthetic_action_effect_replay(&case.bridge_replay_state, &case.name);
+        let spent_nullifiers = case
+            .spent_nullifiers
+            .iter()
+            .map(|key| synthetic_stream_nullifier(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let consumed_replays = case
+            .consumed_bridge_replays
+            .iter()
+            .map(|key| synthetic_stream_replay_key(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let action_nullifiers = case
+            .actions
+            .iter()
+            .map(|action| {
+                action
+                    .nullifiers
+                    .iter()
+                    .map(|key| synthetic_stream_nullifier(*key, &case.name))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let replay_keys = case
+            .actions
+            .iter()
+            .map(|action| {
+                action
+                    .bridge_replay_key
+                    .map(|key| synthetic_stream_replay_key(key, &case.name))
+            })
+            .collect::<Vec<_>>();
         let mut nullifier_state = NullifierState::new(spent_nullifiers, BTreeSet::new());
         let mut bridge_replay_state = InboundReplayState::new(consumed_replays, BTreeSet::new());
         let input = NativeBlockReplayRefinementInput {
             leaf_start: case.leaf_start,
-            commitment_count: case.commitment_count,
-            ciphertext_count: case.ciphertext_count,
             parent_supply: parse_u128(&case.parent_supply),
             height: case.height,
             fee_total: case.fee_total,
@@ -12797,8 +12813,18 @@ mod tests {
 
         let actual = evaluate_native_block_replay_refinement(
             input,
-            &nullifiers,
-            replay_key,
+            case.actions
+                .iter()
+                .zip(action_nullifiers.iter())
+                .zip(replay_keys.iter())
+                .map(
+                    |((action, nullifiers), replay_key)| NativeActionStreamStep {
+                        commitment_count: action.commitment_count,
+                        ciphertext_count: action.ciphertext_count,
+                        nullifiers: nullifiers.as_slice(),
+                        replay_key: *replay_key,
+                    },
+                ),
             &mut nullifier_state,
             &mut bridge_replay_state,
         );
@@ -12822,9 +12848,15 @@ mod tests {
                     case.name
                 );
                 assert_eq!(
-                    Some(summary.imported_bridge_replay),
-                    case.expected_imported_bridge_replay,
-                    "{} replay imported bridge flag drifted from Lean spec",
+                    Some(summary.imported_bridge_replay_count.to_string()),
+                    case.expected_imported_bridge_replay_count,
+                    "{} replay imported bridge count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.planned_starts),
+                    case.expected_planned_starts,
+                    "{} replay planned starts drifted from Lean spec",
                     case.name
                 );
                 assert_eq!(

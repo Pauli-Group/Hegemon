@@ -1,20 +1,22 @@
 import Hegemon.Native.BlockReplayRefinement
 
-open Hegemon.Native.ActionStateEffect
+open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.BlockReplayRefinement
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
 
-def nullifierImportStateJson : NullifierImportState -> String
-  | NullifierImportState.valid => "\"valid\""
-  | NullifierImportState.zero => "\"zero\""
-  | NullifierImportState.duplicate => "\"duplicate\""
+def natListTailJson : List Nat -> String
+  | [] => ""
+  | head :: tail => ", " ++ toString head ++ natListTailJson tail
 
-def bridgeReplayStateJson : BridgeReplayState -> String
-  | BridgeReplayState.absent => "\"absent\""
-  | BridgeReplayState.valid => "\"valid\""
-  | BridgeReplayState.alreadyConsumed => "\"already_consumed\""
+def natListJson : List Nat -> String
+  | [] => "[]"
+  | head :: tail => "[" ++ toString head ++ natListTailJson tail ++ "]"
+
+def optionNatJson : Option Nat -> String
+  | none => "null"
+  | some value => toString value
 
 def rejectionJson :
     Except BlockReplayReject BlockReplaySummary -> String
@@ -55,11 +57,32 @@ def natOrNull :
   | Except.ok output, selector => "\"" ++ toString (selector output) ++ "\""
   | Except.error _, _ => "null"
 
-def boolOrNull :
+def natListOrNull :
     Except BlockReplayReject BlockReplaySummary ->
-    (BlockReplaySummary -> Bool) -> String
-  | Except.ok output, selector => boolJson (selector output)
+    (BlockReplaySummary -> List Nat) -> String
+  | Except.ok output, selector => natListJson (selector output)
   | Except.error _, _ => "null"
+
+def streamActionJson (action : StreamAction) : String :=
+  "        {\n"
+    ++ "          \"commitment_count\": "
+    ++ toString action.commitmentCount ++ ",\n"
+    ++ "          \"ciphertext_count\": "
+    ++ toString action.ciphertextCount ++ ",\n"
+    ++ "          \"nullifiers\": "
+    ++ natListJson action.nullifiers ++ ",\n"
+    ++ "          \"bridge_replay_key\": "
+    ++ optionNatJson action.bridgeReplayKey ++ "\n"
+    ++ "        }"
+
+def streamActionsTailJson : List StreamAction -> String
+  | [] => ""
+  | head :: tail => ",\n" ++ streamActionJson head ++ streamActionsTailJson tail
+
+def streamActionsJson : List StreamAction -> String
+  | [] => "[]"
+  | head :: tail =>
+      "[\n" ++ streamActionJson head ++ streamActionsTailJson tail ++ "\n      ]"
 
 def blockReplayCaseJson
     (name : String)
@@ -68,13 +91,11 @@ def blockReplayCaseJson
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"leaf_start\": " ++ toString input.leafStart ++ ",\n"
-    ++ "      \"commitment_count\": " ++ toString input.commitmentCount ++ ",\n"
-    ++ "      \"ciphertext_count\": " ++ toString input.ciphertextCount ++ ",\n"
-    ++ "      \"nullifier_count\": " ++ toString input.nullifierCount ++ ",\n"
-    ++ "      \"nullifier_state\": "
-      ++ nullifierImportStateJson input.nullifierState ++ ",\n"
-    ++ "      \"bridge_replay_state\": "
-      ++ bridgeReplayStateJson input.bridgeReplayState ++ ",\n"
+    ++ "      \"spent_nullifiers\": "
+      ++ natListJson input.spentNullifiers ++ ",\n"
+    ++ "      \"consumed_bridge_replays\": "
+      ++ natListJson input.consumedBridgeReplays ++ ",\n"
+    ++ "      \"actions\": " ++ streamActionsJson input.actions ++ ",\n"
     ++ "      \"parent_supply\": \"" ++ toString input.parentSupply ++ "\",\n"
     ++ "      \"height\": " ++ toString input.height ++ ",\n"
     ++ "      \"fee_total\": " ++ toString input.feeTotal ++ ",\n"
@@ -99,8 +120,10 @@ def blockReplayCaseJson
       ++ natOrNull result BlockReplaySummary.nextLeafCount ++ ",\n"
     ++ "      \"expected_imported_nullifier_count\": "
       ++ natOrNull result BlockReplaySummary.importedNullifierCount ++ ",\n"
-    ++ "      \"expected_imported_bridge_replay\": "
-      ++ boolOrNull result BlockReplaySummary.importedBridgeReplay ++ ",\n"
+    ++ "      \"expected_imported_bridge_replay_count\": "
+      ++ natOrNull result BlockReplaySummary.importedBridgeReplayCount ++ ",\n"
+    ++ "      \"expected_planned_starts\": "
+      ++ natListOrNull result BlockReplaySummary.plannedStarts ++ ",\n"
     ++ "      \"expected_supply\": "
       ++ natOrNull result BlockReplaySummary.expectedSupply ++ ",\n"
     ++ "      \"expected_valid\": "
@@ -113,26 +136,48 @@ def bridgeReplayValid : BlockReplayInput :=
   {
     validReplay with
     leafStart := 12,
-    commitmentCount := 0,
-    ciphertextCount := 0,
-    nullifierCount := 0,
-    bridgeReplayState := BridgeReplayState.valid
+    actions := [
+      {
+        commitmentCount := 0,
+        ciphertextCount := 0,
+        nullifiers := [],
+        bridgeReplayKey := some 7
+      }
+    ]
   }
 
 def ciphertextCountMismatch : BlockReplayInput :=
-  { validReplay with ciphertextCount := 1 }
+  {
+    validReplay with
+    actions := [
+      {
+        commitmentCount := 1,
+        ciphertextCount := 2,
+        nullifiers := [],
+        bridgeReplayKey := none
+      }
+    ]
+  }
 
 def commitmentIndexOverflow : BlockReplayInput :=
   {
     validReplay with
-    leafStart := u64Max,
-    commitmentCount := 1,
-    ciphertextCount := 1,
-    nullifierCount := 0
+    leafStart := Hegemon.Native.ActionStateEffect.u64Max,
+    actions := [
+      {
+        commitmentCount := 1,
+        ciphertextCount := 1,
+        nullifiers := [],
+        bridgeReplayKey := none
+      }
+    ]
   }
 
 def bridgeReplayDuplicate : BlockReplayInput :=
-  { bridgeReplayValid with bridgeReplayState := BridgeReplayState.alreadyConsumed }
+  {
+    bridgeReplayValid with
+    consumedBridgeReplays := [7]
+  }
 
 def txCountMismatch : BlockReplayInput :=
   { validReplay with txCountMatches := false }
@@ -162,6 +207,7 @@ def vectorJson : String :=
     ++ "  \"schema_version\": 1,\n"
     ++ "  \"block_replay_refinement_cases\": [\n"
     ++ blockReplayCaseJson "valid-transfer-replay" validReplay ++ ",\n"
+    ++ blockReplayCaseJson "valid-two-action-replay" validTwoActionReplay ++ ",\n"
     ++ blockReplayCaseJson "valid-bridge-replay" bridgeReplayValid ++ ",\n"
     ++ blockReplayCaseJson "valid-coinbase-replay" validCoinbaseReplay ++ ",\n"
     ++ blockReplayCaseJson "ciphertext-count-mismatch-rejected"
@@ -170,7 +216,9 @@ def vectorJson : String :=
       commitmentIndexOverflow ++ ",\n"
     ++ blockReplayCaseJson "duplicate-nullifier-replay-rejected"
       duplicateNullifierReplay ++ ",\n"
-    ++ blockReplayCaseJson "bridge-replay-duplicate-rejected"
+    ++ blockReplayCaseJson "cross-action-bridge-replay-duplicate-rejected"
+      crossActionBridgeReplayDuplicate ++ ",\n"
+    ++ blockReplayCaseJson "prior-bridge-replay-duplicate-rejected"
       bridgeReplayDuplicate ++ ",\n"
     ++ blockReplayCaseJson "supply-overflow-replay-rejected"
       supplyOverflowReplay ++ ",\n"
