@@ -2849,7 +2849,7 @@
       "claim_id": "native.action-state-effect-planning",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean action-state effect transition, native action preview/import/replay accepts a planned effect only when ciphertext count equals commitment count for the relevant planner, commitment leaf-count advancement is checked u64 arithmetic, nullifier import status is valid, and any inbound bridge replay key has not already been consumed; rejection precedence is count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native pending-root preview, memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before deriving commitment/message roots or mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state. Focused canonical-state reload regressions require startup to reject malformed commitment keys/values, non-contiguous commitment indexes, and reloaded commitment/nullifier roots that do not match the committed best header. Focused bridge replay reload regressions require startup to reject malformed replay keys/markers and any consumed replay set that differs from replay-derived canonical block history.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native pending-root preview, memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before deriving commitment/message roots or mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state. Native canonical-state reload and bridge-replay reload are separately Lean-gated startup admission nodes.",
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-root-transcript-binding",
@@ -2875,7 +2875,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-10",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Canonical-state and bridge replay reload binding are focused Rust regression evidence outside the Lean sled model. Scope excludes storage atomicity under I/O failure and full action semantics."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Canonical-state and bridge replay reload binding are separate Lean-gated startup admission nodes. Scope excludes storage atomicity under I/O failure and full action semantics."
       },
       "falsification_cases": [
         {
@@ -2919,7 +2919,7 @@
           "gate": "cargo test -p hegemon-node bridge_replay_reload_ --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. Canonical-state and bridge replay reload binding are regression-gated, but not proved in Lean over sled or filesystem behavior. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. Canonical-state and bridge replay reload binding are covered by separate Lean-gated startup admission nodes. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
     },
     {
       "id": "native.announced-block-admission",
@@ -3030,7 +3030,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the deterministic native canonical block-index startup reload admission and missing-genesis-marker repair table. It does not prove sled atomicity, filesystem durability, bincode implementation correctness, hash collision resistance, full historical block replay, state-root reload binding, bridge replay reload binding, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the deterministic native canonical block-index startup reload admission and missing-genesis-marker repair table. It does not prove sled atomicity, filesystem durability, bincode implementation correctness, hash collision resistance, full historical block replay, state-root reload binding, consumed bridge replay reload binding, or complete native-node equivalence."
     },
     {
       "id": "native.canonical-state-reload",
@@ -3086,7 +3086,63 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the deterministic native canonical commitment/nullifier startup reload admission table. It does not prove sled atomicity, filesystem durability, commitment-tree hash security, nullifier-root hash security, full historical block replay, bridge replay reload binding, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the deterministic native canonical commitment/nullifier startup reload admission table. It does not prove sled atomicity, filesystem durability, commitment-tree hash security, nullifier-root hash security, full historical block replay, consumed bridge replay reload binding, or complete native-node equivalence."
+    },
+    {
+      "id": "native.bridge-replay-reload",
+      "claim_id": "native.bridge-replay-reload",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native bridge-replay reload transition, startup accepts persisted inbound bridge replay state only when stored replay keys and markers are well formed, replay-derived canonical block history has no duplicate inbound replay keys, every expected consumed replay key is loaded, and no extra loaded consumed replay key exists; rejection precedence is malformed key, invalid marker, canonical duplicate, missing loaded key, then extra loaded key.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeReplayReload.accepts_iff_bridge_replay_reload_preconditions` proves the executable startup admission predicate, with concrete theorem facts for malformed replay keys, invalid replay markers, canonical duplicate replay keys, missing consumed replay keys, extra consumed replay keys, and precedence cases. `gen_bridge_replay_reload_vectors` emits Lean-derived examples checked against the production `evaluate_native_bridge_replay_reload` helper used by `load_consumed_bridge_messages` and `validate_loaded_bridge_replay_state`; focused native startup regressions corrupt the sled-backed inbound bridge replay tree and canonical block history and require `NativeNode::open` to fail closed.",
+      "depends_on": [
+        "native.block-index-reload",
+        "bridge.inbound-replay-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BridgeReplayReload.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeReplayReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeReplayReload.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeReplayReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native inbound bridge replay startup reload. Scope is the deterministic admission table over observed persisted replay state and replay-derived canonical history; sled atomicity, filesystem durability, action decoding correctness, and replay-key hash security remain outside Lean."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-bridge-replay-reload-theorem",
+          "description": "Removing or weakening the bridge-replay reload theorem or concrete rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-bridge-replay-reload-conformance",
+          "description": "Changing the production bridge-replay reload admission table away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_BRIDGE_REPLAY_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_replay_reload_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-bridge-replay-reload-canonical-binding",
+          "description": "Native startup must reject malformed persisted inbound replay keys, invalid markers, duplicate replay keys in canonical history, and any loaded consumed replay set that differs from replay-derived canonical block history.",
+          "gate": "cargo test -p hegemon-node bridge_replay_reload_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-bridge-replay-reload-gate",
+          "description": "The release formal-core wrapper must generate native bridge-replay reload vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the deterministic native inbound bridge replay startup reload admission table. It does not prove sled atomicity, filesystem durability, BLAKE3 replay-key derivation, SCALE action decoding correctness, bridge receipt soundness, full historical block replay, or complete native-node equivalence."
     },
     {
       "id": "native.codec-admission",
@@ -3530,7 +3586,7 @@
       "claim_id": "bridge.inbound-replay-state",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean replay-state transition, successful staging prevents staging the same key again, and successful import prevents both re-importing and re-staging the same key.",
-      "informal_argument": "The Lean theorems `Hegemon.Bridge.stage_prevents_duplicate_pending`, `Hegemon.Bridge.import_prevents_reimport`, and `Hegemon.Bridge.import_prevents_restaging` prove the no-duplicate properties over the executable replay-state kernel. `gen_bridge_vectors` emits Lean-derived bridge encoding and replay examples, and the formal-core gate runs the production `protocol-kernel` conformance test against them. Focused native startup regressions require persisted consumed replay keys to be well formed and exactly match replay-derived canonical block history before mining or serving state.",
+      "informal_argument": "The Lean theorems `Hegemon.Bridge.stage_prevents_duplicate_pending`, `Hegemon.Bridge.import_prevents_reimport`, and `Hegemon.Bridge.import_prevents_restaging` prove the no-duplicate properties over the executable replay-state kernel. `gen_bridge_vectors` emits Lean-derived bridge encoding and replay examples, and the formal-core gate runs the production `protocol-kernel` conformance test against them. Persisted native startup reload of consumed replay keys is separately theorem-backed by `native.bridge-replay-reload`.",
       "depends_on": [
         "bridge.message-root-replay",
         "release.dependency-waivers"
@@ -3557,7 +3613,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-kernel bridge encoding and replay helper behavior. Native persisted replay reload canonical binding is focused Rust regression evidence outside the Lean sled model."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-kernel bridge encoding and replay helper behavior. Native persisted replay reload canonical binding is separately covered by native.bridge-replay-reload."
       },
       "falsification_cases": [
         {
@@ -3571,12 +3627,12 @@
           "gate": "bash scripts/check_formal_core.sh"
         },
         {
-          "id": "native-bridge-replay-reload-canonical-binding",
-          "description": "Native startup must reject malformed persisted inbound replay keys and any consumed replay set that differs from replay-derived canonical block history.",
-          "gate": "cargo test -p hegemon-node bridge_replay_reload_ --lib --no-default-features -- --nocapture"
+          "id": "native-bridge-replay-reload-linked",
+          "description": "The production native startup reload claim must remain present for persisted inbound replay state.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks protocol replay-state duplicate rejection. Persisted native bridge replay reload is regression-gated, but not proved in Lean over sled or filesystem behavior. This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, bridge receipt soundness, or full native-node equivalence beyond the node's use of the protocol-kernel replay helper and focused startup reload regressions."
+      "scope_boundary": "This node proves and vector-checks protocol replay-state duplicate rejection. Persisted native bridge replay reload is covered by native.bridge-replay-reload. This node does not prove BLAKE3 replay-key derivation, bridge light-client validity, bridge receipt soundness, or full native-node equivalence beyond the node's use of the protocol-kernel replay helper."
     },
     {
       "id": "formal.native-tx-leaf-artifact-wire",

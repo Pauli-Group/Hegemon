@@ -433,6 +433,15 @@ struct NativeCanonicalStateReloadInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeReplayReloadInput {
+    replay_keys_well_formed: bool,
+    replay_markers_valid: bool,
+    canonical_replay_keys_unique: bool,
+    no_missing_loaded_replay_keys: bool,
+    no_extra_loaded_replay_keys: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMinedWorkAdmissionInput {
     best_height: u64,
     work_height: u64,
@@ -539,6 +548,27 @@ impl NativeCanonicalStateReloadRejection {
             Self::CommitmentTreeRebuildFailed => "commitment_tree_rebuild_failed",
             Self::CommitmentRootMismatch => "commitment_root_mismatch",
             Self::NullifierRootMismatch => "nullifier_root_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeReplayReloadRejection {
+    MalformedReplayKey,
+    InvalidReplayMarker,
+    CanonicalReplayDuplicate,
+    MissingConsumedReplayKey,
+    ExtraConsumedReplayKey,
+}
+
+impl NativeBridgeReplayReloadRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedReplayKey => "malformed_replay_key",
+            Self::InvalidReplayMarker => "invalid_replay_marker",
+            Self::CanonicalReplayDuplicate => "canonical_replay_duplicate",
+            Self::MissingConsumedReplayKey => "missing_consumed_replay_key",
+            Self::ExtraConsumedReplayKey => "extra_consumed_replay_key",
         }
     }
 }
@@ -3854,6 +3884,51 @@ fn native_canonical_state_reload_error(
     }
 }
 
+fn evaluate_native_bridge_replay_reload(
+    input: NativeBridgeReplayReloadInput,
+) -> Result<(), NativeBridgeReplayReloadRejection> {
+    if !input.replay_keys_well_formed {
+        Err(NativeBridgeReplayReloadRejection::MalformedReplayKey)
+    } else if !input.replay_markers_valid {
+        Err(NativeBridgeReplayReloadRejection::InvalidReplayMarker)
+    } else if !input.canonical_replay_keys_unique {
+        Err(NativeBridgeReplayReloadRejection::CanonicalReplayDuplicate)
+    } else if !input.no_missing_loaded_replay_keys {
+        Err(NativeBridgeReplayReloadRejection::MissingConsumedReplayKey)
+    } else if !input.no_extra_loaded_replay_keys {
+        Err(NativeBridgeReplayReloadRejection::ExtraConsumedReplayKey)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_bridge_replay_reload_error(
+    rejection: NativeBridgeReplayReloadRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeReplayReloadRejection::MalformedReplayKey => anyhow!(
+            "stored bridge replay key has invalid length ({})",
+            rejection.label()
+        ),
+        NativeBridgeReplayReloadRejection::InvalidReplayMarker => anyhow!(
+            "stored bridge replay marker is invalid ({})",
+            rejection.label()
+        ),
+        NativeBridgeReplayReloadRejection::CanonicalReplayDuplicate => anyhow!(
+            "canonical chain contains duplicate inbound bridge replay key ({})",
+            rejection.label()
+        ),
+        NativeBridgeReplayReloadRejection::MissingConsumedReplayKey => anyhow!(
+            "stored bridge replay set missing consumed key ({})",
+            rejection.label()
+        ),
+        NativeBridgeReplayReloadRejection::ExtraConsumedReplayKey => anyhow!(
+            "stored bridge replay set has extra consumed key ({})",
+            rejection.label()
+        ),
+    }
+}
+
 fn validate_loaded_block_indexes(
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
@@ -4172,25 +4247,31 @@ fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
 
 fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
     let mut consumed = BTreeSet::new();
+    let mut replay_keys_well_formed = true;
+    let mut replay_markers_valid = true;
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() != 48 {
-            return Err(anyhow!(
-                "stored bridge replay key has invalid length: {}",
-                key.len()
-            ));
+            replay_keys_well_formed = false;
+            continue;
         }
         if value.as_ref() != b"1" {
-            return Err(anyhow!(
-                "stored bridge replay marker is invalid: length {}",
-                value.len()
-            ));
+            replay_markers_valid = false;
+            continue;
         }
 
         let mut replay_key = [0u8; 48];
         replay_key.copy_from_slice(&key);
         consumed.insert(replay_key);
     }
+    evaluate_native_bridge_replay_reload(NativeBridgeReplayReloadInput {
+        replay_keys_well_formed,
+        replay_markers_valid,
+        canonical_replay_keys_unique: true,
+        no_missing_loaded_replay_keys: true,
+        no_extra_loaded_replay_keys: true,
+    })
+    .map_err(native_bridge_replay_reload_error)?;
     Ok(consumed)
 }
 
@@ -4301,23 +4382,29 @@ fn validate_loaded_canonical_state(
     Ok(())
 }
 
+struct ExpectedBridgeReplayReloadState {
+    consumed: BTreeSet<[u8; 48]>,
+    duplicate_replay_key: Option<[u8; 48]>,
+}
+
 fn expected_consumed_bridge_messages_from_chain(
     chain: &[NativeBlockMeta],
-) -> Result<BTreeSet<[u8; 48]>> {
+) -> Result<ExpectedBridgeReplayReloadState> {
     let mut consumed = BTreeSet::new();
+    let mut duplicate_replay_key = None;
     for meta in chain.iter().skip(1) {
         for action in decode_block_actions(meta)? {
             if let Some(replay_key) = bridge_inbound_replay_key_from_action(&action)? {
-                if !consumed.insert(replay_key) {
-                    return Err(anyhow!(
-                        "canonical chain contains duplicate inbound bridge replay key {}",
-                        hex48(&replay_key)
-                    ));
+                if !consumed.insert(replay_key) && duplicate_replay_key.is_none() {
+                    duplicate_replay_key = Some(replay_key);
                 }
             }
         }
     }
-    Ok(consumed)
+    Ok(ExpectedBridgeReplayReloadState {
+        consumed,
+        duplicate_replay_key,
+    })
 }
 
 fn validate_loaded_bridge_replay_state(
@@ -4326,25 +4413,57 @@ fn validate_loaded_bridge_replay_state(
     consumed_bridge_messages: &BTreeSet<[u8; 48]>,
 ) -> Result<()> {
     let chain = load_chain_to_hash(block_tree, best.hash)?;
-    let expected = expected_consumed_bridge_messages_from_chain(&chain)?;
-    if &expected != consumed_bridge_messages {
-        let missing = expected
-            .difference(consumed_bridge_messages)
-            .next()
-            .map(hex48)
-            .unwrap_or_else(|| "none".to_string());
-        let extra = consumed_bridge_messages
-            .difference(&expected)
-            .next()
-            .map(hex48)
-            .unwrap_or_else(|| "none".to_string());
-        return Err(anyhow!(
-            "stored bridge replay set mismatch: expected={} loaded={} first_missing={} first_extra={}",
-            expected.len(),
-            consumed_bridge_messages.len(),
-            missing,
-            extra
-        ));
+    let expected_state = expected_consumed_bridge_messages_from_chain(&chain)?;
+    let expected = &expected_state.consumed;
+    let missing = expected
+        .difference(consumed_bridge_messages)
+        .next()
+        .copied();
+    let extra = consumed_bridge_messages
+        .difference(expected)
+        .next()
+        .copied();
+    let admission = evaluate_native_bridge_replay_reload(NativeBridgeReplayReloadInput {
+        replay_keys_well_formed: true,
+        replay_markers_valid: true,
+        canonical_replay_keys_unique: expected_state.duplicate_replay_key.is_none(),
+        no_missing_loaded_replay_keys: missing.is_none(),
+        no_extra_loaded_replay_keys: extra.is_none(),
+    });
+    if let Err(rejection) = admission {
+        return match rejection {
+            NativeBridgeReplayReloadRejection::CanonicalReplayDuplicate => {
+                let replay_key = expected_state
+                    .duplicate_replay_key
+                    .map(|key| hex48(&key))
+                    .unwrap_or_else(|| "unknown".to_string());
+                Err(anyhow!(
+                    "canonical chain contains duplicate inbound bridge replay key {} ({})",
+                    replay_key,
+                    rejection.label()
+                ))
+            }
+            NativeBridgeReplayReloadRejection::MissingConsumedReplayKey
+            | NativeBridgeReplayReloadRejection::ExtraConsumedReplayKey => {
+                let missing = missing
+                    .as_ref()
+                    .map(hex48)
+                    .unwrap_or_else(|| "none".to_string());
+                let extra = extra
+                    .as_ref()
+                    .map(hex48)
+                    .unwrap_or_else(|| "none".to_string());
+                Err(anyhow!(
+                    "stored bridge replay set mismatch: expected={} loaded={} first_missing={} first_extra={} ({})",
+                    expected.len(),
+                    consumed_bridge_messages.len(),
+                    missing,
+                    extra,
+                    rejection.label()
+                ))
+            }
+            _ => Err(native_bridge_replay_reload_error(rejection)),
+        };
     }
     Ok(())
 }
@@ -8122,6 +8241,26 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeReplayReloadVectorFile {
+        schema_version: u32,
+        bridge_replay_reload_cases: Vec<LeanBridgeReplayReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeReplayReloadCase {
+        name: String,
+        replay_keys_well_formed: bool,
+        replay_markers_valid: bool,
+        canonical_replay_keys_unique: bool,
+        no_missing_loaded_replay_keys: bool,
+        no_extra_loaded_replay_keys: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
@@ -9977,6 +10116,55 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native canonical-state reload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_bridge_replay_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_REPLAY_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_REPLAY_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge-replay reload vectors");
+        let vectors: LeanBridgeReplayReloadVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean bridge-replay reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_replay_reload_cases.is_empty(),
+            "Lean bridge-replay reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_replay_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_replay_reload_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_replay_reload_case(case: &LeanBridgeReplayReloadCase) {
+        let input = NativeBridgeReplayReloadInput {
+            replay_keys_well_formed: case.replay_keys_well_formed,
+            replay_markers_valid: case.replay_markers_valid,
+            canonical_replay_keys_unique: case.canonical_replay_keys_unique,
+            no_missing_loaded_replay_keys: case.no_missing_loaded_replay_keys,
+            no_extra_loaded_replay_keys: case.no_extra_loaded_replay_keys,
+        };
+        let actual_rejection = evaluate_native_bridge_replay_reload(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bridge-replay reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge-replay reload rejection drifted from Lean spec",
             case.name
         );
     }
@@ -12716,6 +12904,37 @@ mod tests {
             .to_string()
             .contains("stored bridge replay set mismatch"));
         assert!(err.to_string().contains("first_missing"));
+    }
+
+    #[test]
+    fn bridge_replay_reload_rejects_duplicate_canonical_replay_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let genesis = node.best_meta();
+        let action = test_inbound_bridge_action(b"duplicate startup replay reload");
+        let first = mined_child_with_actions(&genesis, 1, pow_bits, 0, vec![action.clone()]);
+        let second = mined_child_with_actions(&first, 2, pow_bits, 0, vec![action]);
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &first)
+            .expect("persist first inbound bridge block");
+        persist_block(
+            &node.meta_tree,
+            &node.height_tree,
+            &node.block_tree,
+            &second,
+        )
+        .expect("persist duplicate inbound bridge block");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("duplicate canonical bridge replay key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("canonical chain contains duplicate inbound bridge replay key"));
     }
 
     #[test]
