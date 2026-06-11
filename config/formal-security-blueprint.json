@@ -2446,7 +2446,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, noncanonical side-branch block-record durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, or complete native-node equivalence."
     },
     {
       "id": "native.work-template-admission",
@@ -2945,7 +2945,31 @@
           "callee": "verify_native_block_artifacts_locked",
           "required_callers": [
             "import_mined_block",
-            "import_announced_block"
+            "import_announced_block",
+            "replay_chain_state"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "commit_mined_block_atomically",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ]
+            },
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "persist_noncanonical_block_record",
+                "reorganize_chain_to_best_locked"
+              ]
+            },
+            {
+              "caller": "replay_chain_state",
+              "callee_must_precede": [
+                "apply_actions_to_memory"
+              ]
+            }
           ]
         }
       ],
@@ -2980,12 +3004,17 @@
           "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "reorg-replay-artifact-regression",
+          "description": "Canonical side-branch replay must recheck persisted historical block artifacts before publishing a reorg state.",
+          "gate": "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-block-artifact-binding-gate",
           "description": "The release formal-core wrapper must generate block-artifact binding vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates only. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates only. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-ordering",
@@ -4193,7 +4222,7 @@
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit to include canonical block records before in-memory publication, and requires startup canonical-index repair to plan before its atomic sled repair commit. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, sled transaction implementation correctness, filesystem/fsync durability, noncanonical side-branch block-record durability, full action payload validity, tx proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit to include canonical block records before in-memory publication, and requires startup canonical-index repair to plan before its atomic sled repair commit. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, sled transaction implementation correctness, filesystem/fsync durability, full action payload validity, tx proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.block-replay-refinement",
@@ -4254,7 +4283,7 @@
               "callee_must_precede": [
                 "validate_block_actions_locked",
                 "verify_native_block_artifacts_locked",
-                "persist_block_record",
+                "persist_noncanonical_block_record",
                 "reorganize_chain_to_best_locked"
               ]
             },
@@ -4264,6 +4293,13 @@
                 "apply_actions_to_memory"
               ]
             }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "persist_noncanonical_block_record",
+          "required_callers": [
+            "import_announced_block"
           ]
         }
       ],
@@ -4315,9 +4351,14 @@
           "id": "announced-block-replay-precedes-payload-regression",
           "description": "Announced-block import must reject a forged body commitment through the replay-refinement gate before malformed action payload validation can mask the no-counterfeiting failure.",
           "gate": "cargo test -p hegemon-node announced_block_replay_commitment_mismatch_precedes_payload_validation --lib --no-default-features"
+        },
+        {
+          "id": "nonwinning-side-branch-reload-regression",
+          "description": "A nonwinning announced side branch must persist as a hash-addressed block record across reopen without replacing the canonical height index.",
+          "gate": "cargo test -p hegemon-node nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features"
         }
       ],
-  "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+  "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

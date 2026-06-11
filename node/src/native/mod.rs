@@ -1959,7 +1959,7 @@ impl NativeNode {
             Vec::new()
         } else {
             validate_block_actions_locked(&state, &actions)?;
-            verify_native_block_artifacts_locked(self, &state, &actions)?;
+            verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
             plan_pending_action_effects(&self.da_ciphertext_tree, &state, &actions)?
         };
         let mut next_state = state.clone();
@@ -2043,7 +2043,7 @@ impl NativeNode {
         )?;
         if !actions.is_empty() {
             validate_block_actions_locked(&parent_state, &actions)?;
-            verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
+            verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
         }
         if native_meta_better_than(&meta, &state.best) {
             let mut new_chain = self.chain_to_hash(parent.hash)?;
@@ -2051,9 +2051,15 @@ impl NativeNode {
             self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
             Ok(true)
         } else {
-            persist_block_record(&self.block_tree, &meta)?;
+            self.persist_noncanonical_block_record(&meta)?;
             Ok(false)
         }
+    }
+
+    fn persist_noncanonical_block_record(&self, meta: &NativeBlockMeta) -> Result<()> {
+        persist_block_record(&self.block_tree, meta)?;
+        self.db.flush()?;
+        Ok(())
     }
 
     fn broadcast_block_announce(&self, meta: &NativeBlockMeta) {
@@ -2176,6 +2182,9 @@ impl NativeNode {
                         == expected_header_history.len() as u64,
                 },
             )?;
+            if !actions.is_empty() {
+                verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
+            }
             apply_actions_to_memory(&mut state, &actions)?;
             state.best = meta;
         }
@@ -8371,6 +8380,7 @@ fn verify_native_block_artifacts_locked(
     node: &NativeNode,
     state: &NativeState,
     actions: &[PendingAction],
+    meta: &NativeBlockMeta,
 ) -> Result<()> {
     let transfers = actions
         .iter()
@@ -8445,28 +8455,42 @@ fn verify_native_block_artifacts_locked(
         }
     }
     let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
+    let expected_kernel_root =
+        consensus::types::kernel_root_from_shielded_root(&expected_tree.root());
+    if meta.state_root != expected_tree.root()
+        || meta.kernel_root != expected_kernel_root
+        || meta.nullifier_root != expected_nullifier_root
+    {
+        return Err(anyhow!("native block artifact root mismatch"));
+    }
+    if meta.tx_count != transactions.len() as u32 {
+        return Err(anyhow!("native block artifact tx_count mismatch"));
+    }
     let height = evaluate_native_recursive_artifact_context_admission(
         NativeRecursiveArtifactContextAdmissionInput {
             best_height: state.best.height,
         },
     )
     .map_err(native_recursive_artifact_context_admission_error)?;
+    if height != meta.height {
+        return Err(anyhow!("native recursive block height mismatch"));
+    }
     let header = consensus::BlockHeader {
         version: 1,
-        height,
+        height: meta.height,
         view: 0,
-        timestamp_ms: current_time_ms().max(state.best.timestamp_ms.saturating_add(1)),
-        parent_hash: state.best.hash,
-        state_root: expected_tree.root(),
-        kernel_root: consensus::types::kernel_root_from_shielded_root(&expected_tree.root()),
-        nullifier_root: expected_nullifier_root,
+        timestamp_ms: meta.timestamp_ms,
+        parent_hash: meta.parent_hash,
+        state_root: meta.state_root,
+        kernel_root: meta.kernel_root,
+        nullifier_root: meta.nullifier_root,
         proof_commitment: consensus::types::compute_proof_commitment(&transactions),
         da_root: computed_da_root,
         da_params,
         version_commitment: consensus::types::compute_version_commitment(&transactions),
-        tx_count: transactions.len() as u32,
+        tx_count: meta.tx_count,
         fee_commitment: consensus::types::compute_fee_commitment(&transactions),
-        supply_digest: state.best.supply_digest,
+        supply_digest: meta.supply_digest,
         validator_set_commitment: [0u8; 48],
         signature_aggregate: Vec::new(),
         signature_bitmap: None,
@@ -10811,6 +10835,149 @@ mod tests {
     }
 
     #[test]
+    fn nonwinning_announced_side_branch_record_reloads_without_canonicalizing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+
+        let (canonical, side_one) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let genesis = node.best_meta();
+
+            let canonical_work = node.prepare_work().expect("prepare canonical native work");
+            let canonical_seal =
+                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical = node
+                .import_mined_block(&canonical_work, canonical_seal)
+                .expect("canonical import")
+                .expect("canonical block");
+            assert_eq!(node.best_meta().hash, canonical.hash);
+
+            let side_one = (1..128)
+                .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+                .find(|candidate| !native_meta_better_than(candidate, &canonical))
+                .expect("side child that does not beat canonical tip");
+            assert!(
+                !node
+                    .import_announced_block(side_one.clone())
+                    .expect("side branch import"),
+                "nonwinning side branch must not reorganize the canonical chain"
+            );
+            assert_eq!(node.best_meta().hash, canonical.hash);
+            assert_eq!(
+                node.hash_by_height(1).expect("canonical height index"),
+                Some(canonical.hash)
+            );
+            assert_eq!(
+                node.header_by_hash(&side_one.hash)
+                    .expect("side branch block record")
+                    .expect("side branch block should be hash-addressable"),
+                side_one
+            );
+            node.db.flush().expect("flush side branch record");
+            (canonical, side_one)
+        };
+
+        let reopened = NativeNode::open(config).expect("reopen node");
+        assert_eq!(reopened.best_meta().hash, canonical.hash);
+        assert_eq!(
+            reopened
+                .hash_by_height(1)
+                .expect("height index after reopen"),
+            Some(canonical.hash),
+            "nonwinning side branch must not replace the canonical height index"
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&canonical.hash)
+                .expect("canonical block record after reopen")
+                .expect("canonical block remains addressable"),
+            canonical
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&side_one.hash)
+                .expect("side branch block record after reopen")
+                .expect("nonwinning side branch block remains addressable"),
+            side_one
+        );
+    }
+
+    #[test]
+    fn reorg_replay_rechecks_historical_side_branch_artifacts_before_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+
+        let (canonical, side_parent, side_child) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let genesis = node.best_meta();
+
+            let canonical_work = node.prepare_work().expect("prepare canonical native work");
+            let canonical_seal =
+                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical = node
+                .import_mined_block(&canonical_work, canonical_seal)
+                .expect("canonical import")
+                .expect("canonical block");
+            assert_eq!(node.best_meta().hash, canonical.hash);
+
+            let invalid_transfer =
+                test_inline_transfer_action(genesis.state_root, [71u8; 48], [72u8; 48], 0);
+            let invalid_candidate = test_candidate_artifact_action(1, 73);
+            let side_parent = (1..1024)
+                .map(|round| {
+                    mined_child_with_actions(
+                        &genesis,
+                        1,
+                        test_pow_bits,
+                        round,
+                        vec![invalid_transfer.clone(), invalid_candidate.clone()],
+                    )
+                })
+                .find(|candidate| !native_meta_better_than(candidate, &canonical))
+                .expect("side parent that does not beat canonical tip");
+            persist_block_record(&node.block_tree, &side_parent).expect("persist side parent");
+            node.db.flush().expect("flush persisted side parent");
+
+            let side_child = mined_empty_child(&side_parent, 2, test_pow_bits, 2048);
+            (canonical, side_parent, side_child)
+        };
+
+        let node = NativeNode::open(config).expect("reopen node with side branch parent");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert_eq!(
+            node.header_by_hash(&side_parent.hash)
+                .expect("side parent record")
+                .expect("persisted side parent reloads"),
+            side_parent
+        );
+
+        let err = node
+            .import_announced_block(side_child.clone())
+            .expect_err("reorg replay must recheck historical side-branch artifacts");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("native tx-leaf artifact") || err_text.contains("candidate artifact"),
+            "unexpected replay artifact error: {err_text}"
+        );
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert_eq!(
+            node.hash_by_height(1)
+                .expect("height one after failed reorg"),
+            Some(canonical.hash),
+            "failed replay artifact verification must not replace canonical height index"
+        );
+        assert_eq!(node.commitment_tree.len(), 0);
+        assert!(
+            node.header_by_hash(&side_child.hash)
+                .expect("side child lookup after failed import")
+                .is_none(),
+            "failed reorg child must not be persisted"
+        );
+    }
+
+    #[test]
     fn reorg_action_block_commit_reloads_canonical_sled_state() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -10998,7 +11165,7 @@ mod tests {
         };
         let err_text = err.to_string();
         assert!(
-            err_text.contains("missing canonical DA ciphertext"),
+            err_text.contains("missing DA ciphertext"),
             "unexpected reorg error: {err_text}"
         );
         assert_eq!(node.best_meta().hash, old_best);
@@ -16478,7 +16645,8 @@ mod tests {
         validate_block_actions_locked(&state, &[action.clone()])
             .expect("candidate artifact payload is structurally valid");
 
-        let err = verify_native_block_artifacts_locked(&node, &state, &[action])
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+        let err = verify_native_block_artifacts_locked(&node, &state, &[action], &meta)
             .expect_err("candidate artifact without transfers must be rejected");
         assert!(err.to_string().contains("requires shielded transfer"));
     }
@@ -16495,7 +16663,8 @@ mod tests {
         validate_block_actions_locked(&state, &[transfer.clone()])
             .expect("transfer action is structurally valid");
 
-        let err = verify_native_block_artifacts_locked(&node, &state, &[transfer])
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+        let err = verify_native_block_artifacts_locked(&node, &state, &[transfer], &meta)
             .expect_err("non-empty shielded block without candidate artifact must be rejected");
         assert!(err
             .to_string()
@@ -16517,7 +16686,8 @@ mod tests {
         validate_block_actions_locked(&state, &actions)
             .expect("multiple candidate artifacts are structurally valid before coupling");
 
-        let err = verify_native_block_artifacts_locked(&node, &state, &actions)
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+        let err = verify_native_block_artifacts_locked(&node, &state, &actions, &meta)
             .expect_err("non-empty shielded block with multiple candidates must be rejected");
         assert!(err
             .to_string()
@@ -16538,7 +16708,8 @@ mod tests {
         validate_block_actions_locked(&state, &actions)
             .expect("mismatched candidate artifact is structurally valid before coupling");
 
-        let err = verify_native_block_artifacts_locked(&node, &state, &actions)
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+        let err = verify_native_block_artifacts_locked(&node, &state, &actions, &meta)
             .expect_err("candidate artifact tx_count mismatch must be rejected");
         assert!(err.to_string().contains("tx_count mismatch"));
     }

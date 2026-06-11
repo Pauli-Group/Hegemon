@@ -17,6 +17,10 @@ pub const BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1: usize = 404;
 pub const BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1: &[u8] = b"hegemon.bridge.checkpoint-output-v1";
 pub const BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V1: usize =
     BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1.len() + BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1;
+pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1: usize = 4096;
+pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1: usize = 65_536;
+pub const HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1: usize = 64;
+pub const HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1: usize = 64;
 
 pub const HEGEMON_CHAIN_ID_V1: Hash32 = [
     0xa3, 0x8e, 0xff, 0x6b, 0x93, 0xae, 0xae, 0xf8, 0x8d, 0xe8, 0x8d, 0x5f, 0x59, 0x67, 0xcf, 0x62,
@@ -405,12 +409,13 @@ pub fn decode_hegemon_long_range_proof_guest_wire_v1(
     if output_end != bytes.len() {
         return Err(LightClientError::ProofInputMismatch);
     }
-    let confirmations_offset = output_start + 352;
-    let mut confirmations_cursor = confirmations_offset;
-    let min_confirmations = read_u32_le(bytes, &mut confirmations_cursor)?;
-    let min_tip_work = read_work48(bytes, &mut confirmations_cursor)?;
-    proof.output.confirmations_checked = min_confirmations;
-    proof.output.min_work_checked = min_tip_work;
+    let output = decode_bridge_checkpoint_output_wire_v1(&bytes[output_start..output_end])?;
+    let min_confirmations = output.confirmations_checked;
+    let min_tip_work = output.min_work_checked;
+    proof.output = output.clone();
+    if expected_long_range_output_from_wire_fields(&proof, min_tip_work)? != output {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
     cursor = output_end;
     if cursor != bytes.len() {
         return Err(LightClientError::ProofInputMismatch);
@@ -471,49 +476,63 @@ fn read_u128_le(bytes: &[u8], cursor: &mut usize) -> Result<u128, LightClientErr
     Ok(u128::from_le_bytes(read_exact::<16>(bytes, cursor)?))
 }
 
-fn read_scale_compact_len(bytes: &[u8], cursor: &mut usize) -> Result<usize, LightClientError> {
+fn read_scale_compact_len_with_cap(
+    bytes: &[u8],
+    cursor: &mut usize,
+    cap: usize,
+) -> Result<usize, LightClientError> {
     let first = *bytes
         .get(*cursor)
         .ok_or(LightClientError::ProofInputMismatch)?;
-    *cursor = (*cursor).saturating_add(1);
-    let value = match first & 0b11 {
-        0 => (first >> 2) as u64,
+    *cursor = (*cursor)
+        .checked_add(1)
+        .ok_or(LightClientError::ProofInputMismatch)?;
+    let mode = first & 0b11;
+    let value = match mode {
+        0 => u64::from(first >> 2),
         1 => {
             let second = *bytes
                 .get(*cursor)
                 .ok_or(LightClientError::ProofInputMismatch)?;
-            *cursor = (*cursor).saturating_add(1);
+            *cursor = (*cursor)
+                .checked_add(1)
+                .ok_or(LightClientError::ProofInputMismatch)?;
             u16::from_le_bytes([first, second]) as u64 >> 2
         }
         2 => {
             let mut raw = [0u8; 4];
             raw[0] = first;
+            let end = (*cursor)
+                .checked_add(3)
+                .ok_or(LightClientError::ProofInputMismatch)?;
             raw[1..].copy_from_slice(
                 bytes
-                    .get(*cursor..(*cursor).saturating_add(3))
+                    .get(*cursor..end)
                     .ok_or(LightClientError::ProofInputMismatch)?,
             );
-            *cursor = (*cursor).saturating_add(3);
+            *cursor = end;
             u32::from_le_bytes(raw) as u64 >> 2
         }
         _ => return Err(LightClientError::ProofInputMismatch),
     };
+    let canonical = match mode {
+        0 => value < (1 << 6),
+        1 => (1 << 6) <= value && value < (1 << 14),
+        2 => (1 << 14) <= value && value < (1 << 30),
+        _ => false,
+    };
+    if !canonical || value > u64::try_from(cap).unwrap_or(u64::MAX) {
+        return Err(LightClientError::ProofInputMismatch);
+    }
     usize::try_from(value).map_err(|_| LightClientError::ProofInputMismatch)
 }
 
-fn read_scale_compact_u6_len(bytes: &[u8], cursor: &mut usize) -> Result<usize, LightClientError> {
-    let first = *bytes
-        .get(*cursor)
-        .ok_or(LightClientError::ProofInputMismatch)?;
-    *cursor = (*cursor).saturating_add(1);
-    if first & 0b11 != 0 {
-        return Err(LightClientError::ProofInputMismatch);
-    }
-    Ok((first >> 2) as usize)
-}
-
 fn read_vec_bytes(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>, LightClientError> {
-    let len = read_scale_compact_len(bytes, cursor)?;
+    let len = read_scale_compact_len_with_cap(
+        bytes,
+        cursor,
+        HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    )?;
     let end = cursor
         .checked_add(len)
         .ok_or(LightClientError::ProofInputMismatch)?;
@@ -525,7 +544,8 @@ fn read_vec_bytes(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>, LightClie
 }
 
 fn read_hash32_vec(bytes: &[u8], cursor: &mut usize) -> Result<Vec<Hash32>, LightClientError> {
-    let len = read_scale_compact_u6_len(bytes, cursor)?;
+    let len =
+        read_scale_compact_len_with_cap(bytes, cursor, HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1)?;
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
         out.push(read_hash32(bytes, cursor)?);
@@ -597,7 +617,8 @@ fn read_bridge_messages(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<Vec<BridgeMessageV1>, LightClientError> {
-    let len = read_scale_compact_len(bytes, cursor)?;
+    let len =
+        read_scale_compact_len_with_cap(bytes, cursor, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1)?;
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
         out.push(read_bridge_message(bytes, cursor)?);
@@ -631,7 +652,11 @@ fn read_header_mmr_leaf_witnesses(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<Vec<HeaderMmrLeafWitnessV1>, LightClientError> {
-    let len = read_scale_compact_u6_len(bytes, cursor)?;
+    let len = read_scale_compact_len_with_cap(
+        bytes,
+        cursor,
+        HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1,
+    )?;
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
         out.push(read_header_mmr_leaf_witness(bytes, cursor)?);
@@ -664,16 +689,28 @@ fn read_hegemon_long_range_proof(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<HegemonLongRangeProofV1, LightClientError> {
+    let verifier_hash = read_hash32(bytes, cursor)?;
+    let trusted_checkpoint = read_trusted_checkpoint(bytes, cursor)?;
+    let tip_header = read_pow_header(bytes, cursor)?;
+    let message_header = read_pow_header(bytes, cursor)?;
+    let message_header_opening = read_header_mmr_opening(bytes, cursor)?;
+    let messages = read_bridge_messages(bytes, cursor)?;
+    let message_index = read_u32_le(bytes, cursor)?;
+    let sample_headers = read_header_mmr_leaf_witnesses(bytes, cursor)?;
+    let sample_count = read_u32_le(bytes, cursor)?;
+    if sample_count > HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32 {
+        return Err(LightClientError::ProofInputMismatch);
+    }
     Ok(HegemonLongRangeProofV1 {
-        verifier_hash: read_hash32(bytes, cursor)?,
-        trusted_checkpoint: read_trusted_checkpoint(bytes, cursor)?,
-        tip_header: read_pow_header(bytes, cursor)?,
-        message_header: read_pow_header(bytes, cursor)?,
-        message_header_opening: read_header_mmr_opening(bytes, cursor)?,
-        messages: read_bridge_messages(bytes, cursor)?,
-        message_index: read_u32_le(bytes, cursor)?,
-        sample_headers: read_header_mmr_leaf_witnesses(bytes, cursor)?,
-        sample_count: read_u32_le(bytes, cursor)?,
+        verifier_hash,
+        trusted_checkpoint,
+        tip_header,
+        message_header,
+        message_header_opening,
+        messages,
+        message_index,
+        sample_headers,
+        sample_count,
         output: read_bridge_checkpoint_output(bytes, cursor)?,
     })
 }
@@ -682,16 +719,28 @@ fn read_hegemon_long_range_proof_without_output(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<HegemonLongRangeProofV1, LightClientError> {
+    let verifier_hash = read_hash32(bytes, cursor)?;
+    let trusted_checkpoint = read_trusted_checkpoint(bytes, cursor)?;
+    let tip_header = read_pow_header(bytes, cursor)?;
+    let message_header = read_pow_header(bytes, cursor)?;
+    let message_header_opening = read_header_mmr_opening(bytes, cursor)?;
+    let messages = read_bridge_messages(bytes, cursor)?;
+    let message_index = read_u32_le(bytes, cursor)?;
+    let sample_headers = read_header_mmr_leaf_witnesses(bytes, cursor)?;
+    let sample_count = read_u32_le(bytes, cursor)?;
+    if sample_count > HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32 {
+        return Err(LightClientError::ProofInputMismatch);
+    }
     Ok(HegemonLongRangeProofV1 {
-        verifier_hash: read_hash32(bytes, cursor)?,
-        trusted_checkpoint: read_trusted_checkpoint(bytes, cursor)?,
-        tip_header: read_pow_header(bytes, cursor)?,
-        message_header: read_pow_header(bytes, cursor)?,
-        message_header_opening: read_header_mmr_opening(bytes, cursor)?,
-        messages: read_bridge_messages(bytes, cursor)?,
-        message_index: read_u32_le(bytes, cursor)?,
-        sample_headers: read_header_mmr_leaf_witnesses(bytes, cursor)?,
-        sample_count: read_u32_le(bytes, cursor)?,
+        verifier_hash,
+        trusted_checkpoint,
+        tip_header,
+        message_header,
+        message_header_opening,
+        messages,
+        message_index,
+        sample_headers,
+        sample_count,
         output: empty_bridge_checkpoint_output(),
     })
 }
@@ -1548,6 +1597,30 @@ fn verify_hegemon_long_range_proof_inner(
     }
 
     Ok(output)
+}
+
+fn expected_long_range_output_from_wire_fields(
+    proof: &HegemonLongRangeProofV1,
+    min_tip_work: Work48,
+) -> Result<BridgeCheckpointOutputV1, LightClientError> {
+    let message_index = usize::try_from(proof.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    let message = proof
+        .messages
+        .get(message_index)
+        .ok_or(LightClientError::MessageIndexOutOfBounds)?;
+    let message_checkpoint =
+        checkpoint_from_header_hash(&proof.message_header, proof.message_header.pow_hash());
+    let tip_checkpoint =
+        checkpoint_from_header_hash(&proof.tip_header, proof.tip_header.pow_hash());
+    Ok(bridge_checkpoint_output_with_tip(
+        &message_checkpoint,
+        &tip_checkpoint,
+        proof.message_header.message_root,
+        message,
+        long_range_confirmations_checked(proof.tip_header.height, proof.message_header.height),
+        min_tip_work,
+    ))
 }
 
 pub fn decode_risc0_bridge_journal(
@@ -2891,8 +2964,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn long_range_proof_verifies_mmr_openings_and_samples() {
+    fn long_range_test_proof() -> HegemonLongRangeProofV1 {
         let pow_bits = 0x207f_ffff;
         let genesis = checkpoint(pow_bits);
         let mut history = vec![genesis.header_hash];
@@ -2948,7 +3020,7 @@ mod tests {
             3,
             zero_work(),
         );
-        let proof = HegemonLongRangeProofV1 {
+        HegemonLongRangeProofV1 {
             verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
             trusted_checkpoint: genesis,
             tip_header: h4,
@@ -2959,11 +3031,15 @@ mod tests {
             sample_headers,
             sample_count,
             output: output.clone(),
-        };
+        }
+    }
 
+    #[test]
+    fn long_range_proof_verifies_mmr_openings_and_samples() {
+        let proof = long_range_test_proof();
         assert_eq!(
             verify_hegemon_long_range_proof(&proof, 2, zero_work()).unwrap(),
-            output
+            proof.output
         );
         assert_eq!(
             decode_hegemon_long_range_proof_wire_v1(&proof.encode()).unwrap(),
@@ -2971,8 +3047,9 @@ mod tests {
         );
         let (guest_proof, min_confirmations, min_tip_work) =
             decode_hegemon_long_range_proof_guest_wire_v1(&proof.encode()).unwrap();
-        assert_eq!(min_confirmations, output.confirmations_checked);
-        assert_eq!(min_tip_work, output.min_work_checked);
+        assert_eq!(guest_proof.output, proof.output);
+        assert_eq!(min_confirmations, proof.output.confirmations_checked);
+        assert_eq!(min_tip_work, proof.output.min_work_checked);
         assert_eq!(
             verify_hegemon_long_range_proof_without_claimed_output(
                 &guest_proof,
@@ -2980,7 +3057,120 @@ mod tests {
                 min_tip_work
             )
             .unwrap(),
-            output
+            proof.output
         );
+    }
+
+    #[test]
+    fn long_range_proof_wire_decoder_rejects_malformed_cases() {
+        let proof = long_range_test_proof();
+        let wire = proof.encode();
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&wire).unwrap(),
+            proof
+        );
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&wire)
+                .unwrap()
+                .encode(),
+            wire
+        );
+
+        let mut trailing = wire.clone();
+        trailing.push(0);
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&trailing),
+            Err(LightClientError::ProofInputMismatch)
+        );
+
+        let truncated = &wire[..wire.len() - 1];
+        assert!(
+            decode_hegemon_long_range_proof_wire_v1(truncated).is_err(),
+            "truncated long-range proof wire must be rejected"
+        );
+
+        let payload = b"long range bridge";
+        let payload_offset =
+            find_subslice(&wire, payload).expect("test payload must appear in proof wire");
+        let payload_len_offset = payload_offset - 1;
+        assert_eq!(
+            wire[payload_len_offset],
+            (payload.len() as u8) << 2,
+            "test payload should use one-byte compact length"
+        );
+        let mut non_canonical_payload_len = wire.clone();
+        let wide_len = ((payload.len() as u16) << 2) | 0b01;
+        let wide_len_bytes = wide_len.to_le_bytes();
+        non_canonical_payload_len[payload_len_offset] = wide_len_bytes[0];
+        non_canonical_payload_len.insert(payload_len_offset + 1, wide_len_bytes[1]);
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&non_canonical_payload_len),
+            Err(LightClientError::ProofInputMismatch)
+        );
+
+        let mut over_message_cap = proof.clone();
+        over_message_cap.messages =
+            vec![proof.messages[0].clone(); HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1 + 1];
+        over_message_cap.message_header.message_count = over_message_cap.messages.len() as u32;
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&over_message_cap.encode()),
+            Err(LightClientError::ProofInputMismatch)
+        );
+
+        let mut over_payload_cap = proof.clone();
+        over_payload_cap.messages[0].payload =
+            vec![0x2a; HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1 + 1];
+        over_payload_cap.messages[0].payload_hash =
+            bridge_payload_hash(&over_payload_cap.messages[0].payload);
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&over_payload_cap.encode()),
+            Err(LightClientError::ProofInputMismatch)
+        );
+
+        let mut over_sample_vector_cap = proof.clone();
+        over_sample_vector_cap.sample_headers = vec![
+            proof.sample_headers[0].clone();
+            HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1
+                + 1
+        ];
+        over_sample_vector_cap.sample_count = over_sample_vector_cap.sample_headers.len() as u32;
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&over_sample_vector_cap.encode()),
+            Err(LightClientError::ProofInputMismatch)
+        );
+
+        let mut over_sample_count_cap = proof;
+        over_sample_count_cap.sample_count =
+            (HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32) + 1;
+        assert_eq!(
+            decode_hegemon_long_range_proof_wire_v1(&over_sample_count_cap.encode()),
+            Err(LightClientError::ProofInputMismatch)
+        );
+    }
+
+    #[test]
+    fn long_range_guest_wire_decoder_rejects_output_tail_mismatch() {
+        let proof = long_range_test_proof();
+        let mut wire = proof.encode();
+        let output_start = wire.len() - BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1;
+        wire[output_start] ^= 0x01;
+
+        assert_ne!(
+            decode_hegemon_long_range_proof_wire_v1(&wire)
+                .unwrap()
+                .output,
+            proof.output,
+            "full wire decode should expose the tampered claimed output"
+        );
+        assert_eq!(
+            decode_hegemon_long_range_proof_guest_wire_v1(&wire).map(|_| ()),
+            Err(LightClientError::ReceiptOutputMismatch)
+        );
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
     }
 }
