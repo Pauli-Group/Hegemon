@@ -763,6 +763,96 @@ impl NativeActionScopeAdmissionRejection {
     }
 }
 
+#[derive(Clone, Debug)]
+struct NativeBlockActionValidationState {
+    bridge_replay_state: InboundReplayState,
+    previous_transfer_key: Option<[u8; 32]>,
+    validated_action_count: usize,
+    imported_bridge_replay_count: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeBlockActionValidationStep {
+    scope_input: NativeActionScopeAdmissionInput,
+    payload_valid: bool,
+    transfer_key: [u8; 32],
+    transfer_state_input: NativeTransferStateAdmissionInput,
+    bridge_replay_key: Option<[u8; 48]>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeBlockActionValidationSummary {
+    validated_action_count: usize,
+    imported_bridge_replay_count: usize,
+    last_transfer_key: Option<[u8; 32]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBlockActionValidationRejection {
+    ActionCountMismatch,
+    ActionHashMismatch,
+    DuplicateActionHash,
+    CandidateArtifactPayloadWrongRoute,
+    BridgeScopeInvalid,
+    CandidateScopeInvalid,
+    CandidatePayloadMissing,
+    CoinbaseScopeInvalid,
+    UnsupportedActionRoute,
+    TransferScopeInvalid,
+    BridgePayloadInvalid,
+    CandidatePayloadInvalid,
+    CoinbasePayloadInvalid,
+    TransferPayloadInvalid,
+    BridgeReplayDuplicate,
+    TransferOrderInvalid,
+    TransferUnknownAnchor,
+    TransferNullifierZero,
+    TransferNullifierAlreadySpent,
+    TransferDuplicateNullifier,
+    TransferNullifierAlreadyPending,
+    TransferCommitmentZero,
+    TransferSidecarCiphertextMissing,
+    TransferSidecarCiphertextSizeMissing,
+    TransferSidecarCiphertextSizeMismatch,
+}
+
+impl NativeBlockActionValidationRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ActionCountMismatch => "action_count_mismatch",
+            Self::ActionHashMismatch => "action_hash_mismatch",
+            Self::DuplicateActionHash => "duplicate_action_hash",
+            Self::CandidateArtifactPayloadWrongRoute => "candidate_artifact_payload_wrong_route",
+            Self::BridgeScopeInvalid => "bridge_scope_invalid",
+            Self::CandidateScopeInvalid => "candidate_scope_invalid",
+            Self::CandidatePayloadMissing => "candidate_payload_missing",
+            Self::CoinbaseScopeInvalid => "coinbase_scope_invalid",
+            Self::UnsupportedActionRoute => "unsupported_action_route",
+            Self::TransferScopeInvalid => "transfer_scope_invalid",
+            Self::BridgePayloadInvalid => "bridge_payload_invalid",
+            Self::CandidatePayloadInvalid => "candidate_payload_invalid",
+            Self::CoinbasePayloadInvalid => "coinbase_payload_invalid",
+            Self::TransferPayloadInvalid => "transfer_payload_invalid",
+            Self::BridgeReplayDuplicate => "bridge_replay_duplicate",
+            Self::TransferOrderInvalid => "transfer_order_invalid",
+            Self::TransferUnknownAnchor => "transfer_unknown_anchor",
+            Self::TransferNullifierZero => "transfer_nullifier_zero",
+            Self::TransferNullifierAlreadySpent => "transfer_nullifier_already_spent",
+            Self::TransferDuplicateNullifier => "transfer_duplicate_nullifier",
+            Self::TransferNullifierAlreadyPending => "transfer_nullifier_already_pending",
+            Self::TransferCommitmentZero => "transfer_commitment_zero",
+            Self::TransferSidecarCiphertextMissing => "transfer_sidecar_ciphertext_missing",
+            Self::TransferSidecarCiphertextSizeMissing => {
+                "transfer_sidecar_ciphertext_size_missing"
+            }
+            Self::TransferSidecarCiphertextSizeMismatch => {
+                "transfer_sidecar_ciphertext_size_mismatch"
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeActionPayloadAdmissionInput {
     bridge_route: bool,
@@ -6921,6 +7011,223 @@ fn native_action_scope_admission_error(
     }
 }
 
+fn native_block_action_validation_scope_rejection(
+    rejection: NativeActionScopeAdmissionRejection,
+) -> NativeBlockActionValidationRejection {
+    match rejection {
+        NativeActionScopeAdmissionRejection::CandidateArtifactPayloadWrongRoute => {
+            NativeBlockActionValidationRejection::CandidateArtifactPayloadWrongRoute
+        }
+        NativeActionScopeAdmissionRejection::BridgeScopeInvalid => {
+            NativeBlockActionValidationRejection::BridgeScopeInvalid
+        }
+        NativeActionScopeAdmissionRejection::CandidateScopeInvalid => {
+            NativeBlockActionValidationRejection::CandidateScopeInvalid
+        }
+        NativeActionScopeAdmissionRejection::CandidatePayloadMissing => {
+            NativeBlockActionValidationRejection::CandidatePayloadMissing
+        }
+        NativeActionScopeAdmissionRejection::CoinbaseScopeInvalid => {
+            NativeBlockActionValidationRejection::CoinbaseScopeInvalid
+        }
+        NativeActionScopeAdmissionRejection::UnsupportedActionRoute => {
+            NativeBlockActionValidationRejection::UnsupportedActionRoute
+        }
+        NativeActionScopeAdmissionRejection::TransferScopeInvalid => {
+            NativeBlockActionValidationRejection::TransferScopeInvalid
+        }
+    }
+}
+
+fn native_block_action_validation_hash_rejection(
+    rejection: NativeActionHashAdmissionRejection,
+) -> NativeBlockActionValidationRejection {
+    match rejection {
+        NativeActionHashAdmissionRejection::ActionCountMismatch => {
+            NativeBlockActionValidationRejection::ActionCountMismatch
+        }
+        NativeActionHashAdmissionRejection::ActionHashMismatch => {
+            NativeBlockActionValidationRejection::ActionHashMismatch
+        }
+        NativeActionHashAdmissionRejection::DuplicateActionHash => {
+            NativeBlockActionValidationRejection::DuplicateActionHash
+        }
+    }
+}
+
+fn native_block_action_validation_payload_rejection(
+    route: NativeActionScopeAdmissionRoute,
+) -> NativeBlockActionValidationRejection {
+    match route {
+        NativeActionScopeAdmissionRoute::Bridge => {
+            NativeBlockActionValidationRejection::BridgePayloadInvalid
+        }
+        NativeActionScopeAdmissionRoute::CandidateArtifact => {
+            NativeBlockActionValidationRejection::CandidatePayloadInvalid
+        }
+        NativeActionScopeAdmissionRoute::Coinbase => {
+            NativeBlockActionValidationRejection::CoinbasePayloadInvalid
+        }
+        NativeActionScopeAdmissionRoute::Transfer => {
+            NativeBlockActionValidationRejection::TransferPayloadInvalid
+        }
+    }
+}
+
+fn native_block_action_validation_transfer_rejection(
+    rejection: NativeTransferStateAdmissionRejection,
+) -> NativeBlockActionValidationRejection {
+    match rejection {
+        NativeTransferStateAdmissionRejection::UnknownAnchor => {
+            NativeBlockActionValidationRejection::TransferUnknownAnchor
+        }
+        NativeTransferStateAdmissionRejection::NullifierZero => {
+            NativeBlockActionValidationRejection::TransferNullifierZero
+        }
+        NativeTransferStateAdmissionRejection::NullifierAlreadySpent => {
+            NativeBlockActionValidationRejection::TransferNullifierAlreadySpent
+        }
+        NativeTransferStateAdmissionRejection::DuplicateNullifier => {
+            NativeBlockActionValidationRejection::TransferDuplicateNullifier
+        }
+        NativeTransferStateAdmissionRejection::NullifierAlreadyPending => {
+            NativeBlockActionValidationRejection::TransferNullifierAlreadyPending
+        }
+        NativeTransferStateAdmissionRejection::CommitmentZero => {
+            NativeBlockActionValidationRejection::TransferCommitmentZero
+        }
+        NativeTransferStateAdmissionRejection::SidecarCiphertextMissing => {
+            NativeBlockActionValidationRejection::TransferSidecarCiphertextMissing
+        }
+        NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMissing => {
+            NativeBlockActionValidationRejection::TransferSidecarCiphertextSizeMissing
+        }
+        NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMismatch => {
+            NativeBlockActionValidationRejection::TransferSidecarCiphertextSizeMismatch
+        }
+    }
+}
+
+fn evaluate_native_block_action_validation_start(
+    action_count_matches: bool,
+    action_hashes_match: bool,
+    action_hashes_unique: bool,
+    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+) -> Result<NativeBlockActionValidationState, NativeBlockActionValidationRejection> {
+    evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
+        action_count_matches,
+        action_hashes_match,
+        action_hashes_unique,
+    })
+    .map_err(native_block_action_validation_hash_rejection)?;
+    Ok(NativeBlockActionValidationState {
+        bridge_replay_state: InboundReplayState::new(consumed_bridge_messages, BTreeSet::new()),
+        previous_transfer_key: None,
+        validated_action_count: 0,
+        imported_bridge_replay_count: 0,
+    })
+}
+
+fn evaluate_native_block_action_validation_step(
+    state: &mut NativeBlockActionValidationState,
+    step: NativeBlockActionValidationStep,
+) -> Result<NativeActionScopeAdmissionRoute, NativeBlockActionValidationRejection> {
+    let route = evaluate_native_action_scope_admission(step.scope_input)
+        .map_err(native_block_action_validation_scope_rejection)?;
+    if !step.payload_valid {
+        return Err(native_block_action_validation_payload_rejection(route));
+    }
+
+    match route {
+        NativeActionScopeAdmissionRoute::Bridge => {
+            if let Some(replay_key) = step.bridge_replay_key {
+                state
+                    .bridge_replay_state
+                    .import_one(replay_key)
+                    .map_err(|_| NativeBlockActionValidationRejection::BridgeReplayDuplicate)?;
+                state.imported_bridge_replay_count = state
+                    .imported_bridge_replay_count
+                    .checked_add(1)
+                    .expect("usize bridge replay count cannot overflow on one block");
+            }
+        }
+        NativeActionScopeAdmissionRoute::Transfer => {
+            if !transfer_key_extends_canonical_order(
+                state.previous_transfer_key.as_ref(),
+                &step.transfer_key,
+            ) {
+                return Err(NativeBlockActionValidationRejection::TransferOrderInvalid);
+            }
+            state.previous_transfer_key = Some(step.transfer_key);
+            evaluate_native_transfer_state_admission(step.transfer_state_input)
+                .map_err(native_block_action_validation_transfer_rejection)?;
+        }
+        NativeActionScopeAdmissionRoute::CandidateArtifact
+        | NativeActionScopeAdmissionRoute::Coinbase => {}
+    }
+
+    state.validated_action_count = state
+        .validated_action_count
+        .checked_add(1)
+        .expect("usize validated action count cannot overflow on one block");
+    Ok(route)
+}
+
+#[cfg(test)]
+fn native_block_action_validation_summary(
+    state: NativeBlockActionValidationState,
+) -> NativeBlockActionValidationSummary {
+    NativeBlockActionValidationSummary {
+        validated_action_count: state.validated_action_count,
+        imported_bridge_replay_count: state.imported_bridge_replay_count,
+        last_transfer_key: state.previous_transfer_key,
+    }
+}
+
+fn native_block_action_validation_error(
+    rejection: NativeBlockActionValidationRejection,
+) -> anyhow::Error {
+    anyhow!(
+        "native block action validation failed: {}",
+        rejection.label()
+    )
+}
+
+fn native_block_action_validation_transfer_state_rejection(
+    rejection: NativeBlockActionValidationRejection,
+) -> Option<NativeTransferStateAdmissionRejection> {
+    match rejection {
+        NativeBlockActionValidationRejection::TransferUnknownAnchor => {
+            Some(NativeTransferStateAdmissionRejection::UnknownAnchor)
+        }
+        NativeBlockActionValidationRejection::TransferNullifierZero => {
+            Some(NativeTransferStateAdmissionRejection::NullifierZero)
+        }
+        NativeBlockActionValidationRejection::TransferNullifierAlreadySpent => {
+            Some(NativeTransferStateAdmissionRejection::NullifierAlreadySpent)
+        }
+        NativeBlockActionValidationRejection::TransferDuplicateNullifier => {
+            Some(NativeTransferStateAdmissionRejection::DuplicateNullifier)
+        }
+        NativeBlockActionValidationRejection::TransferNullifierAlreadyPending => {
+            Some(NativeTransferStateAdmissionRejection::NullifierAlreadyPending)
+        }
+        NativeBlockActionValidationRejection::TransferCommitmentZero => {
+            Some(NativeTransferStateAdmissionRejection::CommitmentZero)
+        }
+        NativeBlockActionValidationRejection::TransferSidecarCiphertextMissing => {
+            Some(NativeTransferStateAdmissionRejection::SidecarCiphertextMissing)
+        }
+        NativeBlockActionValidationRejection::TransferSidecarCiphertextSizeMissing => {
+            Some(NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMissing)
+        }
+        NativeBlockActionValidationRejection::TransferSidecarCiphertextSizeMismatch => {
+            Some(NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMismatch)
+        }
+        _ => None,
+    }
+}
+
 fn evaluate_native_block_commitment_admission(
     input: NativeBlockCommitmentAdmissionInput,
 ) -> Result<(), NativeBlockCommitmentAdmissionRejection> {
@@ -7088,58 +7395,122 @@ fn block_action_hashes_unique(actions: &[PendingAction]) -> bool {
 }
 
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
-    evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
-        action_count_matches: true,
-        action_hashes_match: block_action_hashes_match(actions),
-        action_hashes_unique: block_action_hashes_unique(actions),
-    })
-    .map_err(native_action_hash_admission_error)?;
-    let mut bridge_replay_state =
-        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    let mut validation_state = evaluate_native_block_action_validation_start(
+        true,
+        block_action_hashes_match(actions),
+        block_action_hashes_unique(actions),
+        state.consumed_bridge_messages.clone(),
+    )
+    .map_err(|rejection| match rejection {
+        NativeBlockActionValidationRejection::ActionCountMismatch => {
+            native_action_hash_admission_error(
+                NativeActionHashAdmissionRejection::ActionCountMismatch,
+            )
+        }
+        NativeBlockActionValidationRejection::ActionHashMismatch => {
+            native_action_hash_admission_error(
+                NativeActionHashAdmissionRejection::ActionHashMismatch,
+            )
+        }
+        NativeBlockActionValidationRejection::DuplicateActionHash => {
+            native_action_hash_admission_error(
+                NativeActionHashAdmissionRejection::DuplicateActionHash,
+            )
+        }
+        _ => native_block_action_validation_error(rejection),
+    })?;
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let mut previous_transfer_key: Option<[u8; 32]> = None;
     for action in actions {
-        match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
-            .map_err(native_action_scope_admission_error)?
-        {
-            NativeActionScopeAdmissionRoute::Bridge => {
-                validate_bridge_action_payload(action)?;
-                if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                    bridge_replay_state
-                        .import_one(replay_key)
-                        .map_err(|_| anyhow!("duplicate inbound bridge message in block"))?;
+        let scope_input = native_action_scope_admission_input(action);
+        let route_preview = evaluate_native_action_scope_admission(scope_input);
+        let mut payload_error = None;
+        let mut bridge_replay_key = None;
+        let mut transfer_key = [0u8; 32];
+        let mut transfer_state_input = NativeTransferStateAdmissionInput {
+            anchor_known: true,
+            nullifier_state: NativeTransferNullifierAdmissionState::Valid,
+            commitments_nonzero: true,
+            sidecar_route: false,
+            sidecar_ciphertexts_available: true,
+            sidecar_ciphertext_sizes_present: true,
+            sidecar_ciphertext_sizes_match: true,
+        };
+
+        if let Ok(route) = route_preview {
+            match route {
+                NativeActionScopeAdmissionRoute::Bridge => {
+                    if let Err(err) = validate_bridge_action_payload(action) {
+                        payload_error = Some(err);
+                    } else {
+                        bridge_replay_key = bridge_inbound_replay_key_from_action(action)?;
+                    }
+                }
+                NativeActionScopeAdmissionRoute::CandidateArtifact => {
+                    if let Err(err) = validate_candidate_action_payload(action) {
+                        payload_error = Some(err);
+                    }
+                }
+                NativeActionScopeAdmissionRoute::Coinbase => {
+                    if let Err(err) = validate_coinbase_action_payload(action) {
+                        payload_error = Some(err);
+                    }
+                }
+                NativeActionScopeAdmissionRoute::Transfer => {
+                    if let Err(err) = validate_transfer_action_payload(action) {
+                        payload_error = Some(err);
+                    } else {
+                        transfer_key = action_order_key(action);
+                        transfer_state_input = native_transfer_state_admission_input_for_block(
+                            state,
+                            &mut nullifier_state,
+                            action,
+                        );
+                    }
                 }
             }
-            NativeActionScopeAdmissionRoute::CandidateArtifact => {
-                validate_candidate_action_payload(action)?;
+        }
+
+        let helper_result = evaluate_native_block_action_validation_step(
+            &mut validation_state,
+            NativeBlockActionValidationStep {
+                scope_input,
+                payload_valid: payload_error.is_none(),
+                transfer_key,
+                transfer_state_input,
+                bridge_replay_key,
+            },
+        );
+        if let Err(rejection) = helper_result {
+            if let Err(scope_rejection) = route_preview {
+                return Err(native_action_scope_admission_error(scope_rejection));
             }
-            NativeActionScopeAdmissionRoute::Coinbase => {
-                validate_coinbase_action_payload(action)?;
+            if matches!(
+                rejection,
+                NativeBlockActionValidationRejection::BridgePayloadInvalid
+                    | NativeBlockActionValidationRejection::CandidatePayloadInvalid
+                    | NativeBlockActionValidationRejection::CoinbasePayloadInvalid
+                    | NativeBlockActionValidationRejection::TransferPayloadInvalid
+            ) {
+                return Err(payload_error
+                    .unwrap_or_else(|| native_block_action_validation_error(rejection)));
             }
-            NativeActionScopeAdmissionRoute::Transfer => {
-                validate_transfer_action_payload(action)?;
-                let transfer_key = action_order_key(action);
-                if !transfer_key_extends_canonical_order(
-                    previous_transfer_key.as_ref(),
-                    &transfer_key,
-                ) {
-                    return Err(anyhow!(
-                        "shielded transfer actions are not in canonical order"
-                    ));
-                }
-                previous_transfer_key = Some(transfer_key);
-                let input = native_transfer_state_admission_input_for_block(
-                    state,
-                    &mut nullifier_state,
-                    action,
-                );
-                evaluate_native_transfer_state_admission(input).map_err(|rejection| {
-                    native_transfer_state_admission_error(
-                        NativeTransferStateAdmissionContext::Block,
-                        rejection,
-                    )
-                })?;
+            if rejection == NativeBlockActionValidationRejection::BridgeReplayDuplicate {
+                return Err(anyhow!("duplicate inbound bridge message in block"));
             }
+            if rejection == NativeBlockActionValidationRejection::TransferOrderInvalid {
+                return Err(anyhow!(
+                    "shielded transfer actions are not in canonical order"
+                ));
+            }
+            if let Some(transfer_rejection) =
+                native_block_action_validation_transfer_state_rejection(rejection)
+            {
+                return Err(native_transfer_state_admission_error(
+                    NativeTransferStateAdmissionContext::Block,
+                    transfer_rejection,
+                ));
+            }
+            return Err(native_block_action_validation_error(rejection));
         }
     }
     Ok(())
@@ -9429,6 +9800,66 @@ mod tests {
         ciphertext_count: usize,
         nullifiers: Vec<u64>,
         bridge_replay_key: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionValidationVectorFile {
+        schema_version: u32,
+        block_action_validation_cases: Vec<LeanBlockActionValidationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionValidationCase {
+        name: String,
+        action_count_matches: bool,
+        action_hashes_match: bool,
+        action_hashes_unique: bool,
+        consumed_bridge_replays: Vec<u64>,
+        actions: Vec<LeanBlockActionValidationActionCase>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_validated_action_count: Option<usize>,
+        expected_imported_bridge_replay_count: Option<usize>,
+        expected_last_transfer_key: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionValidationActionCase {
+        scope: LeanBlockActionValidationScopeCase,
+        payload_valid: bool,
+        transfer_key: u64,
+        transfer_state: LeanBlockActionValidationTransferStateCase,
+        bridge_replay_key: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionValidationScopeCase {
+        candidate_artifact_payload_scoped: bool,
+        bridge_route: bool,
+        bridge_scope_valid: bool,
+        candidate_artifact_route: bool,
+        candidate_scope_valid: bool,
+        candidate_payload_present: bool,
+        coinbase_route: bool,
+        coinbase_scope_valid: bool,
+        transfer_route: bool,
+        transfer_scope_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionValidationTransferStateCase {
+        anchor_known: bool,
+        nullifier_state: String,
+        commitments_nonzero: bool,
+        sidecar_route: bool,
+        sidecar_ciphertexts_available: bool,
+        sidecar_ciphertext_sizes_present: bool,
+        sidecar_ciphertext_sizes_match: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -12292,6 +12723,176 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn lean_generated_block_action_validation_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean block action validation vectors");
+        let vectors: LeanBlockActionValidationVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean block action validation vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.block_action_validation_cases.is_empty(),
+            "Lean block action validation cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.block_action_validation_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_block_action_validation_case(case);
+        }
+    }
+
+    fn verify_lean_block_action_validation_case(case: &LeanBlockActionValidationCase) {
+        let consumed_bridge_replays = case
+            .consumed_bridge_replays
+            .iter()
+            .map(|key| synthetic_stream_replay_key(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let mut actual_rejection = None;
+        let mut validation_state = match evaluate_native_block_action_validation_start(
+            case.action_count_matches,
+            case.action_hashes_match,
+            case.action_hashes_unique,
+            consumed_bridge_replays,
+        ) {
+            Ok(state) => Some(state),
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} block action validation unexpectedly rejected at hash gate: {}",
+                    case.name,
+                    rejection.label()
+                );
+                actual_rejection = Some(rejection);
+                None
+            }
+        };
+        if let Some(ref mut validation_state) = validation_state {
+            for action in &case.actions {
+                let step = NativeBlockActionValidationStep {
+                    scope_input: lean_block_action_validation_scope(&action.scope),
+                    payload_valid: action.payload_valid,
+                    transfer_key: synthetic_transfer_order_key(action.transfer_key),
+                    transfer_state_input: lean_block_action_validation_transfer_state(
+                        &action.transfer_state,
+                    ),
+                    bridge_replay_key: action
+                        .bridge_replay_key
+                        .map(|key| synthetic_stream_replay_key(key, &case.name)),
+                };
+                if let Err(rejection) =
+                    evaluate_native_block_action_validation_step(validation_state, step)
+                {
+                    actual_rejection = Some(rejection);
+                    break;
+                }
+            }
+        }
+
+        match actual_rejection {
+            Some(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} block action validation unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} block action validation rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+            None => {
+                let summary = native_block_action_validation_summary(
+                    validation_state.expect("accepted block action validation state"),
+                );
+                assert!(
+                    case.expected_valid,
+                    "{} block action validation unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.validated_action_count),
+                    case.expected_validated_action_count,
+                    "{} validated action count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.imported_bridge_replay_count),
+                    case.expected_imported_bridge_replay_count,
+                    "{} imported bridge replay count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    summary.last_transfer_key.map(observed_transfer_order_key),
+                    case.expected_last_transfer_key,
+                    "{} last transfer key drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    fn lean_block_action_validation_scope(
+        scope: &LeanBlockActionValidationScopeCase,
+    ) -> NativeActionScopeAdmissionInput {
+        NativeActionScopeAdmissionInput {
+            candidate_artifact_payload_scoped: scope.candidate_artifact_payload_scoped,
+            bridge_route: scope.bridge_route,
+            bridge_scope_valid: scope.bridge_scope_valid,
+            candidate_artifact_route: scope.candidate_artifact_route,
+            candidate_scope_valid: scope.candidate_scope_valid,
+            candidate_payload_present: scope.candidate_payload_present,
+            coinbase_route: scope.coinbase_route,
+            coinbase_scope_valid: scope.coinbase_scope_valid,
+            transfer_route: scope.transfer_route,
+            transfer_scope_valid: scope.transfer_scope_valid,
+        }
+    }
+
+    fn lean_block_action_validation_transfer_state(
+        state: &LeanBlockActionValidationTransferStateCase,
+    ) -> NativeTransferStateAdmissionInput {
+        NativeTransferStateAdmissionInput {
+            anchor_known: state.anchor_known,
+            nullifier_state: match state.nullifier_state.as_str() {
+                "valid" => NativeTransferNullifierAdmissionState::Valid,
+                "zero" => NativeTransferNullifierAdmissionState::Zero,
+                "already_spent" => NativeTransferNullifierAdmissionState::AlreadySpent,
+                "duplicate" => NativeTransferNullifierAdmissionState::Duplicate,
+                "already_pending" => NativeTransferNullifierAdmissionState::AlreadyPending,
+                other => panic!("unknown block action transfer nullifier state {other}"),
+            },
+            commitments_nonzero: state.commitments_nonzero,
+            sidecar_route: state.sidecar_route,
+            sidecar_ciphertexts_available: state.sidecar_ciphertexts_available,
+            sidecar_ciphertext_sizes_present: state.sidecar_ciphertext_sizes_present,
+            sidecar_ciphertext_sizes_match: state.sidecar_ciphertext_sizes_match,
+        }
+    }
+
+    fn synthetic_transfer_order_key(key: u64) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[24..32].copy_from_slice(&key.to_be_bytes());
+        bytes
+    }
+
+    fn observed_transfer_order_key(key: [u8; 32]) -> u64 {
+        u64::from_be_bytes(
+            key[24..32]
+                .try_into()
+                .expect("synthetic transfer order key has 8 trailing bytes"),
+        )
     }
 
     fn synthetic_action_effect_nullifiers(

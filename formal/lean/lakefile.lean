@@ -112,6 +112,9 @@ lean_exe gen_pending_action_reload_vectors where
 lean_exe gen_action_scope_admission_vectors where
   root := `Hegemon.Native.GenerateActionScopeAdmissionVectors
 
+lean_exe gen_block_action_validation_vectors where
+  root := `Hegemon.Native.GenerateBlockActionValidationVectors
+
 lean_exe gen_bridge_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateBridgeActionPayloadAdmissionVectors
 

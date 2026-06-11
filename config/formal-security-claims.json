@@ -3080,6 +3080,50 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-action-validation",
+      "component": "native decoded block action validation composition",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block-action validation kernel proves the composed native decoded-action import table: action count/hash admission, route/scope admission, route-specific payload success, bridge replay duplicate detection, shielded transfer ordering, and transfer state admission run in fixed order before block replay/accounting can treat decoded actions as valid; generated Lean vectors are checked against the production validate_block_actions_locked path.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regressions",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions",
+        "Hegemon.Native.BlockActionValidation.valid_mixed_validation_accepts",
+        "Hegemon.Native.BlockActionValidation.nontransfer_between_transfers_accepts",
+        "Hegemon.Native.BlockActionValidation.action_hash_mismatch_rejects",
+        "Hegemon.Native.BlockActionValidation.duplicate_action_hash_rejects",
+        "Hegemon.Native.BlockActionValidation.scope_rejection_precedes_payload",
+        "Hegemon.Native.BlockActionValidation.bridge_payload_precedes_replay",
+        "Hegemon.Native.BlockActionValidation.bridge_replay_duplicate_rejects",
+        "Hegemon.Native.BlockActionValidation.cross_action_bridge_replay_duplicate_rejects",
+        "Hegemon.Native.BlockActionValidation.transfer_payload_precedes_order",
+        "Hegemon.Native.BlockActionValidation.descending_transfer_order_rejects",
+        "Hegemon.Native.BlockActionValidation.transfer_order_precedes_state",
+        "Hegemon.Native.BlockActionValidation.transfer_state_rejects"
+      ],
+      "assumptions": [
+        "The Lean model composes already-modeled decoded-action predicates over production-derived facts: action hash/count agreement, action scope routing, route-specific payload validity, transfer order keys, transfer state admission, and observed inbound bridge replay keys.",
+        "Generated Lean conformance vectors cover a valid mixed block, non-transfer actions between transfers, action hash mismatch, duplicate action hashes, scope-before-payload precedence, bridge payload-before-replay precedence, prior and cross-action bridge replay duplicates, transfer payload-before-order precedence, descending transfer order rejection, transfer order-before-state precedence, and transfer state rejection.",
+        "The theorem covers executable decoded block-action validation composition only. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash security, tx-leaf proof soundness, recursive proof soundness, storage durability, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionValidationVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_action_validation_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_actions_reject --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.block-commitment-admission",
       "component": "native block derived commitment admission",
       "claim_class": "lean_theorem",

@@ -3744,6 +3744,71 @@
       "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It does not prove SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
     },
     {
+      "id": "native.block-action-validation",
+      "claim_id": "native.block-action-validation",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean block-action validation transition, a native decoded block action stream is accepted only when action hash/count admission accepts, every action passes route/scope admission, route-specific payload validation succeeds before replay/state checks, inbound bridge replay keys are not already consumed or duplicated earlier in the block, shielded transfer keys are nondecreasing, and every shielded transfer passes state admission; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions` proves the executable acceptance predicate over the composed validation table. Companion theorems pin valid mixed blocks, non-transfer interleaving, action hash mismatch, duplicate hashes, scope-before-payload, bridge payload-before-replay, prior and cross-action bridge replay duplicates, transfer payload-before-order, descending transfer order, transfer order-before-state, and transfer-state rejection behavior. `gen_block_action_validation_vectors` emits Lean-derived examples checked against production helper functions introduced in `node/src/native/mod.rs`, and `validate_block_actions_locked` now routes decoded block validation through that helper before preserving the existing user-facing rejection errors.",
+      "depends_on": [
+        "native.codec-admission",
+        "native.block-action-hash-admission",
+        "native.action-scope-admission",
+        "native.bridge-action-payload-admission",
+        "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
+        "native.coinbase-action-payload-admission",
+        "native.candidate-artifact-admission",
+        "native.block-action-ordering",
+        "bridge.inbound-replay-state",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionValidationVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionValidationVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as a decoded block-action validation composition boundary over production-derived route, payload, replay, order, and transfer-state predicates. It narrows the gap between raw decoded actions and block replay/accounting but is not a complete native-node equivalence proof."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-action-validation-theorem",
+          "description": "Removing or weakening the block-action validation theorems or precedence examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-block-action-validation-conformance",
+          "description": "Changing production decoded block-action validation composition away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_action_validation_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-block-action-validation-regressions",
+          "description": "Focused native regressions must still reject invalid block action hashes, invalid routes/payloads, replay duplicates, invalid transfer state, and noncanonical transfer order.",
+          "gate": "cargo test -p hegemon-node block_actions_reject --lib --no-default-features -- --nocapture && cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-block-action-validation-gate",
+          "description": "The release formal-core wrapper must generate block-action validation vectors and run the Rust conformance test over production helpers.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-commitment-admission",
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
@@ -3751,6 +3816,7 @@
       "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
       "depends_on": [
         "native.block-action-hash-admission",
+        "native.block-action-validation",
         "native.action-root-transcript-binding",
         "native.announced-block-admission",
         "native.action-scope-admission",
@@ -3890,7 +3956,8 @@
         "native.action-root-transcript-binding",
         "bridge.message-root-replay",
         "bridge.header-mmr-transcript-binding",
-        "release.dependency-waivers"
+        "release.dependency-waivers",
+        "native.block-action-validation"
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
