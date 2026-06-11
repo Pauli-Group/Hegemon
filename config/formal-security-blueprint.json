@@ -2337,7 +2337,7 @@
       "claim_id": "native.mined-work-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean mined-work admission transition, native local mined-block import accepts work as fresh only when the current best hash equals the work parent hash and the current best height has a checked u64 next height equal to the work height; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.MinedWorkAdmission.accepts_iff_mined_work_preconditions` proves the complete executable mined-work freshness predicate, with concrete theorem facts for valid admission, parent-hash mismatch, height mismatch, u64 height overflow rejection, parent-before-height rejection precedence, and accepting height u64::MAX only when the parent is u64::MAX - 1. `gen_mined_work_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_mined_work_admission` helper called by `import_mined_block` before pending-action replay, body commitment admission, supply accounting, and PoW metadata verification.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MinedWorkAdmission.accepts_iff_mined_work_preconditions` proves the complete executable mined-work freshness predicate, with concrete theorem facts for valid admission, parent-hash mismatch, height mismatch, u64 height overflow rejection, parent-before-height rejection precedence, and accepting height u64::MAX only when the parent is u64::MAX - 1. `gen_mined_work_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_mined_work_admission` helper called by `import_mined_block` before pending-action replay, body commitment admission, supply accounting, and PoW metadata verification. The blueprint also gates local mined-block mutation order: `verify_native_pow_meta` must run before pending-action mutation, persistence, or broadcast, and a regression asserts an invalid local seal leaves pending actions, commitment state, and supply untouched.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -2347,6 +2347,32 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_mined_work_admission",
+          "required_callers": [
+            "import_mined_block"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_native_pow_meta",
+          "required_callers": [
+            "import_mined_block"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "apply_pending_actions_locked",
+                "persist_block",
+                "broadcast_block_announce"
+              ]
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
@@ -2379,12 +2405,22 @@
           "gate": "cargo test -p hegemon-node mined_work_rejects_height_overflow --lib --no-default-features"
         },
         {
+          "id": "native-mined-invalid-pow-no-mutation-regression",
+          "description": "Native local mined-block import must reject an invalid mined seal before mutating pending actions, commitment state, or supply state.",
+          "gate": "cargo test -p hegemon-node mined_invalid_pow_does_not_mutate_pending_state --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-mined-pow-before-mutation-binding",
+          "description": "The blueprint gate must reject the mined-work admission claim if local mined-block PoW metadata verification drifts after pending-action mutation, block persistence, or block broadcast.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
           "id": "formal-core-mined-work-admission-gate",
           "description": "The release formal-core wrapper must generate native mined-work admission vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission only. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity, wall-clock correctness, fork-choice, storage durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes pending-action mutation, persistence, and broadcast. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, storage durability, or complete native-node equivalence."
     },
     {
       "id": "native.work-template-admission",
@@ -4120,6 +4156,7 @@
               "callee_must_precede": [
                 "validate_block_actions_locked",
                 "verify_native_block_artifacts_locked",
+                "verify_native_pow_meta",
                 "apply_pending_actions_locked",
                 "persist_block",
                 "broadcast_block_announce"

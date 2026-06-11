@@ -1920,17 +1920,6 @@ impl NativeNode {
                 header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
             },
         )?;
-        if !actions.is_empty() {
-            validate_block_actions_locked(&state, &actions)?;
-            verify_native_block_artifacts_locked(self, &state, &actions)?;
-            self.apply_pending_actions_locked(&mut state, &actions)?;
-        }
-        if state.commitment_tree.root() != work.state_root
-            || nullifier_root_from_set(&state.nullifiers) != work.nullifier_root
-        {
-            return Err(anyhow!("native pending action preview mismatch"));
-        }
-
         let meta = NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
@@ -1955,6 +1944,17 @@ impl NativeNode {
             action_bytes: actions.iter().map(Encode::encode).collect(),
         };
         verify_native_pow_meta(&state.best, &meta)?;
+
+        if !actions.is_empty() {
+            validate_block_actions_locked(&state, &actions)?;
+            verify_native_block_artifacts_locked(self, &state, &actions)?;
+            self.apply_pending_actions_locked(&mut state, &actions)?;
+        }
+        if state.commitment_tree.root() != work.state_root
+            || nullifier_root_from_set(&state.nullifiers) != work.nullifier_root
+        {
+            return Err(anyhow!("native pending action preview mismatch"));
+        }
 
         persist_block(&self.meta_tree, &self.height_tree, &self.block_tree, &meta)?;
         state.best = meta.clone();
@@ -10733,6 +10733,32 @@ mod tests {
 
         assert_eq!(imported.supply_digest, 0);
         assert_eq!(node.best_meta().supply_digest, 0);
+    }
+
+    #[test]
+    fn mined_invalid_pow_does_not_mutate_pending_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+
+        let reward = consensus::reward::block_subsidy(1);
+        stage_test_coinbase(&node, reward, [42u8; 48]);
+
+        let work = node.prepare_work().expect("prepare native work");
+        let mut invalid_seal = mine_native_round(work.clone(), 0).expect("valid seal");
+        invalid_seal.work_hash[0] ^= 0x80;
+
+        let err = node
+            .import_mined_block(&work, invalid_seal)
+            .expect_err("invalid mined PoW must reject before mutation");
+        assert!(err.to_string().contains("native"));
+
+        let state = node.state.read();
+        assert_eq!(state.best.height, 0);
+        assert_eq!(state.best.supply_digest, 0);
+        assert_eq!(state.pending_actions.len(), 1);
+        assert_eq!(state.commitment_tree.leaf_count(), 0);
     }
 
     #[test]
