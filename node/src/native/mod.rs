@@ -56,6 +56,7 @@ use protocol_shielded_pool::{NullifierReject, NullifierState};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
+use sled::transaction::Transactional;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
@@ -1971,10 +1972,7 @@ impl NativeNode {
             return Err(anyhow!("native pending action preview mismatch"));
         }
 
-        if !actions.is_empty() {
-            self.write_pending_action_effects(&actions, &pending_action_effects)?;
-        }
-        persist_block(&self.meta_tree, &self.height_tree, &self.block_tree, &meta)?;
+        self.commit_mined_block_atomically(&actions, &pending_action_effects, &meta)?;
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
@@ -2260,63 +2258,96 @@ impl NativeNode {
         Ok(())
     }
 
-    fn write_pending_action_effects(
+    fn commit_mined_block_atomically(
         &self,
         actions: &[PendingAction],
         planned: &[NativePlannedActionEffect],
+        meta: &NativeBlockMeta,
     ) -> Result<()> {
         if actions.len() != planned.len() {
             return Err(anyhow!(
-                "pending action write plan length mismatch: actions={} planned={}",
+                "mined block commit plan length mismatch: actions={} planned={}",
                 actions.len(),
                 planned.len()
             ));
         }
-        for (action, effect) in actions.iter().zip(planned.iter()) {
-            for (offset, commitment) in action.commitments.iter().enumerate() {
-                let index = effect
-                    .commitment_start
-                    .checked_add(offset as u64)
-                    .expect("planned commitment index arithmetic must not overflow");
-                self.commitment_tree
-                    .insert(index.to_be_bytes(), commitment.as_slice())?;
-            }
-            insert_ciphertext_archive_entries(
-                &self.ciphertext_archive_tree,
-                effect.commitment_start,
-                &effect.ciphertexts,
-            )?;
 
-            for nullifier in &action.nullifiers {
-                self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
-            }
-            if let Some(replay_key) = effect.replay_key {
-                self.bridge_inbound_tree
-                    .insert(replay_key.as_slice(), b"1")?;
-            }
+        let block_record = bincode::serialize(meta)?;
+        let best_record = block_record.clone();
+        let height_key = height_key(meta.height);
+        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+            &self.meta_tree,
+            &self.height_tree,
+            &self.block_tree,
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+            &self.action_tree,
+        )
+            .transaction(
+                |(
+                    meta_tree,
+                    height_tree,
+                    block_tree,
+                    commitment_tree,
+                    nullifier_tree,
+                    bridge_inbound_tree,
+                    ciphertext_index_tree,
+                    ciphertext_archive_tree,
+                    action_tree,
+                )| {
+                    block_tree.insert(meta.hash.to_vec(), block_record.clone())?;
+                    height_tree.insert(height_key.to_vec(), meta.hash.to_vec())?;
+                    meta_tree.insert(META_BEST_KEY.to_vec(), best_record.clone())?;
 
-            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                let size = action
-                    .ciphertext_sizes
-                    .get(idx)
-                    .copied()
-                    .unwrap_or_default();
-                let mut value = Vec::with_capacity(32 + 4 + 8);
-                value.extend_from_slice(&action.tx_hash);
-                value.extend_from_slice(&size.to_le_bytes());
-                value.extend_from_slice(&(idx as u64).to_le_bytes());
-                self.ciphertext_index_tree.insert(hash.as_slice(), value)?;
-            }
+                    for (action, effect) in actions.iter().zip(planned.iter()) {
+                        for (offset, commitment) in action.commitments.iter().enumerate() {
+                            let index = effect
+                                .commitment_start
+                                .checked_add(offset as u64)
+                                .expect("planned commitment index arithmetic must not overflow");
+                            commitment_tree
+                                .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
+                        }
+                        for (offset, bytes) in effect.ciphertexts.iter().enumerate() {
+                            let index = effect
+                                .commitment_start
+                                .checked_add(offset as u64)
+                                .expect("planned ciphertext index arithmetic must not overflow");
+                            ciphertext_archive_tree
+                                .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
+                        }
 
-            self.action_tree.remove(action.tx_hash.as_slice())?;
-        }
+                        for nullifier in &action.nullifiers {
+                            nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
+                        }
+                        if let Some(replay_key) = effect.replay_key {
+                            bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
+                        }
 
-        self.commitment_tree.flush()?;
-        self.nullifier_tree.flush()?;
-        self.bridge_inbound_tree.flush()?;
-        self.ciphertext_index_tree.flush()?;
-        self.ciphertext_archive_tree.flush()?;
-        self.action_tree.flush()?;
+                        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                            let size = action
+                                .ciphertext_sizes
+                                .get(idx)
+                                .copied()
+                                .unwrap_or_default();
+                            let mut value = Vec::with_capacity(32 + 4 + 8);
+                            value.extend_from_slice(&action.tx_hash);
+                            value.extend_from_slice(&size.to_le_bytes());
+                            value.extend_from_slice(&(idx as u64).to_le_bytes());
+                            ciphertext_index_tree.insert(hash.to_vec(), value)?;
+                        }
+
+                        action_tree.remove(action.tx_hash.to_vec())?;
+                    }
+
+                    meta_tree.flush();
+                    Ok(())
+                },
+            );
+        commit_result.map_err(|err| anyhow!("atomic native mined block commit failed: {err}"))?;
         Ok(())
     }
 
@@ -7926,20 +7957,6 @@ fn plan_pending_action_effects(
         .collect())
 }
 
-fn insert_ciphertext_archive_entries(
-    tree: &sled::Tree,
-    start_index: u64,
-    ciphertexts: &[Vec<u8>],
-) -> Result<()> {
-    for (offset, bytes) in ciphertexts.iter().enumerate() {
-        let index = start_index
-            .checked_add(offset as u64)
-            .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
-        tree.insert(index.to_be_bytes(), bytes.as_slice())?;
-    }
-    Ok(())
-}
-
 fn action_hashes_from_chain(chain: &[NativeBlockMeta]) -> Result<BTreeSet<[u8; 32]>> {
     let mut hashes = BTreeSet::new();
     for meta in chain.iter().skip(1) {
@@ -10786,6 +10803,66 @@ mod tests {
         assert_eq!(imported.supply_digest, reward as u128);
         assert_eq!(node.state.read().commitment_tree.leaf_count(), 1);
         assert_eq!(node.state.read().pending_actions.len(), 0);
+    }
+
+    #[test]
+    fn mined_action_block_commit_reloads_canonical_sled_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let reward = consensus::reward::block_subsidy(1);
+        let commitment = [17u8; 48];
+        let imported = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            stage_test_coinbase(&node, reward, commitment);
+            let action_hash = *node
+                .state
+                .read()
+                .pending_actions
+                .keys()
+                .next()
+                .expect("staged coinbase action");
+            let work = node.prepare_work().expect("prepare native work");
+            let seal = mine_native_round(work.clone(), 0).expect("coinbase seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("coinbase import")
+                .expect("coinbase block");
+            assert_eq!(node.best_meta().hash, imported.hash);
+            assert_eq!(node.commitment_tree.len(), 1);
+            assert_eq!(node.ciphertext_archive_tree.len(), 1);
+            assert!(node
+                .action_tree
+                .get(action_hash.as_slice())
+                .expect("read action tree")
+                .is_none());
+            imported
+        };
+
+        let reopened = NativeNode::open(config).expect("reopen node after mined commit");
+        let state = reopened.state.read();
+        assert_eq!(state.best.hash, imported.hash);
+        assert_eq!(state.best.height, 1);
+        assert_eq!(state.best.supply_digest, reward as u128);
+        assert_eq!(state.commitment_tree.leaf_count(), 1);
+        assert_eq!(state.commitment_tree.root(), imported.state_root);
+        assert_eq!(state.pending_actions.len(), 0);
+        drop(state);
+        assert_eq!(
+            reopened.hash_by_height(1).expect("height index"),
+            Some(imported.hash)
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&imported.hash)
+                .expect("header lookup")
+                .expect("persisted header")
+                .hash,
+            imported.hash
+        );
+        assert_eq!(reopened.commitment_tree.len(), 1);
+        assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
+        assert_eq!(reopened.action_tree.len(), 0);
     }
 
     #[test]
