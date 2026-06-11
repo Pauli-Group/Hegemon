@@ -1194,6 +1194,7 @@ impl NativeNode {
         let pending_actions = load_pending_actions(&action_tree)?;
         let nullifiers = load_nullifiers(&nullifier_tree)?;
         let commitment_state = load_commitment_tree(&commitment_tree)?;
+        validate_loaded_canonical_state(&best, &commitment_state, &nullifiers)?;
         let consumed_bridge_messages = load_consumed_bridge_messages(&bridge_inbound_tree)?;
         let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&da_proof_tree)?;
@@ -3708,12 +3709,36 @@ fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>
 fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeState> {
     let mut commitments = Vec::new();
     for item in tree.iter() {
-        let (_, value) = item?;
-        if value.len() == 48 {
-            let mut commitment = [0u8; 48];
-            commitment.copy_from_slice(&value);
-            commitments.push(commitment);
+        let (key, value) = item?;
+        if key.len() != 8 {
+            return Err(anyhow!(
+                "stored commitment key has invalid length: {}",
+                key.len()
+            ));
         }
+        if value.len() != 48 {
+            return Err(anyhow!(
+                "stored commitment value has invalid length: {}",
+                value.len()
+            ));
+        }
+
+        let mut index = [0u8; 8];
+        index.copy_from_slice(&key);
+        let index = u64::from_be_bytes(index);
+        let expected = u64::try_from(commitments.len())
+            .map_err(|_| anyhow!("stored commitment count exceeds u64"))?;
+        if index != expected {
+            return Err(anyhow!(
+                "stored commitment index is not contiguous: expected {} observed {}",
+                expected,
+                index
+            ));
+        }
+
+        let mut commitment = [0u8; 48];
+        commitment.copy_from_slice(&value);
+        commitments.push(commitment);
     }
     CommitmentTreeState::from_leaves(
         COMMITMENT_TREE_DEPTH,
@@ -3721,6 +3746,34 @@ fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeState> {
         commitments,
     )
     .map_err(|err| anyhow!("rebuild native commitment tree failed: {err}"))
+}
+
+fn validate_loaded_canonical_state(
+    best: &NativeBlockMeta,
+    commitment_state: &CommitmentTreeState,
+    nullifiers: &BTreeSet<[u8; 48]>,
+) -> Result<()> {
+    let commitment_root = commitment_state.root();
+    if commitment_root != best.state_root {
+        return Err(anyhow!(
+            "stored commitment tree root mismatch: best={} loaded={} leaves={}",
+            hex48(&best.state_root),
+            hex48(&commitment_root),
+            commitment_state.leaf_count()
+        ));
+    }
+
+    let nullifier_root = nullifier_root_from_set(nullifiers);
+    if nullifier_root != best.nullifier_root {
+        return Err(anyhow!(
+            "stored nullifier root mismatch: best={} loaded={} entries={}",
+            hex48(&best.nullifier_root),
+            hex48(&nullifier_root),
+            nullifiers.len()
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_binding_hash(
@@ -11453,6 +11506,125 @@ mod tests {
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(tree.len(), 1);
+    }
+
+    #[test]
+    fn canonical_state_reload_accepts_contiguous_commitments() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("commitments").expect("commitment tree");
+        let first = [1u8; 48];
+        let second = [2u8; 48];
+        tree.insert(0u64.to_be_bytes(), first.as_slice())
+            .expect("insert first commitment");
+        tree.insert(1u64.to_be_bytes(), second.as_slice())
+            .expect("insert second commitment");
+        let expected = CommitmentTreeState::from_leaves(
+            COMMITMENT_TREE_DEPTH,
+            consensus::DEFAULT_ROOT_HISTORY_LIMIT,
+            vec![first, second],
+        )
+        .expect("expected commitment tree");
+
+        let loaded = load_commitment_tree(&tree).expect("load commitment tree");
+
+        assert_eq!(loaded.leaf_count(), 2);
+        assert_eq!(loaded.root(), expected.root());
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_malformed_commitment_key() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("commitments").expect("commitment tree");
+        tree.insert(b"bad-key", [1u8; 48].as_slice())
+            .expect("insert malformed commitment key");
+
+        let err =
+            load_commitment_tree(&tree).expect_err("malformed commitment key must fail reload");
+
+        assert!(err
+            .to_string()
+            .contains("stored commitment key has invalid length"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_malformed_commitment_value() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("commitments").expect("commitment tree");
+        tree.insert(0u64.to_be_bytes(), [1u8; 47].as_slice())
+            .expect("insert malformed commitment value");
+
+        let err =
+            load_commitment_tree(&tree).expect_err("malformed commitment value must fail reload");
+
+        assert!(err
+            .to_string()
+            .contains("stored commitment value has invalid length"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_commitment_index_gap() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("commitments").expect("commitment tree");
+        tree.insert(1u64.to_be_bytes(), [1u8; 48].as_slice())
+            .expect("insert commitment at nonzero index");
+
+        let err = load_commitment_tree(&tree).expect_err("commitment index gap must fail reload");
+
+        assert!(err
+            .to_string()
+            .contains("stored commitment index is not contiguous"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_commitment_root_mismatch_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.commitment_tree
+            .insert(0u64.to_be_bytes(), [3u8; 48].as_slice())
+            .expect("insert forged commitment");
+        node.commitment_tree.flush().expect("flush commitment tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("commitment root mismatch must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored commitment tree root mismatch"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_nullifier_root_mismatch_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.nullifier_tree
+            .insert([4u8; 48].as_slice(), b"1")
+            .expect("insert forged nullifier");
+        node.nullifier_tree.flush().expect("flush nullifier tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("nullifier root mismatch must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("stored nullifier root mismatch"));
     }
 
     #[test]

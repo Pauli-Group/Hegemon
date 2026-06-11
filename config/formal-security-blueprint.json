@@ -2849,7 +2849,7 @@
       "claim_id": "native.action-state-effect-planning",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean action-state effect transition, native action preview/import/replay accepts a planned effect only when ciphertext count equals commitment count for the relevant planner, commitment leaf-count advancement is checked u64 arithmetic, nullifier import status is valid, and any inbound bridge replay key has not already been consumed; rejection precedence is count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native pending-root preview, memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before deriving commitment/message roots or mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStateEffect.accepts_iff_state_effect_preconditions` proves the executable effect-planning predicate, with companion theorems for valid transfer effects, valid bridge replay effects, count mismatch, checked commitment-index overflow, max-leaf empty-action acceptance, zero and duplicate nullifier rejection, bridge replay duplicate rejection, and rejection precedence. `gen_action_state_effect_vectors` emits Lean-derived examples checked against the production `evaluate_native_action_state_effect` helper. The native pending-root preview, memory replay, sled-backed import, and canonical index rebuild paths now call planning helpers before deriving commitment/message roots or mutating commitment, nullifier, bridge-replay, action, or ciphertext-index state. Focused canonical-state reload regressions require startup to reject malformed commitment keys/values, non-contiguous commitment indexes, and reloaded commitment/nullifier roots that do not match the committed best header.",
       "depends_on": [
         "native.block-action-hash-admission",
         "native.action-root-transcript-binding",
@@ -2875,7 +2875,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-10",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Scope excludes storage atomicity under I/O failure and full action semantics."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Canonical-state reload root/index binding is focused Rust regression evidence outside the Lean sled model. Scope excludes storage atomicity under I/O failure and full action semantics."
       },
       "falsification_cases": [
         {
@@ -2907,9 +2907,14 @@
           "id": "native-canonical-index-rebuild-no-partial-mutation",
           "description": "Native canonical index rebuild must reject duplicate nullifiers during the planning phase before writing rebuilt commitment, nullifier, or ciphertext indexes.",
           "gate": "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features"
+        },
+        {
+          "id": "native-canonical-state-reload-root-binding",
+          "description": "Native startup must reject malformed commitment indexes and loaded commitment/nullifier roots that do not match the committed best header before mining or serving state.",
+          "gate": "cargo test -p hegemon-node canonical_state_reload_ --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. Canonical-state reload root/index binding is regression-gated, but not proved in Lean over sled or filesystem behavior. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence."
     },
     {
       "id": "native.announced-block-admission",
