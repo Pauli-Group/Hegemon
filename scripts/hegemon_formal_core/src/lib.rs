@@ -370,6 +370,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GeneratePendingActionReloadVectors.lean",
         "formal/lean/Hegemon/Native/StagedCiphertextReload.lean",
         "formal/lean/Hegemon/Native/GenerateStagedCiphertextReloadVectors.lean",
+        "formal/lean/Hegemon/Native/StagedProofReload.lean",
+        "formal/lean/Hegemon/Native/GenerateStagedProofReloadVectors.lean",
         "formal/lean/Hegemon/Native/ActionScopeAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateActionScopeAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",

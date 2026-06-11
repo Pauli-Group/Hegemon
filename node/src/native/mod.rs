@@ -458,6 +458,15 @@ struct NativeStagedCiphertextReloadInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeStagedProofReloadInput {
+    key_well_formed: bool,
+    proof_nonempty: bool,
+    proof_within_limit: bool,
+    capacity_available: bool,
+    byte_capacity_available: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMinedWorkAdmissionInput {
     best_height: u64,
     work_height: u64,
@@ -624,6 +633,28 @@ impl NativeStagedCiphertextReloadRejection {
             Self::OversizedCiphertext => "oversized_ciphertext",
             Self::CiphertextHashMismatch => "ciphertext_hash_mismatch",
             Self::StagedCiphertextCapacityReached => "staged_ciphertext_capacity_reached",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeStagedProofReloadRejection {
+    MalformedProofKey,
+    EmptyProof,
+    OversizedProof,
+    StagedProofCapacityReached,
+    StagedProofByteCapacityReached,
+}
+
+impl NativeStagedProofReloadRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedProofKey => "malformed_proof_key",
+            Self::EmptyProof => "empty_proof",
+            Self::OversizedProof => "oversized_proof",
+            Self::StagedProofCapacityReached => "staged_proof_capacity_reached",
+            Self::StagedProofByteCapacityReached => "staged_proof_byte_capacity_reached",
         }
     }
 }
@@ -4055,6 +4086,24 @@ fn evaluate_native_staged_ciphertext_reload(
     }
 }
 
+fn evaluate_native_staged_proof_reload(
+    input: NativeStagedProofReloadInput,
+) -> Result<(), NativeStagedProofReloadRejection> {
+    if !input.key_well_formed {
+        Err(NativeStagedProofReloadRejection::MalformedProofKey)
+    } else if !input.proof_nonempty {
+        Err(NativeStagedProofReloadRejection::EmptyProof)
+    } else if !input.proof_within_limit {
+        Err(NativeStagedProofReloadRejection::OversizedProof)
+    } else if !input.capacity_available {
+        Err(NativeStagedProofReloadRejection::StagedProofCapacityReached)
+    } else if !input.byte_capacity_available {
+        Err(NativeStagedProofReloadRejection::StagedProofByteCapacityReached)
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_loaded_block_indexes(
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
@@ -4313,36 +4362,76 @@ fn load_staged_sizes_with_limits(
 }
 
 fn load_staged_proofs(tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
+    load_staged_proofs_with_limits(
+        tree,
+        MAX_NATIVE_STAGED_PROOFS,
+        NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+        MAX_NATIVE_STAGED_PROOF_BYTES,
+    )
+}
+
+fn load_staged_proofs_with_limits(
+    tree: &sled::Tree,
+    max_staged_count: usize,
+    max_proof_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut entries = BTreeMap::new();
     let mut total_bytes = 0usize;
+    let mut stale_keys = Vec::new();
     for item in tree.iter() {
         let (key, value) = item?;
-        if key.len() == 64 {
-            evaluate_native_proof_sidecar_decoded_admission(
-                NativeProofSidecarDecodedAdmissionInput {
-                    proof_bytes: value.len(),
-                    max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
-                },
-            )
-            .map_err(native_sidecar_upload_admission_error)?;
-            evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
-                staged_count: entries.len(),
-                max_staged_count: MAX_NATIVE_STAGED_PROOFS,
-                replaces_existing: false,
-            })
-            .map_err(native_sidecar_upload_admission_error)?;
-            total_bytes = total_bytes.saturating_add(value.len());
-            if total_bytes > MAX_NATIVE_STAGED_PROOF_BYTES {
-                return Err(anyhow!(
-                    "staged proof byte capacity reached: {} > {}",
-                    total_bytes,
-                    MAX_NATIVE_STAGED_PROOF_BYTES
-                ));
+        let key_well_formed = key.len() == 64;
+        let proof_nonempty = !value.is_empty();
+        let proof_within_limit = value.len() <= max_proof_bytes;
+        let capacity_available = entries.len() < max_staged_count;
+        let next_total_bytes = total_bytes.saturating_add(value.len());
+        let byte_capacity_available = next_total_bytes <= max_total_bytes;
+        if let Err(rejection) = evaluate_native_staged_proof_reload(NativeStagedProofReloadInput {
+            key_well_formed,
+            proof_nonempty,
+            proof_within_limit,
+            capacity_available,
+            byte_capacity_available,
+        }) {
+            match rejection {
+                NativeStagedProofReloadRejection::MalformedProofKey => warn!(
+                    key_len = key.len(),
+                    "dropping malformed staged proof sidecar key during reload"
+                ),
+                NativeStagedProofReloadRejection::EmptyProof => {
+                    warn!("dropping empty staged proof sidecar during reload")
+                }
+                NativeStagedProofReloadRejection::OversizedProof => warn!(
+                    proof_bytes = value.len(),
+                    max = max_proof_bytes,
+                    "dropping oversized staged proof sidecar during reload"
+                ),
+                NativeStagedProofReloadRejection::StagedProofCapacityReached => warn!(
+                    max = max_staged_count,
+                    "dropping staged proof sidecar beyond reload capacity"
+                ),
+                NativeStagedProofReloadRejection::StagedProofByteCapacityReached => warn!(
+                    total_bytes = next_total_bytes,
+                    max = max_total_bytes,
+                    "dropping staged proof sidecar beyond reload byte capacity"
+                ),
             }
-            let mut binding_hash = [0u8; 64];
-            binding_hash.copy_from_slice(&key);
-            entries.insert(hex64(&binding_hash), value.to_vec());
+            stale_keys.push(key.to_vec());
+            continue;
         }
+
+        let mut binding_hash = [0u8; 64];
+        binding_hash.copy_from_slice(&key);
+        total_bytes = next_total_bytes;
+        entries.insert(hex64(&binding_hash), value.to_vec());
+    }
+    let removed_stale_entries = !stale_keys.is_empty();
+    for key in stale_keys {
+        tree.remove(key)?;
+    }
+    if removed_stale_entries {
+        tree.flush()?;
     }
     Ok(entries)
 }
@@ -8474,6 +8563,26 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanStagedProofReloadVectorFile {
+        schema_version: u32,
+        staged_proof_reload_cases: Vec<LeanStagedProofReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStagedProofReloadCase {
+        name: String,
+        key_well_formed: bool,
+        proof_nonempty: bool,
+        proof_within_limit: bool,
+        capacity_available: bool,
+        byte_capacity_available: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
@@ -10474,6 +10583,55 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native staged-ciphertext reload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_staged_proof_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STAGED_PROOF_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STAGED_PROOF_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean staged-proof reload vectors");
+        let vectors: LeanStagedProofReloadVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean staged-proof reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.staged_proof_reload_cases.is_empty(),
+            "Lean staged-proof reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.staged_proof_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_staged_proof_reload_case(case);
+        }
+    }
+
+    fn verify_lean_staged_proof_reload_case(case: &LeanStagedProofReloadCase) {
+        let input = NativeStagedProofReloadInput {
+            key_well_formed: case.key_well_formed,
+            proof_nonempty: case.proof_nonempty,
+            proof_within_limit: case.proof_within_limit,
+            capacity_available: case.capacity_available,
+            byte_capacity_available: case.byte_capacity_available,
+        };
+        let actual_rejection = evaluate_native_staged_proof_reload(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native staged-proof reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native staged-proof reload rejection drifted from Lean spec",
             case.name
         );
     }
@@ -12779,6 +12937,153 @@ mod tests {
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(tree.len(), 1);
+    }
+
+    #[test]
+    fn load_staged_proofs_accepts_valid_proof() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let binding_hash = [1u8; 64];
+        let proof = vec![9u8, 8, 7];
+        tree.insert(binding_hash.as_slice(), proof.as_slice())
+            .expect("insert staged proof");
+
+        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.get(&hex64(&binding_hash)), Some(&proof));
+        assert!(tree
+            .get(binding_hash.as_slice())
+            .expect("read staged proof")
+            .is_some());
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_malformed_key() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        tree.insert(&[7u8; 63], [1u8, 2, 3].as_slice())
+            .expect("insert malformed proof key");
+
+        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+
+        assert!(loaded.is_empty());
+        assert_eq!(tree.len(), 0);
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_empty_proof() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let binding_hash = [2u8; 64];
+        tree.insert(binding_hash.as_slice(), [].as_slice())
+            .expect("insert empty staged proof");
+
+        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+
+        assert!(loaded.is_empty());
+        assert!(tree
+            .get(binding_hash.as_slice())
+            .expect("read dropped proof")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_oversized_proof() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let binding_hash = [3u8; 64];
+        let proof = vec![5u8; 5];
+        tree.insert(binding_hash.as_slice(), proof.as_slice())
+            .expect("insert oversized staged proof");
+
+        let loaded = load_staged_proofs_with_limits(
+            &tree,
+            MAX_NATIVE_STAGED_PROOFS,
+            proof.len() - 1,
+            MAX_NATIVE_STAGED_PROOF_BYTES,
+        )
+        .expect("load staged proofs");
+
+        assert!(loaded.is_empty());
+        assert!(tree
+            .get(binding_hash.as_slice())
+            .expect("read dropped proof")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_capacity_overflow() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let first_key = [1u8; 64];
+        let second_key = [2u8; 64];
+        tree.insert(first_key.as_slice(), [1u8].as_slice())
+            .expect("insert first staged proof");
+        tree.insert(second_key.as_slice(), [2u8].as_slice())
+            .expect("insert second staged proof");
+
+        let loaded = load_staged_proofs_with_limits(
+            &tree,
+            1,
+            NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            MAX_NATIVE_STAGED_PROOF_BYTES,
+        )
+        .expect("load staged proofs");
+
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.contains_key(&hex64(&first_key)));
+        assert_eq!(tree.len(), 1);
+        assert!(tree
+            .get(second_key.as_slice())
+            .expect("read dropped proof")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_byte_capacity_overflow() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let first_key = [1u8; 64];
+        let second_key = [2u8; 64];
+        tree.insert(first_key.as_slice(), [1u8, 2].as_slice())
+            .expect("insert first staged proof");
+        tree.insert(second_key.as_slice(), [3u8, 4, 5, 6].as_slice())
+            .expect("insert second staged proof");
+
+        let loaded = load_staged_proofs_with_limits(
+            &tree,
+            MAX_NATIVE_STAGED_PROOFS,
+            NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            5,
+        )
+        .expect("load staged proofs");
+
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.contains_key(&hex64(&first_key)));
+        assert_eq!(tree.len(), 1);
+        assert!(tree
+            .get(second_key.as_slice())
+            .expect("read dropped proof")
+            .is_none());
     }
 
     #[test]

@@ -2072,7 +2072,7 @@
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sidecar upload admission kernel proves deterministic request-count, staged-capacity, proof metadata, and decoded proof-byte admission for da_submitCiphertexts and da_submitProofs; generated Lean vectors are checked against the production native helpers used by the unsafe DA staging RPCs and startup proof reload.",
+      "summary": "The Lean native sidecar upload admission kernel proves deterministic request-count, staged-capacity, proof metadata, and decoded proof-byte admission for da_submitCiphertexts and da_submitProofs; generated Lean vectors are checked against the production native helpers used by the unsafe DA staging RPCs. Startup proof reload is covered separately by native.staged-proof-reload.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2200,6 +2200,47 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_staged_ciphertext_reload_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node load_staged_sizes_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "native.staged-proof-reload",
+      "component": "native staged proof startup reload",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native staged-proof reload kernel proves the deterministic per-entry startup admission/drop table for persisted proof sidecars: non-64-byte keys, empty proofs, oversized proofs, staged proof count overflow, and staged proof byte-budget overflow are rejected in fixed order before restored proof sidecars can feed proposer-local artifact coordination.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.StagedProofReload.accepts_iff_staged_proof_reload_preconditions",
+        "Hegemon.Native.StagedProofReload.valid_accepts",
+        "Hegemon.Native.StagedProofReload.malformed_proof_key_rejects",
+        "Hegemon.Native.StagedProofReload.empty_proof_rejects",
+        "Hegemon.Native.StagedProofReload.oversized_proof_rejects",
+        "Hegemon.Native.StagedProofReload.staged_proof_capacity_reached_rejects",
+        "Hegemon.Native.StagedProofReload.staged_proof_byte_capacity_reached_rejects",
+        "Hegemon.Native.StagedProofReload.malformed_key_precedes_empty",
+        "Hegemon.Native.StagedProofReload.empty_precedes_oversize",
+        "Hegemon.Native.StagedProofReload.oversize_precedes_capacity",
+        "Hegemon.Native.StagedProofReload.capacity_precedes_byte_capacity"
+      ],
+      "assumptions": [
+        "The Lean model represents the per-entry reload decision table over production-derived booleans: 64-byte sled-key shape, nonempty proof bytes, decoded proof byte cap, staged proof count capacity, and aggregate staged proof byte capacity.",
+        "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before empty proof, empty proof before oversize, oversize before staged-count capacity, and staged-count capacity before aggregate byte capacity.",
+        "The theorem covers the executable admission/drop table for observed persisted proof-sidecar cache entries only. It does not prove sled atomicity, filesystem durability, I/O error behavior, RPC parser correctness, DA/proof sidecar availability, native tx-leaf proof soundness, proof byte parser correctness beyond size admission, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/StagedProofReload.lean",
+        "formal/lean/Hegemon/Native/GenerateStagedProofReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_STAGED_PROOF_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_staged_proof_reload_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node load_staged_proofs_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

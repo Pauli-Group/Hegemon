@@ -178,6 +178,9 @@ lean_exe gen_sidecar_upload_admission_vectors where
 lean_exe gen_staged_ciphertext_reload_vectors where
   root := `Hegemon.Native.GenerateStagedCiphertextReloadVectors
 
+lean_exe gen_staged_proof_reload_vectors where
+  root := `Hegemon.Native.GenerateStagedProofReloadVectors
+
 lean_exe gen_sync_admission_vectors where
   root := `Hegemon.Native.GenerateSyncAdmissionVectors
 
