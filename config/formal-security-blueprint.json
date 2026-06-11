@@ -2362,6 +2362,7 @@
           "required_callers": [
             "import_mined_block"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "import_mined_block",
@@ -2369,7 +2370,8 @@
                 "commit_mined_block_atomically",
                 "publish_mined_state",
                 "broadcast_block_announce"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         },
@@ -2379,13 +2381,15 @@
           "required_callers": [
             "import_mined_block"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "import_mined_block",
               "callee_must_precede": [
                 "publish_mined_state",
                 "broadcast_block_announce"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         }
@@ -2948,6 +2952,7 @@
             "import_announced_block",
             "replay_chain_state"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "import_mined_block",
@@ -4129,18 +4134,21 @@
             "reorganize_chain_to_best_locked",
             "ensure_ciphertext_archive_index"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "reorganize_chain_to_best_locked",
               "callee_must_precede": [
                 "commit_reorg_state_atomically"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "ensure_ciphertext_archive_index",
               "callee_must_precede": [
                 "commit_canonical_index_repair_atomically"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         },
@@ -4150,12 +4158,14 @@
           "required_callers": [
             "reorganize_chain_to_best_locked"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "reorganize_chain_to_best_locked",
               "callee_must_precede": [
                 "publish_reorganized_state"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         },
@@ -4164,7 +4174,8 @@
           "callee": "commit_canonical_index_repair_atomically",
           "required_callers": [
             "ensure_ciphertext_archive_index"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
@@ -4266,6 +4277,7 @@
             "import_announced_block",
             "replay_chain_state"
           ],
+          "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
               "caller": "import_mined_block",
@@ -4276,7 +4288,8 @@
                 "commit_mined_block_atomically",
                 "publish_mined_state",
                 "broadcast_block_announce"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "import_announced_block",
@@ -4285,13 +4298,15 @@
                 "verify_native_block_artifacts_locked",
                 "persist_noncanonical_block_record",
                 "reorganize_chain_to_best_locked"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "replay_chain_state",
               "callee_must_precede": [
                 "apply_actions_to_memory"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         },
@@ -4300,7 +4315,8 @@
           "callee": "persist_noncanonical_block_record",
           "required_callers": [
             "import_announced_block"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [

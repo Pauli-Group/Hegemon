@@ -54,8 +54,11 @@ pub struct BlueprintReport {
     pub edges: usize,
     pub production_nodes: usize,
     pub implementation_bindings: usize,
+    pub implementation_result_obligations: usize,
     pub implementation_order_constraints: usize,
     pub implementation_order_edges: usize,
+    pub implementation_dominance_constraints: usize,
+    pub implementation_dominance_edges: usize,
     pub falsification_cases: usize,
     pub passed: bool,
 }
@@ -150,6 +153,8 @@ struct ImplementationBinding {
     callee: String,
     required_callers: Vec<String>,
     #[serde(default)]
+    result_obligation: Option<String>,
+    #[serde(default)]
     call_order_constraints: Vec<ImplementationCallOrderConstraint>,
 }
 
@@ -158,6 +163,10 @@ struct ImplementationBinding {
 struct ImplementationCallOrderConstraint {
     caller: String,
     callee_must_precede: Vec<String>,
+    #[serde(default)]
+    result_obligation: Option<String>,
+    #[serde(default)]
+    must_dominate_successors: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -829,8 +838,11 @@ fn validate_blueprint(
     let mut edges = 0usize;
     let mut production_nodes = 0usize;
     let mut implementation_bindings = 0usize;
+    let mut implementation_result_obligations = 0usize;
     let mut implementation_order_constraints = 0usize;
     let mut implementation_order_edges = 0usize;
+    let mut implementation_dominance_constraints = 0usize;
+    let mut implementation_dominance_edges = 0usize;
     let mut falsification_cases = 0usize;
     let mut dependents: BTreeMap<String, usize> =
         node_ids.iter().map(|id| (id.clone(), 0usize)).collect();
@@ -867,12 +879,24 @@ fn validate_blueprint(
         }
         implementation_bindings += node.implementation_bindings.len();
         for binding in &node.implementation_bindings {
+            if binding.result_obligation.is_some() {
+                implementation_result_obligations += 1;
+            }
             implementation_order_constraints += binding.call_order_constraints.len();
             implementation_order_edges += binding
                 .call_order_constraints
                 .iter()
                 .map(|constraint| constraint.callee_must_precede.len())
                 .sum::<usize>();
+            for constraint in &binding.call_order_constraints {
+                if constraint.result_obligation.is_some() {
+                    implementation_result_obligations += 1;
+                }
+                if constraint.must_dominate_successors {
+                    implementation_dominance_constraints += 1;
+                    implementation_dominance_edges += constraint.callee_must_precede.len();
+                }
+            }
         }
         falsification_cases += node.falsification_cases.len();
     }
@@ -893,8 +917,11 @@ fn validate_blueprint(
         edges,
         production_nodes,
         implementation_bindings,
+        implementation_result_obligations,
         implementation_order_constraints,
         implementation_order_edges,
+        implementation_dominance_constraints,
+        implementation_dominance_edges,
         falsification_cases,
         passed: true,
     })
@@ -1019,6 +1046,11 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
         for caller in &binding.required_callers {
             validate_rust_symbol(&node.id, "implementation binding caller", caller)?;
         }
+        parse_result_obligation(
+            &node.id,
+            &binding.callee,
+            binding.result_obligation.as_deref(),
+        )?;
         for constraint in &binding.call_order_constraints {
             validate_rust_symbol(
                 &node.id,
@@ -1044,6 +1076,11 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
                     successor,
                 )?;
             }
+            parse_result_obligation(
+                &node.id,
+                &binding.callee,
+                constraint.result_obligation.as_deref(),
+            )?;
         }
         validate_rust_implementation_binding(root, &node.id, binding)?;
     }
@@ -1084,6 +1121,11 @@ fn validate_rust_implementation_binding(
     let sanitized = sanitize_rust_source(&source);
     let test_module_spans = rust_cfg_test_module_spans(&sanitized);
     let functions = rust_function_spans(&sanitized)?;
+    let result_obligation = parse_result_obligation(
+        claim_id,
+        &binding.callee,
+        binding.result_obligation.as_deref(),
+    )?;
     ensure!(
         functions
             .iter()
@@ -1110,16 +1152,25 @@ fn validate_rust_implementation_binding(
         );
         ensure!(
             non_test_callers.any(|function| {
-                contains_rust_identifier(
+                rust_call_sites(
                     &sanitized[function.body_start..function.body_end],
                     &binding.callee,
                 )
+                .iter()
+                .any(|call| {
+                    call_satisfies_result_obligation(
+                        &sanitized[function.body_start..function.body_end],
+                        call,
+                        result_obligation,
+                    )
+                })
             }),
-            "{} implementation binding caller {} in {} does not call {} in non-test Rust code",
+            "{} implementation binding caller {} in {} does not call {}{} in non-test Rust code",
             claim_id,
             caller,
             binding.path,
-            binding.callee
+            binding.callee,
+            result_obligation_error_suffix(result_obligation)
         );
     }
     for constraint in &binding.call_order_constraints {
@@ -1143,6 +1194,20 @@ fn validate_rust_implementation_order(
     test_module_spans: &[(usize, usize)],
     functions: &[RustFunctionSpan],
 ) -> Result<()> {
+    let binding_result_obligation = parse_result_obligation(
+        claim_id,
+        &binding.callee,
+        binding.result_obligation.as_deref(),
+    )?;
+    let constraint_result_obligation = if constraint.result_obligation.is_some() {
+        parse_result_obligation(
+            claim_id,
+            &binding.callee,
+            constraint.result_obligation.as_deref(),
+        )?
+    } else {
+        binding_result_obligation
+    };
     let matching_callers = functions
         .iter()
         .filter(|function| {
@@ -1158,37 +1223,101 @@ fn validate_rust_implementation_order(
     );
     for function in matching_callers {
         let body = &source[function.body_start..function.body_end];
-        let Some(callee_index) = find_rust_identifier(body, &binding.callee) else {
+        let callee_calls = rust_call_sites(body, &binding.callee)
+            .into_iter()
+            .filter(|call| {
+                call_satisfies_result_obligation(body, call, constraint_result_obligation)
+            })
+            .collect::<Vec<_>>();
+        if callee_calls.is_empty() {
             return Err(anyhow!(
-                "{} implementation binding order caller {} in {} does not call {} in non-test Rust code",
+                "{} implementation binding order caller {} in {} does not call {}{} in non-test Rust code",
                 claim_id,
                 constraint.caller,
                 binding.path,
-                binding.callee
+                binding.callee,
+                result_obligation_error_suffix(constraint_result_obligation)
             ));
-        };
+        }
         for successor in &constraint.callee_must_precede {
-            let Some(successor_index) = find_rust_identifier(body, successor) else {
+            let successor_calls = rust_call_sites(body, successor);
+            if successor_calls.is_empty() {
                 return Err(anyhow!(
-                    "{} implementation binding order caller {} in {} does not reference required successor {}",
+                    "{} implementation binding order caller {} in {} does not call required successor {}",
                     claim_id,
                     constraint.caller,
                     binding.path,
                     successor
                 ));
-            };
-            ensure!(
-                callee_index < successor_index,
-                "{} implementation binding order caller {} in {} calls {} after {}",
-                claim_id,
-                constraint.caller,
-                binding.path,
-                binding.callee,
-                successor
-            );
+            }
+            if constraint.must_dominate_successors {
+                for successor_call in &successor_calls {
+                    ensure!(
+                        callee_calls
+                            .iter()
+                            .any(|call| rust_call_dominates_successor(body, call, successor_call)),
+                        "{} implementation binding order caller {} in {} does not dominate {} before {}",
+                        claim_id,
+                        constraint.caller,
+                        binding.path,
+                        binding.callee,
+                        successor
+                    );
+                }
+            } else {
+                let callee_index = callee_calls
+                    .iter()
+                    .map(|call| call.start)
+                    .min()
+                    .expect("callee_calls checked nonempty");
+                let successor_index = successor_calls
+                    .iter()
+                    .map(|call| call.start)
+                    .min()
+                    .expect("successor_calls checked nonempty");
+                ensure!(
+                    callee_index < successor_index,
+                    "{} implementation binding order caller {} in {} calls {} after {}",
+                    claim_id,
+                    constraint.caller,
+                    binding.path,
+                    binding.callee,
+                    successor
+                );
+            }
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultObligation {
+    None,
+    MustPropagateResult,
+}
+
+fn parse_result_obligation(
+    claim_id: &str,
+    callee: &str,
+    raw: Option<&str>,
+) -> Result<ResultObligation> {
+    match raw {
+        None => Ok(ResultObligation::None),
+        Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
+        Some(other) => Err(anyhow!(
+            "{} implementation binding for {} has unknown result_obligation {}",
+            claim_id,
+            callee,
+            other
+        )),
+    }
+}
+
+fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str {
+    match obligation {
+        ResultObligation::None => "",
+        ResultObligation::MustPropagateResult => " with propagated result",
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1205,7 +1334,7 @@ impl RustFunctionSpan {
         test_module_spans
             .iter()
             .any(|(start, end)| *start <= self.start && self.end <= *end)
-            || preceding_rust_attrs_contain_cfg_test(source, self.start)
+            || preceding_rust_attrs_contain_non_production_cfg(source, self.start)
     }
 }
 
@@ -1253,7 +1382,9 @@ fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
             cursor = mod_start + 3;
             continue;
         };
-        if module_name == "tests" && preceding_rust_attrs_contain_cfg_test(source, mod_start) {
+        if module_name == "tests"
+            && preceding_rust_attrs_contain_non_production_cfg(source, mod_start)
+        {
             spans.push((mod_start, body_end + 1));
         }
         cursor = body_end + 1;
@@ -1465,7 +1596,7 @@ fn match_rust_brace(source: &str, open: usize) -> Result<usize> {
     Err(anyhow!("unclosed Rust brace at byte {open}"))
 }
 
-fn preceding_rust_attrs_contain_cfg_test(source: &str, item_start: usize) -> bool {
+fn preceding_rust_attrs_contain_non_production_cfg(source: &str, item_start: usize) -> bool {
     let prefix = &source[..item_start];
     let mut saw_attr = false;
     for line in prefix.lines().rev() {
@@ -1478,7 +1609,7 @@ fn preceding_rust_attrs_contain_cfg_test(source: &str, item_start: usize) -> boo
         }
         if trimmed.starts_with("#[") {
             saw_attr = true;
-            if trimmed.contains("cfg(test)") {
+            if trimmed.contains("cfg(") || trimmed.contains("cfg_attr(") {
                 return true;
             }
             continue;
@@ -1488,12 +1619,32 @@ fn preceding_rust_attrs_contain_cfg_test(source: &str, item_start: usize) -> boo
     false
 }
 
-fn contains_rust_identifier(source: &str, ident: &str) -> bool {
-    find_rust_identifier(source, ident).is_some()
+#[derive(Debug, Clone)]
+struct RustCallSite {
+    start: usize,
+    close_paren: usize,
 }
 
-fn find_rust_identifier(source: &str, ident: &str) -> Option<usize> {
+fn rust_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
+    let mut calls = Vec::new();
     let mut cursor = 0usize;
+    while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
+        let after_ident = skip_ascii_whitespace(source, index + ident.len());
+        if source.as_bytes().get(after_ident) == Some(&b'(') {
+            if let Ok(close_paren) = match_rust_paren(source, after_ident) {
+                calls.push(RustCallSite {
+                    start: index,
+                    close_paren,
+                });
+            }
+        }
+        cursor = index + ident.len();
+    }
+    calls
+}
+
+fn find_rust_identifier_from(source: &str, ident: &str, from: usize) -> Option<usize> {
+    let mut cursor = from;
     while let Some(relative) = source[cursor..].find(ident) {
         let index = cursor + relative;
         let before = index
@@ -1508,6 +1659,158 @@ fn find_rust_identifier(source: &str, ident: &str) -> Option<usize> {
         cursor = index + ident.len();
     }
     None
+}
+
+fn match_rust_paren(source: &str, open: usize) -> Result<usize> {
+    ensure!(
+        source.as_bytes().get(open) == Some(&b'('),
+        "expected opening paren at byte {open}"
+    );
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[open..].iter().copied().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(anyhow!("unclosed Rust paren at byte {open}"))
+}
+
+fn skip_ascii_whitespace(source: &str, from: usize) -> usize {
+    let mut index = from;
+    while source
+        .as_bytes()
+        .get(index)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        index += 1;
+    }
+    index
+}
+
+fn call_satisfies_result_obligation(
+    source: &str,
+    call: &RustCallSite,
+    obligation: ResultObligation,
+) -> bool {
+    match obligation {
+        ResultObligation::None => true,
+        ResultObligation::MustPropagateResult => call_result_is_propagated(source, call),
+    }
+}
+
+fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = call.close_paren + 1;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while let Some(byte) = bytes.get(index).copied() {
+        match byte {
+            b'?' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return true,
+            b';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return false,
+            b'{' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return false,
+            b'}' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return false,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+#[derive(Debug, Clone)]
+struct RustStatementContext {
+    block_path: Vec<usize>,
+    statement_starts: Vec<usize>,
+}
+
+impl RustStatementContext {
+    fn current_statement_start(&self) -> usize {
+        self.statement_starts.last().copied().unwrap_or_default()
+    }
+}
+
+fn rust_call_dominates_successor(
+    source: &str,
+    callee: &RustCallSite,
+    successor: &RustCallSite,
+) -> bool {
+    if callee.start >= successor.start {
+        return false;
+    }
+    let callee_context = rust_statement_context(source, callee.start);
+    let successor_context = rust_statement_context(source, successor.start);
+    if callee_context.block_path == successor_context.block_path {
+        return callee_context.current_statement_start()
+            < successor_context.current_statement_start();
+    }
+    if rust_block_path_is_prefix(&callee_context.block_path, &successor_context.block_path) {
+        let depth = callee_context.block_path.len();
+        let Some(successor_ancestor_statement) = depth
+            .checked_sub(1)
+            .and_then(|index| successor_context.statement_starts.get(index))
+            .copied()
+        else {
+            return false;
+        };
+        return callee_context.current_statement_start() < successor_ancestor_statement;
+    }
+    false
+}
+
+fn rust_block_path_is_prefix(prefix: &[usize], path: &[usize]) -> bool {
+    prefix.len() < path.len() && path.starts_with(prefix)
+}
+
+fn rust_statement_context(source: &str, target: usize) -> RustStatementContext {
+    let bytes = source.as_bytes();
+    let mut block_path = Vec::new();
+    let mut statement_starts = Vec::new();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut index = 0usize;
+    while index < target && index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' if paren_depth == 0 && bracket_depth == 0 => {
+                block_path.push(index);
+                statement_starts.push(index + 1);
+            }
+            b'}' if paren_depth == 0 && bracket_depth == 0 => {
+                block_path.pop();
+                statement_starts.pop();
+            }
+            b';' if paren_depth == 0 && bracket_depth == 0 => {
+                if let Some(statement_start) = statement_starts.last_mut() {
+                    *statement_start = index + 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    for statement_start in &mut statement_starts {
+        *statement_start = skip_ascii_whitespace(source, *statement_start);
+    }
+    RustStatementContext {
+        block_path,
+        statement_starts,
+    }
 }
 
 fn is_rust_identifier_byte(byte: u8) -> bool {
@@ -2051,6 +2354,86 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_function_item_implementation_reference() {
+        let root = test_root("function-item-implementation-reference");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { let _helper = verified_helper; }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains("does not call verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_accepts_propagated_result_implementation_call() {
+        let root = test_root("propagated-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper()?; }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("propagated result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_ignored_fallible_implementation_call() {
+        let root = test_root("ignored-fallible-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
     fn blueprint_accepts_ordered_implementation_binding() {
         let root = test_root("ordered-implementation-binding");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -2115,6 +2498,73 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_dominating_ordered_implementation_binding() {
+        let root = test_root("dominating-ordered-implementation-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_announced_block() { verified_helper()?; if cond() { persist_block()?; } }\n\
+             fn cond() {}\n\
+             fn persist_block() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_announced_block"],
+                "import_announced_block",
+                &["persist_block"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("valid dominating ordered implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_sibling_branch_implementation_order_false_positive() {
+        let root = test_root("sibling-branch-implementation-order");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_announced_block() { if cond() { verified_helper()?; } else { persist_block()?; } }\n\
+             fn cond() {}\n\
+             fn persist_block() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_announced_block"],
+                "import_announced_block",
+                &["persist_block"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not dominate verified_helper before persist_block"));
+    }
+
+    #[test]
     fn blueprint_rejects_test_only_implementation_callee() {
         let root = test_root("test-only-implementation-callee");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -2123,6 +2573,32 @@ mod tests {
             &root,
             "src/native.rs",
             "#[cfg(test)]\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("callee verified_helper is missing from non-test Rust code"));
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_feature_implementation_callee() {
+        let root = test_root("cfg-feature-implementation-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "#[cfg(feature = \"formal-test-helper\")]\n\
              fn verified_helper() {}\n\
              fn import_mined_block() { verified_helper(); }\n",
         );
@@ -2530,6 +3006,28 @@ mod tests {
         blueprint
     }
 
+    fn blueprint_fixture_with_result_binding(
+        callee: &str,
+        callers: &[&str],
+        result_obligation: &str,
+    ) -> Value {
+        let mut blueprint = blueprint_fixture_with_binding(callee, callers);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        target.insert(
+            "implementation_bindings".to_owned(),
+            json!([
+                {
+                    "path": "src/native.rs",
+                    "callee": callee,
+                    "required_callers": callers,
+                    "result_obligation": result_obligation
+                }
+            ]),
+        );
+        blueprint
+    }
+
     fn blueprint_fixture_with_ordered_binding(
         callee: &str,
         callers: &[&str],
@@ -2555,6 +3053,35 @@ mod tests {
                 }
             ]),
         );
+        blueprint
+    }
+
+    fn blueprint_fixture_with_dominating_ordered_binding(
+        callee: &str,
+        callers: &[&str],
+        ordered_caller: &str,
+        successors: &[&str],
+        result_obligation: Option<&str>,
+    ) -> Value {
+        let mut blueprint = blueprint_fixture_with_binding(callee, callers);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        let mut binding = json!({
+            "path": "src/native.rs",
+            "callee": callee,
+            "required_callers": callers,
+            "call_order_constraints": [
+                {
+                    "caller": ordered_caller,
+                    "callee_must_precede": successors,
+                    "must_dominate_successors": true
+                }
+            ]
+        });
+        if let Some(result_obligation) = result_obligation {
+            binding["result_obligation"] = json!(result_obligation);
+        }
+        target.insert("implementation_bindings".to_owned(), json!([binding]));
         blueprint
     }
 }
