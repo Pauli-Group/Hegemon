@@ -2446,7 +2446,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, filesystem/fsync durability, announced-block/reorg storage atomicity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, filesystem/fsync durability, announced side-branch block-record persistence, startup repair atomicity, or complete native-node equivalence."
     },
     {
       "id": "native.work-template-admission",
@@ -4104,8 +4104,7 @@
             {
               "caller": "reorganize_to_best_locked",
               "callee_must_precede": [
-                "clear_reorg_canonical_indexes",
-                "write_canonical_index_plan"
+                "commit_reorg_state_atomically"
               ]
             },
             {
@@ -4113,6 +4112,21 @@
               "callee_must_precede": [
                 "clear_canonical_state_indexes",
                 "write_canonical_index_plan"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "commit_reorg_state_atomically",
+          "required_callers": [
+            "reorganize_to_best_locked"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_to_best_locked",
+              "callee_must_precede": [
+                "publish_reorganized_state"
               ]
             }
           ]
@@ -4163,12 +4177,17 @@
           "gate": "cargo test -p hegemon-node reorg_rebuild_failure_preserves_canonical_indexes --lib --no-default-features"
         },
         {
+          "id": "native-reorg-atomic-commit-reload-regression",
+          "description": "A canonical reorg containing an action must reload the best pointer, height indexes, commitment state, ciphertext archive, and pending-action tree from sled after reopening.",
+          "gate": "cargo test -p hegemon-node reorg_action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-canonical-rebuild-before-clear-binding",
-          "description": "The blueprint gate must reject action-stream planning if canonical index rebuild planning drifts after reorg/startup canonical index clearing or writing.",
+          "description": "The blueprint gate must reject action-stream planning if canonical index rebuild planning drifts after reorg canonical-state commit or startup canonical index clearing/writing, or if reorg state publication drifts before the atomic commit.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg/startup repair to finish semantic rebuild planning before clearing or writing canonical sled indexes. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, storage atomicity under I/O failure, full action payload validity, tx proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit before in-memory publication, and requires startup repair to plan before clearing or writing canonical sled indexes. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, filesystem/fsync durability, startup repair atomicity, full action payload validity, tx proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.block-replay-refinement",

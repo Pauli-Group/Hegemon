@@ -2205,48 +2205,22 @@ impl NativeNode {
             }
         }
 
-        self.clear_reorg_canonical_indexes()?;
-
-        for (height, hash) in height_entries {
-            self.height_tree
-                .insert(height_key(height), hash.as_slice())?;
-        }
-        write_canonical_index_plan(
+        let pending_entries = pending
+            .values()
+            .map(|action| (action.tx_hash, action.encode()))
+            .collect::<Vec<_>>();
+        self.commit_reorg_state_atomically(
             canonical_index_plan,
-            &self.commitment_tree,
-            &self.nullifier_tree,
-            &self.bridge_inbound_tree,
-            &self.ciphertext_index_tree,
-            &self.ciphertext_archive_tree,
+            &height_entries,
+            &pending_entries,
+            &new_state.best,
         )?;
-
-        self.action_tree.clear()?;
-        for action in pending.values() {
-            self.action_tree
-                .insert(action.tx_hash.as_slice(), action.encode())?;
-        }
-        self.action_tree.flush()?;
-
-        self.meta_tree
-            .insert(META_BEST_KEY, bincode::serialize(&new_state.best)?)?;
-        self.meta_tree.flush()?;
-        self.height_tree.flush()?;
-        self.commitment_tree.flush()?;
-        self.nullifier_tree.flush()?;
-        self.bridge_inbound_tree.flush()?;
-        self.ciphertext_index_tree.flush()?;
-        self.ciphertext_archive_tree.flush()?;
 
         new_state.pending_actions = pending;
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
         new_state.staged_proofs = state.staged_proofs.clone();
-        *state = new_state;
+        publish_reorganized_state(state, new_state);
         Ok(())
-    }
-
-    fn clear_reorg_canonical_indexes(&self) -> Result<()> {
-        self.height_tree.clear()?;
-        self.clear_canonical_state_indexes()
     }
 
     fn clear_canonical_state_indexes(&self) -> Result<()> {
@@ -2255,6 +2229,107 @@ impl NativeNode {
         self.bridge_inbound_tree.clear()?;
         self.ciphertext_index_tree.clear()?;
         self.ciphertext_archive_tree.clear()?;
+        Ok(())
+    }
+
+    fn commit_reorg_state_atomically(
+        &self,
+        canonical_index_plan: NativeCanonicalIndexPlan,
+        height_entries: &[(u64, [u8; 32])],
+        pending_entries: &[([u8; 32], Vec<u8>)],
+        best: &NativeBlockMeta,
+    ) -> Result<()> {
+        let height_keys = collect_tree_keys(&self.height_tree, "native height")?;
+        let commitment_keys = collect_tree_keys(&self.commitment_tree, "native commitment")?;
+        let nullifier_keys = collect_tree_keys(&self.nullifier_tree, "native nullifier")?;
+        let bridge_replay_keys =
+            collect_tree_keys(&self.bridge_inbound_tree, "native bridge replay")?;
+        let ciphertext_index_keys =
+            collect_tree_keys(&self.ciphertext_index_tree, "native ciphertext index")?;
+        let ciphertext_archive_keys =
+            collect_tree_keys(&self.ciphertext_archive_tree, "native ciphertext archive")?;
+        let action_keys = collect_tree_keys(&self.action_tree, "native pending action")?;
+        let best_record = bincode::serialize(best)?;
+        let NativeCanonicalIndexPlan {
+            commitment_entries,
+            nullifier_entries,
+            bridge_replay_entries,
+            ciphertext_index_entries,
+            ciphertext_archive_entries,
+        } = canonical_index_plan;
+
+        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+            &self.meta_tree,
+            &self.height_tree,
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+            &self.action_tree,
+        )
+            .transaction(
+                |(
+                    meta_tree,
+                    height_tree,
+                    commitment_tree,
+                    nullifier_tree,
+                    bridge_inbound_tree,
+                    ciphertext_index_tree,
+                    ciphertext_archive_tree,
+                    action_tree,
+                )| {
+                    for key in &height_keys {
+                        height_tree.remove(key.clone())?;
+                    }
+                    for key in &commitment_keys {
+                        commitment_tree.remove(key.clone())?;
+                    }
+                    for key in &nullifier_keys {
+                        nullifier_tree.remove(key.clone())?;
+                    }
+                    for key in &bridge_replay_keys {
+                        bridge_inbound_tree.remove(key.clone())?;
+                    }
+                    for key in &ciphertext_index_keys {
+                        ciphertext_index_tree.remove(key.clone())?;
+                    }
+                    for key in &ciphertext_archive_keys {
+                        ciphertext_archive_tree.remove(key.clone())?;
+                    }
+                    for key in &action_keys {
+                        action_tree.remove(key.clone())?;
+                    }
+
+                    for (height, hash) in height_entries {
+                        height_tree.insert(height_key(*height).to_vec(), hash.to_vec())?;
+                    }
+                    for (index, commitment) in &commitment_entries {
+                        commitment_tree
+                            .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
+                    }
+                    for (index, bytes) in &ciphertext_archive_entries {
+                        ciphertext_archive_tree
+                            .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
+                    }
+                    for nullifier in &nullifier_entries {
+                        nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
+                    }
+                    for replay_key in &bridge_replay_entries {
+                        bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
+                    }
+                    for (hash, value) in &ciphertext_index_entries {
+                        ciphertext_index_tree.insert(hash.to_vec(), value.clone())?;
+                    }
+                    for (tx_hash, encoded) in pending_entries {
+                        action_tree.insert(tx_hash.to_vec(), encoded.clone())?;
+                    }
+                    meta_tree.insert(META_BEST_KEY.to_vec(), best_record.clone())?;
+                    meta_tree.flush();
+                    Ok(())
+                },
+            );
+        commit_result.map_err(|err| anyhow!("atomic native reorg commit failed: {err}"))?;
         Ok(())
     }
 
@@ -4106,6 +4181,20 @@ fn mine_native_round(work: NativeWork, round: u64) -> Option<NativeSeal> {
 
 fn publish_mined_state(state: &mut NativeState, next_state: NativeState) {
     *state = next_state;
+}
+
+fn publish_reorganized_state(state: &mut NativeState, next_state: NativeState) {
+    *state = next_state;
+}
+
+fn collect_tree_keys(tree: &sled::Tree, tree_name: &str) -> Result<Vec<Vec<u8>>> {
+    tree.iter()
+        .keys()
+        .map(|key| {
+            key.map(|key| key.to_vec())
+                .with_context(|| format!("collect {tree_name} tree keys"))
+        })
+        .collect()
 }
 
 fn load_best_or_genesis(
@@ -10666,6 +10755,126 @@ mod tests {
                 .hash,
             canonical.hash
         );
+    }
+
+    #[test]
+    fn reorg_action_block_commit_reloads_canonical_sled_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), test_pow_bits, "safe", false);
+        let canonical_reward = consensus::reward::block_subsidy(1);
+        let side_reward = consensus::reward::block_subsidy(2);
+        let side_commitment = [13u8; 48];
+
+        let (canonical, old_action_hash, side_one, side_two, side_action_hash) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let genesis = node.best_meta();
+
+            stage_test_coinbase(&node, canonical_reward, [31u8; 48]);
+            let old_action_hash = *node
+                .state
+                .read()
+                .pending_actions
+                .keys()
+                .next()
+                .expect("staged canonical action");
+            let canonical_work = node.prepare_work().expect("prepare canonical native work");
+            let canonical_seal =
+                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical = node
+                .import_mined_block(&canonical_work, canonical_seal)
+                .expect("canonical import")
+                .expect("canonical block");
+            assert_eq!(node.commitment_tree.len(), 1);
+            assert_eq!(node.ciphertext_archive_tree.len(), 1);
+
+            let side_one = (1..128)
+                .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+                .find(|candidate| !native_meta_better_than(candidate, &canonical))
+                .expect("side child that does not beat canonical tip");
+            persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
+
+            let side_action = test_coinbase_action(side_reward);
+            let side_action_hash = side_action.tx_hash;
+            let side_two =
+                mined_child_with_actions(&side_one, 2, test_pow_bits, 129, vec![side_action]);
+            assert!(
+                node.import_announced_block(side_two.clone())
+                    .expect("side two import"),
+                "side action block must trigger reorg"
+            );
+            assert_eq!(node.best_meta().hash, side_two.hash);
+            assert_eq!(node.commitment_tree.len(), 1);
+            assert_eq!(node.ciphertext_archive_tree.len(), 1);
+            assert!(node
+                .action_tree
+                .get(side_action_hash.as_slice())
+                .expect("read side action")
+                .is_none());
+
+            (
+                canonical,
+                old_action_hash,
+                side_one,
+                side_two,
+                side_action_hash,
+            )
+        };
+
+        let reopened = NativeNode::open(config).expect("reopen node after reorg commit");
+        let state = reopened.state.read();
+        assert_eq!(state.best.hash, side_two.hash);
+        assert_eq!(state.best.height, 2);
+        assert_eq!(state.best.supply_digest, side_reward as u128);
+        assert_eq!(state.commitment_tree.leaf_count(), 1);
+        assert_eq!(state.commitment_tree.root(), side_two.state_root);
+        assert!(
+            state.pending_actions.contains_key(&old_action_hash),
+            "orphaned old canonical action should be pending after reorg"
+        );
+        assert!(
+            !state.pending_actions.contains_key(&side_action_hash),
+            "canonical side action must not remain pending after reorg"
+        );
+        drop(state);
+
+        assert_eq!(
+            reopened.hash_by_height(1).expect("height one"),
+            Some(side_one.hash)
+        );
+        assert_eq!(
+            reopened.hash_by_height(2).expect("height two"),
+            Some(side_two.hash)
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&canonical.hash)
+                .expect("old canonical header")
+                .expect("old canonical block remains addressable")
+                .hash,
+            canonical.hash
+        );
+        assert_eq!(reopened.commitment_tree.len(), 1);
+        assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
+        assert_eq!(
+            reopened
+                .commitment_tree
+                .get(0u64.to_be_bytes())
+                .expect("read canonical commitment")
+                .expect("canonical commitment")
+                .as_ref(),
+            side_commitment.as_slice()
+        );
+        assert!(reopened
+            .action_tree
+            .get(side_action_hash.as_slice())
+            .expect("read side action after reopen")
+            .is_none());
+        assert!(reopened
+            .action_tree
+            .get(old_action_hash.as_slice())
+            .expect("read orphaned action after reopen")
+            .is_some());
     }
 
     #[test]
