@@ -1664,6 +1664,30 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_block_supply_delta",
+          "required_callers": [
+            "advance_native_supply_digest"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "advance_native_supply_digest",
+          "required_callers": [
+            "prepare_work",
+            "import_mined_block"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "expected_native_supply_from_parts",
+          "required_callers": [
+            "evaluate_native_block_replay_refinement"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
@@ -1826,6 +1850,31 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_coinbase_accounting_admission",
+          "required_callers": [
+            "validate_coinbase_accounting"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_coinbase_accounting",
+          "required_callers": [
+            "native_block_replay_supply_parts"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_block_replay_supply_parts",
+          "required_callers": [
+            "import_mined_block",
+            "import_announced_block",
+            "replay_state_to_hash"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean",
@@ -1881,6 +1930,23 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_coinbase_action_payload_admission",
+          "required_callers": [
+            "validate_coinbase_action_payload"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_coinbase_action_payload",
+          "required_callers": [
+            "validate_action_state",
+            "validate_block_actions_locked"
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
@@ -2804,6 +2870,23 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_candidate_artifact_binding_admission",
+          "required_callers": [
+            "verify_native_block_artifacts_locked"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_native_block_artifacts_locked",
+          "required_callers": [
+            "import_mined_block",
+            "import_announced_block"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateBlockArtifactBindingAdmissionVectors.lean",
@@ -3705,6 +3788,30 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_transfer_state_admission",
+          "required_callers": [
+            "validate_action_state",
+            "evaluate_native_block_action_validation_step"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_transfer_state_admission_input_for_mempool",
+          "required_callers": [
+            "validate_action_state"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_transfer_state_admission_input_for_block",
+          "required_callers": [
+            "validate_block_actions_locked"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateTransferStateAdmissionVectors.lean",
@@ -3769,6 +3876,31 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_action_validation_start",
+          "required_callers": [
+            "validate_block_actions_locked"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_action_validation_step",
+          "required_callers": [
+            "validate_block_actions_locked"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_block_actions_locked",
+          "required_callers": [
+            "import_mined_block",
+            "import_announced_block",
+            "replay_state_to_hash"
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockActionValidation.lean",
