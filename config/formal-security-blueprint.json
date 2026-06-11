@@ -2215,6 +2215,7 @@
         "native.transfer-state-admission",
         "native.sidecar-upload-admission",
         "native.staged-ciphertext-reload",
+        "native.pending-action-reload",
         "native.candidate-artifact-admission",
         "native.candidate-artifact-coupling-admission",
         "native.block-action-ordering",
@@ -2263,7 +2264,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, pending-action reload completeness, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.mined-work-admission",
@@ -2491,6 +2492,62 @@
         }
       ],
       "scope_boundary": "This node proves and vector-checks native DA sidecar upload admission only. Persisted staged ciphertext reload is covered by native.staged-ciphertext-reload. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash derivation/security, sled durability, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
+    },
+    {
+      "id": "native.pending-action-reload",
+      "claim_id": "native.pending-action-reload",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native pending-action reload predicate, a persisted pending action is accepted into the reloaded local mempool only when its key is well formed, its embedded tx_hash equals the 32-byte sled key, the production pending_action_hash recomputation equals the embedded tx_hash, and no equal action hash has already been loaded; otherwise startup reload rejects with fixed malformed-key, key/hash-mismatch, recomputed-hash-mismatch, then duplicate precedence.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions` before persisted local mempool entries can feed mining selection. Focused sled-backed regressions also reject malformed keys, key/hash drift, and recomputed-hash drift.",
+      "depends_on": [
+        "native.codec-admission",
+        "native.block-action-hash-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/PendingActionReload.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/PendingActionReload.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup reload. Scope is the deterministic admission table over observed persisted entries; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-pending-action-reload-theorem",
+          "description": "Removing or weakening the pending-action reload theorems or precedence examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-pending-action-reload-conformance",
+          "description": "Changing production key-shape, key/hash, recomputed-hash, duplicate, or rejection-precedence behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PENDING_ACTION_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_pending_action_reload_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-pending-action-reload-regressions",
+          "description": "Focused native tests must reject persisted pending-action entries with malformed keys, sled-key/embedded-hash drift, or recomputed pending_action_hash drift before reloaded actions can feed mining selection.",
+          "gate": "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-pending-action-reload-gate",
+          "description": "The release formal-core wrapper must generate pending-action reload vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native pending-action startup reload per-entry admission behavior only. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash derivation/security or implementation equivalence, full action payload validation, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.staged-ciphertext-reload",
@@ -2784,7 +2841,7 @@
       "claim_id": "native.block-action-hash-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean action-hash admission transition, native block action decoding/import accepts only when action payload count agrees with header tx_count, every decoded action's embedded tx_hash equals the recomputed pending_action_hash(action), and all action hashes are unique; count mismatch rejects before hash mismatch, and hash mismatch rejects before duplicate-hash reporting.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionHashAdmission.accepts_iff_admission_preconditions` proves the complete executable admission predicate, with companion theorems for count mismatch, action-hash mismatch, duplicate action hash, and hash-mismatch-before-duplicate precedence. `gen_action_hash_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_hash_admission` helper called by `decode_block_actions` and `validate_block_actions_locked`, while native regressions reject mutated embedded action hashes, duplicate action hashes, and action payload count mismatches on both direct decode and import validation paths. Persisted pending-action reload now checks the sled key, embedded tx_hash, and recomputed `pending_action_hash` agree before reloaded actions can be selected for mining; this is production regression evidence at the local persistence boundary, not a new theorem over sled.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionHashAdmission.accepts_iff_admission_preconditions` proves the complete executable admission predicate, with companion theorems for count mismatch, action-hash mismatch, duplicate action hash, and hash-mismatch-before-duplicate precedence. `gen_action_hash_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_action_hash_admission` helper called by `decode_block_actions` and `validate_block_actions_locked`, while native regressions reject mutated embedded action hashes, duplicate action hashes, and action payload count mismatches on both direct decode and import validation paths.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -2843,14 +2900,9 @@
           "id": "native-block-action-decode-duplicate-hash-regression",
           "description": "Native block-action decoding must reject repeated action hashes before returning decoded actions.",
           "gate": "cargo test -p hegemon-node decode_block_actions_rejects_duplicate_hashes --lib --no-default-features"
-        },
-        {
-          "id": "native-pending-action-reload-hash-binding-regression",
-          "description": "Native pending-action reload must reject persisted mempool entries when the sled key, embedded tx_hash, or recomputed pending_action_hash diverge.",
-          "gate": "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. Persisted pending-action reload is covered by focused production regressions that apply the same recomputed hash equality at the local sled trust boundary. This does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, sled durability or disk integrity, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native block action hash/count admission only. Persisted pending-action startup reload is covered separately by `native.pending-action-reload`. This does not prove BLAKE3 pending_action_hash collision resistance, SCALE encoding implementation equivalence, full action payload validation, transfer-key ordering, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
     },
     {
       "id": "native.action-root-transcript-binding",

@@ -364,6 +364,14 @@ struct NativeActionHashAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativePendingActionReloadInput {
+    key_well_formed: bool,
+    embedded_hash_matches_key: bool,
+    recomputed_hash_matches_embedded: bool,
+    action_hash_unique: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeActionHashAdmissionRejection {
     ActionCountMismatch,
     ActionHashMismatch,
@@ -577,6 +585,25 @@ impl NativeBridgeReplayReloadRejection {
             Self::CanonicalReplayDuplicate => "canonical_replay_duplicate",
             Self::MissingConsumedReplayKey => "missing_consumed_replay_key",
             Self::ExtraConsumedReplayKey => "extra_consumed_replay_key",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativePendingActionReloadRejection {
+    MalformedActionKey,
+    KeyHashMismatch,
+    RecomputedHashMismatch,
+    DuplicatePendingAction,
+}
+
+impl NativePendingActionReloadRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedActionKey => "malformed_action_key",
+            Self::KeyHashMismatch => "key_hash_mismatch",
+            Self::RecomputedHashMismatch => "recomputed_hash_mismatch",
+            Self::DuplicatePendingAction => "duplicate_pending_action",
         }
     }
 }
@@ -3957,6 +3984,61 @@ fn native_bridge_replay_reload_error(
     }
 }
 
+fn evaluate_native_pending_action_reload(
+    input: NativePendingActionReloadInput,
+) -> Result<(), NativePendingActionReloadRejection> {
+    if !input.key_well_formed {
+        Err(NativePendingActionReloadRejection::MalformedActionKey)
+    } else if !input.embedded_hash_matches_key {
+        Err(NativePendingActionReloadRejection::KeyHashMismatch)
+    } else if !input.recomputed_hash_matches_embedded {
+        Err(NativePendingActionReloadRejection::RecomputedHashMismatch)
+    } else if !input.action_hash_unique {
+        Err(NativePendingActionReloadRejection::DuplicatePendingAction)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_pending_action_reload_error(
+    rejection: NativePendingActionReloadRejection,
+    hash: Option<[u8; 32]>,
+    action: Option<&PendingAction>,
+) -> anyhow::Error {
+    match rejection {
+        NativePendingActionReloadRejection::MalformedActionKey => anyhow!(
+            "stored pending action key has invalid length ({})",
+            rejection.label()
+        ),
+        NativePendingActionReloadRejection::KeyHashMismatch => {
+            let hash = hash.expect("pending action hash exists after key-shape validation");
+            let action = action.expect("pending action exists after decode");
+            anyhow!(
+                "stored pending action key/hash mismatch: key={} embedded={} ({})",
+                hex32(&hash),
+                hex32(&action.tx_hash),
+                rejection.label()
+            )
+        }
+        NativePendingActionReloadRejection::RecomputedHashMismatch => {
+            let hash = hash.expect("pending action hash exists after key-shape validation");
+            anyhow!(
+                "stored pending action hash mismatch: key={} ({})",
+                hex32(&hash),
+                rejection.label()
+            )
+        }
+        NativePendingActionReloadRejection::DuplicatePendingAction => {
+            let hash = hash.expect("pending action hash exists after key-shape validation");
+            anyhow!(
+                "duplicate stored pending action {} ({})",
+                hex32(&hash),
+                rejection.label()
+            )
+        }
+    }
+}
+
 fn evaluate_native_staged_ciphertext_reload(
     input: NativeStagedCiphertextReloadInput,
 ) -> Result<(), NativeStagedCiphertextReloadRejection> {
@@ -4270,34 +4352,39 @@ fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingA
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() != 32 {
-            continue;
+            return Err(native_pending_action_reload_error(
+                evaluate_native_pending_action_reload(NativePendingActionReloadInput {
+                    key_well_formed: false,
+                    embedded_hash_matches_key: false,
+                    recomputed_hash_matches_embedded: false,
+                    action_hash_unique: false,
+                })
+                .expect_err("malformed pending action key must reject"),
+                None,
+                None,
+            ));
         }
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&key);
         let action: PendingAction = decode_scale_exact(&value, "pending action")?;
-        validate_loaded_pending_action_hash(hash, &action)?;
-        if actions.insert(hash, action).is_some() {
-            return Err(anyhow!("duplicate stored pending action {}", hex32(&hash)));
-        }
+        validate_loaded_pending_action_hash(hash, &action, !actions.contains_key(&hash))?;
+        actions.insert(hash, action);
     }
     Ok(actions)
 }
 
-fn validate_loaded_pending_action_hash(hash: [u8; 32], action: &PendingAction) -> Result<()> {
-    if action.tx_hash != hash {
-        return Err(anyhow!(
-            "stored pending action key/hash mismatch: key={} embedded={}",
-            hex32(&hash),
-            hex32(&action.tx_hash)
-        ));
-    }
-    if action.tx_hash != pending_action_hash(action) {
-        return Err(anyhow!(
-            "stored pending action hash mismatch: key={}",
-            hex32(&hash)
-        ));
-    }
-    Ok(())
+fn validate_loaded_pending_action_hash(
+    hash: [u8; 32],
+    action: &PendingAction,
+    action_hash_unique: bool,
+) -> Result<()> {
+    evaluate_native_pending_action_reload(NativePendingActionReloadInput {
+        key_well_formed: true,
+        embedded_hash_matches_key: action.tx_hash == hash,
+        recomputed_hash_matches_embedded: action.tx_hash == pending_action_hash(action),
+        action_hash_unique,
+    })
+    .map_err(|rejection| native_pending_action_reload_error(rejection, Some(hash), Some(action)))
 }
 
 fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
@@ -8349,6 +8436,25 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanPendingActionReloadVectorFile {
+        schema_version: u32,
+        pending_action_reload_cases: Vec<LeanPendingActionReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingActionReloadCase {
+        name: String,
+        key_well_formed: bool,
+        embedded_hash_matches_key: bool,
+        recomputed_hash_matches_embedded: bool,
+        action_hash_unique: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanStagedCiphertextReloadVectorFile {
         schema_version: u32,
         staged_ciphertext_reload_cases: Vec<LeanStagedCiphertextReloadCase>,
@@ -10272,6 +10378,54 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native bridge-replay reload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_pending_action_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PENDING_ACTION_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PENDING_ACTION_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean pending-action reload vectors");
+        let vectors: LeanPendingActionReloadVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean pending-action reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.pending_action_reload_cases.is_empty(),
+            "Lean pending-action reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.pending_action_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_pending_action_reload_case(case);
+        }
+    }
+
+    fn verify_lean_pending_action_reload_case(case: &LeanPendingActionReloadCase) {
+        let input = NativePendingActionReloadInput {
+            key_well_formed: case.key_well_formed,
+            embedded_hash_matches_key: case.embedded_hash_matches_key,
+            recomputed_hash_matches_embedded: case.recomputed_hash_matches_embedded,
+            action_hash_unique: case.action_hash_unique,
+        };
+        let actual_rejection = evaluate_native_pending_action_reload(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native pending-action reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native pending-action reload rejection drifted from Lean spec",
             case.name
         );
     }
@@ -12463,6 +12617,26 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded_action.tx_hash, action.tx_hash);
         assert_eq!(pending_action_hash(loaded_action), action.tx_hash);
+    }
+
+    #[test]
+    fn load_pending_actions_rejects_malformed_key() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        let action = test_outbound_bridge_action(b"persisted malformed key");
+        tree.insert(&[7u8; 31], action.encode())
+            .expect("insert malformed pending action key");
+
+        let err =
+            load_pending_actions(&tree).expect_err("malformed pending action key must reject");
+        assert!(err
+            .to_string()
+            .contains("stored pending action key has invalid length"));
     }
 
     #[test]

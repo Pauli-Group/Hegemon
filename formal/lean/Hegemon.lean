@@ -33,6 +33,7 @@ import Hegemon.Native.AnnouncedBlockAdmission
 import Hegemon.Native.BlockIndexReload
 import Hegemon.Native.BridgeReplayReload
 import Hegemon.Native.CanonicalStateReload
+import Hegemon.Native.PendingActionReload
 import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.BridgeActionPayloadAdmission

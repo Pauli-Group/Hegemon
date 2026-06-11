@@ -103,6 +103,9 @@ lean_exe gen_canonical_state_reload_vectors where
 lean_exe gen_bridge_replay_reload_vectors where
   root := `Hegemon.Native.GenerateBridgeReplayReloadVectors
 
+lean_exe gen_pending_action_reload_vectors where
+  root := `Hegemon.Native.GeneratePendingActionReloadVectors
+
 lean_exe gen_action_scope_admission_vectors where
   root := `Hegemon.Native.GenerateActionScopeAdmissionVectors
 
