@@ -394,6 +394,33 @@ struct NativeAnnouncedBlockAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBlockIndexReloadInput {
+    chain_reconstructed: bool,
+    chain_nonempty: bool,
+    genesis_matches_expected: bool,
+    best_metadata_matches_chain: bool,
+    canonical_heights_contiguous: bool,
+    canonical_chain_ids_match: bool,
+    canonical_rules_hashes_match: bool,
+    canonical_hashes_match_work_hashes: bool,
+    canonical_parent_hashes_contiguous: bool,
+    height_keys_well_formed: bool,
+    height_values_well_formed: bool,
+    no_extra_height_indexes: bool,
+    height_index_heights_match_chain: bool,
+    height_index_hashes_match_chain: bool,
+    all_canonical_heights_indexed: bool,
+    genesis_marker_present: bool,
+    genesis_marker_length_valid: bool,
+    genesis_marker_matches_expected: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBlockIndexReloadAdmission {
+    repair_missing_genesis_marker: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMinedWorkAdmissionInput {
     best_height: u64,
     work_height: u64,
@@ -428,6 +455,51 @@ impl NativeAnnouncedBlockAdmissionRejection {
             Self::TimestampDidNotAdvance => "timestamp_did_not_advance",
             Self::FutureSkew => "future_skew",
             Self::HashWorkHashMismatch => "hash_work_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBlockIndexReloadRejection {
+    ChainReconstructionFailed,
+    ChainEmpty,
+    GenesisMismatch,
+    BestMetadataMismatch,
+    CanonicalHeightMismatch,
+    ChainIdMismatch,
+    RulesHashMismatch,
+    HashWorkHashMismatch,
+    ParentHashMismatch,
+    MalformedHeightKey,
+    MalformedHeightValue,
+    ExtraHeightIndex,
+    HeightIndexMismatch,
+    HeightHashMismatch,
+    MissingHeightIndex,
+    GenesisMarkerInvalidLength,
+    GenesisMarkerMismatch,
+}
+
+impl NativeBlockIndexReloadRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ChainReconstructionFailed => "chain_reconstruction_failed",
+            Self::ChainEmpty => "chain_empty",
+            Self::GenesisMismatch => "genesis_mismatch",
+            Self::BestMetadataMismatch => "best_metadata_mismatch",
+            Self::CanonicalHeightMismatch => "canonical_height_mismatch",
+            Self::ChainIdMismatch => "chain_id_mismatch",
+            Self::RulesHashMismatch => "rules_hash_mismatch",
+            Self::HashWorkHashMismatch => "hash_work_hash_mismatch",
+            Self::ParentHashMismatch => "parent_hash_mismatch",
+            Self::MalformedHeightKey => "malformed_height_key",
+            Self::MalformedHeightValue => "malformed_height_value",
+            Self::ExtraHeightIndex => "extra_height_index",
+            Self::HeightIndexMismatch => "height_index_mismatch",
+            Self::HeightHashMismatch => "height_hash_mismatch",
+            Self::MissingHeightIndex => "missing_height_index",
+            Self::GenesisMarkerInvalidLength => "genesis_marker_invalid_length",
+            Self::GenesisMarkerMismatch => "genesis_marker_mismatch",
         }
     }
 }
@@ -3563,6 +3635,125 @@ fn load_chain_to_hash(block_tree: &sled::Tree, hash: [u8; 32]) -> Result<Vec<Nat
     Ok(chain)
 }
 
+fn evaluate_native_block_index_reload(
+    input: NativeBlockIndexReloadInput,
+) -> Result<NativeBlockIndexReloadAdmission, NativeBlockIndexReloadRejection> {
+    if !input.chain_reconstructed {
+        Err(NativeBlockIndexReloadRejection::ChainReconstructionFailed)
+    } else if !input.chain_nonempty {
+        Err(NativeBlockIndexReloadRejection::ChainEmpty)
+    } else if !input.genesis_matches_expected {
+        Err(NativeBlockIndexReloadRejection::GenesisMismatch)
+    } else if !input.best_metadata_matches_chain {
+        Err(NativeBlockIndexReloadRejection::BestMetadataMismatch)
+    } else if !input.canonical_heights_contiguous {
+        Err(NativeBlockIndexReloadRejection::CanonicalHeightMismatch)
+    } else if !input.canonical_chain_ids_match {
+        Err(NativeBlockIndexReloadRejection::ChainIdMismatch)
+    } else if !input.canonical_rules_hashes_match {
+        Err(NativeBlockIndexReloadRejection::RulesHashMismatch)
+    } else if !input.canonical_hashes_match_work_hashes {
+        Err(NativeBlockIndexReloadRejection::HashWorkHashMismatch)
+    } else if !input.canonical_parent_hashes_contiguous {
+        Err(NativeBlockIndexReloadRejection::ParentHashMismatch)
+    } else if !input.height_keys_well_formed {
+        Err(NativeBlockIndexReloadRejection::MalformedHeightKey)
+    } else if !input.height_values_well_formed {
+        Err(NativeBlockIndexReloadRejection::MalformedHeightValue)
+    } else if !input.no_extra_height_indexes {
+        Err(NativeBlockIndexReloadRejection::ExtraHeightIndex)
+    } else if !input.height_index_heights_match_chain {
+        Err(NativeBlockIndexReloadRejection::HeightIndexMismatch)
+    } else if !input.height_index_hashes_match_chain {
+        Err(NativeBlockIndexReloadRejection::HeightHashMismatch)
+    } else if !input.all_canonical_heights_indexed {
+        Err(NativeBlockIndexReloadRejection::MissingHeightIndex)
+    } else if !input.genesis_marker_present {
+        Ok(NativeBlockIndexReloadAdmission {
+            repair_missing_genesis_marker: true,
+        })
+    } else if !input.genesis_marker_length_valid {
+        Err(NativeBlockIndexReloadRejection::GenesisMarkerInvalidLength)
+    } else if !input.genesis_marker_matches_expected {
+        Err(NativeBlockIndexReloadRejection::GenesisMarkerMismatch)
+    } else {
+        Ok(NativeBlockIndexReloadAdmission {
+            repair_missing_genesis_marker: false,
+        })
+    }
+}
+
+fn native_block_index_reload_error(rejection: NativeBlockIndexReloadRejection) -> anyhow::Error {
+    match rejection {
+        NativeBlockIndexReloadRejection::ChainReconstructionFailed => anyhow!(
+            "stored native canonical chain reconstruction failed ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::ChainEmpty => anyhow!(
+            "stored native canonical chain is empty ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::GenesisMismatch => {
+            anyhow!("stored native genesis mismatch ({})", rejection.label())
+        }
+        NativeBlockIndexReloadRejection::BestMetadataMismatch => {
+            anyhow!("stored best metadata mismatch ({})", rejection.label())
+        }
+        NativeBlockIndexReloadRejection::CanonicalHeightMismatch => anyhow!(
+            "stored canonical block height mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::ChainIdMismatch => anyhow!(
+            "stored canonical block chain id mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::RulesHashMismatch => anyhow!(
+            "stored canonical block rules hash mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::HashWorkHashMismatch => anyhow!(
+            "stored canonical block hash/work-hash mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::ParentHashMismatch => anyhow!(
+            "stored canonical block parent mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::MalformedHeightKey => anyhow!(
+            "stored canonical height key has invalid length ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::MalformedHeightValue => anyhow!(
+            "stored canonical height value has invalid length ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::ExtraHeightIndex => anyhow!(
+            "stored extra canonical height index ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::HeightIndexMismatch => anyhow!(
+            "stored canonical height index mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::HeightHashMismatch => anyhow!(
+            "stored canonical height hash mismatch ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::MissingHeightIndex => anyhow!(
+            "stored canonical height index missing ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::GenesisMarkerInvalidLength => anyhow!(
+            "stored native genesis marker has invalid length ({})",
+            rejection.label()
+        ),
+        NativeBlockIndexReloadRejection::GenesisMarkerMismatch => anyhow!(
+            "stored native genesis marker mismatch ({})",
+            rejection.label()
+        ),
+    }
+}
+
 fn validate_loaded_block_indexes(
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
@@ -3572,82 +3763,58 @@ fn validate_loaded_block_indexes(
 ) -> Result<()> {
     let expected_genesis = genesis_meta(pow_bits)?;
     let chain = load_chain_to_hash(block_tree, best.hash)?;
-    let Some(genesis) = chain.first() else {
-        return Err(anyhow!("stored native canonical chain is empty"));
-    };
-    if genesis != &expected_genesis {
-        return Err(anyhow!(
-            "stored native genesis mismatch: expected={} observed={}",
-            hex32(&expected_genesis.hash),
-            hex32(&genesis.hash)
-        ));
-    }
-    let Some(canonical_best) = chain.last() else {
-        return Err(anyhow!("stored native canonical chain is empty"));
-    };
-    if canonical_best != best {
-        return Err(anyhow!(
-            "stored best metadata mismatch: meta_best={} chain_best={}",
-            hex32(&best.hash),
-            hex32(&canonical_best.hash)
-        ));
-    }
 
+    let chain_nonempty = !chain.is_empty();
+    let genesis_matches_expected = chain
+        .first()
+        .map(|genesis| genesis == &expected_genesis)
+        .unwrap_or(false);
+    let best_metadata_matches_chain = chain
+        .last()
+        .map(|canonical_best| canonical_best == best)
+        .unwrap_or(false);
+    let mut canonical_heights_contiguous = true;
+    let mut canonical_chain_ids_match = true;
+    let mut canonical_rules_hashes_match = true;
+    let mut canonical_hashes_match_work_hashes = true;
+    let mut canonical_parent_hashes_contiguous = true;
     for (index, meta) in chain.iter().enumerate() {
         let expected_height =
             u64::try_from(index).map_err(|_| anyhow!("stored native chain height overflow"))?;
         if meta.height != expected_height {
-            return Err(anyhow!(
-                "stored canonical block height mismatch: hash={} expected={} observed={}",
-                hex32(&meta.hash),
-                expected_height,
-                meta.height
-            ));
+            canonical_heights_contiguous = false;
         }
         if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
-            return Err(anyhow!(
-                "stored canonical block chain id mismatch at height {}",
-                meta.height
-            ));
+            canonical_chain_ids_match = false;
         }
         if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
-            return Err(anyhow!(
-                "stored canonical block rules hash mismatch at height {}",
-                meta.height
-            ));
+            canonical_rules_hashes_match = false;
         }
         if meta.hash != meta.work_hash {
-            return Err(anyhow!(
-                "stored canonical block hash/work-hash mismatch at height {}",
-                meta.height
-            ));
+            canonical_hashes_match_work_hashes = false;
         }
         if index > 0 {
             let parent = &chain[index - 1];
             if meta.parent_hash != parent.hash {
-                return Err(anyhow!(
-                    "stored canonical block parent mismatch: height={} parent={} expected={}",
-                    meta.height,
-                    hex32(&meta.parent_hash),
-                    hex32(&parent.hash)
-                ));
+                canonical_parent_hashes_contiguous = false;
             }
         }
     }
 
+    let mut height_keys_well_formed = true;
+    let mut height_values_well_formed = true;
+    let mut no_extra_height_indexes = true;
+    let mut height_index_heights_match_chain = true;
+    let mut height_index_hashes_match_chain = true;
     for item in height_tree.iter() {
         let (key, value) = item?;
         if key.len() != 8 {
-            return Err(anyhow!(
-                "stored canonical height key has invalid length: {}",
-                key.len()
-            ));
+            height_keys_well_formed = false;
+            continue;
         }
         if value.len() != 32 {
-            return Err(anyhow!(
-                "stored canonical height value has invalid length: {}",
-                value.len()
-            ));
+            height_values_well_formed = false;
+            continue;
         }
         let mut height_bytes = [0u8; 8];
         height_bytes.copy_from_slice(key.as_ref());
@@ -3656,78 +3823,68 @@ fn validate_loaded_block_indexes(
             .ok()
             .and_then(|index| chain.get(index))
         else {
-            return Err(anyhow!(
-                "stored extra canonical height index: height={} best_height={}",
-                height,
-                best.height
-            ));
+            no_extra_height_indexes = false;
+            continue;
         };
         if height != meta.height {
-            return Err(anyhow!(
-                "stored canonical height index mismatch: key={} meta_height={}",
-                height,
-                meta.height
-            ));
+            height_index_heights_match_chain = false;
         }
         if value.as_ref() != meta.hash.as_slice() {
-            let mut observed = [0u8; 32];
-            observed.copy_from_slice(value.as_ref());
-            return Err(anyhow!(
-                "stored canonical height hash mismatch: height={} expected={} observed={}",
-                height,
-                hex32(&meta.hash),
-                hex32(&observed)
-            ));
+            height_index_hashes_match_chain = false;
         }
     }
 
+    let mut all_canonical_heights_indexed = true;
     for meta in &chain {
-        let Some(bytes) = height_tree.get(height_key(meta.height))? else {
-            return Err(anyhow!(
-                "stored canonical height index missing: height={}",
-                meta.height
-            ));
-        };
-        if bytes.len() != 32 {
-            return Err(anyhow!(
-                "stored canonical height value has invalid length: {}",
-                bytes.len()
-            ));
-        }
-        if bytes.as_ref() != meta.hash.as_slice() {
-            let mut observed = [0u8; 32];
-            observed.copy_from_slice(bytes.as_ref());
-            return Err(anyhow!(
-                "stored canonical height hash mismatch: height={} expected={} observed={}",
-                meta.height,
-                hex32(&meta.hash),
-                hex32(&observed)
-            ));
+        match height_tree.get(height_key(meta.height))? {
+            Some(bytes) => {
+                if bytes.len() != 32 {
+                    height_values_well_formed = false;
+                } else if bytes.as_ref() != meta.hash.as_slice() {
+                    height_index_hashes_match_chain = false;
+                }
+            }
+            None => {
+                all_canonical_heights_indexed = false;
+            }
         }
     }
 
-    match meta_tree.get(META_GENESIS_KEY)? {
-        Some(bytes) => {
-            if bytes.len() != 32 {
-                return Err(anyhow!(
-                    "stored native genesis marker has invalid length: {}",
-                    bytes.len()
-                ));
-            }
-            if bytes.as_ref() != expected_genesis.hash.as_slice() {
-                let mut observed = [0u8; 32];
-                observed.copy_from_slice(bytes.as_ref());
-                return Err(anyhow!(
-                    "stored native genesis marker mismatch: expected={} observed={}",
-                    hex32(&expected_genesis.hash),
-                    hex32(&observed)
-                ));
-            }
-        }
-        None => {
-            meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
-            meta_tree.flush()?;
-        }
+    let genesis_marker = meta_tree.get(META_GENESIS_KEY)?;
+    let genesis_marker_present = genesis_marker.is_some();
+    let mut genesis_marker_length_valid = true;
+    let mut genesis_marker_matches_expected = true;
+    if let Some(bytes) = genesis_marker.as_ref() {
+        genesis_marker_length_valid = bytes.len() == 32;
+        genesis_marker_matches_expected =
+            genesis_marker_length_valid && bytes.as_ref() == expected_genesis.hash.as_slice();
+    }
+
+    let admission = evaluate_native_block_index_reload(NativeBlockIndexReloadInput {
+        chain_reconstructed: true,
+        chain_nonempty,
+        genesis_matches_expected,
+        best_metadata_matches_chain,
+        canonical_heights_contiguous,
+        canonical_chain_ids_match,
+        canonical_rules_hashes_match,
+        canonical_hashes_match_work_hashes,
+        canonical_parent_hashes_contiguous,
+        height_keys_well_formed,
+        height_values_well_formed,
+        no_extra_height_indexes,
+        height_index_heights_match_chain,
+        height_index_hashes_match_chain,
+        all_canonical_heights_indexed,
+        genesis_marker_present,
+        genesis_marker_length_valid,
+        genesis_marker_matches_expected,
+    })
+    .map_err(native_block_index_reload_error)?;
+
+    if admission.repair_missing_genesis_marker {
+        meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
+        meta_tree.flush()?;
     }
 
     Ok(())
@@ -7751,6 +7908,40 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBlockIndexReloadVectorFile {
+        schema_version: u32,
+        block_index_reload_cases: Vec<LeanBlockIndexReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockIndexReloadCase {
+        name: String,
+        chain_reconstructed: bool,
+        chain_nonempty: bool,
+        genesis_matches_expected: bool,
+        best_metadata_matches_chain: bool,
+        canonical_heights_contiguous: bool,
+        canonical_chain_ids_match: bool,
+        canonical_rules_hashes_match: bool,
+        canonical_hashes_match_work_hashes: bool,
+        canonical_parent_hashes_contiguous: bool,
+        height_keys_well_formed: bool,
+        height_values_well_formed: bool,
+        no_extra_height_indexes: bool,
+        height_index_heights_match_chain: bool,
+        height_index_hashes_match_chain: bool,
+        all_canonical_heights_indexed: bool,
+        genesis_marker_present: bool,
+        genesis_marker_length_valid: bool,
+        genesis_marker_matches_expected: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_repairs_genesis_marker: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
@@ -9480,6 +9671,80 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native announced-block admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_block_index_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_INDEX_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_INDEX_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean block-index reload vectors");
+        let vectors: LeanBlockIndexReloadVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean block-index reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.block_index_reload_cases.is_empty(),
+            "Lean block-index reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.block_index_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_block_index_reload_case(case);
+        }
+    }
+
+    fn verify_lean_block_index_reload_case(case: &LeanBlockIndexReloadCase) {
+        let input = NativeBlockIndexReloadInput {
+            chain_reconstructed: case.chain_reconstructed,
+            chain_nonempty: case.chain_nonempty,
+            genesis_matches_expected: case.genesis_matches_expected,
+            best_metadata_matches_chain: case.best_metadata_matches_chain,
+            canonical_heights_contiguous: case.canonical_heights_contiguous,
+            canonical_chain_ids_match: case.canonical_chain_ids_match,
+            canonical_rules_hashes_match: case.canonical_rules_hashes_match,
+            canonical_hashes_match_work_hashes: case.canonical_hashes_match_work_hashes,
+            canonical_parent_hashes_contiguous: case.canonical_parent_hashes_contiguous,
+            height_keys_well_formed: case.height_keys_well_formed,
+            height_values_well_formed: case.height_values_well_formed,
+            no_extra_height_indexes: case.no_extra_height_indexes,
+            height_index_heights_match_chain: case.height_index_heights_match_chain,
+            height_index_hashes_match_chain: case.height_index_hashes_match_chain,
+            all_canonical_heights_indexed: case.all_canonical_heights_indexed,
+            genesis_marker_present: case.genesis_marker_present,
+            genesis_marker_length_valid: case.genesis_marker_length_valid,
+            genesis_marker_matches_expected: case.genesis_marker_matches_expected,
+        };
+        let actual = evaluate_native_block_index_reload(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        let actual_repairs_genesis_marker = actual
+            .as_ref()
+            .ok()
+            .map(|admission| admission.repair_missing_genesis_marker)
+            .unwrap_or(false);
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native block-index reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native block-index reload rejection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_repairs_genesis_marker, case.expected_repairs_genesis_marker,
+            "{} native block-index reload repair decision drifted from Lean spec",
             case.name
         );
     }
@@ -12039,6 +12304,50 @@ mod tests {
             .expect("genesis marker restored");
 
         assert_eq!(marker.as_ref(), expected.hash.as_slice());
+    }
+
+    #[test]
+    fn block_index_reload_rejects_short_genesis_marker_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.meta_tree
+            .insert(META_GENESIS_KEY, [1u8; 31].as_slice())
+            .expect("insert short genesis marker");
+        node.meta_tree.flush().expect("flush meta tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("short genesis marker must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored native genesis marker has invalid length"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_genesis_marker_mismatch_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.meta_tree
+            .insert(META_GENESIS_KEY, [2u8; 32].as_slice())
+            .expect("insert mismatched genesis marker");
+        node.meta_tree.flush().expect("flush meta tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("mismatched genesis marker must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored native genesis marker mismatch"));
     }
 
     #[test]

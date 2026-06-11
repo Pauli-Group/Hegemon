@@ -94,6 +94,9 @@ lean_exe gen_action_state_effect_vectors where
 lean_exe gen_announced_block_admission_vectors where
   root := `Hegemon.Native.GenerateAnnouncedBlockAdmissionVectors
 
+lean_exe gen_block_index_reload_vectors where
+  root := `Hegemon.Native.GenerateBlockIndexReloadVectors
+
 lean_exe gen_action_scope_admission_vectors where
   root := `Hegemon.Native.GenerateActionScopeAdmissionVectors
 

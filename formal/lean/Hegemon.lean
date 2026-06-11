@@ -30,6 +30,7 @@ import Hegemon.Native.ActionRootTranscript
 import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.AnnouncedBlockAdmission
+import Hegemon.Native.BlockIndexReload
 import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.BridgeActionPayloadAdmission

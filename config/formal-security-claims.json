@@ -2425,7 +2425,7 @@
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean announced-block admission kernel proves the executable pre-PoW native import table for checked next-height progression, parent-hash binding, timestamp monotonicity, future-skew bounds, and block-hash/work-hash equality before an announced block reaches body replay; generated Lean vectors are checked against the production native admission helper, and focused startup regressions bind persisted canonical block indexes back to the reconstructed genesis-to-best chain.",
+      "summary": "The Lean announced-block admission kernel proves the executable pre-PoW native import table for checked next-height progression, parent-hash binding, timestamp monotonicity, future-skew bounds, and block-hash/work-hash equality before an announced block reaches body replay; generated Lean vectors are checked against the production native admission helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2444,7 +2444,6 @@
       "assumptions": [
         "The Lean model proves the deterministic pre-PoW header admission table and checked u64 next-height behavior; it does not prove PoW hash-threshold arithmetic or light-client header verification, which are covered separately by consensus.pow-admission and consensus header/light-client gates.",
         "Generated Lean conformance vectors cover valid admission, height mismatch, height overflow at u64::MAX, parent-hash mismatch, non-advancing timestamps, future-skew rejection, hash/work-hash mismatch, rejection precedence, and saturated future-limit acceptance.",
-        "Persisted canonical block-index reload is covered by focused Rust regressions, not a Lean theorem over sled: startup requires the stored best block to exist by hash, best metadata to match the hash-addressed block record, the reconstructed parent chain to be contiguous from the computed native genesis, every height index to be well formed and exact for the canonical chain, and missing legacy genesis markers to be repaired only after those checks pass.",
         "The theorem covers native announced-block pre-PoW admission only. It does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -2459,6 +2458,59 @@
         "HEGEMON_LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_announced_block_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node announced_block_rejects_height_overflow --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node announced_block_rejects_future_timestamp_skew --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
+      "id": "native.block-index-reload",
+      "component": "native canonical block-index startup reload",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block-index reload kernel proves the executable startup admission table for trusting persisted native canonical block indexes only after the best-to-genesis chain reconstructs, genesis and best metadata match, canonical block metadata is exact, height indexes are well formed and exact, and the genesis marker is valid or absent; generated Lean vectors are checked against the production native startup helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.BlockIndexReload.accepts_iff_block_index_reload_preconditions",
+        "Hegemon.Native.BlockIndexReload.best_metadata_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.canonical_height_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.chain_empty_rejects",
+        "Hegemon.Native.BlockIndexReload.chain_id_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.chain_reconstruction_failure_rejects",
+        "Hegemon.Native.BlockIndexReload.extra_height_index_rejects",
+        "Hegemon.Native.BlockIndexReload.genesis_marker_invalid_length_rejects",
+        "Hegemon.Native.BlockIndexReload.genesis_marker_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.genesis_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.genesis_precedes_best_mismatch",
+        "Hegemon.Native.BlockIndexReload.hash_work_hash_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.height_hash_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.height_index_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.malformed_height_key_rejects",
+        "Hegemon.Native.BlockIndexReload.malformed_height_value_rejects",
+        "Hegemon.Native.BlockIndexReload.malformed_key_precedes_extra_height",
+        "Hegemon.Native.BlockIndexReload.malformed_value_precedes_height_hash",
+        "Hegemon.Native.BlockIndexReload.marker_length_precedes_marker_mismatch",
+        "Hegemon.Native.BlockIndexReload.missing_genesis_marker_accepts_and_repairs",
+        "Hegemon.Native.BlockIndexReload.missing_height_index_rejects",
+        "Hegemon.Native.BlockIndexReload.parent_hash_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.rules_hash_mismatch_rejects",
+        "Hegemon.Native.BlockIndexReload.valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model proves the deterministic startup admission table over facts observed from persisted native metadata; it treats chain reconstruction, hash equality, height-index well-formedness, and marker presence as production-derived Boolean predicates.",
+        "Generated Lean conformance vectors cover valid reload, missing-genesis-marker repair, chain reconstruction failure, empty chain, genesis mismatch, best metadata mismatch, canonical height, chain id, rules hash, hash/work-hash, parent hash, malformed height key/value, extra height index, height-index mismatch, height-hash mismatch, missing height index, genesis marker length/mismatch, and rejection precedence.",
+        "The theorem does not prove sled atomicity, file-system durability, I/O error behavior, hash collision resistance, bincode implementation correctness, or complete native-node equivalence. Those remain explicit storage and implementation assumptions."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockIndexReload.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockIndexReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BLOCK_INDEX_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_index_reload_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_index_reload_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
