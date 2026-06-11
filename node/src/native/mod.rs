@@ -1020,6 +1020,22 @@ struct NativePlannedActionEffect {
     replay_key: Option<[u8; 48]>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct NativeActionStreamStep<'a> {
+    commitment_count: usize,
+    ciphertext_count: usize,
+    nullifiers: &'a [[u8; 48]],
+    replay_key: Option<[u8; 48]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeActionStreamEffect {
+    next_leaf_count: u64,
+    imported_nullifier_count: usize,
+    imported_bridge_replay_count: usize,
+    planned_starts: Vec<u64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeActionStateEffectRejection {
     CiphertextCountMismatch,
@@ -5273,6 +5289,47 @@ fn evaluate_native_action_state_effect(
     })
 }
 
+fn evaluate_native_action_stream_effect<'a>(
+    leaf_start: u64,
+    steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
+    nullifier_state: &mut NullifierState,
+    bridge_replay_state: &mut InboundReplayState,
+) -> Result<NativeActionStreamEffect, NativeActionStateEffectRejection> {
+    let mut next_leaf_count = leaf_start;
+    let mut imported_nullifier_count = 0usize;
+    let mut imported_bridge_replay_count = 0usize;
+    let mut planned_starts = Vec::new();
+
+    for step in steps {
+        planned_starts.push(next_leaf_count);
+        let effect = evaluate_native_action_state_effect(
+            next_leaf_count,
+            step.commitment_count,
+            step.ciphertext_count,
+            step.nullifiers,
+            step.replay_key,
+            nullifier_state,
+            bridge_replay_state,
+        )?;
+        next_leaf_count = effect.next_leaf_count;
+        imported_nullifier_count = imported_nullifier_count
+            .checked_add(effect.imported_nullifier_count)
+            .ok_or(NativeActionStateEffectRejection::CommitmentIndexOverflow)?;
+        if effect.imported_bridge_replay {
+            imported_bridge_replay_count = imported_bridge_replay_count
+                .checked_add(1)
+                .ok_or(NativeActionStateEffectRejection::CommitmentIndexOverflow)?;
+        }
+    }
+
+    Ok(NativeActionStreamEffect {
+        next_leaf_count,
+        imported_nullifier_count,
+        imported_bridge_replay_count,
+        planned_starts,
+    })
+}
+
 fn mempool_transfer_nullifier_admission_state(
     state: &NativeState,
     action: &PendingAction,
@@ -7099,30 +7156,37 @@ fn plan_action_effects_for_memory(
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let mut next_leaf_count = state.commitment_tree.leaf_count();
-    let mut planned = Vec::with_capacity(actions.len());
+    let replay_keys = actions
+        .iter()
+        .map(bridge_inbound_replay_key_from_action)
+        .collect::<Result<Vec<_>>>()?;
 
-    for action in actions {
-        let replay_key = bridge_inbound_replay_key_from_action(action)?;
-        let effect = evaluate_native_action_state_effect(
-            next_leaf_count,
-            action.commitments.len(),
-            action.commitments.len(),
-            &action.nullifiers,
-            replay_key,
-            &mut nullifier_state,
-            &mut bridge_replay_state,
-        )
-        .map_err(native_action_state_effect_error)?;
-        planned.push(NativePlannedActionEffect {
-            commitment_start: next_leaf_count,
+    let stream = evaluate_native_action_stream_effect(
+        state.commitment_tree.leaf_count(),
+        actions
+            .iter()
+            .zip(replay_keys.iter())
+            .map(|(action, replay_key)| NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: action.commitments.len(),
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: *replay_key,
+            }),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(native_action_state_effect_error)?;
+
+    Ok(stream
+        .planned_starts
+        .into_iter()
+        .zip(replay_keys)
+        .map(|(commitment_start, replay_key)| NativePlannedActionEffect {
+            commitment_start,
             ciphertexts: Vec::new(),
             replay_key,
-        });
-        next_leaf_count = effect.next_leaf_count;
-    }
-
-    Ok(planned)
+        })
+        .collect())
 }
 
 fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
@@ -7163,7 +7227,6 @@ fn rebuild_canonical_indexes(
     ciphertext_archive_tree: &sled::Tree,
     da_ciphertext_tree: &sled::Tree,
 ) -> Result<()> {
-    let mut next_commitment_index = 0u64;
     let mut nullifier_state = NullifierState::default();
     let mut bridge_replay_state = InboundReplayState::default();
     let mut planned_actions = Vec::new();
@@ -7172,47 +7235,42 @@ fn rebuild_canonical_indexes(
         for action in actions {
             let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, &action)?;
             let replay_key = bridge_inbound_replay_key_from_action(&action)?;
-            let effect = evaluate_native_action_state_effect(
-                next_commitment_index,
-                action.commitments.len(),
-                ciphertexts.len(),
-                &action.nullifiers,
-                replay_key,
-                &mut nullifier_state,
-                &mut bridge_replay_state,
-            )
-            .map_err(native_action_state_effect_error)?;
-            planned_actions.push((
-                action,
-                NativePlannedActionEffect {
-                    commitment_start: next_commitment_index,
-                    ciphertexts,
-                    replay_key,
-                },
-            ));
-            next_commitment_index = effect.next_leaf_count;
+            planned_actions.push((action, ciphertexts, replay_key));
         }
     }
 
-    for (action, effect) in planned_actions {
+    let stream = evaluate_native_action_stream_effect(
+        0,
+        planned_actions
+            .iter()
+            .map(|(action, ciphertexts, replay_key)| NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: ciphertexts.len(),
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: *replay_key,
+            }),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(native_action_state_effect_error)?;
+
+    for ((action, ciphertexts, replay_key), commitment_start) in planned_actions
+        .into_iter()
+        .zip(stream.planned_starts.into_iter())
+    {
         for (offset, commitment) in action.commitments.iter().enumerate() {
             let offset =
                 u64::try_from(offset).map_err(|_| anyhow!("commitment rebuild offset overflow"))?;
-            let index = effect
-                .commitment_start
+            let index = commitment_start
                 .checked_add(offset)
                 .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
             commitment_tree.insert(index.to_be_bytes(), commitment.as_slice())?;
         }
-        insert_ciphertext_archive_entries(
-            ciphertext_archive_tree,
-            effect.commitment_start,
-            &effect.ciphertexts,
-        )?;
+        insert_ciphertext_archive_entries(ciphertext_archive_tree, commitment_start, &ciphertexts)?;
         for nullifier in &action.nullifiers {
             nullifier_tree.insert(nullifier.as_slice(), b"1")?;
         }
-        if let Some(replay_key) = effect.replay_key {
+        if let Some(replay_key) = replay_key {
             bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
         }
         for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
@@ -7273,31 +7331,45 @@ fn plan_pending_action_effects(
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let mut next_leaf_count = state.commitment_tree.leaf_count();
-    let mut planned = Vec::with_capacity(actions.len());
+    let prepared = actions
+        .iter()
+        .map(|action| {
+            let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, action)?;
+            let replay_key = bridge_inbound_replay_key_from_action(action)?;
+            Ok((ciphertexts, replay_key))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    for action in actions {
-        let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, action)?;
-        let replay_key = bridge_inbound_replay_key_from_action(action)?;
-        let effect = evaluate_native_action_state_effect(
-            next_leaf_count,
-            action.commitments.len(),
-            ciphertexts.len(),
-            &action.nullifiers,
-            replay_key,
-            &mut nullifier_state,
-            &mut bridge_replay_state,
+    let stream = evaluate_native_action_stream_effect(
+        state.commitment_tree.leaf_count(),
+        actions
+            .iter()
+            .zip(prepared.iter())
+            .map(
+                |(action, (ciphertexts, replay_key))| NativeActionStreamStep {
+                    commitment_count: action.commitments.len(),
+                    ciphertext_count: ciphertexts.len(),
+                    nullifiers: action.nullifiers.as_slice(),
+                    replay_key: *replay_key,
+                },
+            ),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(native_action_state_effect_error)?;
+
+    Ok(stream
+        .planned_starts
+        .into_iter()
+        .zip(prepared)
+        .map(
+            |(commitment_start, (ciphertexts, replay_key))| NativePlannedActionEffect {
+                commitment_start,
+                ciphertexts,
+                replay_key,
+            },
         )
-        .map_err(native_action_state_effect_error)?;
-        planned.push(NativePlannedActionEffect {
-            commitment_start: next_leaf_count,
-            ciphertexts,
-            replay_key,
-        });
-        next_leaf_count = effect.next_leaf_count;
-    }
-
-    Ok(planned)
+        .collect())
 }
 
 fn insert_ciphertext_archive_entries(
@@ -9329,6 +9401,38 @@ mod tests {
         expected_imported_bridge_replay: Option<bool>,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionStreamEffectVectorFile {
+        schema_version: u32,
+        action_stream_effect_cases: Vec<LeanActionStreamEffectCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionStreamEffectCase {
+        name: String,
+        leaf_start: u64,
+        spent_nullifiers: Vec<u64>,
+        consumed_bridge_replays: Vec<u64>,
+        actions: Vec<LeanActionStreamActionCase>,
+        expected_next_leaf_count: Option<u64>,
+        expected_imported_nullifier_count: Option<usize>,
+        expected_imported_bridge_replay_count: Option<usize>,
+        expected_planned_starts: Option<Vec<u64>>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionStreamActionCase {
+        commitment_count: usize,
+        ciphertext_count: usize,
+        nullifiers: Vec<u64>,
+        bridge_replay_key: Option<u64>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -12069,6 +12173,132 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lean_generated_action_stream_effect_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_STREAM_EFFECT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_STREAM_EFFECT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action stream effect vectors");
+        let vectors: LeanActionStreamEffectVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean action stream effect vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_stream_effect_cases.is_empty(),
+            "Lean action stream effect cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_stream_effect_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_stream_effect_case(case);
+        }
+    }
+
+    fn verify_lean_action_stream_effect_case(case: &LeanActionStreamEffectCase) {
+        let spent_nullifiers = case
+            .spent_nullifiers
+            .iter()
+            .map(|key| synthetic_stream_nullifier(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let consumed_bridge_replays = case
+            .consumed_bridge_replays
+            .iter()
+            .map(|key| synthetic_stream_replay_key(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let action_nullifiers = case
+            .actions
+            .iter()
+            .map(|action| {
+                action
+                    .nullifiers
+                    .iter()
+                    .map(|key| synthetic_stream_nullifier(*key, &case.name))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let replay_keys = case
+            .actions
+            .iter()
+            .map(|action| {
+                action
+                    .bridge_replay_key
+                    .map(|key| synthetic_stream_replay_key(key, &case.name))
+            })
+            .collect::<Vec<_>>();
+        let mut nullifier_state = NullifierState::new(spent_nullifiers, BTreeSet::new());
+        let mut bridge_replay_state =
+            InboundReplayState::new(consumed_bridge_replays, BTreeSet::new());
+
+        let actual = evaluate_native_action_stream_effect(
+            case.leaf_start,
+            case.actions
+                .iter()
+                .zip(action_nullifiers.iter())
+                .zip(replay_keys.iter())
+                .map(
+                    |((action, nullifiers), replay_key)| NativeActionStreamStep {
+                        commitment_count: action.commitment_count,
+                        ciphertext_count: action.ciphertext_count,
+                        nullifiers: nullifiers.as_slice(),
+                        replay_key: *replay_key,
+                    },
+                ),
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        );
+        match actual {
+            Ok(effect) => {
+                assert!(
+                    case.expected_valid,
+                    "{} action stream effect unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.next_leaf_count),
+                    case.expected_next_leaf_count,
+                    "{} stream next leaf count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.imported_nullifier_count),
+                    case.expected_imported_nullifier_count,
+                    "{} stream imported nullifier count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.imported_bridge_replay_count),
+                    case.expected_imported_bridge_replay_count,
+                    "{} stream imported bridge replay count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(effect.planned_starts),
+                    case.expected_planned_starts,
+                    "{} stream planned starts drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} action stream effect unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} stream rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
     fn synthetic_action_effect_nullifiers(
         state: &str,
         count: usize,
@@ -12107,6 +12337,28 @@ mod tests {
             }
             other => panic!("{case_name} has unknown bridge replay state {other}"),
         }
+    }
+
+    fn synthetic_stream_nullifier(key: u64, case_name: &str) -> [u8; 48] {
+        if key == 0 {
+            return [0u8; 48];
+        }
+        synthetic_stream_key(0x81, key, case_name)
+    }
+
+    fn synthetic_stream_replay_key(key: u64, case_name: &str) -> [u8; 48] {
+        synthetic_stream_key(0x82, key, case_name)
+    }
+
+    fn synthetic_stream_key(domain: u8, key: u64, case_name: &str) -> [u8; 48] {
+        let mut hash = [0u8; 48];
+        hash[0] = domain;
+        hash[1..9].copy_from_slice(&key.to_le_bytes());
+        let name_bytes = case_name.as_bytes();
+        for (idx, byte) in name_bytes.iter().take(39).enumerate() {
+            hash[idx + 9] = *byte;
+        }
+        hash
     }
 
     fn synthetic_hash48(domain: u8, index: usize, case_name: &str) -> [u8; 48] {

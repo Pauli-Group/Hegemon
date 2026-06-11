@@ -358,6 +358,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateActionRootTranscriptVectors.lean",
         "formal/lean/Hegemon/Native/ActionStateEffect.lean",
         "formal/lean/Hegemon/Native/GenerateActionStateEffectVectors.lean",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStreamEffectVectors.lean",
         "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAnnouncedBlockAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/BlockIndexReload.lean",

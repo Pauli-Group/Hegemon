@@ -3813,6 +3813,68 @@
       "scope_boundary": "This node proves and vector-checks the native block derived commitment-admission table only. It does not prove commitment-tree hash security, BLAKE3 bridge message-root security or implementation equivalence, header-MMR hash binding, PoW threshold validity, full action payload validation, tx proof soundness, supply economics, or complete native-node equivalence."
     },
     {
+      "id": "native.action-stream-effect-planning",
+      "claim_id": "native.action-stream-effect-planning",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean action-stream effect transition over an ordered list of decoded native action summaries, acceptance records the commitment-start index for each accepted action, advances the leaf count with checked u64 arithmetic, imports nullifiers into a shared stream state so prior-spent, intra-action, and cross-action duplicates reject, imports inbound replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, and follows the production rejection precedence of count mismatch, commitment-index overflow, nullifier failure, then bridge replay duplicate.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionStreamEffect.accepts_iff_stream_preconditions` pins the executable stream predicate, while `valid_two_action_stream_accepts`, `cross_action_duplicate_nullifier_rejects`, `within_action_duplicate_nullifier_rejects`, `prior_spent_duplicate_nullifier_rejects`, `zero_nullifier_second_action_rejects`, `cross_action_bridge_replay_duplicate_rejects`, `prior_consumed_bridge_replay_duplicate_rejects`, `second_action_commitment_overflow_rejects`, and the companion precedence theorems prove representative ordered-stream cases. `gen_action_stream_effect_vectors` emits Lean-derived examples checked against `evaluate_native_action_stream_effect`, the production helper now called by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state mutation or sled writes.",
+      "depends_on": [
+        "native.action-state-effect-planning",
+        "native.block-action-hash-admission",
+        "bridge.inbound-replay-state",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStreamEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStreamEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for ordered native action-stream planning. It narrows the multi-action replay gap; scope excludes raw action decoding, cryptographic derivations, storage durability, and full native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-stream-effect-theorem",
+          "description": "Removing or weakening the action-stream effect theorem facts or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-stream-effect-conformance",
+          "description": "Changing the production action-stream helper away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-action-stream-memory-regression",
+          "description": "Native memory replay must reject duplicate nullifiers before mutating in-memory commitment or nullifier state.",
+          "gate": "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features"
+        },
+        {
+          "id": "native-action-stream-preview-regression",
+          "description": "Native pending-root preview must reject duplicate inbound bridge replay keys before deriving roots.",
+          "gate": "cargo test -p hegemon-node action_state_effect_preview_ --lib --no-default-features"
+        },
+        {
+          "id": "native-action-stream-rebuild-regression",
+          "description": "Native canonical index rebuild must reject duplicate nullifiers before writing commitment, nullifier, or ciphertext archive sled entries.",
+          "gate": "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, storage atomicity under I/O failure, full action payload validity, tx proof soundness, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",
@@ -3820,6 +3882,7 @@
       "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over action-effect planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against a Rust conformance adapter in `node/src/native/mod.rs`, which composes the same action-effect and block-commitment helpers used by native replay/import paths and mirrors checked native supply advancement over height, fee total, and coinbase presence.",
       "depends_on": [
         "native.action-state-effect-planning",
+        "native.action-stream-effect-planning",
         "native.block-commitment-admission",
         "consensus.supply-digest-accounting",
         "native.coinbase-accounting-admission",
@@ -3866,7 +3929,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks a composed replay/accounting refinement boundary over modeled predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full multi-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks a composed replay/accounting refinement boundary over modeled predicates and depends on the separate action-stream planner for ordered duplicate/overflow behavior. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

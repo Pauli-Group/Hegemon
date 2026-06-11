@@ -91,6 +91,9 @@ lean_exe gen_action_root_transcript_vectors where
 lean_exe gen_action_state_effect_vectors where
   root := `Hegemon.Native.GenerateActionStateEffectVectors
 
+lean_exe gen_action_stream_effect_vectors where
+  root := `Hegemon.Native.GenerateActionStreamEffectVectors
+
 lean_exe gen_announced_block_admission_vectors where
   root := `Hegemon.Native.GenerateAnnouncedBlockAdmissionVectors
 

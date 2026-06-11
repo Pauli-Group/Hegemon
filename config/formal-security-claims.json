@@ -2538,6 +2538,51 @@
       "residual_risks": []
     },
     {
+      "id": "native.action-stream-effect-planning",
+      "component": "native ordered action stream mutation planning",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-stream effect kernel proves representative ordered-list replay facts for native action planning: the stream records one planned commitment start per accepted action, advances leaf counts with checked u64 arithmetic across the whole list, imports nullifiers into a shared stream state so within-action and cross-action duplicates reject, imports inbound bridge replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, and preserves the same rejection precedence as the production planner. Generated Lean vectors are checked against the production stream helper now called by memory replay, pending-action planning, and canonical-index rebuild.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.ActionStreamEffect.accepts_iff_stream_preconditions",
+        "Hegemon.Native.ActionStreamEffect.valid_two_action_stream_accepts",
+        "Hegemon.Native.ActionStreamEffect.empty_stream_accepts",
+        "Hegemon.Native.ActionStreamEffect.cross_action_duplicate_nullifier_rejects",
+        "Hegemon.Native.ActionStreamEffect.within_action_duplicate_nullifier_rejects",
+        "Hegemon.Native.ActionStreamEffect.prior_spent_duplicate_nullifier_rejects",
+        "Hegemon.Native.ActionStreamEffect.zero_nullifier_second_action_rejects",
+        "Hegemon.Native.ActionStreamEffect.cross_action_bridge_replay_duplicate_rejects",
+        "Hegemon.Native.ActionStreamEffect.prior_consumed_bridge_replay_duplicate_rejects",
+        "Hegemon.Native.ActionStreamEffect.second_action_commitment_overflow_rejects",
+        "Hegemon.Native.ActionStreamEffect.count_mismatch_precedes_duplicate",
+        "Hegemon.Native.ActionStreamEffect.overflow_precedes_nullifier",
+        "Hegemon.Native.ActionStreamEffect.nullifier_precedes_bridge_replay"
+      ],
+      "assumptions": [
+        "The Lean stream model uses natural-number keys for already-decoded nullifiers and inbound replay keys. The Rust vector test maps those keys to concrete 48-byte values before calling production state machines, but this claim does not prove nullifier derivation, inbound replay-key derivation, SCALE decoding, or bridge message parsing.",
+        "Generated Lean conformance vectors cover a valid two-action stream, empty streams at max leaf count, cross-action duplicate nullifiers, duplicate nullifiers within one action, duplicates against prior spent state, zero nullifiers in later actions, cross-action bridge replay duplicates, duplicates against prior consumed replay state, cumulative second-action leaf overflow, and rejection precedence.",
+        "The theorem and vectors cover the production stream helper now used by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state is mutated. They do not prove storage atomicity under I/O failure, commitment-tree hash security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/GenerateActionStreamEffectVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_STREAM_EFFECT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_stream_effect_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_state_effect_preview_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
@@ -3101,7 +3146,7 @@
       "assumptions": [
         "The Lean model composes already-modeled native predicates: action-state effect planning, native supply advancement from height/fee/coinbase presence, and block commitment admission. It does not prove cryptographic hash binding or derive those predicates from raw encoded actions.",
         "Generated Lean conformance vectors cover valid transfer, bridge replay, and coinbase replay summaries; action-effect rejection; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; and state-root-before-supply-digest rejection precedence.",
-        "The theorem covers a replay/accounting refinement boundary over production-derived summaries. It does not prove SCALE decoder correctness, storage atomicity, full multi-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+        "The theorem covers a replay/accounting refinement boundary over production-derived summaries and now depends on the separate action-stream planner for ordered multi-action duplicate/overflow behavior. It does not prove SCALE decoder correctness, storage atomicity, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
