@@ -3502,12 +3502,70 @@
       "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission only. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, inbound replay-set state transitions, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.bridge-witness-backscan",
+      "claim_id": "native.bridge-witness-backscan",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native bridge-witness latest-message backscan, the no-explicit-hash `hegemon_exportBridgeWitness` path scans a bounded newest-to-oldest canonical-height window, skips missing height indexes and missing block records, fails closed on canonical block-action decode failure, selects the first eligible block whose bridge-message list contains the requested message index, and rejects if the bounded scan has no eligible bridge message.",
+      "informal_argument": "The Lean recursive evaluator `Hegemon.Native.BridgeWitnessBackscan.evaluateBridgeWitnessBackscan` models the scan entries in descending order. General theorems prove selectable heads are selected, missing hash and missing block records skip to the tail, decode failure precedes any tail match, message-index misses skip to the tail, and an empty scan rejects. Concrete theorems pin newest-candidate selection, skipped-record behavior, decode-failure-before-older-match behavior, and no-eligible-message rejection. `gen_bridge_witness_backscan_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_native_bridge_witness_backscan` helper now called by `latest_bridge_message_block_hash`; a focused regression corrupts a newer canonical block and verifies latest witness export fails closed instead of silently selecting an older bridge message.",
+      "depends_on": [
+        "native.block-index-reload",
+        "native.codec-admission",
+        "bridge.message-root-replay",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessBackscan.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessBackscanVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessBackscan.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessBackscanVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for bounded latest-message bridge witness backscan selection. Scope is deterministic scan selection/rejection before the resolved block's export-admission gate."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-bridge-witness-backscan-theorem",
+          "description": "Removing or weakening the bridge witness backscan theorems or concrete scan facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-bridge-witness-backscan-conformance",
+          "description": "Changing the production bridge witness backscan helper away from the Lean executable scan table must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_witness_backscan_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-bridge-witness-corrupt-newer-backscan-regression",
+          "description": "Latest bridge witness export must fail closed on a corrupt newer canonical block instead of falling through to an older eligible bridge message.",
+          "gate": "cargo test -p hegemon-node bridge_witness_latest_backscan_rejects_corrupt_newer_canonical_block --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-bridge-witness-backscan-gate",
+          "description": "The release formal-core wrapper must generate native bridge witness backscan vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native latest-message bridge witness backscan selection only. It does not prove sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, bridge message-root hash security, external-chain verifier behavior, or complete native-node equivalence. The resolved block's export admission and confirmation-count output are covered by `native.bridge-witness-export-admission`."
+    },
+    {
       "id": "native.bridge-witness-export-admission",
       "claim_id": "native.bridge-witness-export-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native bridge-witness export transition, `hegemon_exportBridgeWitness` admits an outbound witness only when an explicit block hash is well formed, the resolved block exists, its height has a canonical index, the block is canonical at that height, its actions decode, the selected bridge message index is in bounds, the parent header exists, and the current best height is not before the message height; the accepted output returns the capped `confirmations_checked` value used in the exported bridge checkpoint output.",
       "informal_argument": "The Lean theorem `Hegemon.Native.BridgeWitnessExportAdmission.accepts_iff_bridge_witness_export_preconditions` proves the executable witness-export admission predicate, with companion theorems for valid exports, same-height confirmation count, u32 confirmation capping, malformed block-hash rejection, unknown block rejection, missing canonical height rejection, noncanonical block rejection, action-decode rejection, message-index rejection, missing-parent rejection, best-tip-before-message rejection, and precedence cases. `gen_bridge_witness_export_admission_vectors` emits Lean-derived examples. The formal-core gate checks those vectors against the production `evaluate_native_bridge_witness_export_admission` helper now called by `export_bridge_witness`; focused native regressions reject malformed explicit hashes without fallback, unknown blocks, missing canonical height indexes, noncanonical blocks, out-of-bounds message indexes, and missing parents.",
       "depends_on": [
+        "native.bridge-witness-backscan",
         "native.block-index-reload",
         "native.codec-admission",
         "bridge.message-root-replay",

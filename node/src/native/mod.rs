@@ -789,6 +789,15 @@ struct NativeBridgeWitnessExportAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeWitnessBackscanEntry {
+    height: u64,
+    canonical_hash_present: bool,
+    block_known: bool,
+    block_actions_decoded: bool,
+    message_index_in_bounds: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBridgeActionPayloadKind {
     Outbound,
     Inbound,
@@ -836,6 +845,12 @@ enum NativeBridgeWitnessExportAdmissionRejection {
     TipBeforeMessage,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeWitnessBackscanRejection {
+    BlockActionsDecodeFailed,
+    NoBridgeMessageInBackscan,
+}
+
 impl NativeBridgeWitnessExportAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
@@ -847,6 +862,15 @@ impl NativeBridgeWitnessExportAdmissionRejection {
             Self::MessageIndexOutOfBounds => "message_index_out_of_bounds",
             Self::MissingParent => "missing_parent",
             Self::TipBeforeMessage => "tip_before_message",
+        }
+    }
+}
+
+impl NativeBridgeWitnessBackscanRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::BlockActionsDecodeFailed => "block_actions_decode_failed",
+            Self::NoBridgeMessageInBackscan => "no_bridge_message_in_backscan",
         }
     }
 }
@@ -3556,16 +3580,62 @@ fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> 
     let min_height = best
         .height
         .saturating_sub(MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS.saturating_sub(1));
+    let mut entries = Vec::new();
+    let mut hashes = Vec::new();
     for height in (min_height..=best.height).rev() {
-        let Some(hash) = node.hash_by_height(height)? else {
-            continue;
+        let mut entry = NativeBridgeWitnessBackscanEntry {
+            height,
+            canonical_hash_present: false,
+            block_known: false,
+            block_actions_decoded: true,
+            message_index_in_bounds: false,
         };
-        let Some(meta) = node.header_by_hash(&hash)? else {
-            continue;
-        };
-        let actions = decode_block_actions(&meta)?;
-        if bridge_messages_from_actions(&actions, meta.height).len() > message_index {
-            return Ok(meta.hash);
+        let mut selected_hash = None;
+        let mut decode_error = None;
+        if let Some(hash) = node.hash_by_height(height)? {
+            entry.canonical_hash_present = true;
+            if let Some(meta) = node.header_by_hash(&hash)? {
+                entry.block_known = true;
+                selected_hash = Some(meta.hash);
+                match decode_block_actions(&meta) {
+                    Ok(actions) => {
+                        entry.message_index_in_bounds =
+                            bridge_messages_from_actions(&actions, meta.height).len()
+                                > message_index;
+                    }
+                    Err(error) => {
+                        entry.block_actions_decoded = false;
+                        decode_error = Some(error);
+                    }
+                }
+            }
+        }
+        entries.push(entry);
+        hashes.push(selected_hash);
+        match evaluate_native_bridge_witness_backscan(&entries) {
+            Ok(selected_height) => {
+                let selected_index = entries
+                    .iter()
+                    .position(|candidate| candidate.height == selected_height)
+                    .expect("backscan selected height must come from scanned entries");
+                return hashes[selected_index].ok_or_else(|| {
+                    anyhow!(
+                        "bridge witness backscan selected missing block hash at height {selected_height}"
+                    )
+                });
+            }
+            Err(NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed) => {
+                return Err(decode_error.unwrap_or_else(|| {
+                    anyhow!(
+                        "bridge witness backscan block action decode failed ({})",
+                        NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed.label()
+                    )
+                }))
+                .with_context(|| {
+                    format!("decode bridge witness backscan block actions at height {height}")
+                });
+            }
+            Err(NativeBridgeWitnessBackscanRejection::NoBridgeMessageInBackscan) => {}
         }
     }
     Err(anyhow!(
@@ -6325,6 +6395,23 @@ fn evaluate_native_bridge_witness_export_admission(
     }
 }
 
+fn evaluate_native_bridge_witness_backscan(
+    entries: &[NativeBridgeWitnessBackscanEntry],
+) -> Result<u64, NativeBridgeWitnessBackscanRejection> {
+    for entry in entries {
+        if !entry.canonical_hash_present || !entry.block_known {
+            continue;
+        }
+        if !entry.block_actions_decoded {
+            return Err(NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed);
+        }
+        if entry.message_index_in_bounds {
+            return Ok(entry.height);
+        }
+    }
+    Err(NativeBridgeWitnessBackscanRejection::NoBridgeMessageInBackscan)
+}
+
 fn native_bridge_witness_export_admission_error(
     rejection: NativeBridgeWitnessExportAdmissionRejection,
 ) -> anyhow::Error {
@@ -8726,6 +8813,33 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeWitnessBackscanVectorFile {
+        schema_version: u32,
+        bridge_witness_backscan_cases: Vec<LeanBridgeWitnessBackscanCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeWitnessBackscanCase {
+        name: String,
+        entries: Vec<LeanBridgeWitnessBackscanEntry>,
+        expected_valid: bool,
+        expected_selected_height: Option<u64>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeWitnessBackscanEntry {
+        height: u64,
+        canonical_hash_present: bool,
+        block_known: bool,
+        block_actions_decoded: bool,
+        message_index_in_bounds: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanPendingActionReloadVectorFile {
         schema_version: u32,
         pending_action_reload_cases: Vec<LeanPendingActionReloadCase>,
@@ -10751,6 +10865,67 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native bridge witness export admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_bridge_witness_backscan_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge witness backscan vectors");
+        let vectors: LeanBridgeWitnessBackscanVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge witness backscan vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_witness_backscan_cases.is_empty(),
+            "Lean bridge witness backscan cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_witness_backscan_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_witness_backscan_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_witness_backscan_case(case: &LeanBridgeWitnessBackscanCase) {
+        let entries = case
+            .entries
+            .iter()
+            .map(|entry| NativeBridgeWitnessBackscanEntry {
+                height: entry.height,
+                canonical_hash_present: entry.canonical_hash_present,
+                block_known: entry.block_known,
+                block_actions_decoded: entry.block_actions_decoded,
+                message_index_in_bounds: entry.message_index_in_bounds,
+            })
+            .collect::<Vec<_>>();
+        let actual = evaluate_native_bridge_witness_backscan(&entries);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native bridge witness backscan validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.ok(),
+            case.expected_selected_height,
+            "{} native bridge witness backscan selected height drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge witness backscan rejection drifted from Lean spec",
             case.name
         );
     }
@@ -14882,6 +15057,31 @@ mod tests {
         assert!(err
             .to_string()
             .contains("missing parent for bridge witness"));
+    }
+
+    #[test]
+    fn bridge_witness_latest_backscan_rejects_corrupt_newer_canonical_block() {
+        let (_tmp, node, older_bridge) =
+            node_with_exportable_bridge_block(b"older bridge message behind corrupt tip");
+
+        let work = node.prepare_work().expect("prepare empty child");
+        assert_eq!(work.height, older_bridge.height + 1);
+        assert_eq!(work.message_count, 0);
+        let seal = mine_native_round(work.clone(), 0).expect("empty child seal");
+        let mut newer = node
+            .import_mined_block(&work, seal)
+            .expect("import empty child")
+            .expect("empty child block");
+        assert_eq!(node.best_meta().hash, newer.hash);
+        newer.action_bytes.push(vec![0xff]);
+        persist_block_record(&node.block_tree, &newer).expect("persist corrupt canonical child");
+
+        let err = export_bridge_witness(&node, json!([Value::Null, 0]))
+            .expect_err("latest backscan must fail closed on corrupt canonical block actions");
+
+        assert!(err
+            .to_string()
+            .contains("decode bridge witness backscan block actions"));
     }
 
     #[test]

@@ -112,6 +112,9 @@ lean_exe gen_action_scope_admission_vectors where
 lean_exe gen_bridge_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateBridgeActionPayloadAdmissionVectors
 
+lean_exe gen_bridge_witness_backscan_vectors where
+  root := `Hegemon.Native.GenerateBridgeWitnessBackscanVectors
+
 lean_exe gen_bridge_witness_export_admission_vectors where
   root := `Hegemon.Native.GenerateBridgeWitnessExportAdmissionVectors
 

@@ -2859,6 +2859,47 @@
       "residual_risks": []
     },
     {
+      "id": "native.bridge-witness-backscan",
+      "component": "native outbound bridge witness latest-message backscan",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean bridge-witness backscan kernel proves the executable newest-to-oldest bounded scan table used when `hegemon_exportBridgeWitness` is called without an explicit block hash: missing canonical height records and missing block records are skipped, canonical block-action decode failures fail closed, the first eligible bridge-message block in scan order is selected, and an empty or ineligible scan rejects.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.BridgeWitnessBackscan.decode_failure_precedes_older_match",
+        "Hegemon.Native.BridgeWitnessBackscan.decode_failure_precedes_tail",
+        "Hegemon.Native.BridgeWitnessBackscan.empty_backscan_rejects",
+        "Hegemon.Native.BridgeWitnessBackscan.message_index_miss_skips_to_tail",
+        "Hegemon.Native.BridgeWitnessBackscan.missing_block_skips_to_tail",
+        "Hegemon.Native.BridgeWitnessBackscan.missing_hash_skips_to_tail",
+        "Hegemon.Native.BridgeWitnessBackscan.newest_eligible_candidate_wins",
+        "Hegemon.Native.BridgeWitnessBackscan.no_eligible_bridge_message_rejects",
+        "Hegemon.Native.BridgeWitnessBackscan.selectable_head_selects",
+        "Hegemon.Native.BridgeWitnessBackscan.skipped_records_and_index_misses_reach_older_match"
+      ],
+      "assumptions": [
+        "The Lean model treats the descending bounded scan order, canonical height lookup, block lookup, action decoding result, and bridge-message index predicate as production-observed facts; it proves the deterministic selection/rejection table over those facts.",
+        "Generated Lean conformance vectors cover newest eligible selection, skipping missing records and message-index misses to reach an older match, fail-closed decode failure before an older match, no eligible bridge message, and an empty scan.",
+        "The theorem covers executable native latest-message backscan selection only. It does not prove sled atomicity, filesystem durability, decode implementation equivalence, bridge-message hash security, the exact runtime cost of the 4096-block bound, or complete native-node equivalence. The resolved block's export admission and confirmation-count output are covered by `native.bridge-witness-export-admission`."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessBackscan.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessBackscanVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_witness_backscan_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node bridge_witness_latest_backscan_rejects_corrupt_newer_canonical_block --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.bridge-witness-export-admission",
       "component": "native outbound bridge witness export admission",
       "claim_class": "lean_theorem",
@@ -2887,7 +2928,7 @@
       "assumptions": [
         "The Lean model treats block-hash lookup, canonical-height lookup, canonical hash comparison, block-action decoding, bridge-message derivation, and parent lookup as production-derived predicates; it proves the deterministic admission table and confirmation-count output once those predicates are observed.",
         "Generated Lean conformance vectors cover valid exports, same-height one-confirmation exports, u32 confirmation capping, malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, action decode failure, out-of-bounds message indexes, missing parents, best-tip-before-message rejection, and rejection precedence.",
-        "The theorem covers executable native witness-export admission and capped confirmation-count computation only. It does not prove sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, BLAKE3 message-root or output-digest security, header-MMR hash binding, FlyClient sampling soundness, long-range light-client soundness, external-chain verifier behavior, or complete native-node equivalence. Long-range proof shape, FlyClient transcript derivation, header-MMR shape/transcripts, and checkpoint-output byte grammar are covered by separate bridge claims."
+        "The theorem covers executable native witness-export admission and capped confirmation-count computation only. It does not prove latest-message backscan selection, sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, BLAKE3 message-root or output-digest security, header-MMR hash binding, FlyClient sampling soundness, long-range light-client soundness, external-chain verifier behavior, or complete native-node equivalence. Latest-message backscan selection, long-range proof shape, FlyClient transcript derivation, header-MMR shape/transcripts, and checkpoint-output byte grammar are covered by separate bridge claims."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeWitnessExportAdmission.lean",
