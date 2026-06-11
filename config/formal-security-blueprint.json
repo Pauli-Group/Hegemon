@@ -4142,6 +4142,11 @@
           "id": "formal-core-block-replay-production-binding",
           "description": "The blueprint gate must reject the block replay-refinement claim if mined-block import, announced-block import, or canonical replay stop calling the non-test production replay helper.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "announced-block-replay-precedes-payload-regression",
+          "description": "Announced-block import must reject a forged body commitment through the replay-refinement gate before malformed action payload validation can mask the no-counterfeiting failure.",
+          "gate": "cargo test -p hegemon-node announced_block_replay_commitment_mismatch_precedes_payload_validation --lib --no-default-features"
         }
       ],
   "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."

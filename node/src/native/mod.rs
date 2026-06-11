@@ -2000,10 +2000,6 @@ impl NativeNode {
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
-        if !actions.is_empty() {
-            validate_block_actions_locked(&parent_state, &actions)?;
-            verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
-        }
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
@@ -2028,6 +2024,10 @@ impl NativeNode {
                 header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
             },
         )?;
+        if !actions.is_empty() {
+            validate_block_actions_locked(&parent_state, &actions)?;
+            verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
+        }
         persist_block_record(&self.block_tree, &meta)?;
         if native_meta_better_than(&meta, &state.best) {
             self.reorganize_to_best_locked(&mut state, meta.hash)?;
@@ -10841,6 +10841,70 @@ mod tests {
                 "{mutation:?} should reject with {expected}, got {err}"
             );
         }
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
+    fn announced_block_replay_commitment_mismatch_precedes_payload_validation() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let height = parent.height.saturating_add(1);
+        let mut coinbase = test_coinbase_action(consensus::reward::block_subsidy(height));
+        coinbase.ciphertext_hashes[0][0] ^= 1;
+        coinbase.tx_hash = pending_action_hash(&coinbase);
+        let mut block = mined_child_with_actions(&parent, height, pow_bits, 0, vec![coinbase]);
+        block.state_root[0] ^= 1;
+        let pre_header = native_pow_header_from_parts(
+            block.height,
+            block.timestamp_ms,
+            block.parent_hash,
+            block.pow_bits,
+            [0u8; 32],
+            block.cumulative_work,
+            &block.state_root,
+            &block.kernel_root,
+            &block.nullifier_root,
+            &block.extrinsics_root,
+            &block.message_root,
+            block.message_count,
+            &block.header_mmr_root,
+            block.header_mmr_len,
+            block.supply_digest,
+            block.tx_count,
+        );
+        let work = NativeWork {
+            height: block.height,
+            parent_hash: block.parent_hash,
+            pre_hash: pre_header.pre_hash(),
+            state_root: block.state_root,
+            kernel_root: block.kernel_root,
+            nullifier_root: block.nullifier_root,
+            extrinsics_root: block.extrinsics_root,
+            message_root: block.message_root,
+            message_count: block.message_count,
+            header_mmr_root: block.header_mmr_root,
+            header_mmr_len: block.header_mmr_len,
+            cumulative_work: block.cumulative_work,
+            tx_count: block.tx_count,
+            timestamp_ms: block.timestamp_ms,
+            pow_bits: block.pow_bits,
+        };
+        let seal = mine_native_round(work, 1).expect("reseal mutated announced block");
+        block.hash = seal.work_hash;
+        block.work_hash = seal.work_hash;
+        block.nonce = seal.nonce;
+
+        let err = node
+            .import_announced_block(block)
+            .expect_err("counterfeit commitment must reject before payload validation");
+
+        assert!(
+            err.to_string().contains("state_root_mismatch"),
+            "state-root replay mismatch should not be masked by payload validation: {err}"
+        );
         assert_eq!(node.best_meta().height, 0);
     }
 

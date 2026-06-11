@@ -3193,7 +3193,7 @@
       "assumptions": [
         "The Lean model composes already-modeled native predicates: ordered action-stream effect planning, native supply advancement from height/fee/coinbase presence, and block commitment admission. It does not prove cryptographic hash binding or derive those predicates from raw encoded actions.",
         "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; and state-root-before-supply-digest rejection precedence.",
-        "The production helper is called by native mined-block import, announced-block import, and canonical branch replay after decoded-action validation/artifact checks have established the raw action semantics those paths require. The theorem covers the replay/accounting refinement boundary over production-derived decoded action summaries; it does not prove SCALE decoder correctness, storage atomicity, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+        "The production helper is called by native mined-block import, announced-block import, and canonical branch replay. On announced-block import, the replay/accounting/commitment gate runs before deeper payload and artifact validation so forged body commitments are not masked by malformed action payloads; persistence and state mutation still require decoded-action validation and artifact checks. The theorem covers the replay/accounting refinement boundary over production-derived decoded action summaries; it does not prove SCALE decoder correctness, storage atomicity, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
@@ -3202,11 +3202,12 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
-      "gates": [
-        "bash scripts/check_lean_formal.sh",
-        "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features -- --nocapture",
-        "bash scripts/check_formal_core.sh"
-      ],
+    "gates": [
+      "bash scripts/check_lean_formal.sh",
+      "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features -- --nocapture",
+      "cargo test -p hegemon-node announced_block_replay_commitment_mismatch_precedes_payload_validation --lib --no-default-features -- --nocapture",
+      "bash scripts/check_formal_core.sh"
+    ],
       "residual_risks": []
     },
     {
