@@ -1395,7 +1395,6 @@ struct NativeBlockCommitmentAdmissionInput {
     supply_digest_matches: bool,
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBlockReplayRefinementInput {
     leaf_start: u64,
@@ -1415,7 +1414,6 @@ struct NativeBlockReplayRefinementInput {
     header_mmr_len_matches: bool,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NativeBlockReplayRefinementSummary {
     next_leaf_count: u64,
@@ -1439,7 +1437,6 @@ enum NativeBlockCommitmentAdmissionRejection {
     SupplyDigestMismatch,
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBlockReplayRefinementRejection {
     CiphertextCountMismatch,
@@ -1460,7 +1457,6 @@ enum NativeBlockReplayRefinementRejection {
     SupplyDigestMismatch,
 }
 
-#[cfg(test)]
 impl NativeBlockReplayRefinementRejection {
     fn label(self) -> &'static str {
         match self {
@@ -1900,9 +1896,32 @@ impl NativeNode {
         }
         let supply_digest =
             advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, work.height)?;
+        evaluate_native_block_replay_refinement_for_actions(
+            "native mined block replay refinement failed",
+            &state,
+            &actions,
+            NativeBlockReplayRefinementInput {
+                leaf_start: state.commitment_tree.leaf_count(),
+                parent_supply: state.best.supply_digest,
+                height: work.height,
+                fee_total,
+                has_coinbase,
+                claimed_supply: supply_digest,
+                tx_count_matches: preview_tx_count == work.tx_count,
+                state_root_matches: preview_state_root == work.state_root,
+                kernel_root_matches: preview_kernel_root == work.kernel_root,
+                nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
+                extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
+                message_root_matches: preview_message_root == work.message_root,
+                message_count_matches: preview_message_count == work.message_count,
+                header_mmr_root_matches: work.header_mmr_root
+                    == header_mmr_root_from_hashes(&expected_header_history),
+                header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
+            },
+        )?;
         if !actions.is_empty() {
             validate_block_actions_locked(&state, &actions)?;
-            validate_coinbase_accounting(&actions, work.height)?;
             verify_native_block_artifacts_locked(self, &state, &actions)?;
             self.apply_pending_actions_locked(&mut state, &actions)?;
         }
@@ -1981,32 +2000,34 @@ impl NativeNode {
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
-        let expected_supply =
-            advance_native_supply_digest(parent.supply_digest, &actions, meta.height)?;
-        evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
-            tx_count_matches: tx_count == meta.tx_count,
-            state_root_matches: state_root == meta.state_root,
-            kernel_root_matches: kernel_root == meta.kernel_root,
-            nullifier_root_matches: nullifier_root == meta.nullifier_root,
-            extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
-            message_root_matches: message_root == meta.message_root,
-            message_count_matches: message_count == meta.message_count,
-            header_mmr_root_matches: meta.header_mmr_root
-                == header_mmr_root_from_hashes(&expected_header_history),
-            header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
-            supply_digest_matches: meta.supply_digest == expected_supply,
-        })
-        .map_err(|rejection| {
-            native_block_commitment_admission_error(
-                "announced block commitment mismatch",
-                rejection,
-            )
-        })?;
         if !actions.is_empty() {
             validate_block_actions_locked(&parent_state, &actions)?;
-            validate_coinbase_accounting(&actions, meta.height)?;
             verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
         }
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
+        evaluate_native_block_replay_refinement_for_actions(
+            "announced block replay refinement failed",
+            &parent_state,
+            &actions,
+            NativeBlockReplayRefinementInput {
+                leaf_start: parent_state.commitment_tree.leaf_count(),
+                parent_supply: parent.supply_digest,
+                height: meta.height,
+                fee_total,
+                has_coinbase,
+                claimed_supply: meta.supply_digest,
+                tx_count_matches: tx_count == meta.tx_count,
+                state_root_matches: state_root == meta.state_root,
+                kernel_root_matches: kernel_root == meta.kernel_root,
+                nullifier_root_matches: nullifier_root == meta.nullifier_root,
+                extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
+                message_root_matches: message_root == meta.message_root,
+                message_count_matches: message_count == meta.message_count,
+                header_mmr_root_matches: meta.header_mmr_root
+                    == header_mmr_root_from_hashes(&expected_header_history),
+                header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
+            },
+        )?;
         persist_block_record(&self.block_tree, &meta)?;
         if native_meta_better_than(&meta, &state.best) {
             self.reorganize_to_best_locked(&mut state, meta.hash)?;
@@ -2106,28 +2127,32 @@ impl NativeNode {
                 .map_err(|_| anyhow!("native bridge message count overflow"))?;
             let expected_header_history: Vec<Hash32> =
                 chain[..idx].iter().map(|header| header.hash).collect();
-            validate_coinbase_accounting(&actions, meta.height)?;
-            let expected_supply =
-                advance_native_supply_digest(state.best.supply_digest, &actions, meta.height)?;
-            evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
-                tx_count_matches: tx_count == meta.tx_count,
-                state_root_matches: state_root == meta.state_root,
-                kernel_root_matches: kernel_root == meta.kernel_root,
-                nullifier_root_matches: nullifier_root == meta.nullifier_root,
-                extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
-                message_root_matches: message_root == meta.message_root,
-                message_count_matches: message_count == meta.message_count,
-                header_mmr_root_matches: meta.header_mmr_root
-                    == header_mmr_root_from_hashes(&expected_header_history),
-                header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
-                supply_digest_matches: meta.supply_digest == expected_supply,
-            })
-            .map_err(|rejection| {
-                native_block_commitment_admission_error(
-                    "native replay commitment mismatch",
-                    rejection,
-                )
-            })?;
+            let (fee_total, has_coinbase) =
+                native_block_replay_supply_parts(&actions, meta.height)?;
+            evaluate_native_block_replay_refinement_for_actions(
+                "native replay refinement failed",
+                &state,
+                &actions,
+                NativeBlockReplayRefinementInput {
+                    leaf_start: state.commitment_tree.leaf_count(),
+                    parent_supply: state.best.supply_digest,
+                    height: meta.height,
+                    fee_total,
+                    has_coinbase,
+                    claimed_supply: meta.supply_digest,
+                    tx_count_matches: tx_count == meta.tx_count,
+                    state_root_matches: state_root == meta.state_root,
+                    kernel_root_matches: kernel_root == meta.kernel_root,
+                    nullifier_root_matches: nullifier_root == meta.nullifier_root,
+                    extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
+                    message_root_matches: message_root == meta.message_root,
+                    message_count_matches: message_count == meta.message_count,
+                    header_mmr_root_matches: meta.header_mmr_root
+                        == header_mmr_root_from_hashes(&expected_header_history),
+                    header_mmr_len_matches: meta.header_mmr_len
+                        == expected_header_history.len() as u64,
+                },
+            )?;
             apply_actions_to_memory(&mut state, &actions)?;
             state.best = meta;
         }
@@ -7263,7 +7288,6 @@ fn native_block_commitment_admission_error(
     anyhow!("{context}: {}", rejection.label())
 }
 
-#[cfg(test)]
 fn evaluate_native_block_replay_refinement<'a>(
     input: NativeBlockReplayRefinementInput,
     steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
@@ -7307,7 +7331,6 @@ fn evaluate_native_block_replay_refinement<'a>(
     })
 }
 
-#[cfg(test)]
 fn expected_native_supply_from_parts(
     parent_supply: u128,
     height: u64,
@@ -7322,7 +7345,6 @@ fn expected_native_supply_from_parts(
     parent_supply.checked_add(u128::from(delta))
 }
 
-#[cfg(test)]
 fn native_block_replay_refinement_action_rejection(
     rejection: NativeActionStateEffectRejection,
 ) -> NativeBlockReplayRefinementRejection {
@@ -7345,7 +7367,6 @@ fn native_block_replay_refinement_action_rejection(
     }
 }
 
-#[cfg(test)]
 fn native_block_replay_refinement_commitment_rejection(
     rejection: NativeBlockCommitmentAdmissionRejection,
 ) -> NativeBlockReplayRefinementRejection {
@@ -7381,6 +7402,54 @@ fn native_block_replay_refinement_commitment_rejection(
             NativeBlockReplayRefinementRejection::SupplyDigestMismatch
         }
     }
+}
+
+fn native_block_replay_refinement_error(
+    context: &'static str,
+    rejection: NativeBlockReplayRefinementRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
+fn native_block_replay_supply_parts(actions: &[PendingAction], height: u64) -> Result<(u64, bool)> {
+    validate_coinbase_accounting(actions, height)?;
+    let has_coinbase = actions.iter().any(is_coinbase_action);
+    let fee_total = if has_coinbase {
+        checked_transfer_fee_total(actions).ok_or_else(|| anyhow!("block fee total overflow"))?
+    } else {
+        checked_transfer_fee_total(actions).unwrap_or(0)
+    };
+    Ok((fee_total, has_coinbase))
+}
+
+fn evaluate_native_block_replay_refinement_for_actions(
+    context: &'static str,
+    state: &NativeState,
+    actions: &[PendingAction],
+    input: NativeBlockReplayRefinementInput,
+) -> Result<NativeBlockReplayRefinementSummary> {
+    let replay_keys = actions
+        .iter()
+        .map(bridge_inbound_replay_key_from_action)
+        .collect::<Result<Vec<_>>>()?;
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
+    let mut bridge_replay_state =
+        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    evaluate_native_block_replay_refinement(
+        input,
+        actions
+            .iter()
+            .zip(replay_keys.iter())
+            .map(|(action, replay_key)| NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: action.commitments.len(),
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: *replay_key,
+            }),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(|rejection| native_block_replay_refinement_error(context, rejection))
 }
 
 fn block_action_hashes_match(actions: &[PendingAction]) -> bool {

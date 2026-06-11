@@ -3171,7 +3171,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block replay-refinement kernel composes native ordered action-stream planning, checked native supply advancement, and block commitment admission; generated Lean vectors are checked against a Rust conformance adapter over production helpers so accepted multi-action replay summaries cannot carry counterfeit state-root or supply claims under the modeled predicates.",
+      "summary": "The Lean block replay-refinement kernel composes native ordered action-stream planning, checked native supply advancement, and block commitment admission; generated Lean vectors are checked against the production helper now used by mined-block import, announced-block import, and canonical replay so accepted multi-action replay summaries cannot carry counterfeit state-root or supply claims under the modeled predicates.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3193,7 +3193,7 @@
       "assumptions": [
         "The Lean model composes already-modeled native predicates: ordered action-stream effect planning, native supply advancement from height/fee/coinbase presence, and block commitment admission. It does not prove cryptographic hash binding or derive those predicates from raw encoded actions.",
         "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; and state-root-before-supply-digest rejection precedence.",
-        "The theorem covers a replay/accounting refinement boundary over production-derived decoded action summaries. It does not prove SCALE decoder correctness, storage atomicity, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+        "The production helper is called by native mined-block import, announced-block import, and canonical branch replay after decoded-action validation/artifact checks have established the raw action semantics those paths require. The theorem covers the replay/accounting refinement boundary over production-derived decoded action summaries; it does not prove SCALE decoder correctness, storage atomicity, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
