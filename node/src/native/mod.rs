@@ -1612,7 +1612,7 @@ struct NativePagination {
     limit: u64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct NativeState {
     best: NativeBlockMeta,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
@@ -1954,19 +1954,29 @@ impl NativeNode {
         };
         verify_native_pow_meta(&state.best, &meta)?;
 
-        if !actions.is_empty() {
+        let pending_action_effects = if actions.is_empty() {
+            Vec::new()
+        } else {
             validate_block_actions_locked(&state, &actions)?;
             verify_native_block_artifacts_locked(self, &state, &actions)?;
-            self.apply_pending_actions_locked(&mut state, &actions)?;
+            plan_pending_action_effects(&self.da_ciphertext_tree, &state, &actions)?
+        };
+        let mut next_state = state.clone();
+        if !actions.is_empty() {
+            apply_planned_actions_to_memory(&mut next_state, &actions, &pending_action_effects)?;
         }
-        if state.commitment_tree.root() != work.state_root
-            || nullifier_root_from_set(&state.nullifiers) != work.nullifier_root
+        if next_state.commitment_tree.root() != work.state_root
+            || nullifier_root_from_set(&next_state.nullifiers) != work.nullifier_root
         {
             return Err(anyhow!("native pending action preview mismatch"));
         }
 
+        if !actions.is_empty() {
+            self.write_pending_action_effects(&actions, &pending_action_effects)?;
+        }
         persist_block(&self.meta_tree, &self.height_tree, &self.block_tree, &meta)?;
-        state.best = meta.clone();
+        next_state.best = meta.clone();
+        publish_mined_state(&mut state, next_state);
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
         self.broadcast_block_announce(&meta);
         info!(
@@ -2250,27 +2260,24 @@ impl NativeNode {
         Ok(())
     }
 
-    fn apply_pending_actions_locked(
+    fn write_pending_action_effects(
         &self,
-        state: &mut NativeState,
         actions: &[PendingAction],
+        planned: &[NativePlannedActionEffect],
     ) -> Result<()> {
-        let planned = plan_pending_action_effects(&self.da_ciphertext_tree, state, actions)?;
+        if actions.len() != planned.len() {
+            return Err(anyhow!(
+                "pending action write plan length mismatch: actions={} planned={}",
+                actions.len(),
+                planned.len()
+            ));
+        }
         for (action, effect) in actions.iter().zip(planned.iter()) {
             for (offset, commitment) in action.commitments.iter().enumerate() {
                 let index = effect
                     .commitment_start
                     .checked_add(offset as u64)
                     .expect("planned commitment index arithmetic must not overflow");
-                debug_assert_eq!(
-                    index,
-                    state.commitment_tree.leaf_count(),
-                    "planned commitment index drifted during native import"
-                );
-                state
-                    .commitment_tree
-                    .append(*commitment)
-                    .map_err(|err| anyhow!("append native commitment failed: {err}"))?;
                 self.commitment_tree
                     .insert(index.to_be_bytes(), commitment.as_slice())?;
             }
@@ -2281,11 +2288,9 @@ impl NativeNode {
             )?;
 
             for nullifier in &action.nullifiers {
-                state.nullifiers.insert(*nullifier);
                 self.nullifier_tree.insert(nullifier.as_slice(), b"1")?;
             }
             if let Some(replay_key) = effect.replay_key {
-                state.consumed_bridge_messages.insert(replay_key);
                 self.bridge_inbound_tree
                     .insert(replay_key.as_slice(), b"1")?;
             }
@@ -2304,11 +2309,11 @@ impl NativeNode {
             }
 
             self.action_tree.remove(action.tx_hash.as_slice())?;
-            state.pending_actions.remove(&action.tx_hash);
         }
 
         self.commitment_tree.flush()?;
         self.nullifier_tree.flush()?;
+        self.bridge_inbound_tree.flush()?;
         self.ciphertext_index_tree.flush()?;
         self.ciphertext_archive_tree.flush()?;
         self.action_tree.flush()?;
@@ -4066,6 +4071,10 @@ fn mine_native_round(work: NativeWork, round: u64) -> Option<NativeSeal> {
         }
     }
     None
+}
+
+fn publish_mined_state(state: &mut NativeState, next_state: NativeState) {
+    *state = next_state;
 }
 
 fn load_best_or_genesis(
@@ -7687,6 +7696,21 @@ fn plan_action_effects_for_memory(
 
 fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
     let planned = plan_action_effects_for_memory(state, actions)?;
+    apply_planned_actions_to_memory(state, actions, &planned)
+}
+
+fn apply_planned_actions_to_memory(
+    state: &mut NativeState,
+    actions: &[PendingAction],
+    planned: &[NativePlannedActionEffect],
+) -> Result<()> {
+    if actions.len() != planned.len() {
+        return Err(anyhow!(
+            "pending action memory plan length mismatch: actions={} planned={}",
+            actions.len(),
+            planned.len()
+        ));
+    }
     for (action, effect) in actions.iter().zip(planned.iter()) {
         for (offset, commitment) in action.commitments.iter().enumerate() {
             let expected_index = effect
