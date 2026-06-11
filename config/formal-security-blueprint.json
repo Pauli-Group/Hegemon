@@ -2926,7 +2926,7 @@
       "claim_id": "native.announced-block-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean announced-block admission transition, native announced-block pre-PoW import accepts only when parent height has a checked u64 next height equal to the announced height, the parent hash matches, the timestamp strictly advances, the timestamp is within the saturating future-skew bound, and the claimed block hash equals the work hash; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay. Focused canonical block-index reload regressions require startup to reject missing best block records, best metadata drift, malformed height keys, mismatched or extra height indexes, and non-contiguous canonical parent heights before mining or serving state; missing legacy genesis markers are repaired only after the canonical chain and height index validate.",
       "depends_on": [
         "consensus.pow-admission",
         "consensus.header-preimage-binding",
@@ -2949,8 +2949,8 @@
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
-        "reviewed_at": "2026-06-09",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native announced-block pre-PoW admission. Scope excludes PoW cryptographic/hash-threshold verification and body commitment replay."
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native announced-block pre-PoW admission. Canonical block-index reload binding is focused Rust regression evidence outside the Lean sled model. Scope excludes PoW cryptographic/hash-threshold verification and body commitment replay."
       },
       "falsification_cases": [
         {
@@ -2972,9 +2972,14 @@
           "id": "native-announced-block-future-skew-regression",
           "description": "Native announced-block validation must reject timestamps beyond the configured future-skew bound.",
           "gate": "cargo test -p hegemon-node announced_block_rejects_future_timestamp_skew --lib --no-default-features"
+        },
+        {
+          "id": "native-block-index-reload-canonical-binding",
+          "description": "Native startup must reject canonical block-index corruption where best metadata, hash-addressed block records, parent-chain heights, or height indexes differ from the reconstructed genesis-to-best chain.",
+          "gate": "cargo test -p hegemon-node block_index_reload_ --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. Canonical block-index reload binding is regression-gated, but not proved in Lean over sled or filesystem behavior. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
     },
     {
       "id": "native.codec-admission",

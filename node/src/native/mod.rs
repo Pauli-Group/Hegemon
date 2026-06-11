@@ -230,7 +230,7 @@ impl NativeConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct NativeBlockMeta {
     chain_id: [u8; 32],
     rules_hash: [u8; 32],
@@ -1191,6 +1191,13 @@ impl NativeNode {
         let da_proof_tree = db.open_tree("da_pending_proofs")?;
 
         let best = load_best_or_genesis(&meta_tree, &height_tree, &block_tree, config.pow_bits)?;
+        validate_loaded_block_indexes(
+            &best,
+            &meta_tree,
+            &height_tree,
+            &block_tree,
+            config.pow_bits,
+        )?;
         let pending_actions = load_pending_actions(&action_tree)?;
         let nullifiers = load_nullifiers(&nullifier_tree)?;
         let commitment_state = load_commitment_tree(&commitment_tree)?;
@@ -1589,22 +1596,7 @@ impl NativeNode {
     }
 
     fn chain_to_hash(&self, hash: [u8; 32]) -> Result<Vec<NativeBlockMeta>> {
-        let mut chain = Vec::new();
-        let mut cursor = hash;
-        loop {
-            let meta = self
-                .header_by_hash(&cursor)?
-                .ok_or_else(|| anyhow!("missing native block {}", hex32(&cursor)))?;
-            let parent = meta.parent_hash;
-            let is_genesis = meta.height == 0;
-            chain.push(meta);
-            if is_genesis {
-                break;
-            }
-            cursor = parent;
-        }
-        chain.reverse();
-        Ok(chain)
+        load_chain_to_hash(&self.block_tree, hash)
     }
 
     fn header_hashes_to_hash(&self, hash: [u8; 32]) -> Result<Vec<Hash32>> {
@@ -3552,6 +3544,13 @@ fn load_chain_to_hash(block_tree: &sled::Tree, hash: [u8; 32]) -> Result<Vec<Nat
         }
         let meta = load_block_meta_by_hash(block_tree, &cursor)?
             .ok_or_else(|| anyhow!("missing native block {}", hex32(&cursor)))?;
+        if meta.hash != cursor {
+            return Err(anyhow!(
+                "stored native block hash mismatch: key={} embedded={}",
+                hex32(&cursor),
+                hex32(&meta.hash)
+            ));
+        }
         let parent = meta.parent_hash;
         let is_genesis = meta.height == 0;
         chain.push(meta);
@@ -3562,6 +3561,176 @@ fn load_chain_to_hash(block_tree: &sled::Tree, hash: [u8; 32]) -> Result<Vec<Nat
     }
     chain.reverse();
     Ok(chain)
+}
+
+fn validate_loaded_block_indexes(
+    best: &NativeBlockMeta,
+    meta_tree: &sled::Tree,
+    height_tree: &sled::Tree,
+    block_tree: &sled::Tree,
+    pow_bits: u32,
+) -> Result<()> {
+    let expected_genesis = genesis_meta(pow_bits)?;
+    let chain = load_chain_to_hash(block_tree, best.hash)?;
+    let Some(genesis) = chain.first() else {
+        return Err(anyhow!("stored native canonical chain is empty"));
+    };
+    if genesis != &expected_genesis {
+        return Err(anyhow!(
+            "stored native genesis mismatch: expected={} observed={}",
+            hex32(&expected_genesis.hash),
+            hex32(&genesis.hash)
+        ));
+    }
+    let Some(canonical_best) = chain.last() else {
+        return Err(anyhow!("stored native canonical chain is empty"));
+    };
+    if canonical_best != best {
+        return Err(anyhow!(
+            "stored best metadata mismatch: meta_best={} chain_best={}",
+            hex32(&best.hash),
+            hex32(&canonical_best.hash)
+        ));
+    }
+
+    for (index, meta) in chain.iter().enumerate() {
+        let expected_height =
+            u64::try_from(index).map_err(|_| anyhow!("stored native chain height overflow"))?;
+        if meta.height != expected_height {
+            return Err(anyhow!(
+                "stored canonical block height mismatch: hash={} expected={} observed={}",
+                hex32(&meta.hash),
+                expected_height,
+                meta.height
+            ));
+        }
+        if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
+            return Err(anyhow!(
+                "stored canonical block chain id mismatch at height {}",
+                meta.height
+            ));
+        }
+        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
+            return Err(anyhow!(
+                "stored canonical block rules hash mismatch at height {}",
+                meta.height
+            ));
+        }
+        if meta.hash != meta.work_hash {
+            return Err(anyhow!(
+                "stored canonical block hash/work-hash mismatch at height {}",
+                meta.height
+            ));
+        }
+        if index > 0 {
+            let parent = &chain[index - 1];
+            if meta.parent_hash != parent.hash {
+                return Err(anyhow!(
+                    "stored canonical block parent mismatch: height={} parent={} expected={}",
+                    meta.height,
+                    hex32(&meta.parent_hash),
+                    hex32(&parent.hash)
+                ));
+            }
+        }
+    }
+
+    for item in height_tree.iter() {
+        let (key, value) = item?;
+        if key.len() != 8 {
+            return Err(anyhow!(
+                "stored canonical height key has invalid length: {}",
+                key.len()
+            ));
+        }
+        if value.len() != 32 {
+            return Err(anyhow!(
+                "stored canonical height value has invalid length: {}",
+                value.len()
+            ));
+        }
+        let mut height_bytes = [0u8; 8];
+        height_bytes.copy_from_slice(key.as_ref());
+        let height = u64::from_be_bytes(height_bytes);
+        let Some(meta) = usize::try_from(height)
+            .ok()
+            .and_then(|index| chain.get(index))
+        else {
+            return Err(anyhow!(
+                "stored extra canonical height index: height={} best_height={}",
+                height,
+                best.height
+            ));
+        };
+        if height != meta.height {
+            return Err(anyhow!(
+                "stored canonical height index mismatch: key={} meta_height={}",
+                height,
+                meta.height
+            ));
+        }
+        if value.as_ref() != meta.hash.as_slice() {
+            let mut observed = [0u8; 32];
+            observed.copy_from_slice(value.as_ref());
+            return Err(anyhow!(
+                "stored canonical height hash mismatch: height={} expected={} observed={}",
+                height,
+                hex32(&meta.hash),
+                hex32(&observed)
+            ));
+        }
+    }
+
+    for meta in &chain {
+        let Some(bytes) = height_tree.get(height_key(meta.height))? else {
+            return Err(anyhow!(
+                "stored canonical height index missing: height={}",
+                meta.height
+            ));
+        };
+        if bytes.len() != 32 {
+            return Err(anyhow!(
+                "stored canonical height value has invalid length: {}",
+                bytes.len()
+            ));
+        }
+        if bytes.as_ref() != meta.hash.as_slice() {
+            let mut observed = [0u8; 32];
+            observed.copy_from_slice(bytes.as_ref());
+            return Err(anyhow!(
+                "stored canonical height hash mismatch: height={} expected={} observed={}",
+                meta.height,
+                hex32(&meta.hash),
+                hex32(&observed)
+            ));
+        }
+    }
+
+    match meta_tree.get(META_GENESIS_KEY)? {
+        Some(bytes) => {
+            if bytes.len() != 32 {
+                return Err(anyhow!(
+                    "stored native genesis marker has invalid length: {}",
+                    bytes.len()
+                ));
+            }
+            if bytes.as_ref() != expected_genesis.hash.as_slice() {
+                let mut observed = [0u8; 32];
+                observed.copy_from_slice(bytes.as_ref());
+                return Err(anyhow!(
+                    "stored native genesis marker mismatch: expected={} observed={}",
+                    hex32(&expected_genesis.hash),
+                    hex32(&observed)
+                ));
+            }
+        }
+        None => {
+            meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
+            meta_tree.flush()?;
+        }
+    }
+
+    Ok(())
 }
 
 fn load_staged_sizes(tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
@@ -11715,6 +11884,161 @@ mod tests {
         };
 
         assert!(err.to_string().contains("stored nullifier root mismatch"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_missing_best_block_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let best = node.best_meta();
+        node.block_tree
+            .remove(best.hash.as_slice())
+            .expect("remove best block record");
+        node.block_tree.flush().expect("flush block tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("missing best block record must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("missing native block"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_best_metadata_mismatch_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let mut forged_best = node.best_meta();
+        forged_best.timestamp_ms = forged_best.timestamp_ms.saturating_add(1);
+        node.meta_tree
+            .insert(
+                META_BEST_KEY,
+                bincode::serialize(&forged_best)
+                    .expect("serialize forged best")
+                    .as_slice(),
+            )
+            .expect("insert forged best metadata");
+        node.meta_tree.flush().expect("flush meta tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("best metadata drift must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("stored best metadata mismatch"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_height_hash_mismatch_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.height_tree
+            .insert(height_key(0), [7u8; 32].as_slice())
+            .expect("insert forged height hash");
+        node.height_tree.flush().expect("flush height tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("height hash mismatch must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored canonical height hash mismatch"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_extra_height_index_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.height_tree
+            .insert(height_key(1), [8u8; 32].as_slice())
+            .expect("insert extra height index");
+        node.height_tree.flush().expect("flush height tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("extra height index must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored extra canonical height index"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_malformed_height_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.height_tree
+            .insert(b"bad-key", [9u8; 32].as_slice())
+            .expect("insert malformed height key");
+        node.height_tree.flush().expect("flush height tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("malformed height key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored canonical height key has invalid length"));
+    }
+
+    #[test]
+    fn block_index_reload_rejects_non_contiguous_parent_height_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let genesis = node.best_meta();
+        let mut child = mined_empty_child(&genesis, 1, pow_bits, 0);
+        child.height = 2;
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+            .expect("persist non-contiguous child");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("non-contiguous canonical height must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored canonical block height mismatch"));
+    }
+
+    #[test]
+    fn block_index_reload_repairs_missing_genesis_marker_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.meta_tree
+            .remove(META_GENESIS_KEY)
+            .expect("remove genesis marker");
+        node.meta_tree.flush().expect("flush meta tree");
+        drop(node);
+
+        let reopened = NativeNode::open(config).expect("missing genesis marker should repair");
+        let expected = genesis_meta(pow_bits).expect("genesis");
+        let marker = reopened
+            .meta_tree
+            .get(META_GENESIS_KEY)
+            .expect("read genesis marker")
+            .expect("genesis marker restored");
+
+        assert_eq!(marker.as_ref(), expected.hash.as_slice());
     }
 
     #[test]
