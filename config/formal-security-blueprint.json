@@ -3033,6 +3033,62 @@
       "scope_boundary": "This node proves and vector-checks the deterministic native canonical block-index startup reload admission and missing-genesis-marker repair table. It does not prove sled atomicity, filesystem durability, bincode implementation correctness, hash collision resistance, full historical block replay, state-root reload binding, bridge replay reload binding, or complete native-node equivalence."
     },
     {
+      "id": "native.canonical-state-reload",
+      "claim_id": "native.canonical-state-reload",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native canonical-state reload transition, startup accepts persisted commitment and nullifier state only when nullifier keys and markers are well formed, commitment keys and values are well formed, commitment indexes are contiguous from zero, the commitment tree rebuilds successfully, and the loaded commitment and nullifier roots match the persisted best header; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.CanonicalStateReload.accepts_iff_canonical_state_reload_preconditions` proves the executable startup admission predicate, with concrete theorem facts for malformed nullifier keys, invalid nullifier markers, malformed commitment key/value, commitment index gaps, commitment-tree rebuild failure, commitment root mismatch, nullifier root mismatch, and precedence cases. `gen_canonical_state_reload_vectors` emits Lean-derived examples checked against the production `evaluate_native_canonical_state_reload` helper used by `load_nullifiers`, `load_commitment_tree`, and `validate_loaded_canonical_state`; focused native startup regressions corrupt the sled-backed commitment/nullifier trees and require `NativeNode::open` to fail closed.",
+      "depends_on": [
+        "native.action-state-effect-planning",
+        "native.block-index-reload",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalStateReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalStateReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native canonical commitment/nullifier startup reload. Scope is the deterministic admission table over observed persisted state; sled atomicity, filesystem durability, and hash security remain outside Lean."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-canonical-state-reload-theorem",
+          "description": "Removing or weakening the canonical-state reload theorem or concrete rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-canonical-state-reload-conformance",
+          "description": "Changing the production canonical-state reload admission table away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_CANONICAL_STATE_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_canonical_state_reload_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-canonical-state-reload-root-binding",
+          "description": "Native startup must reject commitment or nullifier tree corruption where loaded roots differ from the persisted best header roots.",
+          "gate": "cargo test -p hegemon-node canonical_state_reload_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-canonical-state-reload-gate",
+          "description": "The release formal-core wrapper must generate native canonical-state reload vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the deterministic native canonical commitment/nullifier startup reload admission table. It does not prove sled atomicity, filesystem durability, commitment-tree hash security, nullifier-root hash security, full historical block replay, bridge replay reload binding, or complete native-node equivalence."
+    },
+    {
       "id": "native.codec-admission",
       "claim_id": "native.codec-admission",
       "kind": "target_claim",

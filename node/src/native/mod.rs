@@ -421,6 +421,18 @@ struct NativeBlockIndexReloadAdmission {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCanonicalStateReloadInput {
+    nullifier_keys_well_formed: bool,
+    nullifier_markers_valid: bool,
+    commitment_keys_well_formed: bool,
+    commitment_values_well_formed: bool,
+    commitment_indexes_contiguous: bool,
+    commitment_tree_rebuilt: bool,
+    commitment_root_matches_best: bool,
+    nullifier_root_matches_best: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMinedWorkAdmissionInput {
     best_height: u64,
     work_height: u64,
@@ -500,6 +512,33 @@ impl NativeBlockIndexReloadRejection {
             Self::MissingHeightIndex => "missing_height_index",
             Self::GenesisMarkerInvalidLength => "genesis_marker_invalid_length",
             Self::GenesisMarkerMismatch => "genesis_marker_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCanonicalStateReloadRejection {
+    MalformedNullifierKey,
+    InvalidNullifierMarker,
+    MalformedCommitmentKey,
+    MalformedCommitmentValue,
+    CommitmentIndexGap,
+    CommitmentTreeRebuildFailed,
+    CommitmentRootMismatch,
+    NullifierRootMismatch,
+}
+
+impl NativeCanonicalStateReloadRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedNullifierKey => "malformed_nullifier_key",
+            Self::InvalidNullifierMarker => "invalid_nullifier_marker",
+            Self::MalformedCommitmentKey => "malformed_commitment_key",
+            Self::MalformedCommitmentValue => "malformed_commitment_value",
+            Self::CommitmentIndexGap => "commitment_index_gap",
+            Self::CommitmentTreeRebuildFailed => "commitment_tree_rebuild_failed",
+            Self::CommitmentRootMismatch => "commitment_root_mismatch",
+            Self::NullifierRootMismatch => "nullifier_root_mismatch",
         }
     }
 }
@@ -3754,6 +3793,67 @@ fn native_block_index_reload_error(rejection: NativeBlockIndexReloadRejection) -
     }
 }
 
+fn evaluate_native_canonical_state_reload(
+    input: NativeCanonicalStateReloadInput,
+) -> Result<(), NativeCanonicalStateReloadRejection> {
+    if !input.nullifier_keys_well_formed {
+        Err(NativeCanonicalStateReloadRejection::MalformedNullifierKey)
+    } else if !input.nullifier_markers_valid {
+        Err(NativeCanonicalStateReloadRejection::InvalidNullifierMarker)
+    } else if !input.commitment_keys_well_formed {
+        Err(NativeCanonicalStateReloadRejection::MalformedCommitmentKey)
+    } else if !input.commitment_values_well_formed {
+        Err(NativeCanonicalStateReloadRejection::MalformedCommitmentValue)
+    } else if !input.commitment_indexes_contiguous {
+        Err(NativeCanonicalStateReloadRejection::CommitmentIndexGap)
+    } else if !input.commitment_tree_rebuilt {
+        Err(NativeCanonicalStateReloadRejection::CommitmentTreeRebuildFailed)
+    } else if !input.commitment_root_matches_best {
+        Err(NativeCanonicalStateReloadRejection::CommitmentRootMismatch)
+    } else if !input.nullifier_root_matches_best {
+        Err(NativeCanonicalStateReloadRejection::NullifierRootMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_canonical_state_reload_error(
+    rejection: NativeCanonicalStateReloadRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeCanonicalStateReloadRejection::MalformedNullifierKey => anyhow!(
+            "stored nullifier key has invalid length ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::InvalidNullifierMarker => {
+            anyhow!("stored nullifier marker is invalid ({})", rejection.label())
+        }
+        NativeCanonicalStateReloadRejection::MalformedCommitmentKey => anyhow!(
+            "stored commitment key has invalid length ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::MalformedCommitmentValue => anyhow!(
+            "stored commitment value has invalid length ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::CommitmentIndexGap => anyhow!(
+            "stored commitment index is not contiguous ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::CommitmentTreeRebuildFailed => anyhow!(
+            "rebuild native commitment tree failed ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::CommitmentRootMismatch => anyhow!(
+            "stored commitment tree root mismatch ({})",
+            rejection.label()
+        ),
+        NativeCanonicalStateReloadRejection::NullifierRootMismatch => {
+            anyhow!("stored nullifier root mismatch ({})", rejection.label())
+        }
+    }
+}
+
 fn validate_loaded_block_indexes(
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
@@ -4039,14 +4139,34 @@ fn validate_loaded_pending_action_hash(hash: [u8; 32], action: &PendingAction) -
 
 fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
     let mut nullifiers = BTreeSet::new();
+    let mut nullifier_keys_well_formed = true;
+    let mut nullifier_markers_valid = true;
     for item in tree.iter() {
-        let (key, _) = item?;
-        if key.len() == 48 {
-            let mut nullifier = [0u8; 48];
-            nullifier.copy_from_slice(&key);
-            nullifiers.insert(nullifier);
+        let (key, value) = item?;
+        if key.len() != 48 {
+            nullifier_keys_well_formed = false;
+            continue;
         }
+        if value.as_ref() != b"1" {
+            nullifier_markers_valid = false;
+            continue;
+        }
+
+        let mut nullifier = [0u8; 48];
+        nullifier.copy_from_slice(&key);
+        nullifiers.insert(nullifier);
     }
+    evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
+        nullifier_keys_well_formed,
+        nullifier_markers_valid,
+        commitment_keys_well_formed: true,
+        commitment_values_well_formed: true,
+        commitment_indexes_contiguous: true,
+        commitment_tree_rebuilt: true,
+        commitment_root_matches_best: true,
+        nullifier_root_matches_best: true,
+    })
+    .map_err(native_canonical_state_reload_error)?;
     Ok(nullifiers)
 }
 
@@ -4076,19 +4196,18 @@ fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>
 
 fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeState> {
     let mut commitments = Vec::new();
+    let mut commitment_keys_well_formed = true;
+    let mut commitment_values_well_formed = true;
+    let mut commitment_indexes_contiguous = true;
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() != 8 {
-            return Err(anyhow!(
-                "stored commitment key has invalid length: {}",
-                key.len()
-            ));
+            commitment_keys_well_formed = false;
+            continue;
         }
         if value.len() != 48 {
-            return Err(anyhow!(
-                "stored commitment value has invalid length: {}",
-                value.len()
-            ));
+            commitment_values_well_formed = false;
+            continue;
         }
 
         let mut index = [0u8; 8];
@@ -4097,23 +4216,49 @@ fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeState> {
         let expected = u64::try_from(commitments.len())
             .map_err(|_| anyhow!("stored commitment count exceeds u64"))?;
         if index != expected {
-            return Err(anyhow!(
-                "stored commitment index is not contiguous: expected {} observed {}",
-                expected,
-                index
-            ));
+            commitment_indexes_contiguous = false;
+            continue;
         }
 
         let mut commitment = [0u8; 48];
         commitment.copy_from_slice(&value);
         commitments.push(commitment);
     }
-    CommitmentTreeState::from_leaves(
+    evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
+        nullifier_keys_well_formed: true,
+        nullifier_markers_valid: true,
+        commitment_keys_well_formed,
+        commitment_values_well_formed,
+        commitment_indexes_contiguous,
+        commitment_tree_rebuilt: true,
+        commitment_root_matches_best: true,
+        nullifier_root_matches_best: true,
+    })
+    .map_err(native_canonical_state_reload_error)?;
+
+    match CommitmentTreeState::from_leaves(
         COMMITMENT_TREE_DEPTH,
         consensus::DEFAULT_ROOT_HISTORY_LIMIT,
         commitments,
-    )
-    .map_err(|err| anyhow!("rebuild native commitment tree failed: {err}"))
+    ) {
+        Ok(state) => Ok(state),
+        Err(err) => {
+            let rejection =
+                evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
+                    nullifier_keys_well_formed: true,
+                    nullifier_markers_valid: true,
+                    commitment_keys_well_formed: true,
+                    commitment_values_well_formed: true,
+                    commitment_indexes_contiguous: true,
+                    commitment_tree_rebuilt: false,
+                    commitment_root_matches_best: true,
+                    nullifier_root_matches_best: true,
+                })
+                .expect_err("commitment tree rebuild failure must reject");
+            Err(native_canonical_state_reload_error(rejection)
+                .context(format!("commitment tree detail: {err}")))
+        }
+    }
 }
 
 fn validate_loaded_canonical_state(
@@ -4122,23 +4267,35 @@ fn validate_loaded_canonical_state(
     nullifiers: &BTreeSet<[u8; 48]>,
 ) -> Result<()> {
     let commitment_root = commitment_state.root();
-    if commitment_root != best.state_root {
-        return Err(anyhow!(
-            "stored commitment tree root mismatch: best={} loaded={} leaves={}",
-            hex48(&best.state_root),
-            hex48(&commitment_root),
-            commitment_state.leaf_count()
-        ));
-    }
-
     let nullifier_root = nullifier_root_from_set(nullifiers);
-    if nullifier_root != best.nullifier_root {
-        return Err(anyhow!(
-            "stored nullifier root mismatch: best={} loaded={} entries={}",
-            hex48(&best.nullifier_root),
-            hex48(&nullifier_root),
-            nullifiers.len()
-        ));
+    let admission = evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
+        nullifier_keys_well_formed: true,
+        nullifier_markers_valid: true,
+        commitment_keys_well_formed: true,
+        commitment_values_well_formed: true,
+        commitment_indexes_contiguous: true,
+        commitment_tree_rebuilt: true,
+        commitment_root_matches_best: commitment_root == best.state_root,
+        nullifier_root_matches_best: nullifier_root == best.nullifier_root,
+    });
+    if let Err(rejection) = admission {
+        return match rejection {
+            NativeCanonicalStateReloadRejection::CommitmentRootMismatch => Err(anyhow!(
+                "stored commitment tree root mismatch: best={} loaded={} leaves={} ({})",
+                hex48(&best.state_root),
+                hex48(&commitment_root),
+                commitment_state.leaf_count(),
+                rejection.label()
+            )),
+            NativeCanonicalStateReloadRejection::NullifierRootMismatch => Err(anyhow!(
+                "stored nullifier root mismatch: best={} loaded={} entries={} ({})",
+                hex48(&best.nullifier_root),
+                hex48(&nullifier_root),
+                nullifiers.len(),
+                rejection.label()
+            )),
+            _ => Err(native_canonical_state_reload_error(rejection)),
+        };
     }
 
     Ok(())
@@ -7942,6 +8099,29 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCanonicalStateReloadVectorFile {
+        schema_version: u32,
+        canonical_state_reload_cases: Vec<LeanCanonicalStateReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCanonicalStateReloadCase {
+        name: String,
+        nullifier_keys_well_formed: bool,
+        nullifier_markers_valid: bool,
+        commitment_keys_well_formed: bool,
+        commitment_values_well_formed: bool,
+        commitment_indexes_contiguous: bool,
+        commitment_tree_rebuilt: bool,
+        commitment_root_matches_best: bool,
+        nullifier_root_matches_best: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
@@ -9745,6 +9925,58 @@ mod tests {
         assert_eq!(
             actual_repairs_genesis_marker, case.expected_repairs_genesis_marker,
             "{} native block-index reload repair decision drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_canonical_state_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CANONICAL_STATE_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CANONICAL_STATE_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean canonical-state reload vectors");
+        let vectors: LeanCanonicalStateReloadVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean canonical-state reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.canonical_state_reload_cases.is_empty(),
+            "Lean canonical-state reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.canonical_state_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_canonical_state_reload_case(case);
+        }
+    }
+
+    fn verify_lean_canonical_state_reload_case(case: &LeanCanonicalStateReloadCase) {
+        let input = NativeCanonicalStateReloadInput {
+            nullifier_keys_well_formed: case.nullifier_keys_well_formed,
+            nullifier_markers_valid: case.nullifier_markers_valid,
+            commitment_keys_well_formed: case.commitment_keys_well_formed,
+            commitment_values_well_formed: case.commitment_values_well_formed,
+            commitment_indexes_contiguous: case.commitment_indexes_contiguous,
+            commitment_tree_rebuilt: case.commitment_tree_rebuilt,
+            commitment_root_matches_best: case.commitment_root_matches_best,
+            nullifier_root_matches_best: case.nullifier_root_matches_best,
+        };
+        let actual_rejection = evaluate_native_canonical_state_reload(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native canonical-state reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native canonical-state reload rejection drifted from Lean spec",
             case.name
         );
     }
@@ -12130,6 +12362,48 @@ mod tests {
         assert!(err
             .to_string()
             .contains("stored commitment tree root mismatch"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_malformed_nullifier_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.nullifier_tree
+            .insert(b"bad-nullifier-key".as_slice(), b"1")
+            .expect("insert malformed nullifier key");
+        node.nullifier_tree.flush().expect("flush nullifier tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("malformed nullifier key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored nullifier key has invalid length"));
+    }
+
+    #[test]
+    fn canonical_state_reload_rejects_invalid_nullifier_marker_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.nullifier_tree
+            .insert([5u8; 48].as_slice(), b"bad")
+            .expect("insert invalid nullifier marker");
+        node.nullifier_tree.flush().expect("flush nullifier tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("invalid nullifier marker must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored nullifier marker is invalid"));
     }
 
     #[test]

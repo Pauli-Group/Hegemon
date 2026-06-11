@@ -2517,6 +2517,49 @@
       "residual_risks": []
     },
     {
+      "id": "native.canonical-state-reload",
+      "component": "native canonical shielded-state startup reload",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean canonical-state reload kernel proves the executable startup admission table for trusting persisted native commitment and nullifier state only after nullifier keys and markers are well formed, commitment keys and values are well formed and contiguous, the commitment tree rebuilds, and the loaded commitment/nullifier roots match the persisted best header; generated Lean vectors are checked against the production native startup helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.CanonicalStateReload.accepts_iff_canonical_state_reload_preconditions",
+        "Hegemon.Native.CanonicalStateReload.commitment_index_gap_rejects",
+        "Hegemon.Native.CanonicalStateReload.commitment_key_precedes_commitment_value",
+        "Hegemon.Native.CanonicalStateReload.commitment_root_mismatch_rejects",
+        "Hegemon.Native.CanonicalStateReload.commitment_root_precedes_nullifier_root",
+        "Hegemon.Native.CanonicalStateReload.commitment_tree_rebuild_failed_rejects",
+        "Hegemon.Native.CanonicalStateReload.invalid_nullifier_marker_rejects",
+        "Hegemon.Native.CanonicalStateReload.malformed_commitment_key_rejects",
+        "Hegemon.Native.CanonicalStateReload.malformed_commitment_value_rejects",
+        "Hegemon.Native.CanonicalStateReload.malformed_nullifier_key_rejects",
+        "Hegemon.Native.CanonicalStateReload.nullifier_key_precedes_commitment_key",
+        "Hegemon.Native.CanonicalStateReload.nullifier_root_mismatch_rejects",
+        "Hegemon.Native.CanonicalStateReload.valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model proves the deterministic startup admission table over facts observed from persisted native commitment and nullifier state; it treats commitment-tree rebuild success and root equality as production-derived predicates.",
+        "Generated Lean conformance vectors cover valid reload, malformed nullifier key, invalid nullifier marker, malformed commitment key/value, commitment index gap, commitment tree rebuild failure, commitment root mismatch, nullifier root mismatch, and rejection precedence.",
+        "The theorem does not prove sled atomicity, file-system durability, I/O error behavior, commitment-tree hash security, nullifier-root hash security, or complete native-node equivalence. Those remain explicit storage, hash, and implementation assumptions."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalStateReloadVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_CANONICAL_STATE_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_canonical_state_reload_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node canonical_state_reload_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
