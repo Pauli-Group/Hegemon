@@ -2237,15 +2237,6 @@ impl NativeNode {
         Ok(())
     }
 
-    fn clear_canonical_state_indexes(&self) -> Result<()> {
-        self.commitment_tree.clear()?;
-        self.nullifier_tree.clear()?;
-        self.bridge_inbound_tree.clear()?;
-        self.ciphertext_index_tree.clear()?;
-        self.ciphertext_archive_tree.clear()?;
-        Ok(())
-    }
-
     fn commit_reorg_state_atomically(
         &self,
         canonical_index_plan: NativeCanonicalIndexPlan,
@@ -2350,6 +2341,87 @@ impl NativeNode {
                 },
             );
         commit_result.map_err(|err| anyhow!("atomic native reorg commit failed: {err}"))?;
+        Ok(())
+    }
+
+    fn commit_canonical_index_repair_atomically(
+        &self,
+        canonical_index_plan: NativeCanonicalIndexPlan,
+    ) -> Result<()> {
+        let commitment_keys = collect_tree_keys(&self.commitment_tree, "native commitment")?;
+        let nullifier_keys = collect_tree_keys(&self.nullifier_tree, "native nullifier")?;
+        let bridge_replay_keys =
+            collect_tree_keys(&self.bridge_inbound_tree, "native bridge replay")?;
+        let ciphertext_index_keys =
+            collect_tree_keys(&self.ciphertext_index_tree, "native ciphertext index")?;
+        let ciphertext_archive_keys =
+            collect_tree_keys(&self.ciphertext_archive_tree, "native ciphertext archive")?;
+        let NativeCanonicalIndexPlan {
+            commitment_entries,
+            nullifier_entries,
+            bridge_replay_entries,
+            ciphertext_index_entries,
+            ciphertext_archive_entries,
+        } = canonical_index_plan;
+
+        let repair_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+        )
+            .transaction(
+                |(
+                    commitment_tree,
+                    nullifier_tree,
+                    bridge_inbound_tree,
+                    ciphertext_index_tree,
+                    ciphertext_archive_tree,
+                )| {
+                    for key in &commitment_keys {
+                        commitment_tree.remove(key.clone())?;
+                    }
+                    for key in &nullifier_keys {
+                        nullifier_tree.remove(key.clone())?;
+                    }
+                    for key in &bridge_replay_keys {
+                        bridge_inbound_tree.remove(key.clone())?;
+                    }
+                    for key in &ciphertext_index_keys {
+                        ciphertext_index_tree.remove(key.clone())?;
+                    }
+                    for key in &ciphertext_archive_keys {
+                        ciphertext_archive_tree.remove(key.clone())?;
+                    }
+
+                    for (index, commitment) in &commitment_entries {
+                        commitment_tree
+                            .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
+                    }
+                    for (index, bytes) in &ciphertext_archive_entries {
+                        ciphertext_archive_tree
+                            .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
+                    }
+                    for nullifier in &nullifier_entries {
+                        nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
+                    }
+                    for replay_key in &bridge_replay_entries {
+                        bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
+                    }
+                    for (hash, value) in &ciphertext_index_entries {
+                        ciphertext_index_tree.insert(hash.to_vec(), value.clone())?;
+                    }
+                    Ok(())
+                },
+            );
+        repair_result
+            .map_err(|err| anyhow!("atomic native canonical index repair failed: {err}"))?;
+        self.commitment_tree.flush()?;
+        self.nullifier_tree.flush()?;
+        self.bridge_inbound_tree.flush()?;
+        self.ciphertext_index_tree.flush()?;
+        self.ciphertext_archive_tree.flush()?;
         Ok(())
     }
 
@@ -2459,20 +2531,7 @@ impl NativeNode {
             "rebuilding canonical native ciphertext archive"
         );
         let canonical_index_plan = plan_canonical_index_rebuild(&chain, &self.da_ciphertext_tree)?;
-        self.clear_canonical_state_indexes()?;
-        write_canonical_index_plan(
-            canonical_index_plan,
-            &self.commitment_tree,
-            &self.nullifier_tree,
-            &self.bridge_inbound_tree,
-            &self.ciphertext_index_tree,
-            &self.ciphertext_archive_tree,
-        )?;
-        self.commitment_tree.flush()?;
-        self.nullifier_tree.flush()?;
-        self.bridge_inbound_tree.flush()?;
-        self.ciphertext_index_tree.flush()?;
-        self.ciphertext_archive_tree.flush()?;
+        self.commit_canonical_index_repair_atomically(canonical_index_plan)?;
         Ok(())
     }
 
@@ -7957,32 +8016,6 @@ fn plan_canonical_index_rebuild(
     Ok(plan)
 }
 
-fn write_canonical_index_plan(
-    plan: NativeCanonicalIndexPlan,
-    commitment_tree: &sled::Tree,
-    nullifier_tree: &sled::Tree,
-    bridge_inbound_tree: &sled::Tree,
-    ciphertext_index_tree: &sled::Tree,
-    ciphertext_archive_tree: &sled::Tree,
-) -> Result<()> {
-    for (index, commitment) in plan.commitment_entries {
-        commitment_tree.insert(index.to_be_bytes(), commitment.as_slice())?;
-    }
-    for (index, bytes) in plan.ciphertext_archive_entries {
-        ciphertext_archive_tree.insert(index.to_be_bytes(), bytes)?;
-    }
-    for nullifier in plan.nullifier_entries {
-        nullifier_tree.insert(nullifier.as_slice(), b"1")?;
-    }
-    for replay_key in plan.bridge_replay_entries {
-        bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
-    }
-    for (hash, value) in plan.ciphertext_index_entries {
-        ciphertext_index_tree.insert(hash.as_slice(), value)?;
-    }
-    Ok(())
-}
-
 fn canonical_ciphertexts_for_action(
     da_ciphertext_tree: &sled::Tree,
     action: &PendingAction,
@@ -11109,6 +11142,124 @@ mod tests {
         assert_eq!(reopened.commitment_tree.len(), 1);
         assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
         assert_eq!(reopened.action_tree.len(), 0);
+    }
+
+    #[test]
+    fn startup_canonical_index_repair_rebuilds_archive_atomically() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let reward = consensus::reward::block_subsidy(1);
+        let commitment = [23u8; 48];
+        let stale_ciphertext_hash = [99u8; 48];
+        let (imported, expected_archive, expected_index_hash, expected_index_value) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            stage_test_coinbase(&node, reward, commitment);
+            let action = node
+                .state
+                .read()
+                .pending_actions
+                .values()
+                .next()
+                .expect("staged coinbase")
+                .clone();
+            let expected_index_hash = action.ciphertext_hashes[0];
+            let mut expected_index_value = Vec::with_capacity(32 + 4 + 8);
+            expected_index_value.extend_from_slice(&action.tx_hash);
+            expected_index_value.extend_from_slice(&action.ciphertext_sizes[0].to_le_bytes());
+            expected_index_value.extend_from_slice(&0u64.to_le_bytes());
+
+            let work = node.prepare_work().expect("prepare native work");
+            let seal = mine_native_round(work.clone(), 0).expect("coinbase seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("coinbase import")
+                .expect("coinbase block");
+            assert_eq!(node.commitment_tree.len(), 1);
+            assert_eq!(node.ciphertext_index_tree.len(), 1);
+            assert_eq!(node.ciphertext_archive_tree.len(), 1);
+            let expected_archive = node
+                .ciphertext_archive_tree
+                .get(0u64.to_be_bytes())
+                .expect("read canonical archive")
+                .expect("canonical archive entry")
+                .to_vec();
+            node.db.flush().expect("flush mined test db");
+            (
+                imported,
+                expected_archive,
+                expected_index_hash,
+                expected_index_value,
+            )
+        };
+
+        {
+            let db = sled::open(&config.db_path).expect("open test db for repair corruption");
+            let ciphertext_index_tree = db
+                .open_tree("shielded_ciphertext_index")
+                .expect("ciphertext index tree");
+            let ciphertext_archive_tree = db
+                .open_tree("shielded_ciphertexts_by_index")
+                .expect("ciphertext archive tree");
+            ciphertext_index_tree
+                .remove(expected_index_hash.as_slice())
+                .expect("remove canonical index");
+            ciphertext_index_tree
+                .insert(stale_ciphertext_hash.as_slice(), b"stale".as_slice())
+                .expect("insert stale index");
+            ciphertext_archive_tree
+                .remove(0u64.to_be_bytes())
+                .expect("remove canonical archive");
+            db.flush().expect("flush repair corruption");
+        }
+
+        let reopened = NativeNode::open(config).expect("reopen with canonical index repair");
+        let state = reopened.state.read();
+        assert_eq!(state.best.hash, imported.hash);
+        assert_eq!(state.best.height, 1);
+        assert_eq!(state.best.supply_digest, reward as u128);
+        assert_eq!(state.commitment_tree.leaf_count(), 1);
+        assert_eq!(state.commitment_tree.root(), imported.state_root);
+        drop(state);
+
+        assert_eq!(reopened.commitment_tree.len(), 1);
+        assert_eq!(
+            reopened
+                .commitment_tree
+                .get(0u64.to_be_bytes())
+                .expect("read repaired commitment")
+                .expect("repaired commitment")
+                .as_ref(),
+            commitment.as_slice()
+        );
+        assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
+        assert_eq!(
+            reopened
+                .ciphertext_archive_tree
+                .get(0u64.to_be_bytes())
+                .expect("read repaired archive")
+                .expect("repaired archive")
+                .as_ref(),
+            expected_archive.as_slice()
+        );
+        assert_eq!(reopened.ciphertext_index_tree.len(), 1);
+        assert_eq!(
+            reopened
+                .ciphertext_index_tree
+                .get(expected_index_hash.as_slice())
+                .expect("read repaired ciphertext index")
+                .expect("repaired ciphertext index")
+                .as_ref(),
+            expected_index_value.as_slice()
+        );
+        assert!(
+            reopened
+                .ciphertext_index_tree
+                .get(stale_ciphertext_hash.as_slice())
+                .expect("read stale ciphertext index")
+                .is_none(),
+            "startup repair must remove stale ciphertext index rows in the same replacement"
+        );
     }
 
     #[test]
