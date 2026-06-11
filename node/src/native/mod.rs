@@ -776,6 +776,19 @@ struct NativeBridgeActionPayloadAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeWitnessExportAdmissionInput {
+    block_hash_parameter_valid: bool,
+    block_known: bool,
+    canonical_height_present: bool,
+    block_is_canonical: bool,
+    block_actions_decoded: bool,
+    message_index_in_bounds: bool,
+    parent_known: bool,
+    best_height: u64,
+    message_height: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBridgeActionPayloadKind {
     Outbound,
     Inbound,
@@ -807,6 +820,33 @@ impl NativeBridgeActionPayloadAdmissionRejection {
             Self::InboundReplayKeyMismatch => "inbound_replay_key_mismatch",
             Self::InboundDestinationMismatch => "inbound_destination_mismatch",
             Self::InboundPayloadHashMismatch => "inbound_payload_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeWitnessExportAdmissionRejection {
+    MalformedBlockHash,
+    UnknownBlock,
+    MissingCanonicalHeight,
+    NoncanonicalBlock,
+    BlockActionsDecodeFailed,
+    MessageIndexOutOfBounds,
+    MissingParent,
+    TipBeforeMessage,
+}
+
+impl NativeBridgeWitnessExportAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedBlockHash => "malformed_block_hash",
+            Self::UnknownBlock => "unknown_block",
+            Self::MissingCanonicalHeight => "missing_canonical_height",
+            Self::NoncanonicalBlock => "noncanonical_block",
+            Self::BlockActionsDecodeFailed => "block_actions_decode_failed",
+            Self::MessageIndexOutOfBounds => "message_index_out_of_bounds",
+            Self::MissingParent => "missing_parent",
+            Self::TipBeforeMessage => "tip_before_message",
         }
     }
 }
@@ -3352,42 +3392,84 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
 }
 
 fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
-    let message_index = nth_param(&params, 1).and_then(Value::as_u64).unwrap_or(0) as usize;
-    let block_hash = first_param(&params)
-        .and_then(Value::as_str)
-        .and_then(parse_hash32)
-        .map(Ok)
-        .unwrap_or_else(|| latest_bridge_message_block_hash(node, message_index))?;
-    let meta = node
-        .header_by_hash(&block_hash)?
-        .ok_or_else(|| anyhow!("unknown block {}", hex32(&block_hash)))?;
-    let canonical_hash = node
-        .hash_by_height(meta.height)?
-        .ok_or_else(|| anyhow!("missing canonical block at height {}", meta.height))?;
-    if canonical_hash != meta.hash {
-        return Err(anyhow!(
-            "bridge witness block {} at height {} is not canonical",
-            hex32(&meta.hash),
-            meta.height
-        ));
-    }
-    let actions = decode_block_actions(&meta)?;
-    let messages = bridge_messages_from_actions(&actions, meta.height);
+    let message_index = bridge_witness_message_index(&params)?;
+    let block_hash = match bridge_witness_explicit_block_hash(&params)? {
+        Some(hash) => hash,
+        None => latest_bridge_message_block_hash(node, message_index)?,
+    };
+    let meta = node.header_by_hash(&block_hash)?;
+    let canonical_hash = match &meta {
+        Some(meta) => node.hash_by_height(meta.height)?,
+        None => None,
+    };
+    let canonical_height_present = match &meta {
+        Some(_) => canonical_hash.is_some(),
+        None => true,
+    };
+    let block_is_canonical = match (&meta, canonical_hash) {
+        (Some(meta), Some(hash)) => hash == meta.hash,
+        (Some(_), None) | (None, _) => true,
+    };
+    let mut block_actions_decoded = true;
+    let actions = match meta.as_ref() {
+        Some(meta) if canonical_height_present && block_is_canonical => {
+            match decode_block_actions(meta) {
+                Ok(actions) => Some(actions),
+                Err(_) => {
+                    block_actions_decoded = false;
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let messages = actions.as_ref().and_then(|actions| {
+        meta.as_ref()
+            .map(|meta| bridge_messages_from_actions(actions, meta.height))
+    });
+    let message_index_in_bounds = match &messages {
+        Some(messages) => messages.get(message_index).is_some(),
+        None => true,
+    };
+    let parent = match meta.as_ref() {
+        Some(meta)
+            if canonical_height_present
+                && block_is_canonical
+                && block_actions_decoded
+                && message_index_in_bounds =>
+        {
+            node.header_by_hash(&meta.parent_hash)?
+        }
+        _ => None,
+    };
+    let best = node.best_meta();
+    let confirmations_checked =
+        evaluate_native_bridge_witness_export_admission(NativeBridgeWitnessExportAdmissionInput {
+            block_hash_parameter_valid: true,
+            block_known: meta.is_some(),
+            canonical_height_present,
+            block_is_canonical,
+            block_actions_decoded,
+            message_index_in_bounds,
+            parent_known: parent.is_some()
+                || !(meta.is_some()
+                    && canonical_height_present
+                    && block_is_canonical
+                    && block_actions_decoded
+                    && message_index_in_bounds),
+            best_height: best.height,
+            message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
+        })
+        .map_err(native_bridge_witness_export_admission_error)?;
+    let meta = meta.expect("bridge witness admission ensures block exists");
+    let messages = messages.expect("bridge witness admission ensures actions decoded");
     let message = messages
         .get(message_index)
         .cloned()
-        .ok_or_else(|| anyhow!("bridge message index out of bounds"))?;
-    let parent = node
-        .header_by_hash(&meta.parent_hash)?
-        .ok_or_else(|| anyhow!("missing parent for bridge witness"))?;
+        .expect("bridge witness admission ensures message index is in bounds");
+    let parent = parent.expect("bridge witness admission ensures parent exists");
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
-    let best = node.best_meta();
-    let confirmations_checked = best
-        .height
-        .saturating_sub(meta.height)
-        .saturating_add(1)
-        .min(u32::MAX as u64) as u32;
     let output = bridge_checkpoint_output_with_tip(
         &checkpoint_from_meta(&meta),
         &checkpoint_from_meta(&best),
@@ -3444,6 +3526,29 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
             "long_range_proof": canonical_long_range_proof,
         },
     }))
+}
+
+fn bridge_witness_message_index(params: &Value) -> Result<usize> {
+    let raw = nth_param(params, 1).and_then(Value::as_u64).unwrap_or(0);
+    raw.try_into().map_err(|_| {
+        native_bridge_witness_export_admission_error(
+            NativeBridgeWitnessExportAdmissionRejection::MessageIndexOutOfBounds,
+        )
+    })
+}
+
+fn bridge_witness_explicit_block_hash(params: &Value) -> Result<Option<Hash32>> {
+    match first_param(params) {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(raw)) => parse_hash32(raw).map(Some).ok_or_else(|| {
+            native_bridge_witness_export_admission_error(
+                NativeBridgeWitnessExportAdmissionRejection::MalformedBlockHash,
+            )
+        }),
+        Some(_) => Err(native_bridge_witness_export_admission_error(
+            NativeBridgeWitnessExportAdmissionRejection::MalformedBlockHash,
+        )),
+    }
 }
 
 fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> Result<Hash32> {
@@ -6189,6 +6294,77 @@ fn native_bridge_action_payload_admission_error(
     }
 }
 
+fn native_bridge_witness_confirmations_checked(
+    best_height: u64,
+    message_height: u64,
+) -> Option<u32> {
+    let delta = best_height.checked_sub(message_height)?;
+    Some(delta.saturating_add(1).min(u32::MAX as u64) as u32)
+}
+
+fn evaluate_native_bridge_witness_export_admission(
+    input: NativeBridgeWitnessExportAdmissionInput,
+) -> Result<u32, NativeBridgeWitnessExportAdmissionRejection> {
+    if !input.block_hash_parameter_valid {
+        Err(NativeBridgeWitnessExportAdmissionRejection::MalformedBlockHash)
+    } else if !input.block_known {
+        Err(NativeBridgeWitnessExportAdmissionRejection::UnknownBlock)
+    } else if !input.canonical_height_present {
+        Err(NativeBridgeWitnessExportAdmissionRejection::MissingCanonicalHeight)
+    } else if !input.block_is_canonical {
+        Err(NativeBridgeWitnessExportAdmissionRejection::NoncanonicalBlock)
+    } else if !input.block_actions_decoded {
+        Err(NativeBridgeWitnessExportAdmissionRejection::BlockActionsDecodeFailed)
+    } else if !input.message_index_in_bounds {
+        Err(NativeBridgeWitnessExportAdmissionRejection::MessageIndexOutOfBounds)
+    } else if !input.parent_known {
+        Err(NativeBridgeWitnessExportAdmissionRejection::MissingParent)
+    } else {
+        native_bridge_witness_confirmations_checked(input.best_height, input.message_height)
+            .ok_or(NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage)
+    }
+}
+
+fn native_bridge_witness_export_admission_error(
+    rejection: NativeBridgeWitnessExportAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeWitnessExportAdmissionRejection::MalformedBlockHash => {
+            anyhow!(
+                "malformed bridge witness block hash ({})",
+                rejection.label()
+            )
+        }
+        NativeBridgeWitnessExportAdmissionRejection::UnknownBlock => {
+            anyhow!("unknown bridge witness block ({})", rejection.label())
+        }
+        NativeBridgeWitnessExportAdmissionRejection::MissingCanonicalHeight => anyhow!(
+            "missing canonical block at bridge witness height ({})",
+            rejection.label()
+        ),
+        NativeBridgeWitnessExportAdmissionRejection::NoncanonicalBlock => {
+            anyhow!(
+                "bridge witness block is not canonical ({})",
+                rejection.label()
+            )
+        }
+        NativeBridgeWitnessExportAdmissionRejection::BlockActionsDecodeFailed => anyhow!(
+            "bridge witness block action decode failed ({})",
+            rejection.label()
+        ),
+        NativeBridgeWitnessExportAdmissionRejection::MessageIndexOutOfBounds => {
+            anyhow!("bridge message index out of bounds ({})", rejection.label())
+        }
+        NativeBridgeWitnessExportAdmissionRejection::MissingParent => {
+            anyhow!("missing parent for bridge witness ({})", rejection.label())
+        }
+        NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage => anyhow!(
+            "bridge witness tip height is before message height ({})",
+            rejection.label()
+        ),
+    }
+}
+
 fn evaluate_native_risc0_release_verifier(
     input: NativeRisc0ReleaseVerifierInput,
 ) -> Result<(), NativeRisc0ReleaseVerifierRejection> {
@@ -8525,6 +8701,31 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeWitnessExportAdmissionVectorFile {
+        schema_version: u32,
+        bridge_witness_export_admission_cases: Vec<LeanBridgeWitnessExportAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeWitnessExportAdmissionCase {
+        name: String,
+        block_hash_parameter_valid: bool,
+        block_known: bool,
+        canonical_height_present: bool,
+        block_is_canonical: bool,
+        block_actions_decoded: bool,
+        message_index_in_bounds: bool,
+        parent_known: bool,
+        best_height: u64,
+        message_height: u64,
+        expected_valid: bool,
+        expected_confirmations_checked: Option<u32>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanPendingActionReloadVectorFile {
         schema_version: u32,
         pending_action_reload_cases: Vec<LeanPendingActionReloadCase>,
@@ -10487,6 +10688,69 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native bridge-replay reload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_bridge_witness_export_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge witness export admission vectors");
+        let vectors: LeanBridgeWitnessExportAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge witness export admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_witness_export_admission_cases.is_empty(),
+            "Lean bridge witness export admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_witness_export_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_witness_export_admission_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_witness_export_admission_case(
+        case: &LeanBridgeWitnessExportAdmissionCase,
+    ) {
+        let input = NativeBridgeWitnessExportAdmissionInput {
+            block_hash_parameter_valid: case.block_hash_parameter_valid,
+            block_known: case.block_known,
+            canonical_height_present: case.canonical_height_present,
+            block_is_canonical: case.block_is_canonical,
+            block_actions_decoded: case.block_actions_decoded,
+            message_index_in_bounds: case.message_index_in_bounds,
+            parent_known: case.parent_known,
+            best_height: case.best_height,
+            message_height: case.message_height,
+        };
+        let actual = evaluate_native_bridge_witness_export_admission(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native bridge witness export admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.ok(),
+            case.expected_confirmations_checked,
+            "{} native bridge witness confirmations drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge witness export admission rejection drifted from Lean spec",
             case.name
         );
     }
@@ -14496,6 +14760,28 @@ mod tests {
             .starts_with("0x"));
     }
 
+    fn node_with_exportable_bridge_block(
+        payload: &[u8],
+    ) -> (tempfile::TempDir, Arc<NativeNode>, NativeBlockMeta) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let action = test_outbound_bridge_action(payload);
+        node.state
+            .write()
+            .pending_actions
+            .insert(action.tx_hash, action);
+        let work = node.prepare_work().expect("prepare native work");
+        let seal = mine_native_round(work.clone(), 0).expect("bridge seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("bridge import")
+            .expect("bridge block");
+        assert_eq!(imported.message_count, 1);
+        (tmp, node, imported)
+    }
+
     #[test]
     fn bridge_witness_rejects_noncanonical_block_hash() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -14527,6 +14813,75 @@ mod tests {
         let err = export_bridge_witness(&node, json!([hex32(&side.hash), 0]))
             .expect_err("side-branch bridge witness must be rejected");
         assert!(err.to_string().contains("is not canonical"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_malformed_explicit_block_hash() {
+        let (_tmp, node, _imported) =
+            node_with_exportable_bridge_block(b"malformed hash should not backscan");
+
+        let err = export_bridge_witness(&node, json!(["0x1234", 0]))
+            .expect_err("malformed explicit hash must not fall back to latest witness");
+
+        assert!(err
+            .to_string()
+            .contains("malformed bridge witness block hash"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_unknown_explicit_block_hash() {
+        let (_tmp, node, _imported) =
+            node_with_exportable_bridge_block(b"unknown bridge witness hash");
+
+        let err = export_bridge_witness(&node, json!([hex32(&[0xabu8; 32]), 0]))
+            .expect_err("unknown explicit hash must be rejected");
+
+        assert!(err.to_string().contains("unknown bridge witness block"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_missing_canonical_height_index() {
+        let (_tmp, node, imported) =
+            node_with_exportable_bridge_block(b"missing canonical height index");
+        node.height_tree
+            .remove(height_key(imported.height))
+            .expect("remove height index");
+        node.height_tree.flush().expect("flush height tree");
+
+        let err = export_bridge_witness(&node, json!([hex32(&imported.hash), 0]))
+            .expect_err("missing canonical height index must reject witness export");
+
+        assert!(err.to_string().contains("missing canonical block"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_message_index_out_of_bounds() {
+        let (_tmp, node, imported) =
+            node_with_exportable_bridge_block(b"message index out of bounds");
+
+        let err = export_bridge_witness(&node, json!([hex32(&imported.hash), 1]))
+            .expect_err("missing bridge message index must reject witness export");
+
+        assert!(err
+            .to_string()
+            .contains("bridge message index out of bounds"));
+    }
+
+    #[test]
+    fn bridge_witness_rejects_missing_parent_header() {
+        let (_tmp, node, imported) =
+            node_with_exportable_bridge_block(b"missing bridge witness parent");
+        node.block_tree
+            .remove(imported.parent_hash.as_slice())
+            .expect("remove parent header");
+        node.block_tree.flush().expect("flush block tree");
+
+        let err = export_bridge_witness(&node, json!([hex32(&imported.hash), 0]))
+            .expect_err("missing parent header must reject witness export");
+
+        assert!(err
+            .to_string()
+            .contains("missing parent for bridge witness"));
     }
 
     #[test]

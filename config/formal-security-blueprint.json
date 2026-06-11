@@ -3502,6 +3502,65 @@
       "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission only. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, inbound replay-set state transitions, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.bridge-witness-export-admission",
+      "claim_id": "native.bridge-witness-export-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native bridge-witness export transition, `hegemon_exportBridgeWitness` admits an outbound witness only when an explicit block hash is well formed, the resolved block exists, its height has a canonical index, the block is canonical at that height, its actions decode, the selected bridge message index is in bounds, the parent header exists, and the current best height is not before the message height; the accepted output returns the capped `confirmations_checked` value used in the exported bridge checkpoint output.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeWitnessExportAdmission.accepts_iff_bridge_witness_export_preconditions` proves the executable witness-export admission predicate, with companion theorems for valid exports, same-height confirmation count, u32 confirmation capping, malformed block-hash rejection, unknown block rejection, missing canonical height rejection, noncanonical block rejection, action-decode rejection, message-index rejection, missing-parent rejection, best-tip-before-message rejection, and precedence cases. `gen_bridge_witness_export_admission_vectors` emits Lean-derived examples. The formal-core gate checks those vectors against the production `evaluate_native_bridge_witness_export_admission` helper now called by `export_bridge_witness`; focused native regressions reject malformed explicit hashes without fallback, unknown blocks, missing canonical height indexes, noncanonical blocks, out-of-bounds message indexes, and missing parents.",
+      "depends_on": [
+        "native.block-index-reload",
+        "native.codec-admission",
+        "bridge.message-root-replay",
+        "bridge.checkpoint-output-binding",
+        "bridge.long-range-proof-shape",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessExportAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessExportAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessExportAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessExportAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native outbound bridge witness export admission. Scope is the deterministic native export gate and confirmation-count output before cryptographic MMR/FlyClient/light-client soundness assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-bridge-witness-export-theorem",
+          "description": "Removing or weakening the bridge witness export-admission theorem or concrete rejection facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-bridge-witness-export-conformance",
+          "description": "Changing the production bridge witness export admission table or confirmation-count output away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_witness_export_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-bridge-witness-fail-closed-regressions",
+          "description": "Native bridge witness export must reject malformed explicit hashes without latest-message fallback, unknown explicit hashes, missing canonical height indexes, noncanonical blocks, out-of-bounds message indexes, and missing parent headers.",
+          "gate": "cargo test -p hegemon-node bridge_witness_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-bridge-witness-export-gate",
+          "description": "The release formal-core wrapper must generate native bridge witness export vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native bridge witness export admission and capped confirmation-count computation only. It does not prove sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, BLAKE3 message-root or output-digest security, header-MMR hash binding, FlyClient sampling soundness, complete long-range light-client soundness, external-chain verifier behavior, or complete native-node equivalence."
+    },
+    {
       "id": "native.transfer-action-payload-admission",
       "claim_id": "native.transfer-action-payload-admission",
       "kind": "target_claim",

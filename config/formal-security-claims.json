@@ -2859,6 +2859,53 @@
       "residual_risks": []
     },
     {
+      "id": "native.bridge-witness-export-admission",
+      "component": "native outbound bridge witness export admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean bridge-witness export admission kernel proves the executable native witness-export table for malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, block-action decode failures, out-of-bounds message indexes, missing parents, tip-before-message rejection, and capped confirmation-count output; generated Lean vectors are checked against the production helper used by `hegemon_exportBridgeWitness`.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.BridgeWitnessExportAdmission.accepts_iff_bridge_witness_export_preconditions",
+        "Hegemon.Native.BridgeWitnessExportAdmission.block_actions_decode_failed_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.large_confirmation_count_caps_to_u32_max",
+        "Hegemon.Native.BridgeWitnessExportAdmission.malformed_block_hash_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.malformed_hash_precedes_unknown_block",
+        "Hegemon.Native.BridgeWitnessExportAdmission.message_index_out_of_bounds_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.message_index_precedes_missing_parent",
+        "Hegemon.Native.BridgeWitnessExportAdmission.missing_canonical_height_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.missing_parent_precedes_tip_before_message",
+        "Hegemon.Native.BridgeWitnessExportAdmission.missing_parent_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.noncanonical_block_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.noncanonical_precedes_decode_failure",
+        "Hegemon.Native.BridgeWitnessExportAdmission.same_height_valid_has_one_confirmation",
+        "Hegemon.Native.BridgeWitnessExportAdmission.tip_before_message_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.unknown_block_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model treats block-hash lookup, canonical-height lookup, canonical hash comparison, block-action decoding, bridge-message derivation, and parent lookup as production-derived predicates; it proves the deterministic admission table and confirmation-count output once those predicates are observed.",
+        "Generated Lean conformance vectors cover valid exports, same-height one-confirmation exports, u32 confirmation capping, malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, action decode failure, out-of-bounds message indexes, missing parents, best-tip-before-message rejection, and rejection precedence.",
+        "The theorem covers executable native witness-export admission and capped confirmation-count computation only. It does not prove sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, BLAKE3 message-root or output-digest security, header-MMR hash binding, FlyClient sampling soundness, long-range light-client soundness, external-chain verifier behavior, or complete native-node equivalence. Long-range proof shape, FlyClient transcript derivation, header-MMR shape/transcripts, and checkpoint-output byte grammar are covered by separate bridge claims."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BridgeWitnessExportAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeWitnessExportAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_witness_export_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node bridge_witness_ --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.transfer-action-payload-admission",
       "component": "native decoded shielded transfer payload admission",
       "claim_class": "lean_theorem",
