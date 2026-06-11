@@ -1871,7 +1871,7 @@
           "required_callers": [
             "import_mined_block",
             "import_announced_block",
-            "replay_state_to_hash"
+            "replay_chain_state"
           ]
         }
       ],
@@ -2446,7 +2446,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, filesystem/fsync durability, announced side-branch block-record persistence, startup repair atomicity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, filesystem/fsync durability, noncanonical side-branch block-record durability, startup repair atomicity, or complete native-node equivalence."
     },
     {
       "id": "native.work-template-admission",
@@ -3960,7 +3960,7 @@
           "required_callers": [
             "import_mined_block",
             "import_announced_block",
-            "replay_state_to_hash"
+            "replay_chain_state"
           ]
         }
       ],
@@ -4097,12 +4097,12 @@
           "path": "node/src/native/mod.rs",
           "callee": "plan_canonical_index_rebuild",
           "required_callers": [
-            "reorganize_to_best_locked",
+            "reorganize_chain_to_best_locked",
             "ensure_ciphertext_archive_index"
           ],
           "call_order_constraints": [
             {
-              "caller": "reorganize_to_best_locked",
+              "caller": "reorganize_chain_to_best_locked",
               "callee_must_precede": [
                 "commit_reorg_state_atomically"
               ]
@@ -4120,11 +4120,11 @@
           "path": "node/src/native/mod.rs",
           "callee": "commit_reorg_state_atomically",
           "required_callers": [
-            "reorganize_to_best_locked"
+            "reorganize_chain_to_best_locked"
           ],
           "call_order_constraints": [
             {
-              "caller": "reorganize_to_best_locked",
+              "caller": "reorganize_chain_to_best_locked",
               "callee_must_precede": [
                 "publish_reorganized_state"
               ]
@@ -4178,7 +4178,7 @@
         },
         {
           "id": "native-reorg-atomic-commit-reload-regression",
-          "description": "A canonical reorg containing an action must reload the best pointer, height indexes, commitment state, ciphertext archive, and pending-action tree from sled after reopening.",
+          "description": "A winning announced canonical reorg containing an action must reload the best pointer, block records, height indexes, commitment state, ciphertext archive, and pending-action tree from sled after reopening.",
           "gate": "cargo test -p hegemon-node reorg_action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture"
         },
         {
@@ -4187,7 +4187,7 @@
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit before in-memory publication, and requires startup repair to plan before clearing or writing canonical sled indexes. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, filesystem/fsync durability, startup repair atomicity, full action payload validity, tx proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit to include canonical block records before in-memory publication, and requires startup repair to plan before clearing or writing canonical sled indexes. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, filesystem/fsync durability, noncanonical side-branch block-record durability, startup repair atomicity, full action payload validity, tx proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.block-replay-refinement",
@@ -4229,7 +4229,7 @@
           "required_callers": [
             "import_mined_block",
             "import_announced_block",
-            "replay_state_to_hash"
+            "replay_chain_state"
           ],
           "call_order_constraints": [
             {
@@ -4249,11 +4249,11 @@
                 "validate_block_actions_locked",
                 "verify_native_block_artifacts_locked",
                 "persist_block_record",
-                "reorganize_to_best_locked"
+                "reorganize_chain_to_best_locked"
               ]
             },
             {
-              "caller": "replay_state_to_hash",
+              "caller": "replay_chain_state",
               "callee_must_precede": [
                 "apply_actions_to_memory"
               ]
@@ -4302,7 +4302,7 @@
         },
         {
           "id": "formal-core-block-replay-order-binding",
-          "description": "The blueprint gate must reject the block replay-refinement claim if the replay helper no longer precedes the declared payload validation, state mutation, persistence, broadcast, or reorganization callees in the critical import/replay callers.",
+          "description": "The blueprint gate must reject the block replay-refinement claim if the replay helper no longer precedes the declared payload validation, state mutation, persistence, broadcast, or explicit-chain reorganization callees in the critical import/replay callers.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         },
         {
@@ -4311,7 +4311,7 @@
           "gate": "cargo test -p hegemon-node announced_block_replay_commitment_mismatch_precedes_payload_validation --lib --no-default-features"
         }
       ],
-  "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+  "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

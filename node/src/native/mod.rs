@@ -2045,11 +2045,13 @@ impl NativeNode {
             validate_block_actions_locked(&parent_state, &actions)?;
             verify_native_block_artifacts_locked(self, &parent_state, &actions)?;
         }
-        persist_block_record(&self.block_tree, &meta)?;
         if native_meta_better_than(&meta, &state.best) {
-            self.reorganize_to_best_locked(&mut state, meta.hash)?;
+            let mut new_chain = self.chain_to_hash(parent.hash)?;
+            new_chain.push(meta.clone());
+            self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
             Ok(true)
         } else {
+            persist_block_record(&self.block_tree, &meta)?;
             Ok(false)
         }
     }
@@ -2119,6 +2121,10 @@ impl NativeNode {
 
     fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
         let chain = self.chain_to_hash(hash)?;
+        self.replay_chain_state(&chain)
+    }
+
+    fn replay_chain_state(&self, chain: &[NativeBlockMeta]) -> Result<NativeState> {
         let genesis = chain
             .first()
             .cloned()
@@ -2176,12 +2182,19 @@ impl NativeNode {
         Ok(state)
     }
 
-    fn reorganize_to_best_locked(&self, state: &mut NativeState, new_hash: [u8; 32]) -> Result<()> {
+    fn reorganize_chain_to_best_locked(
+        &self,
+        state: &mut NativeState,
+        new_chain: Vec<NativeBlockMeta>,
+    ) -> Result<()> {
         let old_chain = self.chain_to_hash(state.best.hash).unwrap_or_default();
-        let new_chain = self.chain_to_hash(new_hash)?;
-        let mut new_state = self.replay_state_to_hash(new_hash)?;
+        let mut new_state = self.replay_chain_state(&new_chain)?;
         let canonical_index_plan =
             plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
+        let block_entries = new_chain
+            .iter()
+            .map(|meta| Ok((meta.hash, bincode::serialize(meta)?)))
+            .collect::<Result<Vec<_>>>()?;
         let height_entries = new_chain
             .iter()
             .map(|meta| (meta.height, meta.hash))
@@ -2211,6 +2224,7 @@ impl NativeNode {
             .collect::<Vec<_>>();
         self.commit_reorg_state_atomically(
             canonical_index_plan,
+            &block_entries,
             &height_entries,
             &pending_entries,
             &new_state.best,
@@ -2235,6 +2249,7 @@ impl NativeNode {
     fn commit_reorg_state_atomically(
         &self,
         canonical_index_plan: NativeCanonicalIndexPlan,
+        block_entries: &[([u8; 32], Vec<u8>)],
         height_entries: &[(u64, [u8; 32])],
         pending_entries: &[([u8; 32], Vec<u8>)],
         best: &NativeBlockMeta,
@@ -2261,6 +2276,7 @@ impl NativeNode {
         let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
             &self.meta_tree,
             &self.height_tree,
+            &self.block_tree,
             &self.commitment_tree,
             &self.nullifier_tree,
             &self.bridge_inbound_tree,
@@ -2272,6 +2288,7 @@ impl NativeNode {
                 |(
                     meta_tree,
                     height_tree,
+                    block_tree,
                     commitment_tree,
                     nullifier_tree,
                     bridge_inbound_tree,
@@ -2301,6 +2318,9 @@ impl NativeNode {
                         action_tree.remove(key.clone())?;
                     }
 
+                    for (hash, encoded) in block_entries {
+                        block_tree.insert(hash.to_vec(), encoded.clone())?;
+                    }
                     for (height, hash) in height_entries {
                         height_tree.insert(height_key(*height).to_vec(), hash.to_vec())?;
                     }
@@ -10799,6 +10819,12 @@ mod tests {
             let side_two =
                 mined_child_with_actions(&side_one, 2, test_pow_bits, 129, vec![side_action]);
             assert!(
+                node.header_by_hash(&side_two.hash)
+                    .expect("read side tip before import")
+                    .is_none(),
+                "winning announced side tip should not be pre-persisted by this test"
+            );
+            assert!(
                 node.import_announced_block(side_two.clone())
                     .expect("side two import"),
                 "side action block must trigger reorg"
@@ -10853,6 +10879,14 @@ mod tests {
                 .expect("old canonical block remains addressable")
                 .hash,
             canonical.hash
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&side_two.hash)
+                .expect("side tip header")
+                .expect("winning side tip block record reloads")
+                .hash,
+            side_two.hash
         );
         assert_eq!(reopened.commitment_tree.len(), 1);
         assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
@@ -10920,8 +10954,11 @@ mod tests {
         let old_best = node.best_meta().hash;
         let err = {
             let mut state = node.state.write();
+            let new_chain = node
+                .chain_to_hash(side_two.hash)
+                .expect("load side chain for reorg");
             let err = node
-                .reorganize_to_best_locked(&mut state, side_two.hash)
+                .reorganize_chain_to_best_locked(&mut state, new_chain)
                 .expect_err("missing sidecar ciphertext must reject before canonical clear");
             assert_eq!(state.best.hash, old_best);
             err
