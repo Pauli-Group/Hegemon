@@ -1196,6 +1196,7 @@ impl NativeNode {
         let commitment_state = load_commitment_tree(&commitment_tree)?;
         validate_loaded_canonical_state(&best, &commitment_state, &nullifiers)?;
         let consumed_bridge_messages = load_consumed_bridge_messages(&bridge_inbound_tree)?;
+        validate_loaded_bridge_replay_state(&best, &block_tree, &consumed_bridge_messages)?;
         let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&da_proof_tree)?;
 
@@ -1838,12 +1839,7 @@ impl NativeNode {
     }
 
     fn header_by_hash(&self, hash: &[u8; 32]) -> Result<Option<NativeBlockMeta>> {
-        self.block_tree
-            .get(hash)?
-            .map(|bytes| {
-                bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata")
-            })
-            .transpose()
+        load_block_meta_by_hash(&self.block_tree, hash)
     }
 
     fn hash_by_height(&self, height: u64) -> Result<Option<[u8; 32]>> {
@@ -3533,6 +3529,41 @@ fn persist_block_record(block_tree: &sled::Tree, meta: &NativeBlockMeta) -> Resu
     Ok(())
 }
 
+fn load_block_meta_by_hash(
+    block_tree: &sled::Tree,
+    hash: &[u8; 32],
+) -> Result<Option<NativeBlockMeta>> {
+    block_tree
+        .get(hash)?
+        .map(|bytes| bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata"))
+        .transpose()
+}
+
+fn load_chain_to_hash(block_tree: &sled::Tree, hash: [u8; 32]) -> Result<Vec<NativeBlockMeta>> {
+    let mut chain = Vec::new();
+    let mut cursor = hash;
+    let mut seen = BTreeSet::new();
+    loop {
+        if !seen.insert(cursor) {
+            return Err(anyhow!(
+                "stored native block parent cycle at {}",
+                hex32(&cursor)
+            ));
+        }
+        let meta = load_block_meta_by_hash(block_tree, &cursor)?
+            .ok_or_else(|| anyhow!("missing native block {}", hex32(&cursor)))?;
+        let parent = meta.parent_hash;
+        let is_genesis = meta.height == 0;
+        chain.push(meta);
+        if is_genesis {
+            break;
+        }
+        cursor = parent;
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
 fn load_staged_sizes(tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
     load_staged_sizes_with_limits(tree, MAX_NATIVE_STAGED_CIPHERTEXTS, MAX_CIPHERTEXT_BYTES)
 }
@@ -3696,12 +3727,23 @@ fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
 fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
     let mut consumed = BTreeSet::new();
     for item in tree.iter() {
-        let (key, _) = item?;
-        if key.len() == 48 {
-            let mut replay_key = [0u8; 48];
-            replay_key.copy_from_slice(&key);
-            consumed.insert(replay_key);
+        let (key, value) = item?;
+        if key.len() != 48 {
+            return Err(anyhow!(
+                "stored bridge replay key has invalid length: {}",
+                key.len()
+            ));
         }
+        if value.as_ref() != b"1" {
+            return Err(anyhow!(
+                "stored bridge replay marker is invalid: length {}",
+                value.len()
+            ));
+        }
+
+        let mut replay_key = [0u8; 48];
+        replay_key.copy_from_slice(&key);
+        consumed.insert(replay_key);
     }
     Ok(consumed)
 }
@@ -3773,6 +3815,54 @@ fn validate_loaded_canonical_state(
         ));
     }
 
+    Ok(())
+}
+
+fn expected_consumed_bridge_messages_from_chain(
+    chain: &[NativeBlockMeta],
+) -> Result<BTreeSet<[u8; 48]>> {
+    let mut consumed = BTreeSet::new();
+    for meta in chain.iter().skip(1) {
+        for action in decode_block_actions(meta)? {
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(&action)? {
+                if !consumed.insert(replay_key) {
+                    return Err(anyhow!(
+                        "canonical chain contains duplicate inbound bridge replay key {}",
+                        hex48(&replay_key)
+                    ));
+                }
+            }
+        }
+    }
+    Ok(consumed)
+}
+
+fn validate_loaded_bridge_replay_state(
+    best: &NativeBlockMeta,
+    block_tree: &sled::Tree,
+    consumed_bridge_messages: &BTreeSet<[u8; 48]>,
+) -> Result<()> {
+    let chain = load_chain_to_hash(block_tree, best.hash)?;
+    let expected = expected_consumed_bridge_messages_from_chain(&chain)?;
+    if &expected != consumed_bridge_messages {
+        let missing = expected
+            .difference(consumed_bridge_messages)
+            .next()
+            .map(hex48)
+            .unwrap_or_else(|| "none".to_string());
+        let extra = consumed_bridge_messages
+            .difference(&expected)
+            .next()
+            .map(hex48)
+            .unwrap_or_else(|| "none".to_string());
+        return Err(anyhow!(
+            "stored bridge replay set mismatch: expected={} loaded={} first_missing={} first_extra={}",
+            expected.len(),
+            consumed_bridge_messages.len(),
+            missing,
+            extra
+        ));
+    }
     Ok(())
 }
 
@@ -11625,6 +11715,100 @@ mod tests {
         };
 
         assert!(err.to_string().contains("stored nullifier root mismatch"));
+    }
+
+    #[test]
+    fn bridge_replay_reload_rejects_malformed_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.bridge_inbound_tree
+            .insert(b"bad-key", b"1")
+            .expect("insert malformed bridge replay key");
+        node.bridge_inbound_tree
+            .flush()
+            .expect("flush bridge replay tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("malformed bridge replay key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored bridge replay key has invalid length"));
+    }
+
+    #[test]
+    fn bridge_replay_reload_rejects_invalid_marker_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.bridge_inbound_tree
+            .insert([9u8; 48].as_slice(), b"0")
+            .expect("insert invalid bridge replay marker");
+        node.bridge_inbound_tree
+            .flush()
+            .expect("flush bridge replay tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("invalid bridge replay marker must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored bridge replay marker is invalid"));
+    }
+
+    #[test]
+    fn bridge_replay_reload_rejects_extra_consumed_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        node.bridge_inbound_tree
+            .insert([10u8; 48].as_slice(), b"1")
+            .expect("insert extra bridge replay key");
+        node.bridge_inbound_tree
+            .flush()
+            .expect("flush bridge replay tree");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("extra bridge replay key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored bridge replay set mismatch"));
+        assert!(err.to_string().contains("first_extra"));
+    }
+
+    #[test]
+    fn bridge_replay_reload_rejects_missing_consumed_key_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let genesis = node.best_meta();
+        let action = test_inbound_bridge_action(b"startup replay reload");
+        let child = mined_child_with_actions(&genesis, 1, pow_bits, 0, vec![action]);
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+            .expect("persist crafted inbound bridge block");
+        drop(node);
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("missing bridge replay key must fail startup"),
+            Err(err) => err,
+        };
+
+        assert!(err
+            .to_string()
+            .contains("stored bridge replay set mismatch"));
+        assert!(err.to_string().contains("first_missing"));
     }
 
     #[test]
