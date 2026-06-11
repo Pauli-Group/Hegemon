@@ -54,6 +54,8 @@ pub struct BlueprintReport {
     pub edges: usize,
     pub production_nodes: usize,
     pub implementation_bindings: usize,
+    pub implementation_order_constraints: usize,
+    pub implementation_order_edges: usize,
     pub falsification_cases: usize,
     pub passed: bool,
 }
@@ -147,6 +149,15 @@ struct ImplementationBinding {
     path: String,
     callee: String,
     required_callers: Vec<String>,
+    #[serde(default)]
+    call_order_constraints: Vec<ImplementationCallOrderConstraint>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementationCallOrderConstraint {
+    caller: String,
+    callee_must_precede: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -818,6 +829,8 @@ fn validate_blueprint(
     let mut edges = 0usize;
     let mut production_nodes = 0usize;
     let mut implementation_bindings = 0usize;
+    let mut implementation_order_constraints = 0usize;
+    let mut implementation_order_edges = 0usize;
     let mut falsification_cases = 0usize;
     let mut dependents: BTreeMap<String, usize> =
         node_ids.iter().map(|id| (id.clone(), 0usize)).collect();
@@ -853,6 +866,14 @@ fn validate_blueprint(
             production_nodes += 1;
         }
         implementation_bindings += node.implementation_bindings.len();
+        for binding in &node.implementation_bindings {
+            implementation_order_constraints += binding.call_order_constraints.len();
+            implementation_order_edges += binding
+                .call_order_constraints
+                .iter()
+                .map(|constraint| constraint.callee_must_precede.len())
+                .sum::<usize>();
+        }
         falsification_cases += node.falsification_cases.len();
     }
 
@@ -872,6 +893,8 @@ fn validate_blueprint(
         edges,
         production_nodes,
         implementation_bindings,
+        implementation_order_constraints,
+        implementation_order_edges,
         falsification_cases,
         passed: true,
     })
@@ -996,6 +1019,32 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
         for caller in &binding.required_callers {
             validate_rust_symbol(&node.id, "implementation binding caller", caller)?;
         }
+        for constraint in &binding.call_order_constraints {
+            validate_rust_symbol(
+                &node.id,
+                "implementation binding ordered caller",
+                &constraint.caller,
+            )?;
+            ensure!(
+                binding.required_callers.contains(&constraint.caller),
+                "{} implementation binding order constraint caller {} must also be listed in required_callers",
+                node.id,
+                constraint.caller
+            );
+            ensure!(
+                !constraint.callee_must_precede.is_empty(),
+                "{} implementation binding order constraint for {} must list callee_must_precede",
+                node.id,
+                constraint.caller
+            );
+            for successor in &constraint.callee_must_precede {
+                validate_rust_symbol(
+                    &node.id,
+                    "implementation binding order successor",
+                    successor,
+                )?;
+            }
+        }
         validate_rust_implementation_binding(root, &node.id, binding)?;
     }
     Ok(())
@@ -1072,6 +1121,72 @@ fn validate_rust_implementation_binding(
             binding.path,
             binding.callee
         );
+    }
+    for constraint in &binding.call_order_constraints {
+        validate_rust_implementation_order(
+            claim_id,
+            binding,
+            constraint,
+            &sanitized,
+            &test_module_spans,
+            &functions,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_rust_implementation_order(
+    claim_id: &str,
+    binding: &ImplementationBinding,
+    constraint: &ImplementationCallOrderConstraint,
+    source: &str,
+    test_module_spans: &[(usize, usize)],
+    functions: &[RustFunctionSpan],
+) -> Result<()> {
+    let matching_callers = functions
+        .iter()
+        .filter(|function| {
+            function.name == constraint.caller && !function.is_test_only(source, test_module_spans)
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        !matching_callers.is_empty(),
+        "{} implementation binding order caller {} is missing from non-test Rust code in {}",
+        claim_id,
+        constraint.caller,
+        binding.path
+    );
+    for function in matching_callers {
+        let body = &source[function.body_start..function.body_end];
+        let Some(callee_index) = find_rust_identifier(body, &binding.callee) else {
+            return Err(anyhow!(
+                "{} implementation binding order caller {} in {} does not call {} in non-test Rust code",
+                claim_id,
+                constraint.caller,
+                binding.path,
+                binding.callee
+            ));
+        };
+        for successor in &constraint.callee_must_precede {
+            let Some(successor_index) = find_rust_identifier(body, successor) else {
+                return Err(anyhow!(
+                    "{} implementation binding order caller {} in {} does not reference required successor {}",
+                    claim_id,
+                    constraint.caller,
+                    binding.path,
+                    successor
+                ));
+            };
+            ensure!(
+                callee_index < successor_index,
+                "{} implementation binding order caller {} in {} calls {} after {}",
+                claim_id,
+                constraint.caller,
+                binding.path,
+                binding.callee,
+                successor
+            );
+        }
     }
     Ok(())
 }
@@ -1374,6 +1489,10 @@ fn preceding_rust_attrs_contain_cfg_test(source: &str, item_start: usize) -> boo
 }
 
 fn contains_rust_identifier(source: &str, ident: &str) -> bool {
+    find_rust_identifier(source, ident).is_some()
+}
+
+fn find_rust_identifier(source: &str, ident: &str) -> Option<usize> {
     let mut cursor = 0usize;
     while let Some(relative) = source[cursor..].find(ident) {
         let index = cursor + relative;
@@ -1384,11 +1503,11 @@ fn contains_rust_identifier(source: &str, ident: &str) -> bool {
         if !before.is_some_and(is_rust_identifier_byte)
             && !after.is_some_and(is_rust_identifier_byte)
         {
-            return true;
+            return Some(index);
         }
         cursor = index + ident.len();
     }
-    false
+    None
 }
 
 fn is_rust_identifier_byte(byte: u8) -> bool {
@@ -1904,6 +2023,8 @@ mod tests {
         let report = check_blueprint_file(&blueprint_path, &claims_path)
             .expect("valid implementation binding");
         assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 0);
+        assert_eq!(report.implementation_order_edges, 0);
     }
 
     #[test]
@@ -1927,6 +2048,70 @@ mod tests {
 
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
         assert!(err.to_string().contains("does not call verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_accepts_ordered_implementation_binding() {
+        let root = test_root("ordered-implementation-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); persist_block(); }\n\
+             fn apply_actions() {}\n\
+             fn persist_block() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["apply_actions", "persist_block"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("valid ordered implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 2);
+    }
+
+    #[test]
+    fn blueprint_rejects_late_ordered_implementation_binding() {
+        let root = test_root("late-ordered-implementation-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { apply_actions(); verified_helper(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["apply_actions"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("calls verified_helper after apply_actions"));
     }
 
     #[test]
@@ -2339,6 +2524,34 @@ mod tests {
                     "path": "src/native.rs",
                     "callee": callee,
                     "required_callers": callers
+                }
+            ]),
+        );
+        blueprint
+    }
+
+    fn blueprint_fixture_with_ordered_binding(
+        callee: &str,
+        callers: &[&str],
+        ordered_caller: &str,
+        successors: &[&str],
+    ) -> Value {
+        let mut blueprint = blueprint_fixture_with_binding(callee, callers);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        target.insert(
+            "implementation_bindings".to_owned(),
+            json!([
+                {
+                    "path": "src/native.rs",
+                    "callee": callee,
+                    "required_callers": callers,
+                    "call_order_constraints": [
+                        {
+                            "caller": ordered_caller,
+                            "callee_must_precede": successors
+                        }
+                    ]
                 }
             ]),
         );

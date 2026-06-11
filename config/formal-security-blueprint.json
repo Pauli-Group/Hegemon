@@ -3,7 +3,7 @@
   "generated_for_branch": "codex/formal-blueprint-dag",
   "methodology": {
     "name": "hegemon-formal-blueprint-dag-v1",
-    "summary": "LeanMarathon-inspired formal-security blueprint: every release claim is a reviewed graph node with implementation bindings, evidence, dependencies, and cheap falsification cases.",
+    "summary": "LeanMarathon-inspired formal-security blueprint: every release claim is a reviewed graph node with implementation bindings, call-order constraints, evidence, dependencies, and cheap falsification cases.",
     "source_of_record": "config/formal-security-claims.json",
     "gate": "bash scripts/check_formal_core.sh"
   },
@@ -4106,6 +4106,33 @@
             "import_mined_block",
             "import_announced_block",
             "replay_state_to_hash"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "apply_pending_actions_locked",
+                "persist_block",
+                "broadcast_block_announce"
+              ]
+            },
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "persist_block_record",
+                "reorganize_to_best_locked"
+              ]
+            },
+            {
+              "caller": "replay_state_to_hash",
+              "callee_must_precede": [
+                "apply_actions_to_memory"
+              ]
+            }
           ]
         }
       ],
@@ -4141,6 +4168,11 @@
         {
           "id": "formal-core-block-replay-production-binding",
           "description": "The blueprint gate must reject the block replay-refinement claim if mined-block import, announced-block import, or canonical replay stop calling the non-test production replay helper.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "formal-core-block-replay-order-binding",
+          "description": "The blueprint gate must reject the block replay-refinement claim if the replay helper no longer precedes the declared payload validation, state mutation, persistence, broadcast, or reorganization callees in the critical import/replay callers.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         },
         {
