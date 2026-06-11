@@ -3533,21 +3533,78 @@ fn persist_block_record(block_tree: &sled::Tree, meta: &NativeBlockMeta) -> Resu
 }
 
 fn load_staged_sizes(tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
+    load_staged_sizes_with_limits(tree, MAX_NATIVE_STAGED_CIPHERTEXTS, MAX_CIPHERTEXT_BYTES)
+}
+
+fn load_staged_sizes_with_limits(
+    tree: &sled::Tree,
+    max_staged_count: usize,
+    max_ciphertext_bytes: usize,
+) -> Result<BTreeMap<String, u32>> {
     let mut entries = BTreeMap::new();
+    let mut stale_keys = Vec::new();
     for item in tree.iter() {
         let (key, value) = item?;
-        if key.len() == 48 {
-            let mut hash = [0u8; 48];
-            hash.copy_from_slice(&key);
-            let size = if value.len() == 4 {
-                let mut size = [0u8; 4];
-                size.copy_from_slice(&value);
-                u32::from_le_bytes(size)
-            } else {
-                u32::try_from(value.len()).unwrap_or(u32::MAX)
-            };
-            entries.insert(hex48(&hash), size);
+        if key.len() != 48 {
+            warn!(
+                key_len = key.len(),
+                "dropping malformed staged ciphertext sidecar key during reload"
+            );
+            stale_keys.push(key.to_vec());
+            continue;
         }
+
+        let mut hash = [0u8; 48];
+        hash.copy_from_slice(&key);
+        if value.len() > max_ciphertext_bytes {
+            warn!(
+                hash = %hex48(&hash),
+                size = value.len(),
+                max = max_ciphertext_bytes,
+                "dropping oversized staged ciphertext sidecar during reload"
+            );
+            stale_keys.push(key.to_vec());
+            continue;
+        }
+
+        let observed = ciphertext_hash_bytes(&value);
+        if observed != hash {
+            warn!(
+                key_hash = %hex48(&hash),
+                observed_hash = %hex48(&observed),
+                "dropping hash-mismatched staged ciphertext sidecar during reload"
+            );
+            stale_keys.push(key.to_vec());
+            continue;
+        }
+
+        if evaluate_native_ciphertext_sidecar_capacity_admission(
+            NativeSidecarCapacityAdmissionInput {
+                staged_count: entries.len(),
+                max_staged_count,
+                replaces_existing: false,
+            },
+        )
+        .is_err()
+        {
+            warn!(
+                hash = %hex48(&hash),
+                max = max_staged_count,
+                "dropping staged ciphertext sidecar beyond reload capacity"
+            );
+            stale_keys.push(key.to_vec());
+            continue;
+        }
+
+        let size = u32::try_from(value.len()).unwrap_or(u32::MAX);
+        entries.insert(hex48(&hash), size);
+    }
+    let removed_stale_entries = !stale_keys.is_empty();
+    for key in stale_keys {
+        tree.remove(key)?;
+    }
+    if removed_stale_entries {
+        tree.flush()?;
     }
     Ok(entries)
 }
@@ -11298,6 +11355,104 @@ mod tests {
         assert!(err
             .to_string()
             .contains("stored pending action hash mismatch"));
+    }
+
+    #[test]
+    fn load_staged_sizes_accepts_hash_bound_ciphertext() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("staged_ciphertexts")
+            .expect("staged ciphertext tree");
+        let raw = vec![1u8, 2, 3, 4, 5];
+        let hash = ciphertext_hash_bytes(&raw);
+        tree.insert(hash.as_slice(), raw.as_slice())
+            .expect("insert staged ciphertext");
+
+        let loaded = load_staged_sizes(&tree).expect("load staged ciphertext sizes");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.get(&hex48(&hash)), Some(&(raw.len() as u32)));
+        assert!(tree
+            .get(hash.as_slice())
+            .expect("read ciphertext")
+            .is_some());
+    }
+
+    #[test]
+    fn load_staged_sizes_drops_hash_mismatch() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("staged_ciphertexts")
+            .expect("staged ciphertext tree");
+        let raw = vec![1u8, 2, 3];
+        let wrong_hash = [9u8; 48];
+        assert_ne!(ciphertext_hash_bytes(&raw), wrong_hash);
+        tree.insert(wrong_hash.as_slice(), raw.as_slice())
+            .expect("insert mismatched staged ciphertext");
+
+        let loaded = load_staged_sizes(&tree).expect("load staged ciphertext sizes");
+
+        assert!(loaded.is_empty());
+        assert!(tree
+            .get(wrong_hash.as_slice())
+            .expect("read dropped ciphertext")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_sizes_drops_oversized_ciphertext() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("staged_ciphertexts")
+            .expect("staged ciphertext tree");
+        let raw = vec![7u8; 5];
+        let hash = ciphertext_hash_bytes(&raw);
+        tree.insert(hash.as_slice(), raw.as_slice())
+            .expect("insert oversized staged ciphertext");
+
+        let loaded =
+            load_staged_sizes_with_limits(&tree, MAX_NATIVE_STAGED_CIPHERTEXTS, raw.len() - 1)
+                .expect("load staged ciphertext sizes");
+
+        assert!(loaded.is_empty());
+        assert!(tree
+            .get(hash.as_slice())
+            .expect("read dropped ciphertext")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_sizes_drops_capacity_overflow() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("staged_ciphertexts")
+            .expect("staged ciphertext tree");
+        let first = vec![1u8];
+        let second = vec![2u8];
+        let first_hash = ciphertext_hash_bytes(&first);
+        let second_hash = ciphertext_hash_bytes(&second);
+        tree.insert(first_hash.as_slice(), first.as_slice())
+            .expect("insert first staged ciphertext");
+        tree.insert(second_hash.as_slice(), second.as_slice())
+            .expect("insert second staged ciphertext");
+
+        let loaded = load_staged_sizes_with_limits(&tree, 1, MAX_CIPHERTEXT_BYTES)
+            .expect("load staged ciphertext sizes");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(tree.len(), 1);
     }
 
     #[test]

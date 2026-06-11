@@ -172,8 +172,8 @@ That keeps the system operationally sane:
 DA sidecar staging is intentionally local and ephemeral:
 
 - `da_submitCiphertexts` and `da_submitProofs` are unsafe-only proposer/local RPCs, not public consensus APIs;
-- staged ciphertexts and staged proof bytes live in proposer-local RAM only;
-- a node restart drops those staged sidecars, so wallets/provers must restage before proofless `*_sidecar` transfers can be authored again.
+- staged ciphertexts and staged proof bytes are proposer-local cache entries, not durable consensus state;
+- startup reload restores staged ciphertext metadata only from raw sidecar bytes whose hash matches the 48-byte local key and purges malformed, oversized, hash-mismatched, or over-capacity cache entries, so wallets/provers must be ready to restage before proofless `*_sidecar` transfers can be authored again.
 
 That is the current recovery contract. Restart recovery is deterministic because the authoring node fail-closes or defers when local sidecar bytes are missing; it does not pretend those sidecars are durable chain state.
 
