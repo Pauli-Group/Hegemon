@@ -1110,6 +1110,15 @@ struct NativePlannedActionEffect {
     replay_key: Option<[u8; 48]>,
 }
 
+#[derive(Clone, Debug)]
+struct NativeCanonicalIndexPlan {
+    commitment_entries: Vec<(u64, [u8; 48])>,
+    nullifier_entries: Vec<[u8; 48]>,
+    bridge_replay_entries: Vec<[u8; 48]>,
+    ciphertext_index_entries: Vec<([u8; 48], Vec<u8>)>,
+    ciphertext_archive_entries: Vec<(u64, Vec<u8>)>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NativeActionStreamStep<'a> {
     commitment_count: usize,
@@ -2163,28 +2172,12 @@ impl NativeNode {
         let old_chain = self.chain_to_hash(state.best.hash).unwrap_or_default();
         let new_chain = self.chain_to_hash(new_hash)?;
         let mut new_state = self.replay_state_to_hash(new_hash)?;
-
-        self.height_tree.clear()?;
-        self.commitment_tree.clear()?;
-        self.nullifier_tree.clear()?;
-        self.bridge_inbound_tree.clear()?;
-        self.ciphertext_index_tree.clear()?;
-        self.ciphertext_archive_tree.clear()?;
-
-        for meta in &new_chain {
-            self.height_tree
-                .insert(height_key(meta.height), meta.hash.as_slice())?;
-        }
-        rebuild_canonical_indexes(
-            &new_chain,
-            &self.commitment_tree,
-            &self.nullifier_tree,
-            &self.bridge_inbound_tree,
-            &self.ciphertext_index_tree,
-            &self.ciphertext_archive_tree,
-            &self.da_ciphertext_tree,
-        )?;
-
+        let canonical_index_plan =
+            plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
+        let height_entries = new_chain
+            .iter()
+            .map(|meta| (meta.height, meta.hash))
+            .collect::<Vec<_>>();
         let new_action_hashes = action_hashes_from_chain(&new_chain)?;
         let mut pending = state.pending_actions.clone();
         for hash in &new_action_hashes {
@@ -2203,6 +2196,21 @@ impl NativeNode {
                 pending.entry(action.tx_hash).or_insert(action);
             }
         }
+
+        self.clear_reorg_canonical_indexes()?;
+
+        for (height, hash) in height_entries {
+            self.height_tree
+                .insert(height_key(height), hash.as_slice())?;
+        }
+        write_canonical_index_plan(
+            canonical_index_plan,
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+        )?;
 
         self.action_tree.clear()?;
         for action in pending.values() {
@@ -2225,6 +2233,20 @@ impl NativeNode {
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
         new_state.staged_proofs = state.staged_proofs.clone();
         *state = new_state;
+        Ok(())
+    }
+
+    fn clear_reorg_canonical_indexes(&self) -> Result<()> {
+        self.height_tree.clear()?;
+        self.clear_canonical_state_indexes()
+    }
+
+    fn clear_canonical_state_indexes(&self) -> Result<()> {
+        self.commitment_tree.clear()?;
+        self.nullifier_tree.clear()?;
+        self.bridge_inbound_tree.clear()?;
+        self.ciphertext_index_tree.clear()?;
+        self.ciphertext_archive_tree.clear()?;
         Ok(())
     }
 
@@ -2305,19 +2327,15 @@ impl NativeNode {
             observed = self.ciphertext_archive_tree.len(),
             "rebuilding canonical native ciphertext archive"
         );
-        self.commitment_tree.clear()?;
-        self.nullifier_tree.clear()?;
-        self.bridge_inbound_tree.clear()?;
-        self.ciphertext_index_tree.clear()?;
-        self.ciphertext_archive_tree.clear()?;
-        rebuild_canonical_indexes(
-            &chain,
+        let canonical_index_plan = plan_canonical_index_rebuild(&chain, &self.da_ciphertext_tree)?;
+        self.clear_canonical_state_indexes()?;
+        write_canonical_index_plan(
+            canonical_index_plan,
             &self.commitment_tree,
             &self.nullifier_tree,
             &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
             &self.ciphertext_archive_tree,
-            &self.da_ciphertext_tree,
         )?;
         self.commitment_tree.flush()?;
         self.nullifier_tree.flush()?;
@@ -7696,15 +7714,10 @@ fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -
     Ok(())
 }
 
-fn rebuild_canonical_indexes(
+fn plan_canonical_index_rebuild(
     chain: &[NativeBlockMeta],
-    commitment_tree: &sled::Tree,
-    nullifier_tree: &sled::Tree,
-    bridge_inbound_tree: &sled::Tree,
-    ciphertext_index_tree: &sled::Tree,
-    ciphertext_archive_tree: &sled::Tree,
     da_ciphertext_tree: &sled::Tree,
-) -> Result<()> {
+) -> Result<NativeCanonicalIndexPlan> {
     let mut nullifier_state = NullifierState::default();
     let mut bridge_replay_state = InboundReplayState::default();
     let mut planned_actions = Vec::new();
@@ -7732,6 +7745,14 @@ fn rebuild_canonical_indexes(
     )
     .map_err(native_action_state_effect_error)?;
 
+    let mut plan = NativeCanonicalIndexPlan {
+        commitment_entries: Vec::new(),
+        nullifier_entries: Vec::new(),
+        bridge_replay_entries: Vec::new(),
+        ciphertext_index_entries: Vec::new(),
+        ciphertext_archive_entries: Vec::new(),
+    };
+
     for ((action, ciphertexts, replay_key), commitment_start) in planned_actions
         .into_iter()
         .zip(stream.planned_starts.into_iter())
@@ -7742,14 +7763,19 @@ fn rebuild_canonical_indexes(
             let index = commitment_start
                 .checked_add(offset)
                 .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
-            commitment_tree.insert(index.to_be_bytes(), commitment.as_slice())?;
+            plan.commitment_entries.push((index, *commitment));
         }
-        insert_ciphertext_archive_entries(ciphertext_archive_tree, commitment_start, &ciphertexts)?;
+        for (offset, bytes) in ciphertexts.into_iter().enumerate() {
+            let index = commitment_start
+                .checked_add(offset as u64)
+                .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
+            plan.ciphertext_archive_entries.push((index, bytes));
+        }
         for nullifier in &action.nullifiers {
-            nullifier_tree.insert(nullifier.as_slice(), b"1")?;
+            plan.nullifier_entries.push(*nullifier);
         }
         if let Some(replay_key) = replay_key {
-            bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
+            plan.bridge_replay_entries.push(replay_key);
         }
         for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
             let size = action
@@ -7761,8 +7787,34 @@ fn rebuild_canonical_indexes(
             value.extend_from_slice(&action.tx_hash);
             value.extend_from_slice(&size.to_le_bytes());
             value.extend_from_slice(&(idx as u64).to_le_bytes());
-            ciphertext_index_tree.insert(hash.as_slice(), value)?;
+            plan.ciphertext_index_entries.push((*hash, value));
         }
+    }
+    Ok(plan)
+}
+
+fn write_canonical_index_plan(
+    plan: NativeCanonicalIndexPlan,
+    commitment_tree: &sled::Tree,
+    nullifier_tree: &sled::Tree,
+    bridge_inbound_tree: &sled::Tree,
+    ciphertext_index_tree: &sled::Tree,
+    ciphertext_archive_tree: &sled::Tree,
+) -> Result<()> {
+    for (index, commitment) in plan.commitment_entries {
+        commitment_tree.insert(index.to_be_bytes(), commitment.as_slice())?;
+    }
+    for (index, bytes) in plan.ciphertext_archive_entries {
+        ciphertext_archive_tree.insert(index.to_be_bytes(), bytes)?;
+    }
+    for nullifier in plan.nullifier_entries {
+        nullifier_tree.insert(nullifier.as_slice(), b"1")?;
+    }
+    for replay_key in plan.bridge_replay_entries {
+        bridge_inbound_tree.insert(replay_key.as_slice(), b"1")?;
+    }
+    for (hash, value) in plan.ciphertext_index_entries {
+        ciphertext_index_tree.insert(hash.as_slice(), value)?;
     }
     Ok(())
 }
@@ -10572,6 +10624,79 @@ mod tests {
                 .unwrap()
                 .hash,
             canonical.hash
+        );
+    }
+
+    #[test]
+    fn reorg_rebuild_failure_preserves_canonical_indexes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let genesis = node.best_meta();
+
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [61u8; 48]);
+        let canonical_work = node.prepare_work().expect("prepare canonical native work");
+        let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+        let canonical = node
+            .import_mined_block(&canonical_work, canonical_seal)
+            .expect("canonical import")
+            .expect("canonical block");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert_eq!(node.commitment_tree.len(), 1);
+        assert_eq!(node.ciphertext_archive_tree.len(), 1);
+
+        let side_one = (1..128)
+            .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &canonical))
+            .expect("side child that does not beat canonical tip");
+        persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
+
+        let parent_state = test_state(side_one.clone());
+        let sidecar = test_sidecar_transfer_action(
+            parent_state.commitment_tree.root(),
+            [62u8; 48],
+            [63u8; 48],
+            0,
+        );
+        let candidate = test_candidate_artifact_action(1, 64);
+        let side_two =
+            mined_child_with_actions(&side_one, 2, test_pow_bits, 129, vec![sidecar, candidate]);
+        persist_block_record(&node.block_tree, &side_two).expect("persist side tip");
+
+        let old_height_one = node.hash_by_height(1).expect("height index before reorg");
+        let old_commitments = node.commitment_tree.len();
+        let old_ciphertexts = node.ciphertext_archive_tree.len();
+        let old_best = node.best_meta().hash;
+        let err = {
+            let mut state = node.state.write();
+            let err = node
+                .reorganize_to_best_locked(&mut state, side_two.hash)
+                .expect_err("missing sidecar ciphertext must reject before canonical clear");
+            assert_eq!(state.best.hash, old_best);
+            err
+        };
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("missing canonical DA ciphertext"),
+            "unexpected reorg error: {err_text}"
+        );
+        assert_eq!(node.best_meta().hash, old_best);
+        assert_eq!(
+            node.hash_by_height(1)
+                .expect("height index after failed reorg"),
+            old_height_one,
+            "failed reorg must leave canonical height index untouched"
+        );
+        assert_eq!(
+            node.commitment_tree.len(),
+            old_commitments,
+            "failed reorg must not clear canonical commitments"
+        );
+        assert_eq!(
+            node.ciphertext_archive_tree.len(),
+            old_ciphertexts,
+            "failed reorg must not clear canonical ciphertext archive"
         );
     }
 
@@ -15644,16 +15769,8 @@ mod tests {
         block.tx_count = 2;
         block.action_bytes = vec![first.encode(), second.encode()];
 
-        let err = rebuild_canonical_indexes(
-            &[genesis, block],
-            &commitment_tree,
-            &nullifier_tree,
-            &bridge_inbound_tree,
-            &ciphertext_index_tree,
-            &ciphertext_archive_tree,
-            &da_ciphertext_tree,
-        )
-        .expect_err("duplicate nullifier must reject before rebuilding sled indexes");
+        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree)
+            .expect_err("duplicate nullifier must reject before rebuilding sled indexes");
         assert!(err.to_string().contains("duplicate_nullifier"));
         assert_eq!(
             commitment_tree.len(),
@@ -15664,6 +15781,16 @@ mod tests {
             nullifier_tree.len(),
             0,
             "failed rebuild must not partially write nullifiers"
+        );
+        assert_eq!(
+            bridge_inbound_tree.len(),
+            0,
+            "failed rebuild must not partially write bridge replay entries"
+        );
+        assert_eq!(
+            ciphertext_index_tree.len(),
+            0,
+            "failed rebuild must not partially write ciphertext index entries"
         );
         assert_eq!(
             ciphertext_archive_tree.len(),
@@ -16845,7 +16972,13 @@ mod tests {
         let bridge_messages = bridge_messages_from_actions(&actions, height);
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).expect("message count");
-        let header_history = vec![parent.hash];
+        let header_history = if parent.height == 0 {
+            vec![parent.hash]
+        } else if parent.height == 1 {
+            vec![parent.parent_hash, parent.hash]
+        } else {
+            vec![parent.hash]
+        };
         let header_mmr_root = header_mmr_root_from_hashes(&header_history);
         let header_mmr_len = header_history.len() as u64;
         let cumulative_work =

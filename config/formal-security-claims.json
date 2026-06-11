@@ -2543,7 +2543,7 @@
       "id": "native.action-stream-effect-planning",
       "component": "native ordered action stream mutation planning",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action-stream effect kernel proves representative ordered-list replay facts for native action planning: the stream records one planned commitment start per accepted action, advances leaf counts with checked u64 arithmetic across the whole list, imports nullifiers into a shared stream state so within-action and cross-action duplicates reject, imports inbound bridge replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, and preserves the same rejection precedence as the production planner. Generated Lean vectors are checked against the production stream helper now called by memory replay, pending-action planning, and canonical-index rebuild.",
+      "summary": "The Lean action-stream effect kernel proves representative ordered-list replay facts for native action planning: the stream records one planned commitment start per accepted action, advances leaf counts with checked u64 arithmetic across the whole list, imports nullifiers into a shared stream state so within-action and cross-action duplicates reject, imports inbound bridge replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, and preserves the same rejection precedence as the production planner. Generated Lean vectors are checked against the production stream helper now called by memory replay, pending-action planning, and canonical-index rebuild; the blueprint/regression gate requires reorg and startup canonical-index repair to plan rebuilds before clearing or writing canonical sled indexes.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2565,7 +2565,7 @@
       "assumptions": [
         "The Lean stream model uses natural-number keys for already-decoded nullifiers and inbound replay keys. The Rust vector test maps those keys to concrete 48-byte values before calling production state machines, but this claim does not prove nullifier derivation, inbound replay-key derivation, SCALE decoding, or bridge message parsing.",
         "Generated Lean conformance vectors cover a valid two-action stream, empty streams at max leaf count, cross-action duplicate nullifiers, duplicate nullifiers within one action, duplicates against prior spent state, zero nullifiers in later actions, cross-action bridge replay duplicates, duplicates against prior consumed replay state, cumulative second-action leaf overflow, and rejection precedence.",
-        "The theorem and vectors cover the production stream helper now used by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state is mutated. They do not prove storage atomicity under I/O failure, commitment-tree hash security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
+        "The theorem and vectors cover the production stream helper now used by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state is mutated. The blueprint additionally enforces that `plan_canonical_index_rebuild` appears before reorg/startup canonical index clearing and writing, and `reorg_rebuild_failure_preserves_canonical_indexes` checks that a semantic rebuild failure leaves the previous canonical height, commitment, and ciphertext indexes untouched. This does not prove storage atomicity under I/O failure, commitment-tree hash security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
@@ -2580,6 +2580,8 @@
         "cargo test -p hegemon-node action_state_effect_rejects_duplicate_before_memory_mutation --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node action_state_effect_preview_ --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node reorg_rebuild_failure_preserves_canonical_indexes --lib --no-default-features -- --nocapture",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

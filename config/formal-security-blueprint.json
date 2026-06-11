@@ -4066,6 +4066,32 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_canonical_index_rebuild",
+          "required_callers": [
+            "reorganize_to_best_locked",
+            "ensure_ciphertext_archive_index"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_to_best_locked",
+              "callee_must_precede": [
+                "clear_reorg_canonical_indexes",
+                "write_canonical_index_plan"
+              ]
+            },
+            {
+              "caller": "ensure_ciphertext_archive_index",
+              "callee_must_precede": [
+                "clear_canonical_state_indexes",
+                "write_canonical_index_plan"
+              ]
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
         "formal/lean/Hegemon/Native/GenerateActionStreamEffectVectors.lean",
@@ -4104,9 +4130,19 @@
           "id": "native-action-stream-rebuild-regression",
           "description": "Native canonical index rebuild must reject duplicate nullifiers before writing commitment, nullifier, or ciphertext archive sled entries.",
           "gate": "cargo test -p hegemon-node canonical_index_rebuild_rejects_duplicate_before_sled_mutation --lib --no-default-features"
+        },
+        {
+          "id": "native-reorg-rebuild-plan-before-clear-regression",
+          "description": "Native side-branch reorganization must plan canonical index rebuilds before clearing the previous canonical height, commitment, or ciphertext indexes.",
+          "gate": "cargo test -p hegemon-node reorg_rebuild_failure_preserves_canonical_indexes --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-canonical-rebuild-before-clear-binding",
+          "description": "The blueprint gate must reject action-stream planning if canonical index rebuild planning drifts after reorg/startup canonical index clearing or writing.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, storage atomicity under I/O failure, full action payload validity, tx proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg/startup repair to finish semantic rebuild planning before clearing or writing canonical sled indexes. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, storage atomicity under I/O failure, full action payload validity, tx proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.block-replay-refinement",
