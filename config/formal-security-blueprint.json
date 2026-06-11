@@ -3437,6 +3437,49 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_announced_block_admission",
+          "required_callers": [
+            "validate_announced_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "validate_announced_block",
+              "callee_must_precede": [
+                "verify_native_pow_meta"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_announced_block",
+          "required_callers": [
+            "NativeNode::import_announced_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::import_announced_block",
+              "callee_must_precede": [
+                "replay_state_to_hash",
+                "decode_block_actions",
+                "preview_pending_roots",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "persist_noncanonical_block_record",
+                "reorganize_chain_to_best_locked"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAnnouncedBlockAdmissionVectors.lean",
@@ -3491,6 +3534,31 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_loaded_block_indexes",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "load_pending_actions",
+                "load_nullifiers",
+                "load_commitment_tree",
+                "validate_loaded_canonical_state",
+                "validate_loaded_bridge_replay_state",
+                "load_staged_sizes",
+                "load_staged_proofs"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockIndexReload.lean",
@@ -3548,6 +3616,28 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_loaded_canonical_state",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "load_consumed_bridge_messages",
+                "validate_loaded_bridge_replay_state",
+                "load_staged_sizes",
+                "load_staged_proofs"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
         "formal/lean/Hegemon/Native/GenerateCanonicalStateReloadVectors.lean",
@@ -3603,6 +3693,26 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_loaded_bridge_replay_state",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "load_staged_sizes",
+                "load_staged_proofs"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeReplayReload.lean",
@@ -4869,6 +4979,16 @@
       ],
       "implementation_paths": [
         "node/src/native/mod.rs"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_risc0_bridge_receipt",
+          "required_callers": [
+            "verify_inbound_bridge_receipt"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/Risc0ReleaseVerifier.lean",

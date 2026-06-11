@@ -1044,7 +1044,7 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
             binding.callee
         );
         for caller in &binding.required_callers {
-            validate_rust_symbol(&node.id, "implementation binding caller", caller)?;
+            validate_rust_caller_symbol(&node.id, "implementation binding caller", caller)?;
         }
         parse_result_obligation(
             &node.id,
@@ -1052,7 +1052,7 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
             binding.result_obligation.as_deref(),
         )?;
         for constraint in &binding.call_order_constraints {
-            validate_rust_symbol(
+            validate_rust_caller_symbol(
                 &node.id,
                 "implementation binding ordered caller",
                 &constraint.caller,
@@ -1110,6 +1110,22 @@ fn validate_rust_symbol(claim_id: &str, label: &str, symbol: &str) -> Result<()>
     Ok(())
 }
 
+fn validate_rust_caller_symbol(claim_id: &str, label: &str, symbol: &str) -> Result<()> {
+    if let Some((impl_type, method)) = symbol.split_once("::") {
+        ensure!(
+            !method.contains("::"),
+            "{} {} {} must be either a Rust identifier or TypeName::method_name",
+            claim_id,
+            label,
+            symbol
+        );
+        validate_rust_symbol(claim_id, "implementation binding caller type", impl_type)?;
+        validate_rust_symbol(claim_id, label, method)?;
+        return Ok(());
+    }
+    validate_rust_symbol(claim_id, label, symbol)
+}
+
 fn validate_rust_implementation_binding(
     root: &Path,
     claim_id: &str,
@@ -1140,7 +1156,8 @@ fn validate_rust_implementation_binding(
         let mut non_test_callers = functions
             .iter()
             .filter(|function| {
-                function.name == *caller && !function.is_test_only(&sanitized, &test_module_spans)
+                function.matches_caller(caller)
+                    && !function.is_test_only(&sanitized, &test_module_spans)
             })
             .peekable();
         ensure!(
@@ -1211,7 +1228,8 @@ fn validate_rust_implementation_order(
     let matching_callers = functions
         .iter()
         .filter(|function| {
-            function.name == constraint.caller && !function.is_test_only(source, test_module_spans)
+            function.matches_caller(&constraint.caller)
+                && !function.is_test_only(source, test_module_spans)
         })
         .collect::<Vec<_>>();
     ensure!(
@@ -1326,6 +1344,7 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
 #[derive(Debug, Clone)]
 struct RustFunctionSpan {
     name: String,
+    qualified_name: Option<String>,
     start: usize,
     end: usize,
     body_start: usize,
@@ -1333,6 +1352,14 @@ struct RustFunctionSpan {
 }
 
 impl RustFunctionSpan {
+    fn matches_caller(&self, caller: &str) -> bool {
+        if caller.contains("::") {
+            self.qualified_name.as_deref() == Some(caller)
+        } else {
+            self.name == caller
+        }
+    }
+
     fn is_test_only(&self, source: &str, test_module_spans: &[(usize, usize)]) -> bool {
         test_module_spans
             .iter()
@@ -1342,6 +1369,7 @@ impl RustFunctionSpan {
 }
 
 fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
+    let impl_spans = rust_impl_spans(source)?;
     let mut functions = Vec::new();
     let mut cursor = 0usize;
     while let Some(fn_start) = find_rust_token(source, "fn", cursor) {
@@ -1356,8 +1384,11 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
         let body_end = match_rust_brace(source, body_start).with_context(|| {
             format!("match Rust function body for {name} starting at byte {body_start}")
         })?;
+        let qualified_name = enclosing_impl_type(&impl_spans, fn_start, body_end + 1)
+            .map(|impl_type| format!("{impl_type}::{name}"));
         functions.push(RustFunctionSpan {
             name,
+            qualified_name,
             start: fn_start,
             end: body_end + 1,
             body_start,
@@ -1366,6 +1397,140 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
         cursor = body_end + 1;
     }
     Ok(functions)
+}
+
+#[derive(Debug, Clone)]
+struct RustImplSpan {
+    impl_type: String,
+    body_start: usize,
+    body_end: usize,
+}
+
+fn rust_impl_spans(source: &str) -> Result<Vec<RustImplSpan>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(impl_start) = find_rust_token(source, "impl", cursor) {
+        let Some(body_start) = find_rust_body_start(source, impl_start + 4) else {
+            cursor = impl_start + 4;
+            continue;
+        };
+        let body_end = match_rust_brace(source, body_start)
+            .with_context(|| format!("match Rust impl body starting at byte {body_start}"))?;
+        if let Some(impl_type) = parse_rust_impl_type(&source[impl_start + 4..body_start]) {
+            spans.push(RustImplSpan {
+                impl_type,
+                body_start,
+                body_end: body_end + 1,
+            });
+        }
+        cursor = body_end + 1;
+    }
+    Ok(spans)
+}
+
+fn enclosing_impl_type<'a>(
+    impl_spans: &'a [RustImplSpan],
+    fn_start: usize,
+    fn_end: usize,
+) -> Option<&'a str> {
+    impl_spans
+        .iter()
+        .filter(|span| span.body_start < fn_start && fn_end <= span.body_end)
+        .min_by_key(|span| span.body_end - span.body_start)
+        .map(|span| span.impl_type.as_str())
+}
+
+fn parse_rust_impl_type(header: &str) -> Option<String> {
+    let self_type = if let Some(for_start) = find_top_level_for_keyword(header) {
+        &header[for_start + "for".len()..]
+    } else {
+        strip_impl_generics_prefix(header)
+    };
+    parse_rust_type_name(self_type)
+}
+
+fn strip_impl_generics_prefix(header: &str) -> &str {
+    let trimmed = header.trim_start();
+    if !trimmed.starts_with('<') {
+        return trimmed;
+    }
+    let Some(end) = match_rust_angle(trimmed, 0) else {
+        return trimmed;
+    };
+    trimmed[end + 1..].trim_start()
+}
+
+fn find_top_level_for_keyword(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut found = None;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth = angle_depth.saturating_sub(1),
+            _ => {}
+        }
+        if paren_depth == 0
+            && bracket_depth == 0
+            && angle_depth == 0
+            && rust_token_at(source, "for", index).is_some()
+        {
+            found = Some(index);
+        }
+        index += 1;
+    }
+    found
+}
+
+fn match_rust_angle(source: &str, open: usize) -> Option<usize> {
+    if source.as_bytes().get(open) != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[open..].iter().copied().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_rust_type_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_start();
+    let bytes = trimmed.as_bytes();
+    let mut index = 0usize;
+    while bytes
+        .get(index)
+        .is_some_and(|byte| is_rust_identifier_byte(*byte) || *byte == b':' || *byte == b'_')
+    {
+        index += 1;
+    }
+    let path = trimmed[..index].trim_end_matches(':');
+    path.rsplit("::")
+        .find(|segment| !segment.is_empty())
+        .filter(|segment| {
+            let mut chars = segment.chars();
+            let Some(first) = chars.next() else {
+                return false;
+            };
+            (first == '_' || first.is_ascii_alphabetic())
+                && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+        })
+        .map(str::to_owned)
 }
 
 fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
@@ -2656,6 +2821,139 @@ mod tests {
 
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
         assert!(err.to_string().contains("does not call verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_rejects_qualified_caller_spoofed_by_same_named_method() {
+        let root = test_root("qualified-caller-spoofed-by-same-named-method");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "trait Verifier { fn verify(&self); }\n\
+             struct Wanted;\n\
+             struct Other;\n\
+             fn verified_helper() {}\n\
+             impl Verifier for Wanted {\n\
+                 fn verify(&self) {}\n\
+             }\n\
+             impl Verifier for Other {\n\
+                 fn verify(&self) { verified_helper(); }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["Wanted::verify"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains("caller Wanted::verify"));
+        assert!(err.to_string().contains("does not call verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_accepts_bare_method_caller_name_legacy_matching() {
+        let root = test_root("bare-method-caller-name-legacy-matching");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "trait Verifier { fn verify(&self); }\n\
+             struct Wanted;\n\
+             struct Other;\n\
+             fn verified_helper() {}\n\
+             impl Verifier for Wanted {\n\
+                 fn verify(&self) {}\n\
+             }\n\
+             impl Verifier for Other {\n\
+                 fn verify(&self) { verified_helper(); }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["verify"]),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("bare method name keeps legacy matching");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_inherent_qualified_caller() {
+        let root = test_root("inherent-qualified-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Wanted;\n\
+             fn verified_helper() {}\n\
+             impl Wanted {\n\
+                 fn verify(&self) { verified_helper(); }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["Wanted::verify"]),
+        );
+
+        let report =
+            check_blueprint_file(&blueprint_path, &claims_path).expect("inherent qualified caller");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_qualified_order_and_result_obligation() {
+        let root = test_root("qualified-order-and-result-obligation");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "trait Verifier { fn verify(&self); }\n\
+             struct Wanted;\n\
+             struct Other;\n\
+             fn verified_helper() {}\n\
+             fn mutate() {}\n\
+             impl Verifier for Wanted {\n\
+                 fn verify(&self) { verified_helper()?; mutate(); }\n\
+             }\n\
+             impl Verifier for Other {\n\
+                 fn verify(&self) { mutate(); verified_helper(); }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["Wanted::verify"],
+                "Wanted::verify",
+                &["mutate"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("qualified caller order and result obligation");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
     }
 
     #[test]
