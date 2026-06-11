@@ -53,6 +53,7 @@ pub struct BlueprintReport {
     pub nodes: usize,
     pub edges: usize,
     pub production_nodes: usize,
+    pub implementation_bindings: usize,
     pub falsification_cases: usize,
     pub passed: bool,
 }
@@ -132,10 +133,20 @@ struct BlueprintNode {
     informal_argument: String,
     depends_on: Vec<String>,
     implementation_paths: Vec<String>,
+    #[serde(default)]
+    implementation_bindings: Vec<ImplementationBinding>,
     evidence_paths: Vec<String>,
     target_review: TargetReview,
     falsification_cases: Vec<FalsificationCase>,
     scope_boundary: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementationBinding {
+    path: String,
+    callee: String,
+    required_callers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -806,6 +817,7 @@ fn validate_blueprint(
 
     let mut edges = 0usize;
     let mut production_nodes = 0usize;
+    let mut implementation_bindings = 0usize;
     let mut falsification_cases = 0usize;
     let mut dependents: BTreeMap<String, usize> =
         node_ids.iter().map(|id| (id.clone(), 0usize)).collect();
@@ -840,6 +852,7 @@ fn validate_blueprint(
         if claim.production_eligible {
             production_nodes += 1;
         }
+        implementation_bindings += node.implementation_bindings.len();
         falsification_cases += node.falsification_cases.len();
     }
 
@@ -858,6 +871,7 @@ fn validate_blueprint(
         nodes: blueprint.nodes.len(),
         edges,
         production_nodes,
+        implementation_bindings,
         falsification_cases,
         passed: true,
     })
@@ -937,6 +951,7 @@ fn validate_blueprint_node(
             claim_evidence
         );
     }
+    validate_implementation_bindings(root, node)?;
     validate_falsification_cases(node)?;
     if claim.production_eligible {
         ensure!(
@@ -956,6 +971,428 @@ fn validate_blueprint_node(
         );
     }
     Ok(())
+}
+
+fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result<()> {
+    for binding in &node.implementation_bindings {
+        ensure!(
+            node.implementation_paths.contains(&binding.path),
+            "{} implementation binding path {} must be listed in implementation_paths",
+            node.id,
+            binding.path
+        );
+        ensure_repo_relative_existing(
+            root,
+            &binding.path,
+            &format!("{} implementation binding path", node.id),
+        )?;
+        validate_rust_symbol(&node.id, "implementation binding callee", &binding.callee)?;
+        ensure!(
+            !binding.required_callers.is_empty(),
+            "{} implementation binding for {} must list required_callers",
+            node.id,
+            binding.callee
+        );
+        for caller in &binding.required_callers {
+            validate_rust_symbol(&node.id, "implementation binding caller", caller)?;
+        }
+        validate_rust_implementation_binding(root, &node.id, binding)?;
+    }
+    Ok(())
+}
+
+fn validate_rust_symbol(claim_id: &str, label: &str, symbol: &str) -> Result<()> {
+    ensure!(!symbol.trim().is_empty(), "{} {} missing", claim_id, label);
+    let mut chars = symbol.chars();
+    let Some(first) = chars.next() else {
+        return Err(anyhow!("{} {} missing", claim_id, label));
+    };
+    ensure!(
+        first == '_' || first.is_ascii_alphabetic(),
+        "{} {} {} must start with '_' or ascii letter",
+        claim_id,
+        label,
+        symbol
+    );
+    ensure!(
+        chars.all(|c| c == '_' || c.is_ascii_alphanumeric()),
+        "{} {} {} must be a plain Rust identifier",
+        claim_id,
+        label,
+        symbol
+    );
+    Ok(())
+}
+
+fn validate_rust_implementation_binding(
+    root: &Path,
+    claim_id: &str,
+    binding: &ImplementationBinding,
+) -> Result<()> {
+    let path = root.join(&binding.path);
+    let source = fs::read_to_string(&path)
+        .with_context(|| format!("read {} implementation binding source", path.display()))?;
+    let sanitized = sanitize_rust_source(&source);
+    let test_module_spans = rust_cfg_test_module_spans(&sanitized);
+    let functions = rust_function_spans(&sanitized)?;
+    ensure!(
+        functions
+            .iter()
+            .any(|function| function.name == binding.callee
+                && !function.is_test_only(&sanitized, &test_module_spans)),
+        "{} implementation binding callee {} is missing from non-test Rust code in {}",
+        claim_id,
+        binding.callee,
+        binding.path
+    );
+    for caller in &binding.required_callers {
+        let mut non_test_callers = functions
+            .iter()
+            .filter(|function| {
+                function.name == *caller && !function.is_test_only(&sanitized, &test_module_spans)
+            })
+            .peekable();
+        ensure!(
+            non_test_callers.peek().is_some(),
+            "{} implementation binding caller {} is missing from non-test Rust code in {}",
+            claim_id,
+            caller,
+            binding.path
+        );
+        ensure!(
+            non_test_callers.any(|function| {
+                contains_rust_identifier(
+                    &sanitized[function.body_start..function.body_end],
+                    &binding.callee,
+                )
+            }),
+            "{} implementation binding caller {} in {} does not call {} in non-test Rust code",
+            claim_id,
+            caller,
+            binding.path,
+            binding.callee
+        );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct RustFunctionSpan {
+    name: String,
+    start: usize,
+    end: usize,
+    body_start: usize,
+    body_end: usize,
+}
+
+impl RustFunctionSpan {
+    fn is_test_only(&self, source: &str, test_module_spans: &[(usize, usize)]) -> bool {
+        test_module_spans
+            .iter()
+            .any(|(start, end)| *start <= self.start && self.end <= *end)
+            || preceding_rust_attrs_contain_cfg_test(source, self.start)
+    }
+}
+
+fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
+    let mut functions = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(fn_start) = find_rust_token(source, "fn", cursor) {
+        let Some((name, after_name)) = parse_rust_identifier_after(source, fn_start + 2) else {
+            cursor = fn_start + 2;
+            continue;
+        };
+        let Some(body_start) = find_rust_body_start(source, after_name) else {
+            cursor = fn_start + 2;
+            continue;
+        };
+        let body_end = match_rust_brace(source, body_start).with_context(|| {
+            format!("match Rust function body for {name} starting at byte {body_start}")
+        })?;
+        functions.push(RustFunctionSpan {
+            name,
+            start: fn_start,
+            end: body_end + 1,
+            body_start,
+            body_end: body_end + 1,
+        });
+        cursor = body_end + 1;
+    }
+    Ok(functions)
+}
+
+fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(mod_start) = find_rust_token(source, "mod", cursor) {
+        let Some((module_name, after_name)) = parse_rust_identifier_after(source, mod_start + 3)
+        else {
+            cursor = mod_start + 3;
+            continue;
+        };
+        let Some(body_start) = find_rust_body_start(source, after_name) else {
+            cursor = mod_start + 3;
+            continue;
+        };
+        let Ok(body_end) = match_rust_brace(source, body_start) else {
+            cursor = mod_start + 3;
+            continue;
+        };
+        if module_name == "tests" && preceding_rust_attrs_contain_cfg_test(source, mod_start) {
+            spans.push((mod_start, body_end + 1));
+        }
+        cursor = body_end + 1;
+    }
+    spans
+}
+
+fn sanitize_rust_source(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut index = 0usize;
+    let mut block_depth = 0usize;
+    let mut in_line_comment = false;
+    let mut in_string = false;
+    let mut in_char = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let current = bytes[index];
+        let next = bytes.get(index + 1).copied();
+
+        if in_line_comment {
+            if current == b'\n' {
+                in_line_comment = false;
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            index += 1;
+            continue;
+        }
+
+        if block_depth > 0 {
+            if current == b'/' && next == Some(b'*') {
+                block_depth += 1;
+                out.push(' ');
+                out.push(' ');
+                index += 2;
+                continue;
+            }
+            if current == b'*' && next == Some(b'/') {
+                block_depth -= 1;
+                out.push(' ');
+                out.push(' ');
+                index += 2;
+                continue;
+            }
+            out.push(if current == b'\n' { '\n' } else { ' ' });
+            index += 1;
+            continue;
+        }
+
+        if in_string || in_char {
+            let terminator = if in_string { b'"' } else { b'\'' };
+            if current == b'\n' {
+                out.push('\n');
+                escaped = false;
+            } else {
+                out.push(' ');
+                if escaped {
+                    escaped = false;
+                } else if current == b'\\' {
+                    escaped = true;
+                } else if current == terminator {
+                    in_string = false;
+                    in_char = false;
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        if current == b'/' && next == Some(b'/') {
+            in_line_comment = true;
+            out.push(' ');
+            out.push(' ');
+            index += 2;
+            continue;
+        }
+        if current == b'/' && next == Some(b'*') {
+            block_depth = 1;
+            out.push(' ');
+            out.push(' ');
+            index += 2;
+            continue;
+        }
+        if current == b'"' {
+            in_string = true;
+            out.push(' ');
+            index += 1;
+            continue;
+        }
+        if current == b'\'' && looks_like_rust_char_literal_start(bytes, index) {
+            in_char = true;
+            out.push(' ');
+            index += 1;
+            continue;
+        }
+
+        out.push(current as char);
+        index += 1;
+    }
+    out
+}
+
+fn looks_like_rust_char_literal_start(bytes: &[u8], index: usize) -> bool {
+    let Some(next) = bytes.get(index + 1).copied() else {
+        return false;
+    };
+    let prev = index
+        .checked_sub(1)
+        .and_then(|prev| bytes.get(prev).copied())
+        .unwrap_or(b' ');
+    let has_byte_literal_prefix = prev == b'b'
+        && index
+            .checked_sub(2)
+            .and_then(|prev| bytes.get(prev).copied())
+            .map_or(true, |byte| !is_rust_identifier_byte(byte));
+    if is_rust_identifier_byte(prev) && !has_byte_literal_prefix {
+        return false;
+    }
+    let close = if next == b'\\' {
+        index + 3
+    } else if next != b'\'' && next != b'\n' {
+        index + 2
+    } else {
+        return false;
+    };
+    bytes.get(close) == Some(&b'\'')
+}
+
+fn find_rust_token(source: &str, token: &str, from: usize) -> Option<usize> {
+    let mut cursor = from;
+    while let Some(relative) = source[cursor..].find(token) {
+        let index = cursor + relative;
+        let before = index
+            .checked_sub(1)
+            .and_then(|prev| source.as_bytes().get(prev).copied());
+        let after = source.as_bytes().get(index + token.len()).copied();
+        if !before.is_some_and(is_rust_identifier_byte)
+            && !after.is_some_and(is_rust_identifier_byte)
+        {
+            return Some(index);
+        }
+        cursor = index + token.len();
+    }
+    None
+}
+
+fn parse_rust_identifier_after(source: &str, from: usize) -> Option<(String, usize)> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+        index += 1;
+    }
+    let first = *bytes.get(index)?;
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    let start = index;
+    index += 1;
+    while bytes
+        .get(index)
+        .is_some_and(|byte| is_rust_identifier_byte(*byte))
+    {
+        index += 1;
+    }
+    Some((source[start..index].to_owned(), index))
+}
+
+fn find_rust_body_start(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    while let Some(byte) = bytes.get(index).copied() {
+        match byte {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' if paren_depth == 0 && bracket_depth == 0 => return Some(index),
+            b';' if paren_depth == 0 && bracket_depth == 0 => return None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn match_rust_brace(source: &str, open: usize) -> Result<usize> {
+    ensure!(
+        source.as_bytes().get(open) == Some(&b'{'),
+        "expected opening brace at byte {open}"
+    );
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[open..].iter().copied().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(anyhow!("unclosed Rust brace at byte {open}"))
+}
+
+fn preceding_rust_attrs_contain_cfg_test(source: &str, item_start: usize) -> bool {
+    let prefix = &source[..item_start];
+    let mut saw_attr = false;
+    for line in prefix.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if saw_attr {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with("#[") {
+            saw_attr = true;
+            if trimmed.contains("cfg(test)") {
+                return true;
+            }
+            continue;
+        }
+        break;
+    }
+    false
+}
+
+fn contains_rust_identifier(source: &str, ident: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(relative) = source[cursor..].find(ident) {
+        let index = cursor + relative;
+        let before = index
+            .checked_sub(1)
+            .and_then(|prev| source.as_bytes().get(prev).copied());
+        let after = source.as_bytes().get(index + ident.len()).copied();
+        if !before.is_some_and(is_rust_identifier_byte)
+            && !after.is_some_and(is_rust_identifier_byte)
+        {
+            return true;
+        }
+        cursor = index + ident.len();
+    }
+    false
+}
+
+fn is_rust_identifier_byte(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric()
 }
 
 fn validate_target_review(claim_id: &str, review: &TargetReview) -> Result<()> {
@@ -1433,6 +1870,120 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_non_test_implementation_binding() {
+        let root = test_root("valid-implementation-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); }\n\
+             fn import_announced_block() { if true { verified_helper(); } }\n\
+             fn replay_state_to_hash() { verified_helper(); }\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+                 fn import_mined_block() {}\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding(
+                "verified_helper",
+                &[
+                    "import_mined_block",
+                    "import_announced_block",
+                    "replay_state_to_hash",
+                ],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("valid implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_missing_implementation_call() {
+        let root = test_root("missing-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains("does not call verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_rejects_test_only_implementation_callee() {
+        let root = test_root("test-only-implementation-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "#[cfg(test)]\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("callee verified_helper is missing from non-test Rust code"));
+    }
+
+    #[test]
+    fn blueprint_rejects_test_only_implementation_caller() {
+        let root = test_root("test-only-implementation-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+                 fn import_mined_block() { verified_helper(); }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("caller import_mined_block is missing from non-test Rust code"));
+    }
+
+    #[test]
     fn claims_accept_named_lean_theorem_evidence() {
         let root = test_root("lean-theorem-claim");
         write_repo_file(
@@ -1771,5 +2322,26 @@ mod tests {
                 }
             ]
         })
+    }
+
+    fn blueprint_fixture_with_binding(callee: &str, callers: &[&str]) -> Value {
+        let mut blueprint = blueprint_fixture("accepted", &[], &["support.dep"]);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        target.insert(
+            "implementation_paths".to_owned(),
+            json!(["evidence/target.txt", "src/native.rs"]),
+        );
+        target.insert(
+            "implementation_bindings".to_owned(),
+            json!([
+                {
+                    "path": "src/native.rs",
+                    "callee": callee,
+                    "required_callers": callers
+                }
+            ]),
+        );
+        blueprint
     }
 }

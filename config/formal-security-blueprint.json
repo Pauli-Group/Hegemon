@@ -3966,6 +3966,17 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_replay_refinement_for_actions",
+          "required_callers": [
+            "import_mined_block",
+            "import_announced_block",
+            "replay_state_to_hash"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
         "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
@@ -3994,6 +4005,11 @@
           "id": "formal-core-block-replay-refinement-gate",
           "description": "The release formal-core wrapper must generate block replay-refinement vectors and run the Rust conformance test over the production helper composition.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-block-replay-production-binding",
+          "description": "The blueprint gate must reject the block replay-refinement claim if mined-block import, announced-block import, or canonical replay stop calling the non-test production replay helper.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
   "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
