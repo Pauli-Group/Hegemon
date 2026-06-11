@@ -1185,6 +1185,27 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_native_tx_leaf_admission",
+          "required_callers": [
+            "verify_native_tx_leaf_artifact_record"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_tx_leaf_artifact_record",
+              "callee_must_precede": [
+                "verify_native_tx_leaf_artifact_bytes",
+                "statement_binding_from_tx_leaf",
+                "decode_native_tx_leaf_artifact_bytes"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/NativeTxLeafAdmission.lean",
         "formal/lean/Hegemon/Consensus/GenerateNativeTxLeafAdmissionVectors.lean",
@@ -1293,6 +1314,15 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_proven_batch_binding",
+          "required_callers": [
+            "validate_proven_batch_binding"
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
         "formal/lean/Hegemon/Consensus/GenerateProvenBatchBindingVectors.lean",
@@ -1344,6 +1374,24 @@
         "consensus/src/proof.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_recursive_block_artifact_admission",
+          "required_callers": [
+            "verify_recursive_block_artifact_against_verified_records"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "verify_recursive_block_artifact_against_verified_records",
+              "callee_must_precede": [
+                "verify_block_recursive_v1",
+                "verify_block_recursive_v2"
+              ]
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean",
@@ -2545,6 +2593,27 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_recursive_artifact_context_admission",
+          "required_callers": [
+            "verify_native_block_artifacts_locked"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_block_artifacts_locked",
+              "callee_must_precede": [
+                "consensus_block_artifact_from_candidate",
+                "consensus_proven_batch_from_candidate",
+                "verify_block_with_backend"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/RecursiveArtifactContextAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean",
@@ -2827,6 +2896,32 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_candidate_artifact_admission",
+          "required_callers": [
+            "validate_candidate_artifact",
+            "validate_candidate_action_payload"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_candidate_artifact",
+          "required_callers": [
+            "validate_and_stage_action"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_candidate_action_payload",
+          "required_callers": [
+            "validate_action_state"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
@@ -3124,6 +3219,17 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_hash_admission",
+          "required_callers": [
+            "decode_block_actions",
+            "evaluate_native_block_action_validation_start"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
@@ -3192,6 +3298,22 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "action_root_transcript_preimage",
+          "required_callers": [
+            "actions_extrinsics_root"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "actions_extrinsics_root",
+          "required_callers": [
+            "preview_pending_roots"
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
@@ -4106,6 +4228,37 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_commitment_admission",
+          "required_callers": [
+            "import_mined_block"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "advance_native_supply_digest",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "verify_native_pow_meta",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "commit_mined_block_atomically"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_block_commitment_admission",
+          "required_callers": [
+            "evaluate_native_block_replay_refinement_with_trace"
+          ],
+          "result_obligation": "must_check_result_fail_closed"
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateBlockCommitmentAdmissionVectors.lean",
@@ -4527,6 +4680,32 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "circuits/superneo-hegemon/src/lib.rs",
+          "callee": "decode_native_tx_leaf_artifact_with_params",
+          "required_callers": [
+            "decode_native_tx_leaf_artifact_bytes"
+          ]
+        },
+        {
+          "path": "circuits/superneo-hegemon/src/lib.rs",
+          "callee": "decode_native_tx_leaf_artifact_with_params",
+          "required_callers": [
+            "verify_native_tx_leaf_artifact_bytes_with_params"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_tx_leaf_artifact_bytes_with_params",
+              "callee_must_precede": [
+                "native_tx_leaf_setup_context_with_params"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
         "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
@@ -4568,6 +4747,42 @@
         "circuits/superneo-hegemon/src/lib.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "circuits/superneo-hegemon/src/lib.rs",
+          "callee": "decode_receipt_root_artifact_with_params",
+          "required_callers": [
+            "verify_native_tx_leaf_receipt_root_artifact_bytes_with_params",
+            "verify_native_tx_leaf_receipt_root_artifact_from_records_with_params"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_tx_leaf_receipt_root_artifact_bytes_with_params",
+              "callee_must_precede": [
+                "validate_native_receipt_root_artifact_structure_with_params"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "verify_native_tx_leaf_receipt_root_artifact_from_records_with_params",
+              "callee_must_precede": [
+                "validate_native_receipt_root_artifact_structure_with_params"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "circuits/superneo-hegemon/src/lib.rs",
+          "callee": "validate_native_receipt_root_artifact_structure_with_params",
+          "required_callers": [
+            "verify_native_tx_leaf_receipt_root_artifact_bytes_with_params",
+            "verify_native_tx_leaf_receipt_root_artifact_from_records_with_params"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",

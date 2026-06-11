@@ -1739,6 +1739,8 @@ fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
 fn call_result_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
     call_result_is_err_branch_return(source, call)
         || call_result_if_let_err_branch_return(source, call)
+        || call_result_match_err_branch_return(source, call)
+        || call_result_bound_is_err_branch_return(source, call)
 }
 
 fn call_result_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -1756,6 +1758,202 @@ fn call_result_if_let_err_branch_return(source: &str, call: &RustCallSite) -> bo
         return false;
     }
     fail_closed_branch_after(source, call.close_paren + 1)
+}
+
+fn call_result_match_err_branch_return(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if prefix != "match" {
+        return false;
+    }
+    let branch_start = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(branch_start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    match_body_has_err_return_arm(source, branch_start + 1, branch_end)
+}
+
+fn call_result_bound_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
+    let Some(result_name) = direct_result_binding_name(source, call) else {
+        return false;
+    };
+    let statement_end = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(statement_end) != Some(&b';') {
+        return false;
+    }
+    let next_statement = skip_ascii_whitespace(source, statement_end + 1);
+    statement_is_result_is_err_return(source, next_statement, &result_name)
+}
+
+fn direct_result_binding_name(source: &str, call: &RustCallSite) -> Option<String> {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    let mut rest = prefix.strip_prefix("let ")?.trim_start();
+    if let Some(after_mut) = rest.strip_prefix("mut ") {
+        rest = after_mut.trim_start();
+    }
+    let bytes = rest.as_bytes();
+    let first = *bytes.first()?;
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut ident_end = 1usize;
+    while bytes
+        .get(ident_end)
+        .is_some_and(|byte| is_rust_identifier_byte(*byte))
+    {
+        ident_end += 1;
+    }
+    let name = &rest[..ident_end];
+    let after_name = rest[ident_end..].trim_start();
+    let after_equals = after_name.strip_prefix('=')?.trim();
+    if !after_equals.is_empty() {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
+fn statement_is_result_is_err_return(
+    source: &str,
+    statement_start: usize,
+    result_name: &str,
+) -> bool {
+    let Some(after_if) = rust_token_at(source, "if", statement_start) else {
+        return false;
+    };
+    let condition_start = skip_ascii_whitespace(source, after_if);
+    let Some(after_name) = rust_identifier_at(source, result_name, condition_start) else {
+        return false;
+    };
+    let method_start = skip_ascii_whitespace(source, after_name);
+    if source.as_bytes().get(method_start) != Some(&b'.') {
+        return false;
+    }
+    let Some(after_method) = rust_token_at(source, "is_err", method_start + 1) else {
+        return false;
+    };
+    let paren_start = skip_ascii_whitespace(source, after_method);
+    if source.as_bytes().get(paren_start) != Some(&b'(') {
+        return false;
+    }
+    let Ok(paren_end) = match_rust_paren(source, paren_start) else {
+        return false;
+    };
+    if !source[paren_start + 1..paren_end].trim().is_empty() {
+        return false;
+    }
+    fail_closed_branch_after(source, paren_end + 1)
+}
+
+fn match_body_has_err_return_arm(source: &str, body_start: usize, body_end: usize) -> bool {
+    let mut cursor = body_start;
+    while cursor < body_end {
+        cursor = skip_match_arm_separator(source, cursor, body_end);
+        if cursor >= body_end {
+            return false;
+        }
+        let Some(arrow) = find_top_level_fat_arrow(source, cursor, body_end) else {
+            return false;
+        };
+        let pattern = source[cursor..arrow].trim();
+        let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
+        let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
+        if match_pattern_is_plain_err(pattern) {
+            return match_arm_body_returns(source, arm_body_start, arm_body_end);
+        }
+        cursor = arm_body_end.saturating_add(1);
+    }
+    false
+}
+
+fn skip_match_arm_separator(source: &str, mut cursor: usize, end: usize) -> usize {
+    while cursor < end {
+        match source.as_bytes().get(cursor).copied() {
+            Some(byte) if byte.is_ascii_whitespace() => cursor += 1,
+            Some(b',') => cursor += 1,
+            _ => break,
+        }
+    }
+    cursor
+}
+
+fn find_top_level_fat_arrow(source: &str, from: usize, end: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index + 1 < end {
+        match bytes[index] {
+            b'=' if bytes.get(index + 1) == Some(&b'>')
+                && paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0 =>
+            {
+                return Some(index);
+            }
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn top_level_match_arm_end(source: &str, from: usize, end: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index < end {
+        match bytes[index] {
+            b',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return index,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    end
+}
+
+fn match_pattern_is_plain_err(pattern: &str) -> bool {
+    if pattern.contains(" if ") {
+        return false;
+    }
+    let pattern = pattern.trim();
+    pattern == "Err" || pattern.starts_with("Err(") || pattern.starts_with("Err {")
+}
+
+fn match_arm_body_returns(source: &str, start: usize, end: usize) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if start >= end {
+        return false;
+    }
+    if source.as_bytes().get(start) == Some(&b'{') {
+        let Ok(block_end) = match_rust_brace(source, start) else {
+            return false;
+        };
+        if block_end > end {
+            return false;
+        }
+        let return_start = skip_ascii_whitespace(source, start + 1);
+        return return_start < block_end && rust_token_at(source, "return", return_start).is_some();
+    }
+    rust_token_at(source, "return", start).is_some()
 }
 
 fn fail_closed_branch_after(source: &str, from: usize) -> bool {
@@ -1791,6 +1989,24 @@ fn next_top_level_rust_brace_before_statement_end(source: &str, from: usize) -> 
 
 fn contains_rust_token(source: &str, token: &str) -> bool {
     find_rust_token(source, token, 0).is_some()
+}
+
+fn rust_token_at(source: &str, token: &str, index: usize) -> Option<usize> {
+    if !source[index..].starts_with(token) {
+        return None;
+    }
+    let before = index
+        .checked_sub(1)
+        .and_then(|prev| source.as_bytes().get(prev).copied());
+    let after = source.as_bytes().get(index + token.len()).copied();
+    if before.is_some_and(is_rust_identifier_byte) || after.is_some_and(is_rust_identifier_byte) {
+        return None;
+    }
+    Some(index + token.len())
+}
+
+fn rust_identifier_at(source: &str, ident: &str, index: usize) -> Option<usize> {
+    rust_token_at(source, ident, index)
 }
 
 #[derive(Debug, Clone)]
@@ -2593,6 +2809,80 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_match_err_fail_closed_implementation_call() {
+        let root = test_root("match-err-fail-closed-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn verify_artifacts() {\n\
+                 match verified_helper() {\n\
+                     Ok(()) => (),\n\
+                     Err(rejection) => return Err(rejection),\n\
+                 }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["verify_artifacts"],
+                "verify_artifacts",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("match Err fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_bound_result_is_err_fail_closed_implementation_call() {
+        let root = test_root("bound-result-is-err-fail-closed-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 let result = verified_helper();\n\
+                 if result.is_err() { return Ok(None); }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("bound result is_err fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
     fn blueprint_rejects_non_returning_fail_closed_branch() {
         let root = test_root("non-returning-fail-closed-branch");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -2603,6 +2893,153 @@ mod tests {
             "fn verified_helper() {}\n\
              fn import_mined_block() { if verified_helper().is_err() { log_error(); } mutate(); }\n\
              fn log_error() {}\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_non_returning_match_err_branch() {
+        let root = test_root("non-returning-match-err-branch");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn verify_artifacts() {\n\
+                 match verified_helper() {\n\
+                     Ok(()) => (),\n\
+                     Err(rejection) => log_rejection(rejection),\n\
+                 }\n\
+                 mutate();\n\
+             }\n\
+             fn log_rejection(_: ()) {}\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["verify_artifacts"],
+                "verify_artifacts",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_bound_result_checked_after_mutation() {
+        let root = test_root("bound-result-checked-after-mutation");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 let result = verified_helper();\n\
+                 mutate();\n\
+                 if result.is_err() { return Ok(None); }\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_spoofed_bound_result_check() {
+        let root = test_root("spoofed-bound-result-check");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 let result = verified_helper();\n\
+                 if other_result.is_err() { return Ok(None); }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_mixed_fail_closed_and_ignored_calls() {
+        let root = test_root("mixed-fail-closed-and-ignored-calls");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 if verified_helper().is_err() { return Ok(None); }\n\
+                 verified_helper();\n\
+                 mutate();\n\
+             }\n\
              fn mutate() {}\n",
         );
         let claims_path = root.join("claims.json");
