@@ -51,6 +51,7 @@ import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.Risc0ReleaseVerifier
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
+import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission

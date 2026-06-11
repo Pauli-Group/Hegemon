@@ -442,6 +442,14 @@ struct NativeBridgeReplayReloadInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeStagedCiphertextReloadInput {
+    key_well_formed: bool,
+    ciphertext_within_limit: bool,
+    ciphertext_hash_matches_key: bool,
+    capacity_available: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMinedWorkAdmissionInput {
     best_height: u64,
     work_height: u64,
@@ -569,6 +577,26 @@ impl NativeBridgeReplayReloadRejection {
             Self::CanonicalReplayDuplicate => "canonical_replay_duplicate",
             Self::MissingConsumedReplayKey => "missing_consumed_replay_key",
             Self::ExtraConsumedReplayKey => "extra_consumed_replay_key",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeStagedCiphertextReloadRejection {
+    MalformedCiphertextKey,
+    OversizedCiphertext,
+    CiphertextHashMismatch,
+    StagedCiphertextCapacityReached,
+}
+
+impl NativeStagedCiphertextReloadRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::MalformedCiphertextKey => "malformed_ciphertext_key",
+            Self::OversizedCiphertext => "oversized_ciphertext",
+            Self::CiphertextHashMismatch => "ciphertext_hash_mismatch",
+            Self::StagedCiphertextCapacityReached => "staged_ciphertext_capacity_reached",
         }
     }
 }
@@ -3929,6 +3957,22 @@ fn native_bridge_replay_reload_error(
     }
 }
 
+fn evaluate_native_staged_ciphertext_reload(
+    input: NativeStagedCiphertextReloadInput,
+) -> Result<(), NativeStagedCiphertextReloadRejection> {
+    if !input.key_well_formed {
+        Err(NativeStagedCiphertextReloadRejection::MalformedCiphertextKey)
+    } else if !input.ciphertext_within_limit {
+        Err(NativeStagedCiphertextReloadRejection::OversizedCiphertext)
+    } else if !input.ciphertext_hash_matches_key {
+        Err(NativeStagedCiphertextReloadRejection::CiphertextHashMismatch)
+    } else if !input.capacity_available {
+        Err(NativeStagedCiphertextReloadRejection::StagedCiphertextCapacityReached)
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_loaded_block_indexes(
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
@@ -4078,7 +4122,18 @@ fn load_staged_sizes_with_limits(
     let mut stale_keys = Vec::new();
     for item in tree.iter() {
         let (key, value) = item?;
-        if key.len() != 48 {
+        if let Err(rejection) =
+            evaluate_native_staged_ciphertext_reload(NativeStagedCiphertextReloadInput {
+                key_well_formed: key.len() == 48,
+                ciphertext_within_limit: true,
+                ciphertext_hash_matches_key: true,
+                capacity_available: true,
+            })
+        {
+            debug_assert_eq!(
+                rejection,
+                NativeStagedCiphertextReloadRejection::MalformedCiphertextKey
+            );
             warn!(
                 key_len = key.len(),
                 "dropping malformed staged ciphertext sidecar key during reload"
@@ -4089,7 +4144,18 @@ fn load_staged_sizes_with_limits(
 
         let mut hash = [0u8; 48];
         hash.copy_from_slice(&key);
-        if value.len() > max_ciphertext_bytes {
+        if let Err(rejection) =
+            evaluate_native_staged_ciphertext_reload(NativeStagedCiphertextReloadInput {
+                key_well_formed: true,
+                ciphertext_within_limit: value.len() <= max_ciphertext_bytes,
+                ciphertext_hash_matches_key: true,
+                capacity_available: true,
+            })
+        {
+            debug_assert_eq!(
+                rejection,
+                NativeStagedCiphertextReloadRejection::OversizedCiphertext
+            );
             warn!(
                 hash = %hex48(&hash),
                 size = value.len(),
@@ -4101,7 +4167,18 @@ fn load_staged_sizes_with_limits(
         }
 
         let observed = ciphertext_hash_bytes(&value);
-        if observed != hash {
+        if let Err(rejection) =
+            evaluate_native_staged_ciphertext_reload(NativeStagedCiphertextReloadInput {
+                key_well_formed: true,
+                ciphertext_within_limit: true,
+                ciphertext_hash_matches_key: observed == hash,
+                capacity_available: true,
+            })
+        {
+            debug_assert_eq!(
+                rejection,
+                NativeStagedCiphertextReloadRejection::CiphertextHashMismatch
+            );
             warn!(
                 key_hash = %hex48(&hash),
                 observed_hash = %hex48(&observed),
@@ -4111,15 +4188,26 @@ fn load_staged_sizes_with_limits(
             continue;
         }
 
-        if evaluate_native_ciphertext_sidecar_capacity_admission(
+        let capacity_available = evaluate_native_ciphertext_sidecar_capacity_admission(
             NativeSidecarCapacityAdmissionInput {
                 staged_count: entries.len(),
                 max_staged_count,
                 replaces_existing: false,
             },
         )
-        .is_err()
+        .is_ok();
+        if let Err(rejection) =
+            evaluate_native_staged_ciphertext_reload(NativeStagedCiphertextReloadInput {
+                key_well_formed: true,
+                ciphertext_within_limit: true,
+                ciphertext_hash_matches_key: true,
+                capacity_available,
+            })
         {
+            debug_assert_eq!(
+                rejection,
+                NativeStagedCiphertextReloadRejection::StagedCiphertextCapacityReached
+            );
             warn!(
                 hash = %hex48(&hash),
                 max = max_staged_count,
@@ -8261,6 +8349,25 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanStagedCiphertextReloadVectorFile {
+        schema_version: u32,
+        staged_ciphertext_reload_cases: Vec<LeanStagedCiphertextReloadCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStagedCiphertextReloadCase {
+        name: String,
+        key_well_formed: bool,
+        ciphertext_within_limit: bool,
+        ciphertext_hash_matches_key: bool,
+        capacity_available: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
@@ -10165,6 +10272,54 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native bridge-replay reload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_staged_ciphertext_reload_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean staged-ciphertext reload vectors");
+        let vectors: LeanStagedCiphertextReloadVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean staged-ciphertext reload vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.staged_ciphertext_reload_cases.is_empty(),
+            "Lean staged-ciphertext reload cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.staged_ciphertext_reload_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_staged_ciphertext_reload_case(case);
+        }
+    }
+
+    fn verify_lean_staged_ciphertext_reload_case(case: &LeanStagedCiphertextReloadCase) {
+        let input = NativeStagedCiphertextReloadInput {
+            key_well_formed: case.key_well_formed,
+            ciphertext_within_limit: case.ciphertext_within_limit,
+            ciphertext_hash_matches_key: case.ciphertext_hash_matches_key,
+            capacity_available: case.capacity_available,
+        };
+        let actual_rejection = evaluate_native_staged_ciphertext_reload(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native staged-ciphertext reload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native staged-ciphertext reload rejection drifted from Lean spec",
             case.name
         );
     }
