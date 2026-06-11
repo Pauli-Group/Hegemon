@@ -1152,18 +1152,18 @@ fn validate_rust_implementation_binding(
         );
         ensure!(
             non_test_callers.any(|function| {
-                rust_call_sites(
+                let call_sites = rust_call_sites(
                     &sanitized[function.body_start..function.body_end],
                     &binding.callee,
-                )
-                .iter()
-                .any(|call| {
-                    call_satisfies_result_obligation(
-                        &sanitized[function.body_start..function.body_end],
-                        call,
-                        result_obligation,
-                    )
-                })
+                );
+                !call_sites.is_empty()
+                    && call_sites.iter().all(|call| {
+                        call_satisfies_result_obligation(
+                            &sanitized[function.body_start..function.body_end],
+                            call,
+                            result_obligation,
+                        )
+                    })
             }),
             "{} implementation binding caller {} in {} does not call {}{} in non-test Rust code",
             claim_id,
@@ -1294,6 +1294,7 @@ fn validate_rust_implementation_order(
 enum ResultObligation {
     None,
     MustPropagateResult,
+    MustCheckResultFailClosed,
 }
 
 fn parse_result_obligation(
@@ -1304,6 +1305,7 @@ fn parse_result_obligation(
     match raw {
         None => Ok(ResultObligation::None),
         Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
+        Some("must_check_result_fail_closed") => Ok(ResultObligation::MustCheckResultFailClosed),
         Some(other) => Err(anyhow!(
             "{} implementation binding for {} has unknown result_obligation {}",
             claim_id,
@@ -1317,6 +1319,7 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
     match obligation {
         ResultObligation::None => "",
         ResultObligation::MustPropagateResult => " with propagated result",
+        ResultObligation::MustCheckResultFailClosed => " with fail-closed result handling",
     }
 }
 
@@ -1702,6 +1705,9 @@ fn call_satisfies_result_obligation(
     match obligation {
         ResultObligation::None => true,
         ResultObligation::MustPropagateResult => call_result_is_propagated(source, call),
+        ResultObligation::MustCheckResultFailClosed => {
+            call_result_is_propagated(source, call) || call_result_is_fail_closed(source, call)
+        }
     }
 }
 
@@ -1728,6 +1734,63 @@ fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
         index += 1;
     }
     false
+}
+
+fn call_result_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
+    call_result_is_err_branch_return(source, call)
+        || call_result_if_let_err_branch_return(source, call)
+}
+
+fn call_result_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
+    let after_call = skip_ascii_whitespace(source, call.close_paren + 1);
+    if !source[after_call..].starts_with(".is_err") {
+        return false;
+    }
+    fail_closed_branch_after(source, after_call)
+}
+
+fn call_result_if_let_err_branch_return(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let prefix = &source[context.current_statement_start()..call.start];
+    if !prefix.contains("if let Err") {
+        return false;
+    }
+    fail_closed_branch_after(source, call.close_paren + 1)
+}
+
+fn fail_closed_branch_after(source: &str, from: usize) -> bool {
+    let Some(branch_start) = next_top_level_rust_brace_before_statement_end(source, from) else {
+        return false;
+    };
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    contains_rust_token(&source[branch_start + 1..branch_end], "return")
+}
+
+fn next_top_level_rust_brace_before_statement_end(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    while let Some(byte) = bytes.get(index).copied() {
+        match byte {
+            b'{' if paren_depth == 0 && bracket_depth == 0 => return Some(index),
+            b';' if paren_depth == 0 && bracket_depth == 0 => return None,
+            b'}' if paren_depth == 0 && bracket_depth == 0 => return None,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn contains_rust_token(source: &str, token: &str) -> bool {
+    find_rust_token(source, token, 0).is_some()
 }
 
 #[derive(Debug, Clone)]
@@ -1794,6 +1857,9 @@ fn rust_statement_context(source: &str, target: usize) -> RustStatementContext {
             b'}' if paren_depth == 0 && bracket_depth == 0 => {
                 block_path.pop();
                 statement_starts.pop();
+                if let Some(statement_start) = statement_starts.last_mut() {
+                    *statement_start = index + 1;
+                }
             }
             b';' if paren_depth == 0 && bracket_depth == 0 => {
                 if let Some(statement_start) = statement_starts.last_mut() {
@@ -2431,6 +2497,132 @@ mod tests {
         assert!(err
             .to_string()
             .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_mixed_checked_and_ignored_fallible_calls() {
+        let root = test_root("mixed-fallible-implementation-calls");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper()?; verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_accepts_is_err_fail_closed_implementation_call() {
+        let root = test_root("is-err-fail-closed-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { if verified_helper().is_err() { return Ok(None); } mutate(); }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("is_err fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_if_let_err_fail_closed_implementation_call() {
+        let root = test_root("if-let-err-fail-closed-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn verify_artifacts() { if let Err(rejection) = verified_helper() { return Err(rejection); } mutate(); }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["verify_artifacts"],
+                "verify_artifacts",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("if-let Err fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_non_returning_fail_closed_branch() {
+        let root = test_root("non-returning-fail-closed-branch");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { if verified_helper().is_err() { log_error(); } mutate(); }\n\
+             fn log_error() {}\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
     }
 
     #[test]

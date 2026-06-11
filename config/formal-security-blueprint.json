@@ -2354,6 +2354,21 @@
           "callee": "evaluate_native_mined_work_admission",
           "required_callers": [
             "import_mined_block"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "evaluate_native_block_commitment_admission",
+                "advance_native_supply_digest",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "verify_native_pow_meta",
+                "commit_mined_block_atomically"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         },
         {
@@ -2873,6 +2888,27 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_candidate_artifact_coupling_admission",
+          "required_callers": [
+            "verify_native_block_artifacts_locked"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_block_artifacts_locked",
+              "callee_must_precede": [
+                "evaluate_native_candidate_artifact_binding_admission",
+                "consensus_tx_and_artifact_from_action",
+                "verify_block_with_backend"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
@@ -2942,7 +2978,8 @@
           "callee": "evaluate_native_candidate_artifact_binding_admission",
           "required_callers": [
             "verify_native_block_artifacts_locked"
-          ]
+          ],
+          "result_obligation": "must_check_result_fail_closed"
         },
         {
           "path": "node/src/native/mod.rs",
