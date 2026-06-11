@@ -36,6 +36,7 @@ import Hegemon.Native.CanonicalStateReload
 import Hegemon.Native.PendingActionReload
 import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Native.BlockCommitmentAdmission
+import Hegemon.Native.BlockReplayRefinement
 import Hegemon.Native.BridgeActionPayloadAdmission
 import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission

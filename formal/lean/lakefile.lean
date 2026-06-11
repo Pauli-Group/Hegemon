@@ -145,6 +145,9 @@ lean_exe gen_block_artifact_binding_admission_vectors where
 lean_exe gen_block_commitment_admission_vectors where
   root := `Hegemon.Native.GenerateBlockCommitmentAdmissionVectors
 
+lean_exe gen_block_replay_refinement_vectors where
+  root := `Hegemon.Native.GenerateBlockReplayRefinementVectors
+
 lean_exe gen_candidate_artifact_admission_vectors where
   root := `Hegemon.Native.GenerateCandidateArtifactAdmissionVectors
 

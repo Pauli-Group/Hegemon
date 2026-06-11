@@ -1289,6 +1289,37 @@ struct NativeBlockCommitmentAdmissionInput {
     supply_digest_matches: bool,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBlockReplayRefinementInput {
+    leaf_start: u64,
+    commitment_count: usize,
+    ciphertext_count: usize,
+    parent_supply: u128,
+    height: u64,
+    fee_total: u64,
+    has_coinbase: bool,
+    claimed_supply: u128,
+    tx_count_matches: bool,
+    state_root_matches: bool,
+    kernel_root_matches: bool,
+    nullifier_root_matches: bool,
+    extrinsics_root_matches: bool,
+    message_root_matches: bool,
+    message_count_matches: bool,
+    header_mmr_root_matches: bool,
+    header_mmr_len_matches: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBlockReplayRefinementSummary {
+    next_leaf_count: u64,
+    imported_nullifier_count: usize,
+    imported_bridge_replay: bool,
+    expected_supply: u128,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBlockCommitmentAdmissionRejection {
     TxCountMismatch,
@@ -1301,6 +1332,51 @@ enum NativeBlockCommitmentAdmissionRejection {
     HeaderMmrRootMismatch,
     HeaderMmrLenMismatch,
     SupplyDigestMismatch,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBlockReplayRefinementRejection {
+    CiphertextCountMismatch,
+    CommitmentIndexOverflow,
+    NullifierZero,
+    DuplicateNullifier,
+    BridgeReplayDuplicate,
+    SupplyDeltaInvalid,
+    TxCountMismatch,
+    StateRootMismatch,
+    KernelRootMismatch,
+    NullifierRootMismatch,
+    ExtrinsicsRootMismatch,
+    MessageRootMismatch,
+    MessageCountMismatch,
+    HeaderMmrRootMismatch,
+    HeaderMmrLenMismatch,
+    SupplyDigestMismatch,
+}
+
+#[cfg(test)]
+impl NativeBlockReplayRefinementRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CiphertextCountMismatch => "ciphertext_count_mismatch",
+            Self::CommitmentIndexOverflow => "commitment_index_overflow",
+            Self::NullifierZero => "nullifier_zero",
+            Self::DuplicateNullifier => "duplicate_nullifier",
+            Self::BridgeReplayDuplicate => "bridge_replay_duplicate",
+            Self::SupplyDeltaInvalid => "supply_delta_invalid",
+            Self::TxCountMismatch => "tx_count_mismatch",
+            Self::StateRootMismatch => "state_root_mismatch",
+            Self::KernelRootMismatch => "kernel_root_mismatch",
+            Self::NullifierRootMismatch => "nullifier_root_mismatch",
+            Self::ExtrinsicsRootMismatch => "extrinsics_root_mismatch",
+            Self::MessageRootMismatch => "message_root_mismatch",
+            Self::MessageCountMismatch => "message_count_mismatch",
+            Self::HeaderMmrRootMismatch => "header_mmr_root_mismatch",
+            Self::HeaderMmrLenMismatch => "header_mmr_len_mismatch",
+            Self::SupplyDigestMismatch => "supply_digest_mismatch",
+        }
+    }
 }
 
 impl NativeBlockCommitmentAdmissionRejection {
@@ -6824,6 +6900,129 @@ fn native_block_commitment_admission_error(
     anyhow!("{context}: {}", rejection.label())
 }
 
+#[cfg(test)]
+fn evaluate_native_block_replay_refinement(
+    input: NativeBlockReplayRefinementInput,
+    nullifiers: &[[u8; 48]],
+    replay_key: Option<[u8; 48]>,
+    nullifier_state: &mut NullifierState,
+    bridge_replay_state: &mut InboundReplayState,
+) -> Result<NativeBlockReplayRefinementSummary, NativeBlockReplayRefinementRejection> {
+    let action_effect = evaluate_native_action_state_effect(
+        input.leaf_start,
+        input.commitment_count,
+        input.ciphertext_count,
+        nullifiers,
+        replay_key,
+        nullifier_state,
+        bridge_replay_state,
+    )
+    .map_err(native_block_replay_refinement_action_rejection)?;
+    let expected_supply = expected_native_supply_from_parts(
+        input.parent_supply,
+        input.height,
+        input.fee_total,
+        input.has_coinbase,
+    )
+    .ok_or(NativeBlockReplayRefinementRejection::SupplyDeltaInvalid)?;
+    evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+        tx_count_matches: input.tx_count_matches,
+        state_root_matches: input.state_root_matches,
+        kernel_root_matches: input.kernel_root_matches,
+        nullifier_root_matches: input.nullifier_root_matches,
+        extrinsics_root_matches: input.extrinsics_root_matches,
+        message_root_matches: input.message_root_matches,
+        message_count_matches: input.message_count_matches,
+        header_mmr_root_matches: input.header_mmr_root_matches,
+        header_mmr_len_matches: input.header_mmr_len_matches,
+        supply_digest_matches: expected_supply == input.claimed_supply,
+    })
+    .map_err(native_block_replay_refinement_commitment_rejection)?;
+
+    Ok(NativeBlockReplayRefinementSummary {
+        next_leaf_count: action_effect.next_leaf_count,
+        imported_nullifier_count: action_effect.imported_nullifier_count,
+        imported_bridge_replay: action_effect.imported_bridge_replay,
+        expected_supply,
+    })
+}
+
+#[cfg(test)]
+fn expected_native_supply_from_parts(
+    parent_supply: u128,
+    height: u64,
+    fee_total: u64,
+    has_coinbase: bool,
+) -> Option<u128> {
+    let delta = if has_coinbase {
+        consensus::reward::block_subsidy(height).checked_add(fee_total)?
+    } else {
+        0
+    };
+    parent_supply.checked_add(u128::from(delta))
+}
+
+#[cfg(test)]
+fn native_block_replay_refinement_action_rejection(
+    rejection: NativeActionStateEffectRejection,
+) -> NativeBlockReplayRefinementRejection {
+    match rejection {
+        NativeActionStateEffectRejection::CiphertextCountMismatch => {
+            NativeBlockReplayRefinementRejection::CiphertextCountMismatch
+        }
+        NativeActionStateEffectRejection::CommitmentIndexOverflow => {
+            NativeBlockReplayRefinementRejection::CommitmentIndexOverflow
+        }
+        NativeActionStateEffectRejection::NullifierZero => {
+            NativeBlockReplayRefinementRejection::NullifierZero
+        }
+        NativeActionStateEffectRejection::DuplicateNullifier => {
+            NativeBlockReplayRefinementRejection::DuplicateNullifier
+        }
+        NativeActionStateEffectRejection::BridgeReplayDuplicate => {
+            NativeBlockReplayRefinementRejection::BridgeReplayDuplicate
+        }
+    }
+}
+
+#[cfg(test)]
+fn native_block_replay_refinement_commitment_rejection(
+    rejection: NativeBlockCommitmentAdmissionRejection,
+) -> NativeBlockReplayRefinementRejection {
+    match rejection {
+        NativeBlockCommitmentAdmissionRejection::TxCountMismatch => {
+            NativeBlockReplayRefinementRejection::TxCountMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::StateRootMismatch => {
+            NativeBlockReplayRefinementRejection::StateRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::KernelRootMismatch => {
+            NativeBlockReplayRefinementRejection::KernelRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::NullifierRootMismatch => {
+            NativeBlockReplayRefinementRejection::NullifierRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::ExtrinsicsRootMismatch => {
+            NativeBlockReplayRefinementRejection::ExtrinsicsRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::MessageRootMismatch => {
+            NativeBlockReplayRefinementRejection::MessageRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::MessageCountMismatch => {
+            NativeBlockReplayRefinementRejection::MessageCountMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch => {
+            NativeBlockReplayRefinementRejection::HeaderMmrRootMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch => {
+            NativeBlockReplayRefinementRejection::HeaderMmrLenMismatch
+        }
+        NativeBlockCommitmentAdmissionRejection::SupplyDigestMismatch => {
+            NativeBlockReplayRefinementRejection::SupplyDigestMismatch
+        }
+    }
+}
+
 fn block_action_hashes_match(actions: &[PendingAction]) -> bool {
     actions
         .iter()
@@ -9238,6 +9437,45 @@ mod tests {
     struct LeanBlockCommitmentAdmissionVectorFile {
         schema_version: u32,
         block_commitment_admission_cases: Vec<LeanBlockCommitmentAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockReplayRefinementVectorFile {
+        schema_version: u32,
+        block_replay_refinement_cases: Vec<LeanBlockReplayRefinementCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockReplayRefinementCase {
+        name: String,
+        leaf_start: u64,
+        commitment_count: usize,
+        ciphertext_count: usize,
+        nullifier_count: usize,
+        nullifier_state: String,
+        bridge_replay_state: String,
+        parent_supply: String,
+        height: u64,
+        fee_total: u64,
+        has_coinbase: bool,
+        claimed_supply: String,
+        tx_count_matches: bool,
+        state_root_matches: bool,
+        kernel_root_matches: bool,
+        nullifier_root_matches: bool,
+        extrinsics_root_matches: bool,
+        message_root_matches: bool,
+        message_count_matches: bool,
+        header_mmr_root_matches: bool,
+        header_mmr_len_matches: bool,
+        expected_next_leaf_count: Option<String>,
+        expected_imported_nullifier_count: Option<String>,
+        expected_imported_bridge_replay: Option<bool>,
+        expected_supply: Option<String>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -12248,6 +12486,117 @@ mod tests {
             "{} native block commitment admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_block_replay_refinement_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean block replay refinement vectors");
+        let vectors: LeanBlockReplayRefinementVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean block replay refinement vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.block_replay_refinement_cases.is_empty(),
+            "Lean block replay refinement cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.block_replay_refinement_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_block_replay_refinement_case(case);
+        }
+    }
+
+    fn verify_lean_block_replay_refinement_case(case: &LeanBlockReplayRefinementCase) {
+        let (spent_nullifiers, nullifiers) = synthetic_action_effect_nullifiers(
+            &case.nullifier_state,
+            case.nullifier_count,
+            &case.name,
+        );
+        let (consumed_replays, replay_key) =
+            synthetic_action_effect_replay(&case.bridge_replay_state, &case.name);
+        let mut nullifier_state = NullifierState::new(spent_nullifiers, BTreeSet::new());
+        let mut bridge_replay_state = InboundReplayState::new(consumed_replays, BTreeSet::new());
+        let input = NativeBlockReplayRefinementInput {
+            leaf_start: case.leaf_start,
+            commitment_count: case.commitment_count,
+            ciphertext_count: case.ciphertext_count,
+            parent_supply: parse_u128(&case.parent_supply),
+            height: case.height,
+            fee_total: case.fee_total,
+            has_coinbase: case.has_coinbase,
+            claimed_supply: parse_u128(&case.claimed_supply),
+            tx_count_matches: case.tx_count_matches,
+            state_root_matches: case.state_root_matches,
+            kernel_root_matches: case.kernel_root_matches,
+            nullifier_root_matches: case.nullifier_root_matches,
+            extrinsics_root_matches: case.extrinsics_root_matches,
+            message_root_matches: case.message_root_matches,
+            message_count_matches: case.message_count_matches,
+            header_mmr_root_matches: case.header_mmr_root_matches,
+            header_mmr_len_matches: case.header_mmr_len_matches,
+        };
+
+        let actual = evaluate_native_block_replay_refinement(
+            input,
+            &nullifiers,
+            replay_key,
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        );
+        match actual {
+            Ok(summary) => {
+                assert!(
+                    case.expected_valid,
+                    "{} block replay refinement unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.next_leaf_count.to_string()),
+                    case.expected_next_leaf_count,
+                    "{} replay next leaf count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.imported_nullifier_count.to_string()),
+                    case.expected_imported_nullifier_count,
+                    "{} replay imported nullifier count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.imported_bridge_replay),
+                    case.expected_imported_bridge_replay,
+                    "{} replay imported bridge flag drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.expected_supply.to_string()),
+                    case.expected_supply,
+                    "{} replay expected supply drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} block replay refinement unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} replay rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
     }
 
     #[test]

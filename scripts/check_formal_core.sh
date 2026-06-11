@@ -72,6 +72,7 @@ LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS="$(mktemp)"
 LEAN_TRANSFER_STATE_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS="$(mktemp)"
+LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS="$(mktemp)"
 LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS="$(mktemp)"
 LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS="$(mktemp)"
 LEAN_CODEC_ADMISSION_VECTORS="$(mktemp)"
@@ -145,6 +146,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_transfer_state_admission_vectors > "$LEAN_TRANSFER_STATE_ADMISSION_VECTORS"
   lake exe gen_block_artifact_binding_admission_vectors > "$LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS"
   lake exe gen_block_commitment_admission_vectors > "$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS"
+  lake exe gen_block_replay_refinement_vectors > "$LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS"
   lake exe gen_candidate_artifact_admission_vectors > "$LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS"
   lake exe gen_candidate_artifact_coupling_admission_vectors > "$LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS"
   lake exe gen_codec_admission_vectors > "$LEAN_CODEC_ADMISSION_VECTORS"
@@ -275,6 +277,8 @@ HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS="$LEAN_BLOCK_ARTIFACT_BIND
   cargo test -p hegemon-node lean_generated_block_artifact_binding_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS="$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_commitment_admission_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS="$LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS" \
+  cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS="$LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_candidate_artifact_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS="$LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS" \

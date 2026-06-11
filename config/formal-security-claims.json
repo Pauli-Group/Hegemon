@@ -3079,6 +3079,45 @@
       "residual_risks": []
     },
     {
+      "id": "native.block-replay-refinement",
+      "component": "native block replay/accounting refinement boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean block replay-refinement kernel composes native action-state effect planning, checked native supply advancement, and block commitment admission; generated Lean vectors are checked against a Rust conformance adapter over production helpers so accepted replay summaries cannot carry counterfeit state-root or supply claims under the modeled predicates.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.BlockReplayRefinement.accepted_claims_expected_supply",
+        "Hegemon.Native.BlockReplayRefinement.accepted_forbids_counterfeit_state_root",
+        "Hegemon.Native.BlockReplayRefinement.accepted_has_action_effect",
+        "Hegemon.Native.BlockReplayRefinement.accepted_implies_commitment_preconditions",
+        "Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions",
+        "Hegemon.Native.BlockReplayRefinement.counterfeit_supply_replay_rejects",
+        "Hegemon.Native.BlockReplayRefinement.duplicate_nullifier_replay_rejects",
+        "Hegemon.Native.BlockReplayRefinement.state_root_precedes_supply_digest",
+        "Hegemon.Native.BlockReplayRefinement.supply_overflow_replay_rejects",
+        "Hegemon.Native.BlockReplayRefinement.valid_replay_accepts"
+      ],
+      "assumptions": [
+        "The Lean model composes already-modeled native predicates: action-state effect planning, native supply advancement from height/fee/coinbase presence, and block commitment admission. It does not prove cryptographic hash binding or derive those predicates from raw encoded actions.",
+        "Generated Lean conformance vectors cover valid transfer, bridge replay, and coinbase replay summaries; action-effect rejection; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; and state-root-before-supply-digest rejection precedence.",
+        "The theorem covers a replay/accounting refinement boundary over production-derived summaries. It does not prove SCALE decoder correctness, storage atomicity, full multi-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "formal.native-tx-leaf-artifact-wire",
       "component": "native tx-leaf artifact wire grammar",
       "claim_class": "lean_theorem",

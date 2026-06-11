@@ -3813,6 +3813,62 @@
       "scope_boundary": "This node proves and vector-checks the native block derived commitment-admission table only. It does not prove commitment-tree hash security, BLAKE3 bridge message-root security or implementation equivalence, header-MMR hash binding, PoW threshold validity, full action payload validation, tx proof soundness, supply economics, or complete native-node equivalence."
     },
     {
+      "id": "native.block-replay-refinement",
+      "claim_id": "native.block-replay-refinement",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean block replay-refinement transition, native replay/accounting acceptance implies the action-state effect table accepted, checked native supply advancement produced the claimed supply digest, and every block commitment-admission precondition holds. In particular, an accepted replay summary cannot carry a counterfeit state-root predicate or claimed supply under the modeled production-derived predicates.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over action-effect planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against a Rust conformance adapter in `node/src/native/mod.rs`, which composes the same action-effect and block-commitment helpers used by native replay/import paths and mirrors checked native supply advancement over height, fee total, and coinbase presence.",
+      "depends_on": [
+        "native.action-state-effect-planning",
+        "native.block-commitment-admission",
+        "consensus.supply-digest-accounting",
+        "native.coinbase-accounting-admission",
+        "native.coinbase-action-payload-admission",
+        "native.action-root-transcript-binding",
+        "bridge.message-root-replay",
+        "bridge.header-mmr-transcript-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-11",
+        "notes": "Accepted as a compositional Lean refinement boundary over existing production-derived predicates. It narrows the gap toward end-to-end no-counterfeiting but is not a complete native-node equivalence proof."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-replay-refinement-theorem",
+          "description": "Removing or weakening the block replay-refinement theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-block-replay-refinement-conformance",
+          "description": "Changing the Rust composite replay/accounting helper away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_replay_refinement_vectors_match_production --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-block-replay-refinement-gate",
+          "description": "The release formal-core wrapper must generate block replay-refinement vectors and run the Rust conformance test over the production helper composition.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks a composed replay/accounting refinement boundary over modeled predicates. It does not prove SCALE decoder correctness, storage atomicity or durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full multi-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+    },
+    {
       "id": "bridge.message-root-replay",
       "claim_id": "bridge.message-root-replay",
       "kind": "target_claim",
