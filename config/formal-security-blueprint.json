@@ -7081,6 +7081,86 @@
       "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries, and the blueprint/regression gate requires canonical reorg repair to finish semantic rebuild planning before its atomic sled commit, requires that commit to include canonical block records before in-memory publication, and requires startup canonical-index repair to plan before its atomic sled repair commit. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, sled transaction implementation correctness, filesystem/fsync durability, full action payload validity, tx proof soundness, or complete native-node equivalence."
     },
     {
+      "id": "native.action-plan-application-admission",
+      "claim_id": "native.action-plan-application-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native action-plan application predicate, acceptance means the action commitment-count list and planned-start list have the same length, every planned start equals the current commitment leaf cursor before that action is applied, and cumulative commitment-count advancement stays within u64.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionPlanApplicationAdmission.accepts_iff_plan_application_preconditions` pins the executable predicate, while the valid, empty, missing/extra planned-start, first/later mismatch, overflow, precedence, and zero-commitment-at-max-leaf theorems pin representative release-relevant cases. `gen_action_plan_application_admission_vectors` emits Lean-derived examples checked against `evaluate_native_action_plan_application_admission`. Production planning and application now propagate this helper, or its wrapper, in materialized action planning, root preview, in-memory action application, and canonical-index rebuild before planned starts are zipped with actions, commitments are appended, roots are derived, or canonical index rows are generated.",
+      "depends_on": [
+        "native.action-stream-effect-planning",
+        "native.action-state-effect-planning",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionPlanApplicationAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_plan_application_admission",
+          "required_callers": [
+            "plan_materialized_action_effects",
+            "plan_canonical_index_rebuild"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "admit_native_action_plan_application",
+          "required_callers": [
+            "apply_planned_actions_to_memory",
+            "preview_pending_roots"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionPlanApplicationAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as a narrow Lean/vector/release-regression implementation-equivalence slice for applying action-stream planned starts. Scope excludes row-value equivalence, raw action wire projection, cryptographic binding, and complete native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-plan-application-theorem",
+          "description": "Removing or weakening the action-plan application theorem facts or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-plan-application-conformance",
+          "description": "Changing the production action-plan application helper away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-action-plan-application-length-regression",
+          "description": "Native in-memory action application must reject a missing planned action entry before appending commitments.",
+          "gate": "cargo test -p hegemon-node apply_planned_actions_rejects_plan_length_mismatch --lib --no-default-features"
+        },
+        {
+          "id": "native-action-plan-application-start-regression",
+          "description": "Native in-memory action application must reject a planned commitment start that differs from the current commitment leaf cursor before appending commitments.",
+          "gate": "cargo test -p hegemon-node apply_planned_actions_rejects_planned_start_mismatch --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-action-plan-application-binding",
+          "description": "The blueprint gate must reject the slice if production preview, memory application, materialized planning, or canonical-index rebuild stop propagating the action-plan application gate.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks planned-start application over already-decoded action commitment counts and planned starts. It hardens release behavior by replacing debug-only planned-start assertions with propagated errors. It does not prove SCALE decode equivalence, PendingAction field projection, ciphertext materialization row values, tx-leaf proof/artifact binding, commitment-tree hash security, sled transaction correctness, filesystem durability, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",
@@ -7089,6 +7169,7 @@
       "depends_on": [
         "native.action-state-effect-planning",
         "native.action-stream-effect-planning",
+        "native.action-plan-application-admission",
         "native.block-commitment-admission",
         "consensus.supply-digest-accounting",
         "native.coinbase-accounting-admission",

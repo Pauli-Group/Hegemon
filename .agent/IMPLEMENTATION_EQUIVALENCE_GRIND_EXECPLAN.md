@@ -14,7 +14,11 @@ Hegemon's Lean claims should describe the same objects that the native node actu
 - [x] (2026-06-12) Re-ran the local formal-core gate and native node tests after the action-request projection slice.
 - [x] (2026-06-12) Implemented the native atomic-commit manifest admission slice over mined-block, canonical-reorg, canonical-index-repair, and noncanonical block-record commit paths.
 - [x] (2026-06-12) Re-ran the local native-node suite and full formal-core gate after the atomic-manifest slice.
-- [ ] Commit, push, deploy to `hegemon-dev`, and smoke-test mining/transactions.
+- [x] (2026-06-12) Deployed the atomic-manifest/storage/action-projection branch to `hegemon-dev`; smoke tests passed, mining advanced from block 6314 to 6317, and wallet-send transaction validation passed.
+- [x] (2026-06-12) Audited the next implementation-equivalence gaps with agents: raw `PendingAction` wire-to-replay projection and native transfer action to tx-leaf artifact binding are the highest-value remaining targets.
+- [x] (2026-06-12) Implemented the native action-plan application admission slice so planned starts must line up with the current commitment leaf cursor in release builds before preview, memory application, materialized planning, or canonical-index rebuild.
+- [x] (2026-06-12) Re-ran the full local formal-core gate, native node suite, formatting check, diff check, and release build after the action-plan application slice.
+- [ ] Commit, push, deploy to `hegemon-dev`, and smoke-test mining/transactions for the expanded branch.
 
 ## Surprises & Discoveries
 
@@ -22,6 +26,10 @@ Hegemon's Lean claims should describe the same objects that the native node actu
   Evidence: `wallet/src/node_rpc.rs` defines `SubmitActionRequest` with those fields and builds requests from `ActionEnvelope`.
 - Observation: The native node previously decoded only the native projection fields in `SubmitActionRpcRequest`, so serde ignored any extra JSON fields by default.
   Evidence: `node/src/native/mod.rs` had no `serde(deny_unknown_fields)` on `SubmitActionRpcRequest`.
+- Observation: Raw `PendingAction` bytes still need a field-level wire-to-replay projection table.
+  Evidence: Agent audit traced `PendingAction` through `NativeBlockMeta.action_bytes`, `decode_block_actions`, `pending_action_hash`, sidecar materialization, replay refinement, and row planning; current proofs cover exact decode and replay summaries but not every decoded field's use in row values.
+- Observation: Native transfer action to tx-leaf artifact binding needs a broader mutation table.
+  Evidence: Agent audit found existing coverage for nullifier/commitment/ciphertext/version/fee/payload-hash agreement but missing formal/vector coverage for count agreement, receipt statement hash, public-input digest, proof/backend digest, and balance-tag projection.
 
 ## Decision Log
 
@@ -31,10 +39,13 @@ Hegemon's Lean claims should describe the same objects that the native node actu
 - Decision: Extend the branch from RPC projection into atomic commit manifests before shipping.
   Rationale: The projection boundary removed silent field dropping, and the next highest-value implementation-equivalence gap was whether storage commit helpers declared the row families they mutate before sled transactions.
   Date/Author: 2026-06-12 / Codex.
+- Decision: Add action-plan application admission before the larger raw-action projection table.
+  Rationale: The existing action-stream proof emitted planned starts, but production application still relied on debug assertions for leaf-cursor drift. The new slice is narrow, release-relevant, and directly hardens root/index derivation while leaving deeper field-level projection work explicit.
+  Date/Author: 2026-06-12 / Codex.
 
 ## Outcomes & Retrospective
 
-The action-request projection milestone added a theorem-backed admission table, generated vectors, production helper wiring, and a regression that accepts empty wallet envelope compatibility fields while rejecting unknown or non-empty unimplemented envelope fields before pending-action publication. The atomic-manifest milestone added theorem-backed manifest counts and production gates before noncanonical persistence and mined/reorg/repair sled transactions. Local `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features`, and `git diff --check` pass after both slices; `hegemon-dev` deployment and smoke outcomes are still pending.
+The action-request projection milestone added a theorem-backed admission table, generated vectors, production helper wiring, and a regression that accepts empty wallet envelope compatibility fields while rejecting unknown or non-empty unimplemented envelope fields before pending-action publication. The atomic-manifest milestone added theorem-backed manifest counts and production gates before noncanonical persistence and mined/reorg/repair sled transactions. The first `hegemon-dev` deployment of those slices passed smoke, mining, and wallet-send validation. The action-plan application milestone adds theorem-backed planned-start length/cursor/overflow admission and release regressions for memory application drift. Local validation passed `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features`, `cargo fmt --check`, `git diff --check`, and `cargo build -p hegemon-node --bin hegemon-node --no-default-features --release`. The deeper remaining work is now explicit: raw `PendingAction` field-level wire-to-replay projection and native transfer action to tx-leaf artifact binding.
 
 ## Context and Orientation
 

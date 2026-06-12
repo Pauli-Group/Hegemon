@@ -1265,6 +1265,29 @@ struct NativeActionStreamEffect {
     planned_starts: Vec<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeActionPlanApplicationSummary {
+    next_leaf_count: u64,
+    applied_action_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionPlanApplicationAdmissionRejection {
+    PlanLengthMismatch,
+    PlannedStartMismatch,
+    CommitmentIndexOverflow,
+}
+
+impl NativeActionPlanApplicationAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PlanLengthMismatch => "plan_length_mismatch",
+            Self::PlannedStartMismatch => "planned_start_mismatch",
+            Self::CommitmentIndexOverflow => "commitment_index_overflow",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeActionStateEffectRejection {
     CiphertextCountMismatch,
@@ -6789,6 +6812,72 @@ fn evaluate_native_action_stream_effect<'a>(
     })
 }
 
+fn evaluate_native_action_plan_application_admission(
+    leaf_start: u64,
+    action_commitment_counts: &[usize],
+    planned_starts: &[u64],
+) -> Result<NativeActionPlanApplicationSummary, NativeActionPlanApplicationAdmissionRejection> {
+    if action_commitment_counts.len() != planned_starts.len() {
+        return Err(NativeActionPlanApplicationAdmissionRejection::PlanLengthMismatch);
+    }
+
+    let mut next_leaf_count = leaf_start;
+    for (commitment_count, planned_start) in action_commitment_counts
+        .iter()
+        .copied()
+        .zip(planned_starts.iter().copied())
+    {
+        if planned_start != next_leaf_count {
+            return Err(NativeActionPlanApplicationAdmissionRejection::PlannedStartMismatch);
+        }
+        let commitment_count = u64::try_from(commitment_count)
+            .map_err(|_| NativeActionPlanApplicationAdmissionRejection::CommitmentIndexOverflow)?;
+        next_leaf_count = next_leaf_count
+            .checked_add(commitment_count)
+            .ok_or(NativeActionPlanApplicationAdmissionRejection::CommitmentIndexOverflow)?;
+    }
+
+    Ok(NativeActionPlanApplicationSummary {
+        next_leaf_count,
+        applied_action_count: action_commitment_counts.len(),
+    })
+}
+
+fn native_action_plan_application_admission_error(
+    context: &'static str,
+    rejection: NativeActionPlanApplicationAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
+fn action_commitment_counts(actions: &[PendingAction]) -> Vec<usize> {
+    actions
+        .iter()
+        .map(|action| action.commitments.len())
+        .collect()
+}
+
+fn planned_action_starts(planned: &[NativePlannedActionEffect]) -> Vec<u64> {
+    planned
+        .iter()
+        .map(|effect| effect.commitment_start)
+        .collect()
+}
+
+fn admit_native_action_plan_application(
+    context: &'static str,
+    leaf_start: u64,
+    actions: &[PendingAction],
+    planned: &[NativePlannedActionEffect],
+) -> Result<NativeActionPlanApplicationSummary> {
+    evaluate_native_action_plan_application_admission(
+        leaf_start,
+        &action_commitment_counts(actions),
+        &planned_action_starts(planned),
+    )
+    .map_err(|rejection| native_action_plan_application_admission_error(context, rejection))
+}
+
 fn mempool_transfer_nullifier_admission_state(
     state: &NativeState,
     action: &PendingAction,
@@ -9442,6 +9531,17 @@ fn plan_materialized_action_effects(
         &mut bridge_replay_state,
     )
     .map_err(native_action_state_effect_error)?;
+    evaluate_native_action_plan_application_admission(
+        state.commitment_tree.leaf_count(),
+        &action_commitment_counts(actions),
+        &stream.planned_starts,
+    )
+    .map_err(|rejection| {
+        native_action_plan_application_admission_error(
+            "native materialized action plan construction",
+            rejection,
+        )
+    })?;
 
     Ok(stream
         .planned_starts
@@ -9469,28 +9569,36 @@ fn apply_planned_actions_to_memory(
     actions: &[PendingAction],
     planned: &[NativePlannedActionEffect],
 ) -> Result<()> {
-    if actions.len() != planned.len() {
-        return Err(anyhow!(
-            "pending action memory plan length mismatch: actions={} planned={}",
-            actions.len(),
-            planned.len()
-        ));
-    }
+    let mut leaf_cursor = state.commitment_tree.leaf_count();
+    admit_native_action_plan_application(
+        "native memory action plan application",
+        leaf_cursor,
+        actions,
+        planned,
+    )?;
     for (action, effect) in actions.iter().zip(planned.iter()) {
         for (offset, commitment) in action.commitments.iter().enumerate() {
+            let offset = u64::try_from(offset)
+                .map_err(|_| anyhow!("native memory commitment offset overflow"))?;
             let expected_index = effect
                 .commitment_start
-                .checked_add(offset as u64)
-                .expect("planned commitment index arithmetic must not overflow");
-            debug_assert_eq!(
-                expected_index,
-                state.commitment_tree.leaf_count(),
-                "planned commitment index drifted during memory replay"
-            );
+                .checked_add(offset)
+                .ok_or_else(|| anyhow!("native memory commitment index overflow"))?;
+            if expected_index != leaf_cursor || expected_index != state.commitment_tree.leaf_count()
+            {
+                return Err(anyhow!(
+                    "native memory action plan drift: expected leaf {} observed {}",
+                    expected_index,
+                    state.commitment_tree.leaf_count()
+                ));
+            }
             state
                 .commitment_tree
                 .append(*commitment)
                 .map_err(|err| anyhow!("append native commitment failed: {err}"))?;
+            leaf_cursor = leaf_cursor
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native memory commitment leaf overflow"))?;
         }
         for nullifier in &action.nullifiers {
             state.nullifiers.insert(*nullifier);
@@ -9540,6 +9648,21 @@ fn plan_canonical_index_rebuild(
         &mut bridge_replay_state,
     )
     .map_err(native_action_state_effect_error)?;
+    let rebuild_commitment_counts = planned_actions
+        .iter()
+        .map(|(action, _, _)| action.commitments.len())
+        .collect::<Vec<_>>();
+    evaluate_native_action_plan_application_admission(
+        0,
+        &rebuild_commitment_counts,
+        &stream.planned_starts,
+    )
+    .map_err(|rejection| {
+        native_action_plan_application_admission_error(
+            "native canonical index rebuild action plan",
+            rejection,
+        )
+    })?;
 
     let mut plan = NativeCanonicalIndexPlan {
         commitment_entries: Vec::new(),
@@ -10356,6 +10479,13 @@ fn preview_pending_roots(
     }
 
     let planned = plan_materialized_action_effects(da_ciphertext_tree, state, actions)?;
+    let mut leaf_cursor = state.commitment_tree.leaf_count();
+    admit_native_action_plan_application(
+        "native preview action plan application",
+        leaf_cursor,
+        actions,
+        &planned,
+    )?;
     let mut tree = state.commitment_tree.clone();
     let mut nullifiers = state.nullifiers.clone();
     for (action, effect) in actions.iter().zip(planned.iter()) {
@@ -10366,13 +10496,18 @@ fn preview_pending_roots(
                 .commitment_start
                 .checked_add(offset)
                 .ok_or_else(|| anyhow!("preview commitment index overflow"))?;
-            debug_assert_eq!(
-                expected_index,
-                tree.leaf_count(),
-                "planned commitment index drifted during root preview"
-            );
+            if expected_index != leaf_cursor || expected_index != tree.leaf_count() {
+                return Err(anyhow!(
+                    "native preview action plan drift: expected leaf {} observed {}",
+                    expected_index,
+                    tree.leaf_count()
+                ));
+            }
             tree.append(*commitment)
                 .map_err(|err| anyhow!("preview commitment append failed: {err}"))?;
+            leaf_cursor = leaf_cursor
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("preview commitment leaf overflow"))?;
         }
         for nullifier in &action.nullifiers {
             nullifiers.insert(*nullifier);
@@ -12113,6 +12248,26 @@ mod tests {
         ciphertext_count: usize,
         nullifiers: Vec<u64>,
         bridge_replay_key: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionPlanApplicationAdmissionVectorFile {
+        schema_version: u32,
+        action_plan_application_admission_cases: Vec<LeanActionPlanApplicationAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionPlanApplicationAdmissionCase {
+        name: String,
+        leaf_start: u64,
+        action_commitment_counts: Vec<usize>,
+        planned_starts: Vec<u64>,
+        expected_next_leaf_count: Option<u64>,
+        expected_applied_action_count: Option<usize>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17100,6 +17255,77 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_action_plan_application_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action plan application admission vectors");
+        let vectors: LeanActionPlanApplicationAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean action plan application admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_plan_application_admission_cases.is_empty(),
+            "Lean action plan application admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_plan_application_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_plan_application_admission_case(case);
+        }
+    }
+
+    fn verify_lean_action_plan_application_admission_case(
+        case: &LeanActionPlanApplicationAdmissionCase,
+    ) {
+        let actual = evaluate_native_action_plan_application_admission(
+            case.leaf_start,
+            &case.action_commitment_counts,
+            &case.planned_starts,
+        );
+        match actual {
+            Ok(summary) => {
+                assert!(
+                    case.expected_valid,
+                    "{} action plan application unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.next_leaf_count),
+                    case.expected_next_leaf_count,
+                    "{} plan application next leaf count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.applied_action_count),
+                    case.expected_applied_action_count,
+                    "{} plan application action count drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} action plan application unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} plan application rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn lean_generated_block_action_validation_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS") else {
             eprintln!(
@@ -20312,6 +20538,45 @@ mod tests {
         assert!(!state
             .staged_ciphertexts
             .contains_key(&hex48(&action.ciphertext_hashes[0])));
+    }
+
+    #[test]
+    fn apply_planned_actions_rejects_plan_length_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [63u8; 48], [64u8; 48], 0);
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+
+        let err = apply_planned_actions_to_memory(&mut state, &[action], &[])
+            .expect_err("missing plan entry must reject");
+
+        assert!(err.to_string().contains("plan_length_mismatch"));
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+    }
+
+    #[test]
+    fn apply_planned_actions_rejects_planned_start_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [65u8; 48], [66u8; 48], 0);
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: before_leaf_count.saturating_add(1),
+            ciphertexts: vec![test_transfer_ciphertext_bytes()],
+            replay_key: None,
+        }];
+
+        let err = apply_planned_actions_to_memory(&mut state, &[action], &planned)
+            .expect_err("wrong planned start must reject");
+
+        assert!(err.to_string().contains("planned_start_mismatch"));
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
     }
 
     #[test]

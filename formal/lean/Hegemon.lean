@@ -31,6 +31,7 @@ import Hegemon.Native.ActionRequestProjectionAdmission
 import Hegemon.Native.ActionRootTranscript
 import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionStreamEffect
+import Hegemon.Native.ActionPlanApplicationAdmission
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.AnnouncedBlockAdmission
 import Hegemon.Native.BlockActionValidation

@@ -2776,6 +2776,54 @@
       "residual_risks": []
     },
     {
+      "id": "native.action-plan-application-admission",
+      "component": "native action plan application",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean action-plan application kernel proves the executable predicate that accepted native action-effect plans have exactly one planned commitment start per action, each planned start equals the current commitment leaf cursor, and cumulative commitment-count advancement uses checked u64 arithmetic. Generated Lean vectors are checked against the production Rust helper, and native preview/memory/rebuild planning now propagates this gate before roots, in-memory state, or canonical index rows are derived.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.ActionPlanApplicationAdmission.accepts_iff_plan_application_preconditions",
+        "Hegemon.Native.ActionPlanApplicationAdmission.valid_two_action_plan_accepts",
+        "Hegemon.Native.ActionPlanApplicationAdmission.empty_plan_accepts",
+        "Hegemon.Native.ActionPlanApplicationAdmission.missing_planned_start_rejects",
+        "Hegemon.Native.ActionPlanApplicationAdmission.extra_planned_start_rejects",
+        "Hegemon.Native.ActionPlanApplicationAdmission.first_planned_start_mismatch_rejects",
+        "Hegemon.Native.ActionPlanApplicationAdmission.second_planned_start_mismatch_rejects",
+        "Hegemon.Native.ActionPlanApplicationAdmission.commitment_overflow_rejects",
+        "Hegemon.Native.ActionPlanApplicationAdmission.planned_start_precedes_overflow",
+        "Hegemon.Native.ActionPlanApplicationAdmission.zero_commitment_at_max_leaf_accepts"
+      ],
+      "assumptions": [
+        "The Lean model covers decoded action commitment counts and planned commitment starts. It does not prove SCALE decoding, commitment hash security, ciphertext byte materialization, row-value correctness, nullifier derivation, tx proof soundness, or sled transaction correctness.",
+        "Generated Lean conformance vectors cover valid two-action and empty plans, missing and extra planned-start entries, first and later planned-start mismatch, u64 commitment-index overflow, rejection precedence before overflow, and zero-commitment acceptance at max leaf count.",
+        "The production wiring propagates the application gate in materialized action planning, root preview, in-memory action application, and canonical-index rebuild planning before those paths zip starts with actions, append commitments, derive roots, or derive canonical index rows."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionPlanApplicationAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_plan_application_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-action-wire-replay-projection-missing",
+          "description": "This is an implementation-equivalence sub-slice. Field-level PendingAction wire-to-replay projection and native transfer action to tx-leaf artifact binding remain separate work items.",
+          "status": "open",
+          "tracking": ".agent/IMPLEMENTATION_EQUIVALENCE_GRIND_EXECPLAN.md"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
