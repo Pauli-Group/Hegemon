@@ -10325,7 +10325,7 @@ fn decode_base64(raw: &str) -> Result<Vec<u8>> {
         .context("decode base64")
 }
 
-fn decode_scale_exact<T: Decode>(bytes: &[u8], label: &str) -> Result<T> {
+fn decode_scale_exact<T: Decode + Encode>(bytes: &[u8], label: &str) -> Result<T> {
     let mut cursor = bytes;
     let value = T::decode(&mut cursor).map_err(|err| anyhow!("decode {label} failed: {err:?}"))?;
     if !cursor.is_empty() {
@@ -10334,10 +10334,21 @@ fn decode_scale_exact<T: Decode>(bytes: &[u8], label: &str) -> Result<T> {
             cursor.len()
         ));
     }
+    let canonical = value.encode();
+    if canonical.as_slice() != bytes {
+        return Err(anyhow!(
+            "{label} is not canonical SCALE encoding: input_len={}, canonical_len={}",
+            bytes.len(),
+            canonical.len()
+        ));
+    }
     Ok(value)
 }
 
-fn bincode_deserialize_exact<T: DeserializeOwned>(bytes: &[u8], label: &str) -> Result<T> {
+fn bincode_deserialize_exact<T: DeserializeOwned + Serialize>(
+    bytes: &[u8],
+    label: &str,
+) -> Result<T> {
     let mut cursor = Cursor::new(bytes);
     let value: T = bincode::deserialize_from(&mut cursor)
         .map_err(|err| anyhow!("decode {label} failed: {err}"))?;
@@ -10345,6 +10356,15 @@ fn bincode_deserialize_exact<T: DeserializeOwned>(bytes: &[u8], label: &str) -> 
         return Err(anyhow!(
             "{label} has {} trailing bytes after bincode decode",
             bytes.len().saturating_sub(cursor.position() as usize)
+        ));
+    }
+    let canonical =
+        bincode::serialize(&value).map_err(|err| anyhow!("re-encode {label} failed: {err}"))?;
+    if canonical.as_slice() != bytes {
+        return Err(anyhow!(
+            "{label} is not canonical bincode encoding: input_len={}, canonical_len={}",
+            bytes.len(),
+            canonical.len()
         ));
     }
     Ok(value)
@@ -10629,6 +10649,48 @@ async fn shutdown_signal(node: Arc<NativeNode>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, Clone, Copy)]
+    struct NormalizedScaleByte;
+
+    impl Encode for NormalizedScaleByte {
+        fn size_hint(&self) -> usize {
+            1
+        }
+
+        fn encode_to<T: codec::Output + ?Sized>(&self, dest: &mut T) {
+            dest.push_byte(0);
+        }
+    }
+
+    impl Decode for NormalizedScaleByte {
+        fn decode<I: codec::Input>(input: &mut I) -> std::result::Result<Self, codec::Error> {
+            let _ = input.read_byte()?;
+            Ok(Self)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct NormalizedBincodeByte;
+
+    impl Serialize for NormalizedBincodeByte {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_u8(0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for NormalizedBincodeByte {
+        fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let _ = u8::deserialize(deserializer)?;
+            Ok(Self)
+        }
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -11022,6 +11084,7 @@ mod tests {
         fixture: String,
         parser_accepts: bool,
         consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -15129,7 +15192,7 @@ mod tests {
 
     fn verify_lean_exact_decode_case(case: &LeanExactDecodeCase) {
         assert_eq!(
-            case.parser_accepts && case.consumed_all_bytes,
+            case.parser_accepts && case.consumed_all_bytes && case.canonical_reencode_matches,
             case.expected_valid,
             "{} Lean exact-decode predicate fields disagree with expected validity",
             case.name
@@ -15146,6 +15209,10 @@ mod tests {
                 encoded.push(0xaa);
                 decode_scale_exact::<PendingAction>(&encoded, "Lean pending action").map(|_| ())
             }
+            ("scale_normalizing_fixture", "noncanonical_byte") => {
+                decode_scale_exact::<NormalizedScaleByte>(&[1], "Lean normalized SCALE byte")
+                    .map(|_| ())
+            }
             ("bincode_native_meta", "valid_genesis_meta") => {
                 let meta = genesis_meta(0x207f_ffff).expect("genesis");
                 let encoded = bincode::serialize(&meta).expect("serialize native meta");
@@ -15159,13 +15226,24 @@ mod tests {
                 bincode_deserialize_exact::<NativeBlockMeta>(&encoded, "Lean native metadata")
                     .map(|_| ())
             }
+            ("bincode_normalizing_fixture", "noncanonical_byte") => {
+                let encoded = bincode::serialize(&1u8).expect("serialize noncanonical byte");
+                bincode_deserialize_exact::<NormalizedBincodeByte>(
+                    &encoded,
+                    "Lean normalized bincode byte",
+                )
+                .map(|_| ())
+            }
             (codec, fixture) => {
                 panic!("unknown Lean exact-decode case codec={codec} fixture={fixture}")
             }
         };
         let actual_rejection = actual.as_ref().err().map(|err| {
-            if err.to_string().contains("trailing bytes") {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
                 "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
             } else {
                 "parser_rejected".to_owned()
             }

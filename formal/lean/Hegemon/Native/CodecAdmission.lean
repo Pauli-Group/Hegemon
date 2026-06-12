@@ -61,11 +61,13 @@ theorem sync_rejects_trailing_bytes
 inductive ExactDecodeReject where
   | parserRejected
   | trailingBytes
+  | nonCanonicalEncoding
 deriving DecidableEq, Repr
 
 structure ExactDecodeInput where
   parserAccepts : Bool
   consumedAllBytes : Bool
+  canonicalReencodeMatches : Bool
 deriving DecidableEq, Repr
 
 def evaluateExactDecodeRejection (input : ExactDecodeInput) : Option ExactDecodeReject :=
@@ -73,6 +75,8 @@ def evaluateExactDecodeRejection (input : ExactDecodeInput) : Option ExactDecode
     some ExactDecodeReject.parserRejected
   else if input.consumedAllBytes = false then
     some ExactDecodeReject.trailingBytes
+  else if input.canonicalReencodeMatches = false then
+    some ExactDecodeReject.nonCanonicalEncoding
   else
     none
 
@@ -80,15 +84,16 @@ def exactDecodeAccepts (input : ExactDecodeInput) : Bool :=
   evaluateExactDecodeRejection input = none
 
 def exactDecodePreconditions (input : ExactDecodeInput) : Bool :=
-  input.parserAccepts && input.consumedAllBytes
+  input.parserAccepts && input.consumedAllBytes && input.canonicalReencodeMatches
 
 theorem exact_accepts_iff_preconditions
     {input : ExactDecodeInput} :
     exactDecodeAccepts input = true ↔ exactDecodePreconditions input = true := by
   cases input with
-  | mk parserAccepts consumedAllBytes =>
+  | mk parserAccepts consumedAllBytes canonicalReencodeMatches =>
       cases parserAccepts <;>
         cases consumedAllBytes <;>
+        cases canonicalReencodeMatches <;>
         simp [
           exactDecodeAccepts,
           exactDecodePreconditions,
@@ -111,6 +116,16 @@ theorem exact_rejects_trailing_bytes
       some ExactDecodeReject.trailingBytes := by
   unfold evaluateExactDecodeRejection
   simp [parserAccepted, hasTrailing]
+
+theorem exact_rejects_noncanonical_encoding
+    {input : ExactDecodeInput}
+    (parserAccepted : input.parserAccepts = true)
+    (consumedAll : input.consumedAllBytes = true)
+    (nonCanonical : input.canonicalReencodeMatches = false) :
+    evaluateExactDecodeRejection input =
+      some ExactDecodeReject.nonCanonicalEncoding := by
+  unfold evaluateExactDecodeRejection
+  simp [parserAccepted, consumedAll, nonCanonical]
 
 inductive BlockActionDecodeReject where
   | actionCountMismatch
@@ -184,7 +199,8 @@ def validSync : SyncDecodeInput :=
 def validExactDecode : ExactDecodeInput :=
   {
     parserAccepts := true,
-    consumedAllBytes := true
+    consumedAllBytes := true,
+    canonicalReencodeMatches := true
   }
 
 def validBlockActions : BlockActionDecodeInput :=
@@ -226,6 +242,12 @@ theorem parser_failure_rejects :
     evaluateExactDecodeRejection
       { validExactDecode with parserAccepts := false } =
       some ExactDecodeReject.parserRejected := by
+  rfl
+
+theorem noncanonical_exact_decode_rejects :
+    evaluateExactDecodeRejection
+      { validExactDecode with canonicalReencodeMatches := false } =
+      some ExactDecodeReject.nonCanonicalEncoding := by
   rfl
 
 theorem valid_block_actions_accept :
