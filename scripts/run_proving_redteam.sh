@@ -26,12 +26,57 @@ declare -a CAMPAIGNS=()
 declare -a RESULTS=()
 declare -a LOGS=()
 
+cargo_test_filter() {
+  local package="$1"
+  local filter="$2"
+  shift 2
+
+  local list
+  if ! list="$(cargo test -p "$package" "$filter" -- --list 2>&1)"; then
+    printf '%s\n' "$list" >&2
+    return 1
+  fi
+
+  local matches
+  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  if [[ "$matches" -eq 0 ]]; then
+    echo "red-team gate matched zero tests: cargo test -p $package $filter" >&2
+    return 97
+  fi
+
+  cargo test -p "$package" "$filter" "$@"
+}
+export -f cargo_test_filter
+
+cargo_test_target() {
+  local package="$1"
+  local target="$2"
+  shift 2
+
+  local list
+  if ! list="$(cargo test -p "$package" --test "$target" -- --list 2>&1)"; then
+    printf '%s\n' "$list" >&2
+    return 1
+  fi
+
+  local matches
+  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  if [[ "$matches" -eq 0 ]]; then
+    echo "red-team gate matched zero tests: cargo test -p $package --test $target" >&2
+    return 97
+  fi
+
+  cargo test -p "$package" --test "$target" "$@"
+}
+export -f cargo_test_target
+
 campaign_script() {
   case "$1" in
     parser-malleability)
       cat <<'EOF'
-cargo test -p hegemon-node submit_proofs_rejects_non_native_tx_leaf_artifact -- --nocapture
-cargo test -p hegemon-node submit_proofs_rejects_binding_hash_mismatch_for_native_tx_leaf -- --nocapture
+cargo_test_filter hegemon-node submit_proofs_rejects_non_native_tx_leaf_artifact -- --nocapture
+cargo_test_filter hegemon-node submit_proofs_rejects_repartitioned_tx_leaf_binding_alias -- --nocapture
+cargo_test_filter hegemon-node submit_proofs_rejects_binding_hash_mismatch_before_staging -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +nightly fuzz run native_tx_leaf_artifact -- -max_total_time=30
 fi
@@ -39,9 +84,10 @@ EOF
       ;;
     semantic-aliasing)
       cat <<'EOF'
-cargo test -p hegemon-node proof_da_blob_rejects_duplicate_binding_hash -- --nocapture
-cargo test -p hegemon-node filter_conflicting_shielded_transfers_drops_binding_conflicts_and_keeps_nullifier_overlaps -- --nocapture
-cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering -- --nocapture
+cargo_test_filter hegemon-node submit_proofs_rejects_repartitioned_tx_leaf_binding_alias -- --nocapture
+cargo_test_filter hegemon-node transfer_action_rejects_inline_repartitioned_tx_leaf_binding_alias -- --nocapture
+cargo_test_filter hegemon-node transfer_action_rejects_sidecar_repartitioned_tx_leaf_binding_alias -- --nocapture
+cargo_test_filter hegemon-node inbound_bridge_rejects_message_binding_tampering -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo test -p transaction-circuit --test security_fuzz -- --nocapture
   cargo test -p wallet --test address_fuzz -- --nocapture
@@ -50,26 +96,28 @@ EOF
       ;;
     staged-proof-abuse)
       cat <<'EOF'
-cargo test -p hegemon-node submit_ciphertexts_rejects_ -- --nocapture
-cargo test -p hegemon-node submit_proofs_rejects_ -- --nocapture
-cargo test -p hegemon-node rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode -- --nocapture
-cargo test -p hegemon-node sidecar_ -- --nocapture
+cargo_test_filter hegemon-node submit_ciphertexts_rejects_ -- --nocapture
+cargo_test_filter hegemon-node submit_proofs_rejects_ -- --nocapture
+cargo_test_filter hegemon-node rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode -- --nocapture
+cargo_test_filter hegemon-node sidecar_ -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
-  cargo test security_pipeline -- --nocapture
+  cargo_test_target security-tests security_pipeline -- --nocapture
 fi
 EOF
       ;;
     recursive-block-mismatch)
       cat <<'EOF'
-cargo test -p consensus recursive_block_v1_verifier_rejects_tx_count_mismatch -- --nocapture
-cargo test -p consensus recursive_block_v2_verifier_rejects_tx_count_mismatch -- --nocapture
-cargo test -p consensus --test raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
+cargo_test_filter consensus recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
+cargo_test_filter consensus recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
+cargo_test_filter consensus raw_active_rejects_bad_tx_proof -- --ignored --nocapture
 EOF
       ;;
     receipt-root-tamper)
       cat <<'EOF'
-cargo test -p hegemon-node receipt_root -- --nocapture
-cargo test -p consensus --test raw_active_mode receipt_root_ -- --ignored --nocapture
+cargo_test_filter consensus parallel_receipt_root_payload_mismatches_reject_before_backend -- --nocapture
+cargo_test_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
+cargo_test_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
+cargo_test_filter consensus receipt_root_ -- --ignored --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=30
 fi
@@ -77,15 +125,15 @@ EOF
       ;;
     prover-configuration-downgrade)
       cat <<'EOF'
-cargo test -p wallet test_fast_config_is_clamped_without_explicit_override -- --nocapture
-cargo test -p wallet test_fast_config_requires_explicit_override_to_weaken_floor -- --nocapture
+cargo_test_filter wallet test_fast_config_is_clamped_without_explicit_override -- --nocapture
+cargo_test_filter wallet test_fast_config_requires_explicit_override_to_weaken_floor -- --nocapture
 EOF
       ;;
     network-transport-abuse)
       cat <<'EOF'
-cargo test -p pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
-cargo test -p network --test adversarial -- --nocapture
-cargo test -p network --test handshake duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
+cargo_test_filter pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
+cargo_test_target network adversarial -- --nocapture
+cargo_test_filter network duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
 EOF
       ;;
     review-package-parity)
@@ -109,8 +157,10 @@ EOF
 run_campaign() {
   local name="$1"
   local log="$OUTDIR/${name}.log"
-  local script
-  script="$(campaign_script "$name")"
+  local script_file="$OUTDIR/${name}.sh"
+  local script_text
+  script_text="$(campaign_script "$name")"
+  printf '%s\n' "$script_text" >"$script_file"
 
   CAMPAIGNS+=("$name")
   LOGS+=("$log")
@@ -121,9 +171,9 @@ run_campaign() {
     echo "# campaign: $name"
     echo "# started_at_utc: $(date -u +%FT%TZ)"
     echo "# command_script:"
-    printf '%s\n' "$script"
+    printf '%s\n' "$script_text"
     echo
-    HEGEMON_REDTEAM_MODE="$MODE" bash -lc "$script"
+    HEGEMON_REDTEAM_MODE="$MODE" bash -euo pipefail "$script_file"
   } 2>&1 | tee "$log"
 
   local status="${PIPESTATUS[0]}"

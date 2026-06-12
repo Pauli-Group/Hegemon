@@ -4255,8 +4255,8 @@
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sidecar upload admission predicates, ciphertext/proof upload requests accept only within request-count caps, staged sidecar insertions accept only when capacity remains or the item replaces an existing staged entry, proof metadata accepts only when binding_hash is present and valid and proof is present, and decoded proof bytes accept only when nonempty and within the native tx-leaf artifact cap.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.SidecarUploadAdmission.ciphertext_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.proof_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.ciphertext_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_metadata_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_decoded_accepts_iff_preconditions`, and companion request/capacity/proof precedence examples prove the executable sidecar upload admission behavior. `gen_sidecar_upload_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_native_*_sidecar_*_admission` helpers used by `da_submitCiphertexts` and `da_submitProofs`. Persisted staged ciphertext reload and staged proof reload are represented by the separate `native.staged-ciphertext-reload` and `native.staged-proof-reload` nodes.",
+      "formal_statement": "For the executable Lean native sidecar upload admission predicates, ciphertext/proof upload requests accept only within request-count caps, staged sidecar insertions accept only when capacity remains or the item replaces an existing staged entry, proof metadata accepts only when binding_hash is present and valid and proof is present, and decoded proof bytes accept only when nonempty, within the native tx-leaf artifact cap, and whose decoded proof binding hash equals the upload key.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.SidecarUploadAdmission.ciphertext_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.proof_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.ciphertext_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_metadata_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_decoded_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_binding_hash_mismatch_rejects`, and companion request/capacity/proof precedence examples prove the executable sidecar upload admission behavior. `gen_sidecar_upload_admission_vectors` emits Lean-derived examples, including `proof_binding_hash_mismatch`, and the formal-core gate checks them against the production `evaluate_native_*_sidecar_*_admission` helpers used by `da_submitCiphertexts` and `da_submitProofs`. Persisted staged ciphertext reload and staged proof reload are represented by the separate `native.staged-ciphertext-reload` and `native.staged-proof-reload` nodes.",
       "depends_on": [
         "native.rpc-admission",
         "native.resource-budget-admission",
@@ -4408,12 +4408,12 @@
         },
         {
           "id": "lean-generated-sidecar-upload-conformance",
-          "description": "Changing production request-count, capacity, proof metadata, or decoded proof-byte behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "description": "Changing production request-count, capacity, proof metadata, decoded proof-byte, or decoded proof binding-hash/key equality behavior away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
           "id": "native-sidecar-upload-regressions",
-          "description": "Focused native tests must reject oversized sidecar upload batches, invalid proof metadata, and empty sidecar proofs while accepting replacements at capacity.",
+          "description": "Focused native tests must reject oversized sidecar upload batches, invalid proof metadata, empty sidecar proofs, and proof binding-hash/key mismatches while accepting replacements at capacity.",
           "gate": "cargo test -p hegemon-node sidecar_upload --lib --no-default-features -- --nocapture && cargo test -p hegemon-node submit_ciphertexts_rejects_ --lib --no-default-features -- --nocapture && cargo test -p hegemon-node submit_proofs_rejects_ --lib --no-default-features -- --nocapture"
         },
         {
@@ -4422,7 +4422,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native DA sidecar upload admission only. Persisted staged ciphertext reload is covered by native.staged-ciphertext-reload, and persisted staged proof reload is covered by native.staged-proof-reload. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash derivation/security, sled durability, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native DA sidecar upload admission only, including decoded proof binding-hash equality with the upload key. Persisted staged ciphertext reload is covered by native.staged-ciphertext-reload, and persisted staged proof reload is covered by native.staged-proof-reload. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash derivation/security, sled durability, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.pending-action-reload",
@@ -4964,8 +4964,8 @@
       "id": "native.block-artifact-binding-admission",
       "claim_id": "native.block-artifact-binding-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, input/output flag counts, version, fee, balance-tag projection, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions` and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers called by native block artifact verification. Production now computes the tx-leaf/action input from decoded native artifact fields before building the tx validity artifact.",
+      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, input/output flag counts, version, fee, stablecoin public payload, balance-tag projection, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions`, `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_stablecoin_payload_mismatch_rejects`, and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence including stablecoin-payload-before-balance-tag ordering. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, including `stablecoin_payload_mismatch`, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers called by native block artifact verification. Production now computes the tx-leaf/action input from decoded native artifact fields before building the tx validity artifact.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -5018,20 +5018,23 @@
                 "commit_mined_block_atomically",
                 "publish_mined_state",
                 "broadcast_block_announce"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "import_announced_block",
               "callee_must_precede": [
                 "persist_noncanonical_block_record",
                 "reorganize_chain_to_best_locked"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "replay_chain_state",
               "callee_must_precede": [
                 "apply_actions_to_memory"
-              ]
+              ],
+              "must_dominate_successors": true
             }
           ]
         }
@@ -5063,7 +5066,7 @@
         },
         {
           "id": "native-block-artifact-binding-regressions",
-          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including input/output count, fee, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and payload-hash mismatches in the specified order, plus candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches.",
+          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including input/output count, fee, stablecoin public payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and payload-hash mismatches in the specified order, plus candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches.",
           "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
         },
         {
@@ -5077,7 +5080,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-ordering",
@@ -6586,8 +6589,8 @@
       "id": "native.transfer-action-payload-admission",
       "claim_id": "native.transfer-action-payload-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean decoded transfer-payload admission transition, native shielded transfer payload validation accepts only when proof bytes are present and within the native tx-leaf cap, anchor and commitment fields agree with the action metadata, inline ciphertext bytes are within the ciphertext cap, ciphertext hash and size metadata agree, the binding hash matches the decoded transfer statement, and the decoded fee equals the action fee; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.TransferActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded payload-admission predicate, with companion theorems for missing proof, proof oversize, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, binding-hash mismatch, fee mismatch, exact proof-limit acceptance, and proof-missing-before-anchor precedence. `gen_transfer_action_payload_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_transfer_payload_admission` helper now called by native inline and sidecar transfer payload validation. Native regressions reject missing inline proofs, oversized inline proofs, oversized inline ciphertexts, mismatched binding hashes, and action/payload fee mismatches.",
+      "formal_statement": "For the executable Lean decoded transfer-payload admission transition, native shielded transfer payload validation accepts only when proof bytes are present and within the native tx-leaf cap, anchor and commitment fields agree with the action metadata, inline ciphertext bytes are within the ciphertext cap, ciphertext hash and size metadata agree, the binding hash matches the decoded transfer statement, decoded native tx-leaf proof public fields derive the same binding hash, and the decoded fee equals the action fee; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.TransferActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded payload-admission predicate, with companion theorems for missing proof, proof oversize, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, binding-hash mismatch, proof binding-hash mismatch, fee mismatch, exact proof-limit acceptance, and proof-missing-before-anchor precedence. `gen_transfer_action_payload_admission_vectors` emits Lean-derived accept/reject examples, including proof-binding-hash-before-fee precedence. The formal-core gate checks those vectors against the production `evaluate_native_transfer_payload_admission` helper now called by native inline and sidecar transfer payload validation. Native regressions reject missing inline proofs, oversized inline proofs, oversized inline ciphertexts, mismatched binding hashes, proof sidecars whose decoded public fields derive a different binding hash, and action/payload fee mismatches.",
       "depends_on": [
         "native.action-scope-admission",
         "formal.transaction-public-input-binding",
@@ -6614,7 +6617,8 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_transfer_action_payload",
           "required_callers": [
-            "validate_pending_action_against_mempool_state"
+            "validate_pending_action_against_mempool_state",
+            "validate_block_actions_locked"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
@@ -6623,6 +6627,13 @@
               "callee_must_precede": [
                 "native_transfer_state_admission_input_for_mempool",
                 "evaluate_native_transfer_state_admission"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "validate_block_actions_locked",
+              "callee_must_precede": [
+                "native_transfer_state_admission_input_for_block"
               ],
               "must_dominate_successors": true
             }
@@ -6668,6 +6679,11 @@
           "id": "native-transfer-binding-regression",
           "description": "Native block-action validation must reject mismatched transfer binding hashes.",
           "gate": "cargo test -p hegemon-node imported_block_actions_recompute_binding_hash --lib --no-default-features"
+        },
+        {
+          "id": "native-transfer-proof-binding-regression",
+          "description": "Native block-action validation must reject inline and sidecar proof bytes whose decoded native tx-leaf public fields derive a different binding hash than the action key.",
+          "gate": "cargo test -p hegemon-node transfer_action_rejects_ --lib --no-default-features"
         },
         {
           "id": "native-transfer-fee-regression",
@@ -6849,7 +6865,8 @@
                 "commit_mined_block_atomically",
                 "publish_mined_state",
                 "broadcast_block_announce"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "import_announced_block",
@@ -6857,7 +6874,8 @@
                 "verify_native_block_artifacts_locked",
                 "reorganize_chain_to_best_locked",
                 "persist_noncanonical_block_record"
-              ]
+              ],
+              "must_dominate_successors": true
             },
             {
               "caller": "replay_chain_state",

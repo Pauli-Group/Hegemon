@@ -1128,6 +1128,7 @@ struct NativeTransferPayloadAdmissionInput {
     ciphertext_hashes_match: bool,
     ciphertext_sizes_match: bool,
     binding_hash_matches: bool,
+    proof_binding_hash_matches_key: bool,
     fee_matches: bool,
 }
 
@@ -1147,6 +1148,7 @@ enum NativeTransferPayloadAdmissionRejection {
     CiphertextHashesMismatch,
     CiphertextSizesMismatch,
     BindingHashMismatch,
+    ProofBindingHashMismatch,
     FeeMismatch,
 }
 
@@ -1162,6 +1164,7 @@ impl NativeTransferPayloadAdmissionRejection {
             Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
             Self::CiphertextSizesMismatch => "ciphertext_sizes_mismatch",
             Self::BindingHashMismatch => "binding_hash_mismatch",
+            Self::ProofBindingHashMismatch => "proof_binding_hash_mismatch",
             Self::FeeMismatch => "fee_mismatch",
         }
     }
@@ -1508,6 +1511,7 @@ struct NativeTxLeafActionBindingAdmissionInput {
     output_count_matches: bool,
     version_matches: bool,
     fee_matches: bool,
+    stablecoin_payload_matches: bool,
     balance_tag_matches: bool,
     receipt_statement_hash_matches: bool,
     public_inputs_digest_matches: bool,
@@ -1525,6 +1529,7 @@ enum NativeTxLeafActionBindingAdmissionRejection {
     OutputCountMismatch,
     VersionMismatch,
     FeeMismatch,
+    StablecoinPayloadMismatch,
     BalanceTagMismatch,
     ReceiptStatementHashMismatch,
     PublicInputsDigestMismatch,
@@ -1544,6 +1549,7 @@ impl NativeTxLeafActionBindingAdmissionRejection {
             Self::OutputCountMismatch => "output_count_mismatch",
             Self::VersionMismatch => "version_mismatch",
             Self::FeeMismatch => "fee_mismatch",
+            Self::StablecoinPayloadMismatch => "stablecoin_payload_mismatch",
             Self::BalanceTagMismatch => "balance_tag_mismatch",
             Self::ReceiptStatementHashMismatch => "receipt_statement_hash_mismatch",
             Self::PublicInputsDigestMismatch => "public_inputs_digest_mismatch",
@@ -1928,6 +1934,7 @@ struct NativeProofSidecarMetadataAdmissionInput {
 struct NativeProofSidecarDecodedAdmissionInput {
     proof_bytes: usize,
     max_proof_bytes: usize,
+    proof_binding_hash_matches_key: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1941,6 +1948,7 @@ enum NativeSidecarUploadAdmissionRejection {
     ProofMissing,
     ProofEmpty,
     ProofTooLarge,
+    ProofBindingHashMismatch,
 }
 
 impl NativeSidecarUploadAdmissionRejection {
@@ -1956,6 +1964,7 @@ impl NativeSidecarUploadAdmissionRejection {
             Self::ProofMissing => "proof_missing",
             Self::ProofEmpty => "proof_empty",
             Self::ProofTooLarge => "proof_too_large",
+            Self::ProofBindingHashMismatch => "proof_binding_hash_mismatch",
         }
     }
 }
@@ -2492,10 +2501,7 @@ impl NativeNode {
         };
         let mut action = PendingAction {
             tx_hash: [0u8; 32],
-            binding: KernelVersionBinding {
-                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-            },
+            binding: protocol_versioning::DEFAULT_VERSION_BINDING.into(),
             family_id: FAMILY_SHIELDED_POOL,
             action_id: ACTION_MINT_COINBASE,
             anchor: [0u8; 48],
@@ -2801,17 +2807,12 @@ impl NativeNode {
         sign_native_block_meta(&mut meta, &self.miner_identity);
         verify_native_pow_meta(&state.best, &meta)?;
 
-        let pending_action_effects = if actions.is_empty() {
-            Vec::new()
-        } else {
-            validate_block_actions_locked(&state, &actions)?;
-            verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
-            plan_pending_action_effects(&self.da_ciphertext_tree, &state, &actions)?
-        };
+        validate_block_actions_locked(&state, &actions)?;
+        verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
+        let pending_action_effects =
+            plan_pending_action_effects(&self.da_ciphertext_tree, &state, &actions)?;
         let mut next_state = state.clone();
-        if !actions.is_empty() {
-            apply_planned_actions_to_memory(&mut next_state, &actions, &pending_action_effects)?;
-        }
+        apply_planned_actions_to_memory(&mut next_state, &actions, &pending_action_effects)?;
         if next_state.commitment_tree.root() != work.state_root
             || nullifier_root_from_set(&next_state.nullifiers) != work.nullifier_root
         {
@@ -2891,10 +2892,8 @@ impl NativeNode {
                 header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
             },
         )?;
-        if !actions.is_empty() {
-            validate_block_actions_locked(&parent_state, &actions)?;
-            verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
-        }
+        validate_block_actions_locked(&parent_state, &actions)?;
+        verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
         let candidate_wins = native_meta_better_than(&meta, &state.best);
         if candidate_wins {
             let mut new_chain = self.chain_to_hash(parent.hash)?;
@@ -3123,9 +3122,7 @@ impl NativeNode {
                         == expected_header_history.len() as u64,
                 },
             )?;
-            if !actions.is_empty() {
-                verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
-            }
+            verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
             apply_actions_to_memory(&self.da_ciphertext_tree, &mut state, &actions)?;
             state.best = meta;
         }
@@ -4195,6 +4192,8 @@ impl NativeNode {
                 NativeProofSidecarDecodedAdmissionInput {
                     proof_bytes: proof.len(),
                     max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                    proof_binding_hash_matches_key:
+                        native_tx_leaf_artifact_binding_hash_matches_key(binding_hash_bytes, &proof),
                 },
             )
             .map_err(native_sidecar_upload_admission_error)?;
@@ -6670,23 +6669,28 @@ fn binding_hash_matches(
     expected == binding_hash
 }
 
-fn native_tx_leaf_artifact_binding_hash(
+fn native_tx_leaf_artifact_stablecoin_binding(
     decoded: &consensus::backend_interface::NativeTxLeafArtifact,
-) -> Result<[u8; 64]> {
-    let balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS] = decoded
-        .stark_public_inputs
-        .balance_slot_asset_ids
-        .clone()
-        .try_into()
-        .map_err(|slots: Vec<u64>| {
-            anyhow!(
-                "native tx-leaf balance slot length {} does not match {}",
-                slots.len(),
-                transaction_core::constants::BALANCE_SLOTS
-            )
-        })?;
-    let stablecoin = match decoded.stark_public_inputs.stablecoin_enabled {
-        0 => None,
+) -> Result<Option<StablecoinPolicyBinding>> {
+    Ok(match decoded.stark_public_inputs.stablecoin_enabled {
+        0 => {
+            if decoded.stark_public_inputs.stablecoin_asset_id != 0
+                || decoded.stark_public_inputs.stablecoin_policy_version != 0
+                || decoded.stark_public_inputs.stablecoin_issuance_sign != 0
+                || decoded.stark_public_inputs.stablecoin_issuance_magnitude != 0
+                || decoded.stark_public_inputs.stablecoin_policy_hash != [0u8; 48]
+                || decoded.stark_public_inputs.stablecoin_oracle_commitment != [0u8; 48]
+                || decoded
+                    .stark_public_inputs
+                    .stablecoin_attestation_commitment
+                    != [0u8; 48]
+            {
+                return Err(anyhow!(
+                    "disabled native tx-leaf stablecoin public fields must be zero"
+                ));
+            }
+            None
+        }
         1 => Some(StablecoinPolicyBinding {
             asset_id: decoded.stark_public_inputs.stablecoin_asset_id,
             policy_hash: decoded.stark_public_inputs.stablecoin_policy_hash,
@@ -6706,7 +6710,30 @@ fn native_tx_leaf_artifact_binding_hash(
                 "native tx-leaf stablecoin_enabled flag must be 0 or 1, got {other}"
             ));
         }
-    };
+    })
+}
+
+fn native_tx_leaf_artifact_binding_hash(
+    decoded: &consensus::backend_interface::NativeTxLeafArtifact,
+) -> Result<[u8; 64]> {
+    let balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS] = decoded
+        .stark_public_inputs
+        .balance_slot_asset_ids
+        .clone()
+        .try_into()
+        .map_err(|slots: Vec<u64>| {
+            anyhow!(
+                "native tx-leaf balance slot length {} does not match {}",
+                slots.len(),
+                transaction_core::constants::BALANCE_SLOTS
+            )
+        })?;
+    let stablecoin = native_tx_leaf_artifact_stablecoin_binding(decoded)?;
+    let value_balance = native_tx_leaf_decode_signed_magnitude(
+        decoded.stark_public_inputs.value_balance_sign,
+        decoded.stark_public_inputs.value_balance_magnitude,
+        "value_balance",
+    )?;
     let inputs = ShieldedTransferInputs {
         anchor: decoded.stark_public_inputs.merkle_root,
         nullifiers: decoded.tx.nullifiers.clone(),
@@ -6714,7 +6741,7 @@ fn native_tx_leaf_artifact_binding_hash(
         ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
         balance_slot_asset_ids,
         fee: decoded.stark_public_inputs.fee,
-        value_balance: 0,
+        value_balance,
         stablecoin,
     };
     Ok(StarkVerifier::compute_binding_hash(&inputs).data)
@@ -6745,6 +6772,8 @@ fn evaluate_native_transfer_payload_admission(
         Err(NativeTransferPayloadAdmissionRejection::CiphertextSizesMismatch)
     } else if !input.binding_hash_matches {
         Err(NativeTransferPayloadAdmissionRejection::BindingHashMismatch)
+    } else if !input.proof_binding_hash_matches_key {
+        Err(NativeTransferPayloadAdmissionRejection::ProofBindingHashMismatch)
     } else if !input.fee_matches {
         Err(NativeTransferPayloadAdmissionRejection::FeeMismatch)
     } else {
@@ -6789,6 +6818,9 @@ fn native_transfer_payload_admission_error(
         }
         NativeTransferPayloadAdmissionRejection::BindingHashMismatch => {
             anyhow!("binding hash mismatch")
+        }
+        NativeTransferPayloadAdmissionRejection::ProofBindingHashMismatch => {
+            anyhow!("proof binding hash mismatch")
         }
         NativeTransferPayloadAdmissionRejection::FeeMismatch => {
             anyhow!("shielded {route_label} fee mismatch")
@@ -7407,6 +7439,10 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
                         )
                     },
                 ),
+                proof_binding_hash_matches_key: native_tx_leaf_artifact_binding_hash_matches_key(
+                    args.binding_hash,
+                    &args.proof,
+                ),
                 fee_matches: args.fee == action.fee,
             };
             evaluate_native_transfer_payload_admission(input).map_err(|rejection| {
@@ -7438,6 +7474,10 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
                     args.fee,
                     args.binding_hash,
                     args.stablecoin,
+                ),
+                proof_binding_hash_matches_key: native_tx_leaf_artifact_binding_hash_matches_key(
+                    args.binding_hash,
+                    &args.proof,
                 ),
                 fee_matches: args.fee == action.fee,
             };
@@ -7992,6 +8032,8 @@ fn evaluate_native_proof_sidecar_decoded_admission(
         Err(NativeSidecarUploadAdmissionRejection::ProofEmpty)
     } else if input.proof_bytes > input.max_proof_bytes {
         Err(NativeSidecarUploadAdmissionRejection::ProofTooLarge)
+    } else if !input.proof_binding_hash_matches_key {
+        Err(NativeSidecarUploadAdmissionRejection::ProofBindingHashMismatch)
     } else {
         Ok(())
     }
@@ -8035,6 +8077,9 @@ fn native_sidecar_upload_admission_error(
             "proof size exceeds native tx-leaf artifact limit {}",
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE
         ),
+        NativeSidecarUploadAdmissionRejection::ProofBindingHashMismatch => {
+            anyhow!("proof binding hash does not match native tx-leaf public fields")
+        }
     }
 }
 
@@ -9855,16 +9900,13 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
                     }
                 }
                 NativeActionScopeAdmissionRoute::Transfer => {
-                    if let Err(err) = validate_transfer_action_payload(action) {
-                        payload_error = Some(err);
-                    } else {
-                        transfer_key = action_order_key(action);
-                        transfer_state_input = native_transfer_state_admission_input_for_block(
-                            state,
-                            &mut nullifier_state,
-                            action,
-                        );
-                    }
+                    validate_transfer_action_payload(action)?;
+                    transfer_key = action_order_key(action);
+                    transfer_state_input = native_transfer_state_admission_input_for_block(
+                        state,
+                        &mut nullifier_state,
+                        action,
+                    );
                 }
             }
         }
@@ -10459,6 +10501,8 @@ fn evaluate_native_tx_leaf_action_binding_admission(
         Err(NativeTxLeafActionBindingAdmissionRejection::VersionMismatch)
     } else if !input.fee_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::FeeMismatch)
+    } else if !input.stablecoin_payload_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::StablecoinPayloadMismatch)
     } else if !input.balance_tag_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch)
     } else if !input.receipt_statement_hash_matches {
@@ -10500,6 +10544,9 @@ fn native_tx_leaf_action_binding_admission_error(
         }
         NativeTxLeafActionBindingAdmissionRejection::FeeMismatch => {
             anyhow!("native tx-leaf fee mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::StablecoinPayloadMismatch => {
+            anyhow!("native tx-leaf stablecoin payload mismatch")
         }
         NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch => {
             anyhow!("native tx-leaf balance tag mismatch")
@@ -10578,6 +10625,24 @@ fn native_tx_leaf_statement_hash_from_decoded(
     .map_err(|err| anyhow!("derive native tx-leaf statement hash failed: {err}"))
 }
 
+fn transfer_action_stablecoin_binding(
+    action: &PendingAction,
+) -> Result<Option<StablecoinPolicyBinding>> {
+    match action.action_id {
+        ACTION_SHIELDED_TRANSFER_INLINE => {
+            let args: ShieldedTransferInlineArgs =
+                decode_scale_exact(&action.public_args, "shielded inline action args")?;
+            Ok(args.stablecoin)
+        }
+        ACTION_SHIELDED_TRANSFER_SIDECAR => {
+            let args: ShieldedTransferSidecarArgs =
+                decode_scale_exact(&action.public_args, "shielded sidecar action args")?;
+            Ok(args.stablecoin)
+        }
+        _ => Err(anyhow!("action is not a shielded transfer")),
+    }
+}
+
 fn native_tx_leaf_action_binding_admission_input(
     decoded: &consensus::backend_interface::NativeTxLeafArtifact,
     action: &PendingAction,
@@ -10597,6 +10662,13 @@ fn native_tx_leaf_action_binding_admission_input(
         decoded.proof_backend,
         &decoded.stark_proof,
     );
+    let stablecoin_payload_matches = match (
+        native_tx_leaf_artifact_stablecoin_binding(decoded),
+        transfer_action_stablecoin_binding(action),
+    ) {
+        (Ok(decoded), Ok(action)) => decoded == action,
+        _ => false,
+    };
     NativeTxLeafActionBindingAdmissionInput {
         nullifiers_match: decoded.tx.nullifiers == action.nullifiers,
         commitments_match: decoded.tx.commitments == action.commitments,
@@ -10609,6 +10681,7 @@ fn native_tx_leaf_action_binding_admission_input(
             && output_count == Some(decoded.tx.ciphertext_hashes.len()),
         version_matches: decoded.tx.version == action.binding.into(),
         fee_matches: decoded.stark_public_inputs.fee == action.fee,
+        stablecoin_payload_matches,
         balance_tag_matches: tx.balance_tag == decoded.tx.balance_tag,
         receipt_statement_hash_matches: expected_statement_hash
             == Some(decoded.receipt.statement_hash),
@@ -12788,6 +12861,8 @@ mod tests {
         ciphertext_hashes_match: bool,
         ciphertext_sizes_match: bool,
         binding_hash_matches: bool,
+        #[serde(default = "default_true")]
+        proof_binding_hash_matches_key: bool,
         fee_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
@@ -13073,6 +13148,8 @@ mod tests {
         output_count_matches: bool,
         version_matches: bool,
         fee_matches: bool,
+        #[serde(default = "default_true")]
+        stablecoin_payload_matches: bool,
         balance_tag_matches: bool,
         receipt_statement_hash_matches: bool,
         public_inputs_digest_matches: bool,
@@ -13356,12 +13433,18 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    fn default_true() -> bool {
+        true
+    }
+
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct LeanProofSidecarDecodedCase {
         name: String,
         proof_bytes: usize,
         max_proof_bytes: usize,
+        #[serde(default = "default_true")]
+        proof_binding_hash_matches_key: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -13470,12 +13553,27 @@ mod tests {
             stablecoin: None,
         };
         let binding_hash = StarkVerifier::compute_binding_hash(&inputs).data;
+        let binding = KernelVersionBinding {
+            circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+        };
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let proof = test_transfer_proof_artifact(
+            anchor,
+            &[nullifier],
+            &[commitment],
+            &[ciphertext_hash],
+            balance_slot_asset_ids,
+            7,
+            None,
+            binding,
+        );
         let args = ShieldedTransferInlineArgs {
-            proof: vec![9u8; 32],
+            proof,
             commitments: vec![commitment],
             ciphertexts: vec![note],
             anchor,
-            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            balance_slot_asset_ids,
             binding_hash,
             stablecoin: None,
             fee: 7,
@@ -13528,7 +13626,11 @@ mod tests {
         let err = node
             .import_mined_block(&work, seal)
             .expect_err("invalid recursive artifacts must be rejected");
-        assert!(err.to_string().contains("native tx-leaf artifact"));
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("candidate artifact"),
+            "unexpected import rejection: {err_text}"
+        );
         assert_eq!(node.state.read().pending_actions.len(), 2);
         assert!(!node.state.read().nullifiers.contains(&action.nullifiers[0]));
         assert_eq!(node.state.read().commitment_tree.leaf_count(), 0);
@@ -15826,31 +15928,33 @@ mod tests {
         assert_eq!(ciphertexts[0]["size"].as_u64(), Some(3));
         assert!(ciphertexts[0]["hash"].as_str().unwrap().starts_with("0x"));
 
-        let binding_hash = format!("0x{}", "11".repeat(64));
+        let (binding_hash, proof) = staged_proof_fixture();
+        let binding_hash = format!("0x{}", hex::encode(binding_hash));
+        let proof_hex = format!("0x{}", hex::encode(&proof));
         let proofs = node
             .submit_proofs(json!({
-                "proofs": [{ "binding_hash": binding_hash, "proof": "0x010203" }]
+                "proofs": [{ "binding_hash": binding_hash, "proof": proof_hex }]
             }))
             .expect("valid proof sidecar should stage");
         let proofs = proofs.as_array().expect("proof result should be array");
         assert_eq!(proofs.len(), 1);
-        assert_eq!(proofs[0]["size"].as_u64(), Some(3));
+        assert_eq!(proofs[0]["size"].as_u64(), Some(proof.len() as u64));
         assert!(proofs[0]["proof_hash"].as_str().unwrap().starts_with("0x"));
-        assert_eq!(
-            proofs[0]["binding_hash"],
-            json!(format!("0x{}", "11".repeat(64)))
-        );
+        assert_eq!(proofs[0]["binding_hash"], json!(binding_hash));
 
-        let replacement_binding_hash = format!("0x{}", "11".repeat(64));
+        let replacement_binding_hash = proofs[0]["binding_hash"].clone();
         node.submit_proofs(json!({
-            "proofs": [{ "binding_hash": replacement_binding_hash, "proof": "0x01020304" }]
+            "proofs": [{ "binding_hash": replacement_binding_hash, "proof": format!("0x{}", hex::encode(&proof)) }]
         }))
         .expect("same binding hash replacement should be accepted");
 
         let state = node.state.read();
         assert_eq!(state.staged_ciphertexts.len(), 1);
         assert_eq!(state.staged_proofs.len(), 1);
-        assert_eq!(state.staged_proofs.values().next().unwrap().len(), 4);
+        assert_eq!(
+            state.staged_proofs.values().next().unwrap().len(),
+            proof.len()
+        );
     }
 
     #[test]
@@ -15858,10 +15962,14 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let (binding_hash, proof) = staged_proof_fixture();
+        let prefixed_binding_hash = format!("0x{}", hex::encode(binding_hash));
+        let uppercase_unprefixed_binding_hash = hex::encode(binding_hash).to_uppercase();
+        let proof_hex = format!("0x{}", hex::encode(&proof));
 
         let prefixed_response = node
             .submit_proofs(json!({
-                "proofs": [{ "binding_hash": format!("0x{}", "ab".repeat(64)), "proof": "0x010203" }]
+                "proofs": [{ "binding_hash": prefixed_binding_hash, "proof": proof_hex }]
             }))
             .expect("prefixed proof sidecar");
         let prefixed = prefixed_response
@@ -15872,7 +15980,7 @@ mod tests {
             .clone();
         let uppercase_response = node
             .submit_proofs(json!({
-                "proofs": [{ "binding_hash": "AB".repeat(64), "proof": "0x010203" }]
+                "proofs": [{ "binding_hash": uppercase_unprefixed_binding_hash, "proof": format!("0x{}", hex::encode(&proof)) }]
             }))
             .expect("uppercase unprefixed proof sidecar");
         let uppercase_unprefixed = uppercase_response
@@ -15884,7 +15992,7 @@ mod tests {
 
         assert_eq!(
             prefixed["binding_hash"],
-            json!(format!("0x{}", "ab".repeat(64)))
+            json!(format!("0x{}", hex::encode(binding_hash)))
         );
         assert_eq!(
             uppercase_unprefixed["binding_hash"],
@@ -15892,6 +16000,121 @@ mod tests {
         );
         assert_eq!(uppercase_unprefixed["proof_hash"], prefixed["proof_hash"]);
         assert_eq!(node.state.read().staged_proofs.len(), 1);
+    }
+
+    #[test]
+    fn submit_proofs_rejects_binding_hash_mismatch_before_staging() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let (mut binding_hash, proof) = staged_proof_fixture();
+        binding_hash[0] ^= 0xff;
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{
+                    "binding_hash": format!("0x{}", hex::encode(binding_hash)),
+                    "proof": format!("0x{}", hex::encode(proof)),
+                }]
+            }))
+            .expect_err("mismatched proof binding hash must reject before staging");
+        assert!(err.to_string().contains("proof binding hash"));
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
+    }
+
+    #[test]
+    fn submit_proofs_rejects_non_native_tx_leaf_artifact() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{
+                    "binding_hash": format!("0x{}", "11".repeat(64)),
+                    "proof": "0x01020304",
+                }]
+            }))
+            .expect_err("non-native tx leaf artifact must reject before staging");
+        assert!(err.to_string().contains("proof binding hash"));
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
+    }
+
+    #[test]
+    fn submit_proofs_rejects_repartitioned_tx_leaf_binding_alias() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let (binding_hash, proof) = repartitioned_tx_leaf_binding_alias_fixture();
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{
+                    "binding_hash": format!("0x{}", hex::encode(binding_hash)),
+                    "proof": format!("0x{}", hex::encode(proof)),
+                }]
+            }))
+            .expect_err("repartitioned tx-leaf artifact must not alias binding hash");
+        assert!(err.to_string().contains("proof binding hash"));
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
+    }
+
+    #[test]
+    fn submit_proofs_rejects_value_balance_binding_alias() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = [45u8; 48];
+        let nullifier = [46u8; 48];
+        let commitment = [47u8; 48];
+        let ciphertext_hash = [48u8; 48];
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let fee = 3;
+        let binding = KernelVersionBinding {
+            circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+        };
+        let zero_value_binding_hash =
+            StarkVerifier::compute_binding_hash(&ShieldedTransferInputs {
+                anchor,
+                nullifiers: vec![nullifier],
+                commitments: vec![commitment],
+                ciphertext_hashes: vec![ciphertext_hash],
+                balance_slot_asset_ids,
+                fee,
+                value_balance: 0,
+                stablecoin: None,
+            })
+            .data;
+        let proof = test_transfer_proof_artifact_with_value_balance(
+            anchor,
+            &[nullifier],
+            &[commitment],
+            &[ciphertext_hash],
+            balance_slot_asset_ids,
+            fee,
+            -17,
+            None,
+            binding,
+        );
+        assert!(
+            !native_tx_leaf_artifact_binding_hash_matches_key(zero_value_binding_hash, &proof),
+            "artifact binding must bind decoded value balance"
+        );
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{
+                    "binding_hash": format!("0x{}", hex::encode(zero_value_binding_hash)),
+                    "proof": format!("0x{}", hex::encode(proof)),
+                }]
+            }))
+            .expect_err("value-balance alias must not stage proof sidecar");
+        assert!(err.to_string().contains("proof binding hash"));
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
     }
 
     #[test]
@@ -17749,6 +17972,7 @@ mod tests {
             ciphertext_hashes_match: case.ciphertext_hashes_match,
             ciphertext_sizes_match: case.ciphertext_sizes_match,
             binding_hash_matches: case.binding_hash_matches,
+            proof_binding_hash_matches_key: case.proof_binding_hash_matches_key,
             fee_matches: case.fee_matches,
         };
         let actual_rejection = evaluate_native_transfer_payload_admission(input)
@@ -18658,6 +18882,7 @@ mod tests {
             output_count_matches: case.output_count_matches,
             version_matches: case.version_matches,
             fee_matches: case.fee_matches,
+            stablecoin_payload_matches: case.stablecoin_payload_matches,
             balance_tag_matches: case.balance_tag_matches,
             receipt_statement_hash_matches: case.receipt_statement_hash_matches,
             public_inputs_digest_matches: case.public_inputs_digest_matches,
@@ -18715,6 +18940,7 @@ mod tests {
             output_count_matches: true,
             version_matches: true,
             fee_matches: true,
+            stablecoin_payload_matches: true,
             balance_tag_matches: true,
             receipt_statement_hash_matches: true,
             public_inputs_digest_matches: true,
@@ -18752,13 +18978,28 @@ mod tests {
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     fee_matches: false,
+                    stablecoin_payload_matches: false,
+                    balance_tag_matches: false,
                     ciphertext_payload_hashes_match: false,
                     ..valid
                 }
             )
-            .expect_err("fee mismatch must reject before payload hashes")
+            .expect_err("fee mismatch must reject before stablecoin or payload hashes")
             .label(),
             "fee_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    stablecoin_payload_matches: false,
+                    balance_tag_matches: false,
+                    receipt_statement_hash_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("stablecoin mismatch must reject before balance tag or receipt fields")
+            .label(),
+            "stablecoin_payload_mismatch"
         );
     }
 
@@ -18772,6 +19013,7 @@ mod tests {
             output_count_matches: true,
             version_matches: true,
             fee_matches: true,
+            stablecoin_payload_matches: true,
             balance_tag_matches: true,
             receipt_statement_hash_matches: true,
             public_inputs_digest_matches: true,
@@ -18803,6 +19045,23 @@ mod tests {
             .expect_err("output count mismatch must reject before version")
             .label(),
             "output_count_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    stablecoin_payload_matches: false,
+                    balance_tag_matches: false,
+                    receipt_statement_hash_matches: false,
+                    public_inputs_digest_matches: false,
+                    proof_digest_matches: false,
+                    proof_backend_matches: false,
+                    ciphertext_payload_hashes_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("balance tag mismatch must reject before receipt and digest fields")
+            .label(),
+            "stablecoin_payload_mismatch"
         );
         assert_eq!(
             evaluate_native_tx_leaf_action_binding_admission(
@@ -19804,6 +20063,7 @@ mod tests {
         let input = NativeProofSidecarDecodedAdmissionInput {
             proof_bytes: case.proof_bytes,
             max_proof_bytes: case.max_proof_bytes,
+            proof_binding_hash_matches_key: case.proof_binding_hash_matches_key,
         };
         let actual = evaluate_native_proof_sidecar_decoded_admission(input);
         let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
@@ -20529,6 +20789,46 @@ mod tests {
         (binding_hash, artifact_bytes)
     }
 
+    fn repartitioned_tx_leaf_binding_alias_fixture() -> ([u8; 64], Vec<u8>) {
+        let anchor = [41u8; 48];
+        let nullifier = [42u8; 48];
+        let commitment = [43u8; 48];
+        let ciphertext_hash = [44u8; 48];
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let fee = 0;
+        let stablecoin = None;
+        let binding = KernelVersionBinding {
+            circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+        };
+        let intended = ShieldedTransferInputs {
+            anchor,
+            nullifiers: vec![nullifier],
+            commitments: vec![commitment],
+            ciphertext_hashes: vec![ciphertext_hash],
+            balance_slot_asset_ids,
+            fee,
+            value_balance: 0,
+            stablecoin: stablecoin.clone(),
+        };
+        let intended_binding_hash = StarkVerifier::compute_binding_hash(&intended).data;
+        let alias_bytes = test_repartitioned_transfer_proof_alias(
+            anchor,
+            nullifier,
+            commitment,
+            ciphertext_hash,
+            balance_slot_asset_ids,
+            fee,
+            stablecoin,
+            binding,
+        );
+        assert!(
+            !native_tx_leaf_artifact_binding_hash_matches_key(intended_binding_hash, &alias_bytes),
+            "length-tagged binding hash must reject repartitioned tx-leaf public fields"
+        );
+        (intended_binding_hash, alias_bytes)
+    }
+
     #[test]
     fn canonical_state_reload_accepts_contiguous_commitments() {
         let db = sled::Config::new()
@@ -21178,6 +21478,183 @@ mod tests {
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("mismatched binding hash should fail");
         assert!(err.to_string().contains("binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_inline_proof_binding_hash_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [30u8; 48], [130u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        let (_, wrong_proof) = staged_proof_fixture();
+        args.proof = wrong_proof;
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("misbound inline proof must fail transfer payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_sidecar_proof_binding_hash_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_sidecar_transfer_action(anchor, [31u8; 48], [131u8; 48], 0);
+        let mut args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        let (_, wrong_proof) = staged_proof_fixture();
+        args.proof = wrong_proof;
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("misbound sidecar proof must fail transfer payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_inline_repartitioned_tx_leaf_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [32u8; 48], [132u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_repartitioned_transfer_proof_alias(
+            anchor,
+            action.nullifiers[0],
+            action.commitments[0],
+            action.ciphertext_hashes[0],
+            args.balance_slot_asset_ids,
+            args.fee,
+            args.stablecoin.clone(),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("repartitioned inline proof must fail transfer payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_inline_value_balance_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [36u8; 48], [136u8; 48], 0);
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_transfer_proof_artifact_with_value_balance(
+            anchor,
+            &action.nullifiers,
+            &action.commitments,
+            &action.ciphertext_hashes,
+            args.balance_slot_asset_ids,
+            args.fee,
+            29,
+            args.stablecoin.clone(),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("inline proof with aliased value balance must fail payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_sidecar_repartitioned_tx_leaf_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_sidecar_transfer_action(anchor, [33u8; 48], [133u8; 48], 0);
+        let mut args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_repartitioned_transfer_proof_alias(
+            anchor,
+            action.nullifiers[0],
+            action.commitments[0],
+            action.ciphertext_hashes[0],
+            args.balance_slot_asset_ids,
+            args.fee,
+            args.stablecoin.clone(),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("repartitioned sidecar proof must fail transfer payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_accepts_stablecoin_bound_inline_proof() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [34u8; 48],
+            [134u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+
+        validate_block_actions_locked(&state, &[action])
+            .expect("stablecoin-bound inline transfer should pass action validation");
+    }
+
+    #[test]
+    fn block_artifact_binding_rejects_decoded_stablecoin_public_field_mismatch() {
+        let anchor = [44u8; 48];
+        let action_stablecoin = test_stablecoin_policy_binding(11);
+        let decoded_stablecoin = test_stablecoin_policy_binding(12);
+        let action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [35u8; 48],
+            [135u8; 48],
+            3,
+            Some(action_stablecoin),
+        );
+        let args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        let proof = test_transfer_proof_artifact(
+            anchor,
+            &action.nullifiers,
+            &action.commitments,
+            &action.ciphertext_hashes,
+            args.balance_slot_asset_ids,
+            args.fee,
+            Some(decoded_stablecoin),
+            action.binding,
+        );
+        let decoded = consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&proof)
+            .expect("decode native tx-leaf artifact");
+        let tx = Transaction {
+            id: [0u8; 32],
+            nullifiers: decoded.tx.nullifiers.clone(),
+            commitments: decoded.tx.commitments.clone(),
+            balance_tag: decoded.tx.balance_tag,
+            version: decoded.tx.version,
+            ciphertexts: Vec::new(),
+            ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
+        };
+        let input = native_tx_leaf_action_binding_admission_input(&decoded, &action, &tx);
+
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(input)
+                .expect_err("decoded stablecoin payload mismatch must reject")
+                .label(),
+            "stablecoin_payload_mismatch"
+        );
     }
 
     #[test]
@@ -23326,11 +23803,163 @@ mod tests {
         tree.flush().expect("flush test sidecar ciphertext");
     }
 
+    fn test_transfer_proof_artifact(
+        anchor: [u8; 48],
+        nullifiers: &[[u8; 48]],
+        commitments: &[[u8; 48]],
+        ciphertext_hashes: &[[u8; 48]],
+        balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
+        fee: u64,
+        stablecoin: Option<StablecoinPolicyBinding>,
+        binding: KernelVersionBinding,
+    ) -> Vec<u8> {
+        test_transfer_proof_artifact_with_value_balance(
+            anchor,
+            nullifiers,
+            commitments,
+            ciphertext_hashes,
+            balance_slot_asset_ids,
+            fee,
+            0,
+            stablecoin,
+            binding,
+        )
+    }
+
+    fn test_transfer_proof_artifact_with_value_balance(
+        anchor: [u8; 48],
+        nullifiers: &[[u8; 48]],
+        commitments: &[[u8; 48]],
+        ciphertext_hashes: &[[u8; 48]],
+        balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
+        fee: u64,
+        value_balance: i128,
+        stablecoin: Option<StablecoinPolicyBinding>,
+        binding: KernelVersionBinding,
+    ) -> Vec<u8> {
+        let (_, fixture_bytes) = staged_proof_fixture();
+        let mut decoded =
+            consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&fixture_bytes)
+                .expect("decode native tx-leaf fixture");
+        let value_balance_magnitude = u64::try_from(value_balance.unsigned_abs())
+            .expect("test value balance magnitude fits u64");
+        decoded.tx.nullifiers = nullifiers.to_vec();
+        decoded.tx.commitments = commitments.to_vec();
+        decoded.tx.ciphertext_hashes = ciphertext_hashes.to_vec();
+        decoded.tx.version = binding.into();
+        decoded.proof_backend =
+            protocol_versioning::tx_proof_backend_for_version(decoded.tx.version)
+                .unwrap_or(protocol_versioning::DEFAULT_TX_PROOF_BACKEND);
+        decoded.stark_public_inputs.input_flags = vec![1; nullifiers.len()];
+        decoded.stark_public_inputs.output_flags = vec![1; commitments.len()];
+        decoded.stark_public_inputs.fee = fee;
+        decoded.stark_public_inputs.value_balance_sign = u8::from(value_balance < 0);
+        decoded.stark_public_inputs.value_balance_magnitude = value_balance_magnitude;
+        decoded.stark_public_inputs.merkle_root = anchor;
+        decoded.stark_public_inputs.balance_slot_asset_ids = balance_slot_asset_ids.to_vec();
+        match stablecoin {
+            Some(stablecoin) => {
+                let issuance_magnitude = u64::try_from(stablecoin.issuance_delta.unsigned_abs())
+                    .expect("test stablecoin issuance delta magnitude fits u64");
+                decoded.stark_public_inputs.stablecoin_enabled = 1;
+                decoded.stark_public_inputs.stablecoin_asset_id = stablecoin.asset_id;
+                decoded.stark_public_inputs.stablecoin_policy_version = stablecoin.policy_version;
+                decoded.stark_public_inputs.stablecoin_issuance_sign =
+                    u8::from(stablecoin.issuance_delta < 0);
+                decoded.stark_public_inputs.stablecoin_issuance_magnitude = issuance_magnitude;
+                decoded.stark_public_inputs.stablecoin_policy_hash = stablecoin.policy_hash;
+                decoded.stark_public_inputs.stablecoin_oracle_commitment =
+                    stablecoin.oracle_commitment;
+                decoded
+                    .stark_public_inputs
+                    .stablecoin_attestation_commitment = stablecoin.attestation_commitment;
+            }
+            None => {
+                decoded.stark_public_inputs.stablecoin_enabled = 0;
+                decoded.stark_public_inputs.stablecoin_asset_id = 0;
+                decoded.stark_public_inputs.stablecoin_policy_version = 0;
+                decoded.stark_public_inputs.stablecoin_issuance_sign = 0;
+                decoded.stark_public_inputs.stablecoin_issuance_magnitude = 0;
+                decoded.stark_public_inputs.stablecoin_policy_hash = [0u8; 48];
+                decoded.stark_public_inputs.stablecoin_oracle_commitment = [0u8; 48];
+                decoded
+                    .stark_public_inputs
+                    .stablecoin_attestation_commitment = [0u8; 48];
+            }
+        }
+        decoded.receipt.statement_hash =
+            native_tx_leaf_statement_hash_from_decoded(&decoded).expect("statement hash");
+        decoded.receipt.verifier_profile =
+            consensus::proof_interface::experimental_native_tx_leaf_verifier_profile();
+        decoded.receipt.public_inputs_digest =
+            consensus::backend_interface::transaction_public_inputs_digest_from_serialized(
+                &decoded.stark_public_inputs,
+            )
+            .expect("public input digest");
+        decoded.receipt.proof_digest =
+            transaction_circuit::proof::transaction_proof_digest_from_parts(
+                decoded.proof_backend,
+                &decoded.stark_proof,
+            );
+        let proof = consensus::backend_interface::encode_native_tx_leaf_artifact_bytes(&decoded)
+            .expect("encode native tx-leaf fixture");
+        let binding_hash = native_tx_leaf_artifact_binding_hash(&decoded)
+            .expect("derive native tx-leaf binding hash");
+        assert!(native_tx_leaf_artifact_binding_hash_matches_key(
+            binding_hash,
+            &proof
+        ));
+        proof
+    }
+
+    fn test_repartitioned_transfer_proof_alias(
+        anchor: [u8; 48],
+        nullifier: [u8; 48],
+        commitment: [u8; 48],
+        ciphertext_hash: [u8; 48],
+        balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS],
+        fee: u64,
+        stablecoin: Option<StablecoinPolicyBinding>,
+        binding: KernelVersionBinding,
+    ) -> Vec<u8> {
+        test_transfer_proof_artifact(
+            anchor,
+            &[nullifier, commitment],
+            &[],
+            &[ciphertext_hash],
+            balance_slot_asset_ids,
+            fee,
+            stablecoin,
+            binding,
+        )
+    }
+
+    fn test_stablecoin_policy_binding(seed: u8) -> StablecoinPolicyBinding {
+        StablecoinPolicyBinding {
+            asset_id: u64::from(seed),
+            policy_hash: [seed; 48],
+            oracle_commitment: [seed.wrapping_add(1); 48],
+            attestation_commitment: [seed.wrapping_add(2); 48],
+            issuance_delta: i128::from(seed) - 20,
+            policy_version: u32::from(seed),
+        }
+    }
+
     fn test_inline_transfer_action(
         anchor: [u8; 48],
         nullifier: [u8; 48],
         commitment: [u8; 48],
         fee: u64,
+    ) -> PendingAction {
+        test_inline_transfer_action_with_stablecoin(anchor, nullifier, commitment, fee, None)
+    }
+
+    fn test_inline_transfer_action_with_stablecoin(
+        anchor: [u8; 48],
+        nullifier: [u8; 48],
+        commitment: [u8; 48],
+        fee: u64,
+        stablecoin: Option<StablecoinPolicyBinding>,
     ) -> PendingAction {
         let note = test_transfer_encrypted_note();
         let note_bytes = test_transfer_ciphertext_bytes();
@@ -23343,17 +23972,32 @@ mod tests {
             balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
             fee,
             value_balance: 0,
-            stablecoin: None,
+            stablecoin: stablecoin.clone(),
         };
         let binding_hash = StarkVerifier::compute_binding_hash(&inputs).data;
+        let binding = KernelVersionBinding {
+            circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+        };
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let proof = test_transfer_proof_artifact(
+            anchor,
+            &[nullifier],
+            &[commitment],
+            &[ciphertext_hash],
+            balance_slot_asset_ids,
+            fee,
+            stablecoin.clone(),
+            binding,
+        );
         let args = ShieldedTransferInlineArgs {
-            proof: vec![9u8; 32],
+            proof,
             commitments: vec![commitment],
             ciphertexts: vec![note],
             anchor,
-            balance_slot_asset_ids: [0, u64::MAX, u64::MAX, u64::MAX],
+            balance_slot_asset_ids,
             binding_hash,
-            stablecoin: None,
+            stablecoin,
             fee,
         };
         let ciphertext_size = u32::try_from(
@@ -23362,10 +24006,7 @@ mod tests {
         .expect("ciphertext size");
         let mut action = PendingAction {
             tx_hash: [0u8; 32],
-            binding: KernelVersionBinding {
-                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
-                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
-            },
+            binding,
             family_id: FAMILY_SHIELDED_POOL,
             action_id: ACTION_SHIELDED_TRANSFER_INLINE,
             anchor,

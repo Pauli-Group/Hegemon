@@ -107,7 +107,7 @@ const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 pub const AGGREGATION_PROOF_FORMAT_VERSION_V4: u8 = 4;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
-const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v3";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
 const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
@@ -662,15 +662,31 @@ fn binding_hash_from_public_inputs(
     ensure_zeroed_suffix(&public.commitments, output_count, "commitments")?;
     ensure_zeroed_suffix(&public.ciphertext_hashes, output_count, "ciphertext_hashes")?;
 
-    let mut message =
-        Vec::with_capacity(48 + input_count * 48 + output_count * 48 + output_count * 48 + 24);
+    let mut message = Vec::with_capacity(
+        48 + 12
+            + input_count * 48
+            + output_count * 48
+            + output_count * 48
+            + 24
+            + public.balance_slot_assets.len() * 8
+            + 1
+            + 8
+            + 48
+            + 48
+            + 48
+            + 16
+            + 4,
+    );
     message.extend_from_slice(&felts_to_bytes48(&public.merkle_root));
+    extend_binding_len(&mut message, input_count);
     for nf in public.nullifiers.iter().take(input_count) {
         message.extend_from_slice(&felts_to_bytes48(nf));
     }
+    extend_binding_len(&mut message, output_count);
     for cm in public.commitments.iter().take(output_count) {
         message.extend_from_slice(&felts_to_bytes48(cm));
     }
+    extend_binding_len(&mut message, output_count);
     for ct in public.ciphertext_hashes.iter().take(output_count) {
         message.extend_from_slice(&felts_to_bytes48(ct));
     }
@@ -678,6 +694,53 @@ fn binding_hash_from_public_inputs(
     let value_balance =
         decode_signed_i128_from_parts(public.value_balance_sign, public.value_balance_magnitude)?;
     message.extend_from_slice(&value_balance.to_le_bytes());
+    for asset_id in public.balance_slot_assets {
+        message.extend_from_slice(&asset_id.as_canonical_u64().to_le_bytes());
+    }
+
+    let stablecoin_enabled =
+        canonical_u8_public_input(public.stablecoin_enabled, "stablecoin_enabled")?;
+    if stablecoin_enabled > 1 {
+        return Err(ProofError::AggregationProofV4Binding(
+            "stablecoin_enabled is not boolean".to_string(),
+        ));
+    }
+    let stablecoin_asset = public.stablecoin_asset.as_canonical_u64();
+    let stablecoin_policy_version = canonical_u32_public_input(
+        public.stablecoin_policy_version,
+        "stablecoin_policy_version",
+    )?;
+    let stablecoin_issuance_sign =
+        canonical_u8_public_input(public.stablecoin_issuance_sign, "stablecoin_issuance_sign")?;
+    let stablecoin_issuance_magnitude = public.stablecoin_issuance_magnitude.as_canonical_u64();
+    let stablecoin_issuance = decode_signed_i128_from_parts(
+        public.stablecoin_issuance_sign,
+        public.stablecoin_issuance_magnitude,
+    )?;
+    let stablecoin_policy_hash = felts_to_bytes48(&public.stablecoin_policy_hash);
+    let stablecoin_oracle_commitment = felts_to_bytes48(&public.stablecoin_oracle_commitment);
+    let stablecoin_attestation_commitment =
+        felts_to_bytes48(&public.stablecoin_attestation_commitment);
+    if stablecoin_enabled == 0
+        && (stablecoin_asset != 0
+            || stablecoin_policy_version != 0
+            || stablecoin_issuance_sign != 0
+            || stablecoin_issuance_magnitude != 0
+            || stablecoin_policy_hash != [0u8; 48]
+            || stablecoin_oracle_commitment != [0u8; 48]
+            || stablecoin_attestation_commitment != [0u8; 48])
+    {
+        return Err(ProofError::AggregationProofV4Binding(
+            "disabled stablecoin public fields must be zero".to_string(),
+        ));
+    }
+    message.push(stablecoin_enabled);
+    message.extend_from_slice(&stablecoin_asset.to_le_bytes());
+    message.extend_from_slice(&stablecoin_policy_hash);
+    message.extend_from_slice(&stablecoin_oracle_commitment);
+    message.extend_from_slice(&stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(&stablecoin_policy_version.to_le_bytes());
 
     let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
     msg0.extend_from_slice(BINDING_HASH_DOMAIN);
@@ -695,6 +758,23 @@ fn binding_hash_from_public_inputs(
     out[..32].copy_from_slice(&hash0);
     out[32..].copy_from_slice(&hash1);
     Ok(out)
+}
+
+fn extend_binding_len(message: &mut Vec<u8>, len: usize) {
+    let len = u32::try_from(len).expect("aggregation binding vector length exceeds u32");
+    message.extend_from_slice(&len.to_le_bytes());
+}
+
+fn canonical_u8_public_input(value: Val, label: &str) -> Result<u8, ProofError> {
+    let raw = value.as_canonical_u64();
+    u8::try_from(raw)
+        .map_err(|_| ProofError::AggregationProofV4Binding(format!("{label} does not fit in u8")))
+}
+
+fn canonical_u32_public_input(value: Val, label: &str) -> Result<u32, ProofError> {
+    let raw = value.as_canonical_u64();
+    u32::try_from(raw)
+        .map_err(|_| ProofError::AggregationProofV4Binding(format!("{label} does not fit in u32")))
 }
 
 fn blake2_256(bytes: &[u8]) -> [u8; 32] {

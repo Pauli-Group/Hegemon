@@ -11,6 +11,7 @@ inductive TransferPayloadReject where
   | ciphertextHashesMismatch
   | ciphertextSizesMismatch
   | bindingHashMismatch
+  | proofBindingHashMismatch
   | feeMismatch
 deriving DecidableEq, Repr
 
@@ -24,6 +25,7 @@ structure TransferPayloadInput where
   ciphertextHashesMatch : Bool
   ciphertextSizesMatch : Bool
   bindingHashMatches : Bool
+  proofBindingHashMatchesKey : Bool
   feeMatches : Bool
 deriving DecidableEq, Repr
 
@@ -45,6 +47,8 @@ def evaluateTransferPayload
     Except.error TransferPayloadReject.ciphertextSizesMismatch
   else if input.bindingHashMatches = false then
     Except.error TransferPayloadReject.bindingHashMismatch
+  else if input.proofBindingHashMatchesKey = false then
+    Except.error TransferPayloadReject.proofBindingHashMismatch
   else if input.feeMatches = false then
     Except.error TransferPayloadReject.feeMismatch
   else
@@ -78,6 +82,8 @@ def transferPayloadPreconditions (input : TransferPayloadInput) : Bool :=
     false
   else if input.bindingHashMatches = false then
     false
+  else if input.proofBindingHashMatchesKey = false then
+    false
   else if input.feeMatches = false then
     false
   else
@@ -88,22 +94,26 @@ theorem accepts_iff_payload_preconditions (input : TransferPayloadInput) :
   cases input with
   | mk proofBytes maxProofBytes anchorMatches commitmentsMatch inlineCiphertextBytes
       maxCiphertextBytes ciphertextHashesMatch ciphertextSizesMatch bindingHashMatches
-      feeMatches =>
+      proofBindingHashMatchesKey feeMatches =>
       unfold transferPayloadAccepts transferPayloadPreconditions evaluateTransferPayload
       by_cases noProof : proofBytes = 0
       · cases anchorMatches <;> cases commitmentsMatch <;> cases ciphertextHashesMatch <;>
-          cases ciphertextSizesMatch <;> cases bindingHashMatches <;> cases feeMatches <;>
+          cases ciphertextSizesMatch <;> cases bindingHashMatches <;>
+          cases proofBindingHashMatchesKey <;> cases feeMatches <;>
           simp [noProof]
       · by_cases proofOversized : proofBytes > maxProofBytes
         · cases anchorMatches <;> cases commitmentsMatch <;> cases ciphertextHashesMatch <;>
-            cases ciphertextSizesMatch <;> cases bindingHashMatches <;> cases feeMatches <;>
+            cases ciphertextSizesMatch <;> cases bindingHashMatches <;>
+            cases proofBindingHashMatchesKey <;> cases feeMatches <;>
             simp [noProof, proofOversized]
         · by_cases ciphertextOversized : inlineCiphertextBytes > maxCiphertextBytes
           · cases anchorMatches <;> cases commitmentsMatch <;> cases ciphertextHashesMatch <;>
-              cases ciphertextSizesMatch <;> cases bindingHashMatches <;> cases feeMatches <;>
+              cases ciphertextSizesMatch <;> cases bindingHashMatches <;>
+              cases proofBindingHashMatchesKey <;> cases feeMatches <;>
               simp [noProof, proofOversized, ciphertextOversized]
           · cases anchorMatches <;> cases commitmentsMatch <;> cases ciphertextHashesMatch <;>
-              cases ciphertextSizesMatch <;> cases bindingHashMatches <;> cases feeMatches <;>
+              cases ciphertextSizesMatch <;> cases bindingHashMatches <;>
+              cases proofBindingHashMatchesKey <;> cases feeMatches <;>
               simp [noProof, proofOversized, ciphertextOversized]
 
 def validTransferPayload : TransferPayloadInput :=
@@ -117,6 +127,7 @@ def validTransferPayload : TransferPayloadInput :=
     ciphertextHashesMatch := true,
     ciphertextSizesMatch := true,
     bindingHashMatches := true,
+    proofBindingHashMatchesKey := true,
     feeMatches := true
   }
 
@@ -233,6 +244,32 @@ theorem binding_hash_mismatch_rejects
     mismatch
   ]
 
+theorem proof_binding_hash_mismatch_rejects
+    {input : TransferPayloadInput}
+    (present : input.proofBytes ≠ 0)
+    (proofInBounds : ¬ input.proofBytes > input.maxProofBytes)
+    (anchor : input.anchorMatches = true)
+    (commitments : input.commitmentsMatch = true)
+    (ciphertextInBounds : ¬ input.inlineCiphertextBytes > input.maxCiphertextBytes)
+    (hashes : input.ciphertextHashesMatch = true)
+    (sizes : input.ciphertextSizesMatch = true)
+    (binding : input.bindingHashMatches = true)
+    (mismatch : input.proofBindingHashMatchesKey = false) :
+    evaluateTransferPayload input =
+      Except.error TransferPayloadReject.proofBindingHashMismatch := by
+  unfold evaluateTransferPayload
+  simp [
+    present,
+    proofInBounds,
+    anchor,
+    commitments,
+    ciphertextInBounds,
+    hashes,
+    sizes,
+    binding,
+    mismatch
+  ]
+
 theorem fee_mismatch_rejects
     {input : TransferPayloadInput}
     (present : input.proofBytes ≠ 0)
@@ -243,6 +280,7 @@ theorem fee_mismatch_rejects
     (hashes : input.ciphertextHashesMatch = true)
     (sizes : input.ciphertextSizesMatch = true)
     (binding : input.bindingHashMatches = true)
+    (proofBinding : input.proofBindingHashMatchesKey = true)
     (mismatch : input.feeMatches = false) :
     evaluateTransferPayload input =
       Except.error TransferPayloadReject.feeMismatch := by
@@ -256,6 +294,7 @@ theorem fee_mismatch_rejects
     hashes,
     sizes,
     binding,
+    proofBinding,
     mismatch
   ]
 

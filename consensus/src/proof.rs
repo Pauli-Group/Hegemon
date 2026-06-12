@@ -1064,6 +1064,37 @@ pub fn native_receipt_root_verify_mode_label() -> &'static str {
     load_native_receipt_root_verify_mode().label()
 }
 
+#[cfg(test)]
+type ReceiptRootBackendOverride = Arc<
+    dyn Fn(
+            &[NativeTxLeafRecord],
+            &[TxValidityArtifact],
+            &[u8],
+        ) -> Result<crate::types::ReceiptRootMetadata, ProofError>
+        + Send
+        + Sync,
+>;
+
+#[cfg(test)]
+thread_local! {
+    static RECEIPT_ROOT_BACKEND_OVERRIDE: std::cell::RefCell<Option<ReceiptRootBackendOverride>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn receipt_root_backend_override_result(
+    leaf_records: &[NativeTxLeafRecord],
+    artifacts: &[TxValidityArtifact],
+    artifact_bytes: &[u8],
+) -> Option<Result<crate::types::ReceiptRootMetadata, ProofError>> {
+    RECEIPT_ROOT_BACKEND_OVERRIDE.with(|override_cell| {
+        override_cell
+            .borrow()
+            .as_ref()
+            .map(|override_fn| override_fn(leaf_records, artifacts, artifact_bytes))
+    })
+}
+
 pub trait ArtifactVerifier: Send + Sync {
     fn kind(&self) -> ProofArtifactKind;
     fn supports_verifier_profile(&self, verifier_profile: VerifierProfileDigest) -> bool;
@@ -1437,36 +1468,80 @@ impl ArtifactVerifier for ReceiptRootVerifier {
             .map(|record| record.leaf.clone())
             .collect::<Vec<_>>();
         let verify_mode = load_native_receipt_root_verify_mode();
-        let root_metadata = match verify_mode {
-            NativeReceiptRootVerifyMode::Replay => {
-                verify_experimental_native_receipt_root_artifact(
-                    artifacts,
-                    &envelope.artifact_bytes,
-                )
-            }
-            NativeReceiptRootVerifyMode::VerifiedRecords => {
-                verify_experimental_native_receipt_root_artifact_from_records(
-                    &leaf_records,
-                    &envelope.artifact_bytes,
-                )
-            }
-            NativeReceiptRootVerifyMode::CrossCheck => {
-                let records_metadata =
-                    verify_experimental_native_receipt_root_artifact_from_records(
-                        &leaf_records,
-                        &envelope.artifact_bytes,
-                    )?;
-                let replay_metadata = verify_experimental_native_receipt_root_artifact(
-                    artifacts,
-                    &envelope.artifact_bytes,
-                )?;
-                if records_metadata != replay_metadata {
-                    return Err(ProofError::AggregationProofVerification(
-                        "native receipt-root replay and verified-record verification disagreed"
-                            .to_string(),
-                    ));
+        let root_metadata = {
+            #[cfg(test)]
+            if let Some(result) =
+                receipt_root_backend_override_result(&leaf_records, artifacts, &envelope.artifact_bytes)
+            {
+                result
+            } else {
+                match verify_mode {
+                    NativeReceiptRootVerifyMode::Replay => {
+                        verify_experimental_native_receipt_root_artifact(
+                            artifacts,
+                            &envelope.artifact_bytes,
+                        )
+                    }
+                    NativeReceiptRootVerifyMode::VerifiedRecords => {
+                        verify_experimental_native_receipt_root_artifact_from_records(
+                            &leaf_records,
+                            &envelope.artifact_bytes,
+                        )
+                    }
+                    NativeReceiptRootVerifyMode::CrossCheck => {
+                        let records_metadata =
+                            verify_experimental_native_receipt_root_artifact_from_records(
+                                &leaf_records,
+                                &envelope.artifact_bytes,
+                            )?;
+                        let replay_metadata = verify_experimental_native_receipt_root_artifact(
+                            artifacts,
+                            &envelope.artifact_bytes,
+                        )?;
+                        if records_metadata != replay_metadata {
+                            return Err(ProofError::AggregationProofVerification(
+                                "native receipt-root replay and verified-record verification disagreed"
+                                    .to_string(),
+                            ));
+                        }
+                        Ok(records_metadata)
+                    }
                 }
-                Ok(records_metadata)
+            }
+            #[cfg(not(test))]
+            {
+                match verify_mode {
+                    NativeReceiptRootVerifyMode::Replay => {
+                        verify_experimental_native_receipt_root_artifact(
+                            artifacts,
+                            &envelope.artifact_bytes,
+                        )
+                    }
+                    NativeReceiptRootVerifyMode::VerifiedRecords => {
+                        verify_experimental_native_receipt_root_artifact_from_records(
+                            &leaf_records,
+                            &envelope.artifact_bytes,
+                        )
+                    }
+                    NativeReceiptRootVerifyMode::CrossCheck => {
+                        let records_metadata =
+                            verify_experimental_native_receipt_root_artifact_from_records(
+                                &leaf_records,
+                                &envelope.artifact_bytes,
+                            )?;
+                        let replay_metadata = verify_experimental_native_receipt_root_artifact(
+                            artifacts,
+                            &envelope.artifact_bytes,
+                        )?;
+                        if records_metadata != replay_metadata {
+                            return Err(ProofError::AggregationProofVerification(
+                                "native receipt-root replay and verified-record verification disagreed"
+                                    .to_string(),
+                            ));
+                        }
+                        Ok(records_metadata)
+                    }
+                }
             }
         }
         .map_err(|err| {
@@ -2782,7 +2857,8 @@ mod tests {
     use protocol_versioning::DEFAULT_VERSION_BINDING;
     use protocol_versioning::VersionBinding;
     use serde::Deserialize;
-    use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
     static TEST_ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
@@ -4399,6 +4475,373 @@ mod tests {
             commitment: superneo_backend_lattice::LatticeCommitment::digest_only([seed; 48]),
             proof_digest: [seed; 48],
         }
+    }
+
+    #[derive(Clone)]
+    struct ReceiptRootCallerFixture {
+        parent_tree: CommitmentTreeState,
+        transactions: Vec<crate::types::Transaction>,
+        tx_artifacts: Vec<TxValidityArtifact>,
+        verified_records: Vec<VerifiedNativeTxLeaf>,
+        backend_inputs: BlockBackendInputs,
+        block: Block<TestHeader>,
+        envelope: ProofEnvelope,
+        statement_commitment: [u8; 48],
+        metadata: crate::types::ReceiptRootMetadata,
+    }
+
+    struct NativeTxLeafCacheGuard;
+
+    impl Drop for NativeTxLeafCacheGuard {
+        fn drop(&mut self) {
+            clear_verified_native_tx_leaf_store();
+        }
+    }
+
+    fn receipt_root_caller_fixture() -> ReceiptRootCallerFixture {
+        static FIXTURE: OnceLock<ReceiptRootCallerFixture> = OnceLock::new();
+        FIXTURE
+            .get_or_init(build_receipt_root_caller_fixture)
+            .clone()
+    }
+
+    fn build_receipt_root_caller_fixture() -> ReceiptRootCallerFixture {
+        let parent_tree = CommitmentTreeState::default();
+        let tx = crate::types::Transaction::new_with_hashes(
+            vec![[1u8; 48]],
+            vec![[2u8; 48]],
+            [3u8; 48],
+            DEFAULT_VERSION_BINDING,
+            vec![[4u8; 48]],
+        );
+        let transactions = vec![tx.clone()];
+        let da_params = crate::types::DaParams {
+            chunk_size: 1024,
+            sample_count: 4,
+        };
+        let da_root = da_root(&transactions, da_params).expect("fixture da root");
+        let native_tx_profile = experimental_native_tx_leaf_verifier_profile();
+        let receipt =
+            TxValidityReceipt::new([0x11u8; 48], [0x12u8; 48], [0x13u8; 48], native_tx_profile);
+        let tx_leaf_bytes = b"receipt-root caller native tx-leaf sentinel".to_vec();
+        let tx_artifact = TxValidityArtifact {
+            receipt: receipt.clone(),
+            proof: Some(ProofEnvelope {
+                kind: ProofArtifactKind::TxLeaf,
+                verifier_profile: native_tx_profile,
+                artifact_bytes: tx_leaf_bytes.clone(),
+            }),
+        };
+        let binding = TxStatementBinding {
+            statement_hash: receipt.statement_hash,
+            anchor: parent_tree.root(),
+            fee: 7,
+            circuit_version: u32::from(DEFAULT_VERSION_BINDING.circuit),
+        };
+        let claim = TxValidityClaim::new(receipt.clone(), binding.clone());
+        let statement_commitment =
+            commitment_from_statement_bindings(std::slice::from_ref(&binding))
+                .expect("fixture statement commitment");
+        let updated_tree =
+            apply_commitments(&parent_tree, &transactions).expect("fixture commitment tree update");
+        let lists = commitment_nullifier_lists(&transactions).expect("fixture nullifier lists");
+        let nullifier_root =
+            nullifier_root_from_list(&lists.nullifiers).expect("fixture nullifier root");
+        let commitment_proof = CommitmentBlockProver::new()
+            .prove_from_statement_hashes_with_inputs(
+                &[receipt.statement_hash],
+                parent_tree.root(),
+                updated_tree.root(),
+                kernel_root_from_shielded_root(&parent_tree.root()),
+                kernel_root_from_shielded_root(&updated_tree.root()),
+                nullifier_root,
+                da_root,
+                lists.nullifiers,
+                lists.sorted_nullifiers,
+            )
+            .expect("fixture commitment proof");
+
+        let metadata = crate::types::ReceiptRootMetadata {
+            params_fingerprint: [0x21u8; 48],
+            relation_id: [0x22u8; 32],
+            shape_digest: [0x23u8; 32],
+            leaf_count: 1,
+            fold_count: 0,
+        };
+        let root_proof = b"receipt-root backend sentinel proof".to_vec();
+        let receipt_root_payload = crate::types::ReceiptRootProofPayload {
+            root_proof: root_proof.clone(),
+            metadata: metadata.clone(),
+            receipts: vec![receipt.clone()],
+        };
+        let native_root_profile = experimental_native_receipt_root_verifier_profile();
+        let block = Block {
+            header: TestHeader {
+                da_params,
+                da_root,
+                message_root: [0u8; 48],
+            },
+            transactions: transactions.clone(),
+            coinbase: None,
+            proven_batch: Some(crate::types::ProvenBatch {
+                version: 2,
+                tx_count: transactions.len() as u32,
+                tx_statements_commitment: statement_commitment,
+                da_root,
+                da_chunk_count: 1,
+                commitment_proof,
+                mode: ProvenBatchMode::ReceiptRoot,
+                proof_kind: ProofArtifactKind::ReceiptRoot,
+                verifier_profile: native_root_profile,
+                receipt_root: Some(receipt_root_payload),
+            }),
+            block_artifact: None,
+            tx_validity_claims: Some(vec![claim]),
+            tx_statements_commitment: Some(statement_commitment),
+            proof_verification_mode: ProofVerificationMode::SelfContainedAggregation,
+        };
+        let verified_record = VerifiedNativeTxLeaf {
+            tx: tx_leaf_public_tx_from_consensus_tx(&tx),
+            receipt: receipt.clone(),
+            binding,
+            leaf: fake_native_tx_leaf_record(7),
+        };
+        let tx_artifacts = vec![tx_artifact];
+        ReceiptRootCallerFixture {
+            parent_tree,
+            transactions,
+            tx_artifacts: tx_artifacts.clone(),
+            verified_records: vec![verified_record],
+            backend_inputs: BlockBackendInputs::from_tx_validity_artifacts(tx_artifacts),
+            block,
+            envelope: ProofEnvelope {
+                kind: ProofArtifactKind::ReceiptRoot,
+                verifier_profile: native_root_profile,
+                artifact_bytes: root_proof,
+            },
+            statement_commitment,
+            metadata,
+        }
+    }
+
+    fn install_receipt_root_fixture_cache(
+        fixture: &ReceiptRootCallerFixture,
+    ) -> NativeTxLeafCacheGuard {
+        clear_verified_native_tx_leaf_store();
+        for (artifact, record) in fixture.tx_artifacts.iter().zip(&fixture.verified_records) {
+            let artifact_bytes = &artifact
+                .proof
+                .as_ref()
+                .expect("fixture tx artifact has proof")
+                .artifact_bytes;
+            NATIVE_TX_LEAF_VERIFY_CACHE
+                .lock()
+                .insert(native_tx_leaf_artifact_hash(artifact_bytes), record.clone());
+        }
+        NativeTxLeafCacheGuard
+    }
+
+    fn with_receipt_root_backend_override<T>(
+        override_fn: ReceiptRootBackendOverride,
+        body: impl FnOnce() -> T,
+    ) -> T {
+        RECEIPT_ROOT_BACKEND_OVERRIDE.with(|override_cell| {
+            assert!(
+                override_cell.borrow().is_none(),
+                "nested receipt-root backend overrides are not supported"
+            );
+            *override_cell.borrow_mut() = Some(override_fn);
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        RECEIPT_ROOT_BACKEND_OVERRIDE.with(|override_cell| {
+            *override_cell.borrow_mut() = None;
+        });
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    fn expect_receipt_root_backend_not_called<T>(
+        body: impl FnOnce() -> Result<T, ProofError>,
+    ) -> ProofError {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_override = Arc::clone(&calls);
+        let err = with_receipt_root_backend_override(
+            Arc::new(move |_, _, _| {
+                calls_for_override.fetch_add(1, Ordering::SeqCst);
+                Err(ProofError::AggregationProofVerification(
+                    "sentinel receipt-root backend verifier was called".to_string(),
+                ))
+            }),
+            || match body() {
+                Ok(_) => panic!("caller-level receipt-root admission must reject"),
+                Err(err) => err,
+            },
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "receipt-root backend verifier was reached before caller-level rejection"
+        );
+        err
+    }
+
+    #[test]
+    fn parallel_receipt_root_payload_mismatches_reject_before_backend() {
+        let _guard = set_native_receipt_root_verify_mode("verified_records");
+        let fixture = receipt_root_caller_fixture();
+        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
+
+        let mut leaf_count_mismatch = fixture.block.clone();
+        leaf_count_mismatch
+            .proven_batch
+            .as_mut()
+            .expect("fixture proven batch")
+            .receipt_root
+            .as_mut()
+            .expect("fixture receipt-root payload")
+            .metadata
+            .leaf_count += 1;
+        let err = expect_receipt_root_backend_not_called(|| {
+            ParallelProofVerifier::new().verify_block_with_backend(
+                &leaf_count_mismatch,
+                Some(&fixture.backend_inputs),
+                &fixture.parent_tree,
+            )
+        });
+        assert!(matches!(
+            err,
+            ProofError::ProvenBatchBindingMismatch(message)
+                if message.contains("leaf_count mismatch")
+        ));
+
+        let mut block = fixture.block.clone();
+        block
+            .proven_batch
+            .as_mut()
+            .expect("fixture proven batch")
+            .receipt_root
+            .as_mut()
+            .expect("fixture receipt-root payload")
+            .receipts[0]
+            .proof_digest[0] ^= 0x01;
+
+        let err = expect_receipt_root_backend_not_called(|| {
+            ParallelProofVerifier::new().verify_block_with_backend(
+                &block,
+                Some(&fixture.backend_inputs),
+                &fixture.parent_tree,
+            )
+        });
+        assert!(matches!(
+            err,
+            ProofError::ProvenBatchBindingMismatch(message)
+                if message.contains("payload receipts do not match")
+        ));
+    }
+
+    #[test]
+    fn receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend() {
+        let _guard = set_native_receipt_root_verify_mode("verified_records");
+        let fixture = receipt_root_caller_fixture();
+        let verifier = ReceiptRootVerifier;
+
+        let mut wrong_kind = fixture.envelope.clone();
+        wrong_kind.kind = ProofArtifactKind::TxLeaf;
+        let err = expect_receipt_root_backend_not_called(|| {
+            verifier.verify_block_artifact(
+                &fixture.transactions,
+                Some(&fixture.tx_artifacts),
+                &fixture.statement_commitment,
+                &wrong_kind,
+            )
+        });
+        assert!(matches!(
+            err,
+            ProofError::UnsupportedProofArtifact(message)
+                if message.contains("expected receipt_root block artifact, got tx_leaf")
+        ));
+
+        let mut wrong_profile = fixture.envelope.clone();
+        wrong_profile.verifier_profile = experimental_native_tx_leaf_verifier_profile();
+        let err = expect_receipt_root_backend_not_called(|| {
+            verifier.verify_block_artifact(
+                &fixture.transactions,
+                Some(&fixture.tx_artifacts),
+                &fixture.statement_commitment,
+                &wrong_profile,
+            )
+        });
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofInputsMismatch(message)
+                if message.contains("receipt-root requires the native verifier profile")
+        ));
+    }
+
+    #[test]
+    fn receipt_root_statement_commitment_mismatch_rejects_before_backend() {
+        let _guard = set_native_receipt_root_verify_mode("verified_records");
+        let fixture = receipt_root_caller_fixture();
+        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
+        let mut wrong_commitment = fixture.statement_commitment;
+        wrong_commitment[0] ^= 0x01;
+
+        let err = expect_receipt_root_backend_not_called(|| {
+            ReceiptRootVerifier.verify_block_artifact(
+                &fixture.transactions,
+                Some(&fixture.tx_artifacts),
+                &wrong_commitment,
+                &fixture.envelope,
+            )
+        });
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofInputsMismatch(message)
+                if message.contains("statement commitment mismatch")
+        ));
+    }
+
+    #[test]
+    fn parallel_receipt_root_verified_metadata_leaf_count_mismatch_rejects() {
+        let _guard = set_native_receipt_root_verify_mode("verified_records");
+        let fixture = receipt_root_caller_fixture();
+        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_override = Arc::clone(&calls);
+        let mut wrong_metadata = fixture.metadata.clone();
+        wrong_metadata.leaf_count = 2;
+        let expected_artifact_bytes = fixture.envelope.artifact_bytes.clone();
+
+        let err = with_receipt_root_backend_override(
+            Arc::new(move |records, artifacts, artifact_bytes| {
+                calls_for_override.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(records.len(), 1);
+                assert_eq!(artifacts.len(), 1);
+                assert_eq!(artifact_bytes, expected_artifact_bytes.as_slice());
+                Ok(wrong_metadata.clone())
+            }),
+            || {
+                ParallelProofVerifier::new()
+                    .verify_block_with_backend(
+                        &fixture.block,
+                        Some(&fixture.backend_inputs),
+                        &fixture.parent_tree,
+                    )
+                    .expect_err("verified metadata leaf-count mismatch must reject")
+            },
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "metadata mismatch test must reach the root backend exactly once"
+        );
+        assert!(matches!(
+            err,
+            ProofError::AggregationProofInputsMismatch(message)
+                if message.contains("verified leaf count mismatch")
+        ));
     }
 
     #[test]

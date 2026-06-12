@@ -12,6 +12,7 @@ inductive SidecarUploadReject where
   | proofMissing
   | proofEmpty
   | proofTooLarge
+  | proofBindingHashMismatch
 deriving DecidableEq, Repr
 
 structure RequestCountInput where
@@ -34,6 +35,7 @@ deriving DecidableEq, Repr
 structure ProofDecodedInput where
   proofBytes : Nat
   maxProofBytes : Nat
+  proofBindingHashMatchesKey : Bool
 deriving DecidableEq, Repr
 
 def evaluateCiphertextRequest
@@ -87,6 +89,8 @@ def evaluateProofDecoded
     Except.error SidecarUploadReject.proofEmpty
   else if input.proofBytes > input.maxProofBytes then
     Except.error SidecarUploadReject.proofTooLarge
+  else if input.proofBindingHashMatchesKey = false then
+    Except.error SidecarUploadReject.proofBindingHashMismatch
   else
     Except.ok ()
 
@@ -120,6 +124,8 @@ def proofDecodedPreconditions (input : ProofDecodedInput) : Bool :=
   if input.proofBytes = 0 then
     false
   else if input.proofBytes > input.maxProofBytes then
+    false
+  else if input.proofBindingHashMatchesKey = false then
     false
   else
     true
@@ -170,11 +176,13 @@ theorem proof_decoded_accepts_iff_preconditions
     (input : ProofDecodedInput) :
     accepts (evaluateProofDecoded input) = proofDecodedPreconditions input := by
   cases input with
-  | mk proofBytes maxProofBytes =>
+  | mk proofBytes maxProofBytes proofBindingHashMatchesKey =>
       unfold accepts evaluateProofDecoded proofDecodedPreconditions
       by_cases empty : proofBytes = 0
       · simp [empty]
-      · by_cases tooLarge : proofBytes > maxProofBytes <;> simp [empty, tooLarge]
+      · by_cases tooLarge : proofBytes > maxProofBytes
+        · simp [empty, tooLarge]
+        · cases proofBindingHashMatchesKey <;> simp [empty, tooLarge]
 
 def requestExactLimit : RequestCountInput :=
   {
@@ -283,7 +291,8 @@ theorem invalid_binding_hash_precedes_proof_missing :
 def validProofDecoded : ProofDecodedInput :=
   {
     proofBytes := 7,
-    maxProofBytes := 530368
+    maxProofBytes := 530368,
+    proofBindingHashMatchesKey := true
   }
 
 theorem valid_proof_decoded_accepts :
@@ -307,9 +316,26 @@ theorem proof_too_large_rejects :
       Except.error SidecarUploadReject.proofTooLarge := by
   rfl
 
+theorem proof_binding_hash_mismatch_rejects :
+    evaluateProofDecoded
+      { validProofDecoded with proofBindingHashMatchesKey := false } =
+      Except.error SidecarUploadReject.proofBindingHashMismatch := by
+  rfl
+
 theorem proof_empty_precedes_too_large_when_max_zero :
-    evaluateProofDecoded { proofBytes := 0, maxProofBytes := 0 } =
+    evaluateProofDecoded
+      { proofBytes := 0,
+        maxProofBytes := 0,
+        proofBindingHashMatchesKey := false } =
       Except.error SidecarUploadReject.proofEmpty := by
+  rfl
+
+theorem proof_too_large_precedes_binding_hash_mismatch :
+    evaluateProofDecoded
+      { validProofDecoded with
+        proofBytes := validProofDecoded.maxProofBytes + 1,
+        proofBindingHashMatchesKey := false } =
+      Except.error SidecarUploadReject.proofTooLarge := by
   rfl
 
 end SidecarUploadAdmission

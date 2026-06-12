@@ -22,6 +22,8 @@ def txLeafActionRejectionJson :
       "\"version_mismatch\""
   | some TxLeafActionBindingReject.feeMismatch =>
       "\"fee_mismatch\""
+  | some TxLeafActionBindingReject.stablecoinPayloadMismatch =>
+      "\"stablecoin_payload_mismatch\""
   | some TxLeafActionBindingReject.balanceTagMismatch =>
       "\"balance_tag_mismatch\""
   | some TxLeafActionBindingReject.receiptStatementHashMismatch =>
@@ -60,6 +62,8 @@ def txLeafActionBindingCaseJson
       ++ boolJson input.outputCountMatches ++ ",\n"
     ++ "      \"version_matches\": " ++ boolJson input.versionMatches ++ ",\n"
     ++ "      \"fee_matches\": " ++ boolJson input.feeMatches ++ ",\n"
+    ++ "      \"stablecoin_payload_matches\": "
+      ++ boolJson input.stablecoinPayloadMatches ++ ",\n"
     ++ "      \"balance_tag_matches\": "
       ++ boolJson input.balanceTagMatches ++ ",\n"
     ++ "      \"receipt_statement_hash_matches\": "
@@ -124,6 +128,10 @@ def vectorJson : String :=
       "fee-mismatch-rejected"
       { validTxLeafActionBinding with feeMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
+      "stablecoin-payload-mismatch-rejected"
+      { validTxLeafActionBinding with
+        stablecoinPayloadMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
       "balance-tag-mismatch-rejected"
       { validTxLeafActionBinding with balanceTagMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
@@ -167,15 +175,28 @@ def vectorJson : String :=
         outputCountMatches := false,
         versionMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
-      "version-precedes-fee-and-payload-hashes"
+      "version-precedes-fee-stablecoin-and-payload-hashes"
       { validTxLeafActionBinding with
         versionMatches := false,
         feeMatches := false,
+        stablecoinPayloadMatches := false,
         ciphertextPayloadHashesMatch := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
-      "fee-precedes-payload-hashes"
+      "fee-precedes-stablecoin-and-payload-hashes"
       { validTxLeafActionBinding with
         feeMatches := false,
+        stablecoinPayloadMatches := false,
+        balanceTagMatches := false,
+        ciphertextPayloadHashesMatch := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "stablecoin-payload-precedes-balance-tag"
+      { validTxLeafActionBinding with
+        stablecoinPayloadMatches := false,
+        balanceTagMatches := false,
+        receiptStatementHashMatches := false,
+        publicInputsDigestMatches := false,
+        proofDigestMatches := false,
+        proofBackendMatches := false,
         ciphertextPayloadHashesMatch := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
       "balance-tag-precedes-receipt-and-digests"

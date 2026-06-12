@@ -19,6 +19,8 @@ def rejectionJson : Option SidecarUploadReject -> String
   | some SidecarUploadReject.proofMissing => "\"proof_missing\""
   | some SidecarUploadReject.proofEmpty => "\"proof_empty\""
   | some SidecarUploadReject.proofTooLarge => "\"proof_too_large\""
+  | some SidecarUploadReject.proofBindingHashMismatch =>
+      "\"proof_binding_hash_mismatch\""
 
 def requestCaseJson
     (name : String)
@@ -66,6 +68,8 @@ def decodedCaseJson (name : String) (input : ProofDecodedInput) : String :=
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"proof_bytes\": " ++ toString input.proofBytes ++ ",\n"
     ++ "      \"max_proof_bytes\": " ++ toString input.maxProofBytes ++ ",\n"
+    ++ "      \"proof_binding_hash_matches_key\": "
+    ++ boolJson input.proofBindingHashMatchesKey ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (accepts result) ++ ",\n"
     ++ "      \"expected_rejection\": " ++ rejectionJson (rejection result) ++ "\n"
     ++ "    }"
@@ -134,7 +138,13 @@ def vectorJson : String :=
     ++ decodedCaseJson "proof-empty-rejected"
       { validProofDecoded with proofBytes := 0 } ++ ",\n"
     ++ decodedCaseJson "proof-too-large-rejected"
-      { validProofDecoded with proofBytes := validProofDecoded.maxProofBytes + 1 } ++ "\n"
+      { validProofDecoded with proofBytes := validProofDecoded.maxProofBytes + 1 } ++ ",\n"
+    ++ decodedCaseJson "proof-binding-hash-mismatch-rejected"
+      { validProofDecoded with proofBindingHashMatchesKey := false } ++ ",\n"
+    ++ decodedCaseJson "proof-too-large-precedes-binding-mismatch"
+      { validProofDecoded with
+        proofBytes := validProofDecoded.maxProofBytes + 1,
+        proofBindingHashMatchesKey := false } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

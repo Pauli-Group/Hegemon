@@ -767,9 +767,331 @@ fn current_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ProofError;
+    use crate::header::{BlockHeader, PowSeal};
+    use crate::proof_interface::{BlockBackendInputs, HeaderProofExt};
     use crate::reward::adjusted_timespan;
+    use crate::types::{
+        Block, DaParams, ProofVerificationMode, Transaction, compute_fee_commitment,
+        compute_proof_commitment, compute_version_commitment, da_root,
+    };
+    use crypto::ml_dsa::MlDsaSecretKey;
+    use crypto::traits::SigningKey as _;
+    use protocol_versioning::DEFAULT_VERSION_BINDING;
     use serde::Deserialize;
     use std::collections::BTreeSet;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    const EASY_TEST_POW_BITS: u32 = 0x20ff_ffff;
+    const BAD_TEST_POW_BITS: u32 = 0x20ff_fffe;
+
+    struct RejectingProofVerifier {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ProofVerifier for RejectingProofVerifier {
+        fn verify_block_with_backend<BH>(
+            &self,
+            _block: &Block<BH>,
+            _backend_inputs: Option<&BlockBackendInputs>,
+            _parent_commitment_tree: &CommitmentTreeState,
+        ) -> Result<CommitmentTreeState, ProofError>
+        where
+            BH: HeaderProofExt,
+        {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProofError::Internal("sentinel proof verifier reached"))
+        }
+    }
+
+    struct TestMiner {
+        secret: MlDsaSecretKey,
+        public: MlDsaPublicKey,
+    }
+
+    struct TestPowBlockParams<'a> {
+        height: u64,
+        parent_hash: [u8; 32],
+        timestamp_ms: u64,
+        transactions: Vec<Transaction>,
+        miner: &'a TestMiner,
+        base_nullifiers: &'a NullifierSet,
+        base_commitment_tree: &'a CommitmentTreeState,
+        pow_bits: u32,
+        nonce: [u8; 32],
+        coinbase: CoinbaseData,
+        claimed_supply: SupplyDigest,
+    }
+
+    struct PowStateSnapshot {
+        best: [u8; 32],
+        node_count: usize,
+        genesis_height: u64,
+        genesis_work: BigUint,
+        genesis_state_root: [u8; 48],
+        genesis_nullifier_root: [u8; 48],
+        genesis_supply: SupplyDigest,
+    }
+
+    #[test]
+    fn apply_block_rejects_supply_mismatch_before_bad_pow_and_verifier() {
+        let miner = test_miner(b"supply-mismatch-precedence-miner");
+        let base_tree = CommitmentTreeState::default();
+        let base_nullifiers = NullifierSet::new();
+        let verifier_calls = Arc::new(AtomicUsize::new(0));
+        let mut consensus = PowConsensus::with_genesis_pow_bits(
+            vec![miner.public.clone()],
+            base_tree.clone(),
+            RejectingProofVerifier {
+                calls: verifier_calls.clone(),
+            },
+            EASY_TEST_POW_BITS,
+        );
+        let before = snapshot_pow_state(&consensus);
+
+        let coinbase = CoinbaseData {
+            minted: block_subsidy(1),
+            fees: 0,
+            burns: 0,
+            source: CoinbaseSource::BalanceTag([0u8; 48]),
+        };
+        let expected_supply =
+            expected_pow_supply_after_transition(0, &coinbase).expect("test supply advances");
+        let block = assemble_signed_pow_block(TestPowBlockParams {
+            height: 1,
+            parent_hash: GENESIS_HASH,
+            timestamp_ms: 1_000,
+            transactions: vec![dummy_pow_transaction(17)],
+            miner: &miner,
+            base_nullifiers: &base_nullifiers,
+            base_commitment_tree: &base_tree,
+            pow_bits: BAD_TEST_POW_BITS,
+            nonce: [0u8; 32],
+            coinbase,
+            claimed_supply: expected_supply + 1,
+        });
+        let rejected_hash = block.header.hash().expect("hash rejected block");
+        assert_ne!(rejected_hash, GENESIS_HASH);
+
+        let err = consensus
+            .apply_block(block)
+            .expect_err("bad claimed supply must reject before later invalid conditions");
+        assert!(matches!(
+            err,
+            ConsensusError::InvalidHeader("supply digest mismatch")
+        ));
+        assert_eq!(
+            verifier_calls.load(Ordering::SeqCst),
+            0,
+            "supply mismatch must reject before proof verification"
+        );
+        assert_pow_state_unchanged(&consensus, &before, rejected_hash);
+    }
+
+    #[test]
+    fn apply_block_rejects_supply_underflow_before_verifier_and_state_mutation() {
+        let miner = test_miner(b"supply-underflow-precedence-miner");
+        let base_tree = CommitmentTreeState::default();
+        let base_nullifiers = NullifierSet::new();
+        let verifier_calls = Arc::new(AtomicUsize::new(0));
+        let mut consensus = PowConsensus::with_genesis_pow_bits(
+            vec![miner.public.clone()],
+            base_tree.clone(),
+            RejectingProofVerifier {
+                calls: verifier_calls.clone(),
+            },
+            EASY_TEST_POW_BITS,
+        );
+        let before = snapshot_pow_state(&consensus);
+
+        let coinbase = CoinbaseData {
+            minted: 0,
+            fees: 0,
+            burns: 1,
+            source: CoinbaseSource::BalanceTag([0u8; 48]),
+        };
+        let mut block = assemble_signed_pow_block(TestPowBlockParams {
+            height: 1,
+            parent_hash: GENESIS_HASH,
+            timestamp_ms: 1_000,
+            transactions: vec![dummy_pow_transaction(29)],
+            miner: &miner,
+            base_nullifiers: &base_nullifiers,
+            base_commitment_tree: &base_tree,
+            pow_bits: EASY_TEST_POW_BITS,
+            nonce: [0u8; 32],
+            coinbase,
+            claimed_supply: 0,
+        });
+        mine_easy_pow_nonce(&mut block, EASY_TEST_POW_BITS);
+        let rejected_hash = block.header.hash().expect("hash rejected block");
+        assert_ne!(rejected_hash, GENESIS_HASH);
+
+        let err = consensus
+            .apply_block(block)
+            .expect_err("supply underflow must reject before proof verification");
+        assert!(matches!(
+            err,
+            ConsensusError::InvalidCoinbase("supply digest underflow")
+        ));
+        assert_eq!(
+            verifier_calls.load(Ordering::SeqCst),
+            0,
+            "supply underflow must reject before proof verification"
+        );
+        assert_pow_state_unchanged(&consensus, &before, rejected_hash);
+    }
+
+    fn test_miner(seed: &[u8]) -> TestMiner {
+        let secret = MlDsaSecretKey::generate_deterministic(seed);
+        let public = secret.verify_key();
+        TestMiner { secret, public }
+    }
+
+    fn dummy_pow_transaction(seed: u8) -> Transaction {
+        Transaction::new(
+            vec![[seed; 48]],
+            vec![[seed.wrapping_add(1); 48]],
+            [seed.wrapping_add(2); 48],
+            DEFAULT_VERSION_BINDING,
+            Vec::new(),
+        )
+    }
+
+    fn assemble_signed_pow_block(params: TestPowBlockParams<'_>) -> ConsensusBlock {
+        let TestPowBlockParams {
+            height,
+            parent_hash,
+            timestamp_ms,
+            transactions,
+            miner,
+            base_nullifiers,
+            base_commitment_tree,
+            pow_bits,
+            nonce,
+            coinbase,
+            claimed_supply,
+        } = params;
+        let mut working_nullifiers = base_nullifiers.clone();
+        for tx in &transactions {
+            for nf in &tx.nullifiers {
+                working_nullifiers
+                    .insert(*nf)
+                    .expect("insert test nullifier");
+            }
+        }
+        let nullifier_root = working_nullifiers.commitment();
+
+        let mut working_tree = base_commitment_tree.clone();
+        for tx in &transactions {
+            for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
+                working_tree
+                    .append(commitment)
+                    .expect("append test commitment");
+            }
+        }
+        let state_root = working_tree.root();
+        let da_params = DaParams {
+            chunk_size: 1024,
+            sample_count: 4,
+        };
+        let mut header = BlockHeader {
+            version: 1,
+            height,
+            view: height,
+            timestamp_ms,
+            parent_hash,
+            state_root,
+            kernel_root: kernel_root_from_shielded_root(&state_root),
+            nullifier_root,
+            proof_commitment: compute_proof_commitment(&transactions),
+            da_root: da_root(&transactions, da_params).expect("test da root"),
+            da_params,
+            version_commitment: compute_version_commitment(&transactions),
+            tx_count: transactions.len() as u32,
+            fee_commitment: compute_fee_commitment(&transactions),
+            supply_digest: claimed_supply,
+            validator_set_commitment: blake3_384(&miner.public.to_bytes()),
+            signature_aggregate: Vec::new(),
+            signature_bitmap: None,
+            pow: Some(PowSeal { nonce, pow_bits }),
+        };
+        let signing_hash = header.signing_hash().expect("test signing hash");
+        header.signature_aggregate = miner.secret.sign(&signing_hash).to_bytes();
+
+        ConsensusBlock {
+            header,
+            transactions,
+            coinbase: Some(coinbase),
+            proven_batch: None,
+            block_artifact: None,
+            tx_validity_claims: None,
+            tx_statements_commitment: None,
+            proof_verification_mode: ProofVerificationMode::InlineRequired,
+        }
+    }
+
+    fn mine_easy_pow_nonce(block: &mut ConsensusBlock, pow_bits: u32) {
+        let target = compact_to_target(pow_bits).expect("easy test target decodes");
+        for nonce in 0u64..1_000 {
+            let mut nonce_bytes = [0u8; 32];
+            nonce_bytes[..8].copy_from_slice(&nonce.to_le_bytes());
+            block.header.pow.as_mut().expect("test pow seal").nonce = nonce_bytes;
+            let hash = block.header.hash().expect("hash test block");
+            if BigUint::from_bytes_be(&hash) <= target {
+                return;
+            }
+        }
+        panic!("easy test target did not admit any searched nonce");
+    }
+
+    fn snapshot_pow_state<V: ProofVerifier>(consensus: &PowConsensus<V>) -> PowStateSnapshot {
+        let genesis = consensus
+            .nodes
+            .get(&GENESIS_HASH)
+            .expect("genesis node exists");
+        PowStateSnapshot {
+            best: consensus.best,
+            node_count: consensus.nodes.len(),
+            genesis_height: genesis.height,
+            genesis_work: genesis.work.clone(),
+            genesis_state_root: genesis.commitment_tree.root(),
+            genesis_nullifier_root: genesis.nullifiers.commitment(),
+            genesis_supply: genesis.supply_digest,
+        }
+    }
+
+    fn assert_pow_state_unchanged<V: ProofVerifier>(
+        consensus: &PowConsensus<V>,
+        before: &PowStateSnapshot,
+        rejected_hash: [u8; 32],
+    ) {
+        assert_eq!(consensus.best, before.best, "best hash mutated");
+        assert_eq!(
+            consensus.nodes.len(),
+            before.node_count,
+            "rejected block changed node map size"
+        );
+        assert!(
+            !consensus.nodes.contains_key(&rejected_hash),
+            "rejected block was inserted into the node map"
+        );
+        let genesis = consensus
+            .nodes
+            .get(&GENESIS_HASH)
+            .expect("genesis node exists after rejection");
+        assert_eq!(genesis.height, before.genesis_height);
+        assert_eq!(genesis.work, before.genesis_work);
+        assert_eq!(genesis.commitment_tree.root(), before.genesis_state_root);
+        assert_eq!(
+            genesis.nullifiers.commitment(),
+            before.genesis_nullifier_root
+        );
+        assert_eq!(genesis.supply_digest, before.genesis_supply);
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]

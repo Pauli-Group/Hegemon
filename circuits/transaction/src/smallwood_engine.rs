@@ -4901,7 +4901,8 @@ mod tests {
     use crate::public_inputs::StablecoinPolicyBinding;
     use crate::smallwood_frontend::{
         build_packed_smallwood_bridge_material_from_witness,
-        build_packed_smallwood_frontend_material_from_witness, prove_smallwood_candidate,
+        build_packed_smallwood_frontend_material_from_witness,
+        prove_smallwood_candidate_with_arithmetization,
         verify_smallwood_candidate_transaction_proof, SmallwoodCandidateProof,
         SMALLWOOD_BRIDGE_PACKING_FACTOR, SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
@@ -4951,6 +4952,40 @@ mod tests {
             *slot = (u128::from_le_bytes(buf) % FIELD_ORDER as u128) as u64;
         }
         out
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    struct LegacySmallwoodCandidateProofForTest {
+        #[serde(default = "default_bridge_smallwood_arithmetization_for_test")]
+        arithmetization: SmallwoodArithmetization,
+        ark_proof: Vec<u8>,
+    }
+
+    fn default_bridge_smallwood_arithmetization_for_test() -> SmallwoodArithmetization {
+        SmallwoodArithmetization::Bridge64V1
+    }
+
+    fn decode_smallwood_candidate_proof_for_test(bytes: &[u8]) -> SmallwoodCandidateProof {
+        bincode::deserialize(bytes).unwrap_or_else(|_| {
+            let legacy: LegacySmallwoodCandidateProofForTest =
+                bincode::deserialize(bytes).expect("decode legacy smallwood candidate proof");
+            SmallwoodCandidateProof {
+                arithmetization: legacy.arithmetization,
+                ark_proof: legacy.ark_proof,
+                auxiliary_witness_words: Vec::new(),
+            }
+        })
+    }
+
+    fn encode_smallwood_candidate_proof_for_test(proof: &SmallwoodCandidateProof) -> Vec<u8> {
+        if proof.auxiliary_witness_words.is_empty() {
+            return bincode::serialize(&LegacySmallwoodCandidateProofForTest {
+                arithmetization: proof.arithmetization,
+                ark_proof: proof.ark_proof.clone(),
+            })
+            .expect("encode legacy smallwood candidate proof");
+        }
+        bincode::serialize(proof).expect("encode smallwood candidate proof")
     }
 
     fn merkle_build_levels_blake3_reference(
@@ -5361,7 +5396,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "redteam regression for PCS/evaluation binding on the experimental SmallWood backend"]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
@@ -5377,13 +5411,17 @@ mod tests {
             &material.linear_constraints.targets,
         );
         let cfg = SmallwoodConfig::new(&statement).unwrap();
-        let mut proof = prove_smallwood_candidate(&witness).unwrap();
-        let mut outer: SmallwoodCandidateProof = bincode::deserialize(&proof.stark_proof).unwrap();
+        let mut proof = prove_smallwood_candidate_with_arithmetization(
+            &witness,
+            SmallwoodArithmetization::Bridge64V1,
+        )
+        .unwrap();
+        let mut outer = decode_smallwood_candidate_proof_for_test(&proof.stark_proof);
         let mut inner = decode_smallwood_proof_bytes_v1(&outer.ark_proof).unwrap();
 
         let forged_combi_heads = vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.nb_lvcs_opened_combi];
         let forged_rcombi_tails =
-            vec![vec![0u64; SMALLWOOD_DECS_NB_OPENED_EVALS]; cfg.nb_lvcs_opened_combi];
+            vec![vec![0u64; cfg.decs_nb_opened_evals()]; cfg.nb_lvcs_opened_combi];
         let trans_hash = hash_challenge_opening_decs(
             &cfg,
             &forged_combi_heads,
@@ -5392,25 +5430,25 @@ mod tests {
             SmallwoodTranscriptBackend::Blake3,
         );
         let (leaves_indexes, _) = xof_decs_opening(
-            SMALLWOOD_DECS_NB_EVALS,
-            SMALLWOOD_DECS_NB_OPENED_EVALS,
-            SMALLWOOD_DECS_POW_BITS,
+            cfg.decs_nb_evals(),
+            cfg.decs_nb_opened_evals(),
+            cfg.decs_pow_bits(),
             &trans_hash,
             SmallwoodTranscriptBackend::Blake3,
         )
         .unwrap();
         let zero_rows = vec![
             vec![0u64; cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi];
-            SMALLWOOD_DECS_NB_OPENED_EVALS
+            cfg.decs_nb_opened_evals()
         ];
-        let zero_masking = vec![vec![0u64; SMALLWOOD_DECS_ETA]; SMALLWOOD_DECS_NB_OPENED_EVALS];
+        let zero_masking = vec![vec![0u64; cfg.decs_eta()]; cfg.decs_nb_opened_evals()];
         let zero_leaf = hash_merkle_leave(
             cfg.nb_lvcs_rows,
-            &vec![0u64; cfg.nb_lvcs_rows + SMALLWOOD_DECS_ETA],
+            &vec![0u64; cfg.nb_lvcs_rows + cfg.decs_eta()],
             &inner.salt,
             SmallwoodTranscriptBackend::Blake3,
         );
-        let mut levels = vec![vec![zero_leaf; SMALLWOOD_DECS_NB_EVALS]];
+        let mut levels = vec![vec![zero_leaf; cfg.decs_nb_evals()]];
         merkle_build_levels(&mut levels, SmallwoodTranscriptBackend::Blake3);
         let auth_paths = leaves_indexes
             .iter()
@@ -5427,12 +5465,12 @@ mod tests {
             decs: DecsProof {
                 auth_paths,
                 masking_evals: zero_masking,
-                high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; SMALLWOOD_DECS_ETA],
+                high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.decs_eta()],
             },
         };
 
         outer.ark_proof = encode_smallwood_proof_bytes_v1(&inner).unwrap();
-        proof.stark_proof = bincode::serialize(&outer).unwrap();
+        proof.stark_proof = encode_smallwood_candidate_proof_for_test(&outer);
 
         let err = verify_smallwood_candidate_transaction_proof(&proof)
             .expect_err("forged self-consistent PCS layer unexpectedly verified");

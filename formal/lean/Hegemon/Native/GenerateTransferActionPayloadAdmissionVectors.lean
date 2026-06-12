@@ -18,6 +18,8 @@ def rejectionJson : Option TransferPayloadReject -> String
   | some TransferPayloadReject.ciphertextSizesMismatch =>
       "\"ciphertext_sizes_mismatch\""
   | some TransferPayloadReject.bindingHashMismatch => "\"binding_hash_mismatch\""
+  | some TransferPayloadReject.proofBindingHashMismatch =>
+      "\"proof_binding_hash_mismatch\""
   | some TransferPayloadReject.feeMismatch => "\"fee_mismatch\""
 
 def transferPayloadCaseJson (name : String) (input : TransferPayloadInput) : String :=
@@ -34,6 +36,8 @@ def transferPayloadCaseJson (name : String) (input : TransferPayloadInput) : Str
     ++ "      \"ciphertext_sizes_match\": "
       ++ boolJson input.ciphertextSizesMatch ++ ",\n"
     ++ "      \"binding_hash_matches\": " ++ boolJson input.bindingHashMatches ++ ",\n"
+    ++ "      \"proof_binding_hash_matches_key\": "
+      ++ boolJson input.proofBindingHashMatchesKey ++ ",\n"
     ++ "      \"fee_matches\": " ++ boolJson input.feeMatches ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (transferPayloadAccepts input) ++ ",\n"
     ++ "      \"expected_rejection\": "
@@ -66,8 +70,14 @@ def vectorJson : String :=
       { validTransferPayload with ciphertextSizesMatch := false } ++ ",\n"
     ++ transferPayloadCaseJson "binding-hash-mismatch-rejected"
       { validTransferPayload with bindingHashMatches := false } ++ ",\n"
+    ++ transferPayloadCaseJson "proof-binding-hash-mismatch-rejected"
+      { validTransferPayload with proofBindingHashMatchesKey := false } ++ ",\n"
     ++ transferPayloadCaseJson "fee-mismatch-rejected"
       { validTransferPayload with feeMatches := false } ++ ",\n"
+    ++ transferPayloadCaseJson "proof-binding-hash-mismatch-precedes-fee"
+      { validTransferPayload with
+        proofBindingHashMatchesKey := false,
+        feeMatches := false } ++ ",\n"
     ++ transferPayloadCaseJson "proof-missing-precedes-anchor"
       { validTransferPayload with proofBytes := 0, anchorMatches := false } ++ "\n"
     ++ "  ]\n"
