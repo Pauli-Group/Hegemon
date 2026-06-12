@@ -3073,6 +3073,50 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_pending_action_reload",
+          "required_callers": [
+            "validate_loaded_pending_action_hash"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_loaded_pending_action_hash",
+          "required_callers": [
+            "load_pending_actions"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "load_pending_actions",
+              "callee_must_precede": [
+                "actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_pending_actions",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "RwLock::new"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
         "formal/lean/Hegemon/Native/GeneratePendingActionReloadVectors.lean",
@@ -3129,6 +3173,40 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_staged_ciphertext_reload",
+          "required_callers": [
+            "load_staged_sizes_with_limits"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_staged_sizes_with_limits",
+          "required_callers": [
+            "load_staged_sizes"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_staged_sizes",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "RwLock::new"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/StagedCiphertextReload.lean",
         "formal/lean/Hegemon/Native/GenerateStagedCiphertextReloadVectors.lean",
@@ -3184,6 +3262,40 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_staged_proof_reload",
+          "required_callers": [
+            "load_staged_proofs_with_limits"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_staged_proofs_with_limits",
+          "required_callers": [
+            "load_staged_proofs"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_staged_proofs",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "RwLock::new"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/StagedProofReload.lean",
@@ -3726,6 +3838,81 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_state_effect",
+          "required_callers": [
+            "evaluate_native_action_stream_effect"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_stream_effect",
+          "required_callers": [
+            "evaluate_native_block_replay_refinement_with_trace",
+            "plan_action_effects_for_memory",
+            "plan_pending_action_effects",
+            "plan_canonical_index_rebuild"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "evaluate_native_block_replay_refinement_with_trace",
+              "callee_must_precede": [
+                "expected_native_supply_from_parts",
+                "evaluate_native_block_commitment_admission"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_action_effects_for_memory",
+          "required_callers": [
+            "preview_pending_roots",
+            "apply_actions_to_memory"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "preview_pending_roots",
+              "callee_must_precede": [
+                "tree.append",
+                "nullifiers.insert",
+                "actions_extrinsics_root"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "apply_actions_to_memory",
+              "callee_must_precede": [
+                "apply_planned_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_pending_action_effects",
+          "required_callers": [
+            "import_mined_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "apply_planned_actions_to_memory",
+                "commit_mined_block_atomically"
+              ]
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionStateEffect.lean",
@@ -4743,6 +4930,16 @@
           "callee": "evaluate_native_block_action_validation_start",
           "required_callers": [
             "validate_block_actions_locked"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "validate_block_actions_locked",
+              "callee_must_precede": [
+                "evaluate_native_block_action_validation_step"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         },
         {
@@ -4750,7 +4947,8 @@
           "callee": "evaluate_native_block_action_validation_step",
           "required_callers": [
             "validate_block_actions_locked"
-          ]
+          ],
+          "result_obligation": "must_check_result_fail_closed"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -4759,6 +4957,36 @@
             "import_mined_block",
             "import_announced_block",
             "replay_chain_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "verify_native_block_artifacts_locked",
+                "plan_pending_action_effects",
+                "commit_mined_block_atomically",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ]
+            },
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "verify_native_block_artifacts_locked",
+                "reorganize_chain_to_best_locked",
+                "persist_noncanonical_block_record"
+              ]
+            },
+            {
+              "caller": "replay_chain_state",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "verify_native_block_artifacts_locked",
+                "apply_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         }
       ],
