@@ -10,10 +10,10 @@ use crate::backend_interface::{
     recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
     transaction_proof_digest, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_statement_hash_from_parts, transaction_verifier_profile_digest,
-    transaction_verifier_profile_digest_for_version, verify_block_commitment,
-    verify_block_recursive_v1, verify_block_recursive_v2, verify_native_tx_leaf_artifact_bytes,
-    verify_transaction_proof, verify_tx_leaf_artifact_bytes,
+    transaction_statement_hash_checked, transaction_statement_hash_from_parts,
+    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
+    verify_block_commitment, verify_block_recursive_v1, verify_block_recursive_v2,
+    verify_native_tx_leaf_artifact_bytes, verify_transaction_proof, verify_tx_leaf_artifact_bytes,
 };
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
@@ -1696,16 +1696,23 @@ where
 pub fn tx_validity_receipt_from_proof(
     proof: &TransactionProof,
 ) -> Result<TxValidityReceipt, String> {
+    let statement_hash = checked_transaction_statement_hash_for_receipt(proof)?;
     let public_inputs_digest =
         transaction_public_inputs_digest(proof).map_err(|err| err.to_string())?;
     let verifier_profile =
         transaction_verifier_profile_digest(proof).map_err(|err| err.to_string())?;
     Ok(TxValidityReceipt {
-        statement_hash: transaction_statement_hash(proof),
+        statement_hash,
         proof_digest: transaction_proof_digest(proof),
         public_inputs_digest,
         verifier_profile,
     })
+}
+
+fn checked_transaction_statement_hash_for_receipt(
+    proof: &TransactionProof,
+) -> Result<[u8; 48], String> {
+    transaction_statement_hash_checked(proof).map_err(|err| err.to_string())
 }
 
 pub fn tx_validity_artifact_from_proof(
@@ -4320,6 +4327,66 @@ mod tests {
 
         ensure_claims_match_verified_artifacts(&provided, &provided)
             .expect("identical verified claims must be accepted");
+    }
+
+    fn malformed_inline_tx_proof_with_oversized_public_inputs() -> TransactionProof {
+        let mut public_inputs = transaction_circuit::TransactionPublicInputs::default();
+        public_inputs
+            .nullifiers
+            .resize(MAX_INPUTS.saturating_add(1), [9u8; 48]);
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            backend: protocol_versioning::TxProofBackend::Plonky3Fri,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: None,
+        }
+    }
+
+    #[test]
+    fn tx_validity_receipt_rejects_oversized_public_inputs_without_panic() {
+        let proof = malformed_inline_tx_proof_with_oversized_public_inputs();
+
+        let err = tx_validity_receipt_from_proof(&proof)
+            .expect_err("oversized public inputs must be a structured receipt error");
+        assert!(err.contains("transaction nullifier length"));
+    }
+
+    #[test]
+    fn tx_validity_claim_derivation_rejects_malformed_inline_public_inputs_without_panic() {
+        let proof = malformed_inline_tx_proof_with_oversized_public_inputs();
+        let artifact_bytes = bincode::serialize(&proof).expect("serialize malformed proof");
+        let tx = tx_with_commitments(Vec::new());
+        let expected_profile = transaction_verifier_profile_digest_for_version(tx.version);
+        let artifact = TxValidityArtifact {
+            receipt: TxValidityReceipt::new(
+                [1u8; 48],
+                transaction_proof_digest(&proof),
+                [2u8; 48],
+                expected_profile,
+            ),
+            proof: Some(ProofEnvelope {
+                kind: ProofArtifactKind::InlineTx,
+                verifier_profile: expected_profile,
+                artifact_bytes,
+            }),
+        };
+
+        let err = tx_validity_claims_from_tx_artifacts(&[tx], &[artifact])
+            .expect_err("claim derivation must reject malformed inline proof without panic");
+        match err {
+            ProofError::TransactionProofInputsMismatch { index, message } => {
+                assert_eq!(index, 0);
+                assert!(message.contains("transaction nullifier length"));
+            }
+            ProofError::TransactionProofVerification { index, message } => {
+                assert_eq!(index, 0);
+                assert!(message.contains("failed to decode inline tx proof artifact"));
+            }
+            other => panic!("unexpected malformed inline proof error: {other:?}"),
+        }
     }
 
     fn fake_native_tx_leaf_record(seed: u8) -> NativeTxLeafRecord {

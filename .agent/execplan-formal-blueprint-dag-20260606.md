@@ -26,7 +26,11 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - [x] (2026-06-12T07:31:25Z) Restarted `hegemon-node.service` on `hegemon-dev` after backing up the service unit to `/home/ubuntu/hegemon-devnet/deploy-backups/hegemon-node.service.20260612T072958Z`. Service PID `1311168` stayed active/running with zero restarts. RPC smoke showed `system_health` not syncing, consensus height `436645`, empty pending extrinsics, `rpcExternal=false`, `rpcMethods=unsafe`, NTP synchronized, `HEGEMON_MINE=1`, `HEGEMON_MINE_THREADS=1`, and `HEGEMON_MAX_PEERS=140`. `bash scripts/test-node.sh wallet-send` passed, the focused `timestamp_rpc_rejects_corrupt_explicit_range_header` regression passed, and mining advanced from height `436643`/`blocks_found=3` to height `436644`/`blocks_found=4` during the sample.
 - [x] (2026-06-12T07:42:01Z) Hardened the next implementation-equivalence slice locally: `NativeNode::block_range` now materializes every admitted canonical sync row through `load_canonical_sync_block_at_height` and errors on missing height indexes, missing block records, height/hash mismatches, hash/work-hash mismatches, or parent discontinuity; `wallet_commitments` now decodes every commitment archive row through `decode_wallet_commitment_row` and errors on iterator errors, malformed keys, malformed values, or index gaps; `ciphertext_entries_page` now decodes every ciphertext archive row through `decode_wallet_ciphertext_row` and errors on iterator errors, malformed keys, too-short values, or oversized values.
 - [x] (2026-06-12T07:42:01Z) Added focused regressions `block_range_rejects_*`, `wallet_commitments_rejects_*`, and `wallet_ciphertexts_rejects_*`; updated the blueprint to 120 implementation bindings, 95 order constraints covering 277 order edges, 105 result obligations, 79 dominance constraints covering 234 dominance edges, and 307 falsification cases; and ran the focused block-range tests, wallet archive tests, and blueprint checker successfully.
-- [ ] Run full local formatting, formal-core, node-library, and release-build gates for the sync/wallet materialization slice, then deploy it to `hegemon-dev` and rerun remote smoke/mining/transaction validation.
+- [x] (2026-06-12T08:12:59Z) Hardened the next native RPC implementation-equivalence slice locally: malformed explicit `chain_getHeader`/`chain_getBlock` hash params now return `null` instead of falling back to latest, direct block metadata loads reject key/hash and hash/work-hash drift, timestamp rows use canonical sync-block materialization, and `hegemon_startMining` thread counts pass through an explicit fail-closed bounded parser before mining starts.
+- [x] (2026-06-12T08:12:59Z) Hardened consensus transaction receipt derivation locally: untrusted inline transaction artifacts now use a fallible statement-hash path before `TxValidityReceipt` construction, so oversized public-input vectors produce structured errors instead of panicking during claim derivation.
+- [x] (2026-06-12T08:12:59Z) Added focused regressions `chain_rpc_rejects_malformed_explicit_hash_without_latest_fallback`, `chain_rpc_rejects_block_record_key_hash_mismatch`, `chain_rpc_rejects_block_record_work_hash_mismatch`, `timestamp_rpc_rejects_missing_canonical_height_inside_best_range`, `timestamp_rpc_rejects_canonical_record_height_mismatch`, `timestamp_rpc_rejects_canonical_record_work_hash_mismatch`, `start_mining_thread_param_accepts_default_and_valid_threads`, `start_mining_thread_param_rejects_malformed_explicit_threads`, `tx_validity_receipt_rejects_oversized_public_inputs_without_panic`, and `tx_validity_claim_derivation_rejects_malformed_inline_public_inputs_without_panic`; updated the blueprint to 123 implementation bindings, 96 order constraints covering 278 order edges, 108 result obligations, 80 dominance constraints covering 235 dominance edges, and 310 falsification cases; and ran the focused native RPC, start-mining, consensus receipt, and blueprint checks successfully.
+- [x] (2026-06-12T08:39:25Z) Ran full local acceptance for the expanded RPC/proof-boundary materialization slice: `cargo fmt --all -- --check`, `git diff --check`, `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features -- --nocapture` (205 tests), `cargo test -p consensus --lib -- --nocapture` (64 tests), and `cargo build --release -p hegemon-node --bin hegemon-node --no-default-features`. The local release binary SHA is `a2abf80bb03023dd6681abe421454e86259760a51e9b008e70162ede484ecab8`.
+- [ ] Deploy the expanded RPC/proof-boundary materialization slice to `hegemon-dev` and rerun remote formal-core, smoke, mining, and transaction validation.
 
 ## Surprises & Discoveries
 
@@ -53,6 +57,15 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 
 - Observation: Wallet archive RPCs were weaker than startup reload validation.
   Evidence: Startup canonical state reload already rejects malformed commitment keys/values and gaps before trusting state, but `wallet_commitments` skipped bad rows and `ciphertext_entries_page` skipped bad ciphertext keys while serving unchecked values. The new archive row helpers and focused wallet tests make exported wallet pages fail closed on those corrupt sled rows.
+
+- Observation: Explicit chain RPC hash parameters and direct block-row materialization had two separate fail-open shapes.
+  Evidence: `chain_getBlock` treated a malformed explicit hash the same as a missing parameter and returned the latest block, while `load_block_meta_by_hash` decoded metadata without checking that the storage key, embedded hash, and work hash all agreed. The new chain RPC and block-record regressions corrupt those cases and now observe `null` for bad explicit params or a propagated mismatch error for forged rows.
+
+- Observation: Timestamp RPC canonicalization required more than propagating decode errors.
+  Evidence: A height inside the current best range could be missing its canonical height index, or the index could point at a metadata row whose embedded height or work hash did not match the canonical identity. `timestamp_meta_by_height` now rejects missing in-range height indexes and goes through `load_canonical_sync_block_at_height`, and focused regressions prove missing-height, embedded-height, and work-hash drift fail closed.
+
+- Observation: Inline transaction artifacts could reach receipt statement-hash derivation before their public-input shape was trusted.
+  Evidence: `tx_validity_receipt_from_proof` previously called the infallible `transaction_statement_hash` helper, whose internal `expect` assumes already-validated arity. A malformed inline proof with too many nullifiers now returns a structured receipt or claim-derivation error through `transaction_statement_hash_checked`.
 
 ## Decision Log
 
@@ -84,6 +97,14 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
   Rationale: A formally checked range or page cap is not enough if the production code can skip corrupt rows after admission. The release branch should either return rows that match the canonical storage invariant or fail closed with an error. This keeps peer sync, wallets, and monitoring from treating local corruption as an empty or shorter valid response.
   Date/Author: 2026-06-12 / Codex.
 
+- Decision: Treat direct block metadata row materialization and unsafe mining thread parsing as RPC implementation-equivalence gates.
+  Rationale: Chain RPC consumers must not receive a latest block when they asked for a malformed explicit hash, and they must not receive a row stored under a different key or work hash. Mining thread counts are unsafe control-plane input, so the u64-to-u32 boundary must be explicit and order-gated before `start_mining`.
+  Date/Author: 2026-06-12 / Codex.
+
+- Decision: Treat transaction statement-hash receipt derivation as a fallible trust-boundary path.
+  Rationale: The infallible statement-hash helper is acceptable for already-validated public inputs, but inline proof artifacts arrive from untrusted block/proof materialization. Receipt construction must propagate malformed public-input shape errors instead of relying on an `expect`.
+  Date/Author: 2026-06-12 / Codex.
+
 ## Outcomes & Retrospective
 
 The branch now has a stricter formal-core gate that treats formal-security claims as a reviewed dependency graph instead of isolated checklist rows. The new gate catches missing blueprint nodes, claim/blueprint branch drift, dangling dependencies, dependency cycles, path escapes, missing implementation/evidence bindings, missing accepted target review for production claims, and missing falsification cases.
@@ -91,6 +112,10 @@ The branch now has a stricter formal-core gate that treats formal-security claim
 This is still not a full formal proof of Hegemon's Rust implementation. It is an enforceable release methodology layer that makes the next Lean or model-checking work sharper by keeping claim targets, assumptions, scope boundaries, and cheap counterexamples explicit.
 
 2026-06-12 update: The timestamp RPC storage-materialization slice shows how this blueprint work now catches implementation-equivalence failures, not just missing formal metadata. Range admission was already modeled, but storage metadata lookup still swallowed corrupt canonical rows. The new binding forces the production RPC to propagate header lookup/decode failures, and the `hegemon-dev` deployment confirmed the formal gate, focused regression, transaction compatibility test, service restart, and live mining all work on the branch.
+
+2026-06-12 implementation-equivalence update: The branch now covers a larger RPC/proof-boundary slice. Native chain RPCs reject malformed explicit hashes without latest fallback, hash-addressed block rows are key/work-hash bound, timestamp RPCs reuse canonical sync-row materialization, unsafe mining thread counts are parsed through a fail-closed bounded helper before mining starts, and transaction receipt derivation propagates malformed inline public-input shapes. The blueprint now records 123 production implementation bindings and 310 falsification cases for this wider slice; full local and remote gates remain the acceptance step before considering it deployed.
+
+2026-06-12 local validation update: Full local validation passed for the expanded slice with 123 implementation bindings, 108 result obligations, 96 order constraints over 278 order edges, 80 dominance constraints over 235 dominance edges, and 310 falsification cases. The remaining acceptance step is deployment to `hegemon-dev` followed by the same formal, RPC, mining, and transaction smoke checks on the VPS.
 
 ## Context and Orientation
 
@@ -217,6 +242,10 @@ Revision note 2026-06-06T05:52:34Z: Created this plan after reviewing the existi
 Revision note 2026-06-06T06:13:00Z: Recorded the implemented blueprint DAG file, checker command, shell-gate wiring, documentation updates, focused regression tests, and passing local formal-core validation.
 
 Revision note 2026-06-06T06:19:00Z: Recorded the `hegemon-dev` non-interactive PATH discovery and the shell wrapper fix that makes Cargo-installed audit tools visible.
+
+Revision note 2026-06-12T08:12:59Z: Recorded the expanded native RPC/proof-boundary implementation-equivalence hardening slice, updated blueprint counts, focused regressions, and the remaining full-gate/deploy acceptance work.
+
+Revision note 2026-06-12T08:39:25Z: Recorded full local formal-core, node-library, consensus-library, diff hygiene, formatting, and release-build validation for the expanded RPC/proof-boundary slice.
 
 Revision note 2026-06-12T07:19:02Z: Recorded the timestamp RPC fail-closed implementation-equivalence slice, including the new storage metadata helper, blueprint binding, focused regression, and local formal/node/release validation.
 

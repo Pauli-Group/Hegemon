@@ -329,6 +329,16 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "checked_transaction_statement_hash_for_receipt",
+          "required_callers": [
+            "tx_validity_receipt_from_proof"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
@@ -360,9 +370,14 @@
           "id": "formal-core-statement-hash-gate",
           "description": "The release formal-core wrapper must generate statement-hash vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "consensus-inline-statement-hash-regression",
+          "description": "Focused consensus tests must reject malformed inline transaction public-input vectors during receipt and claim derivation without panicking.",
+          "gate": "cargo test -p consensus tx_validity_ --lib -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. Blueprint bindings and regressions additionally require consensus receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "shielded.nullifier-state",
@@ -2561,8 +2576,8 @@
       "id": "native.rpc-admission",
       "claim_id": "native.rpc-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for external listeners and unsafe for local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap. Blueprint implementation bindings additionally require timestamp and wallet archive row materialization helpers to propagate storage/key/value failures before returning JSON rows.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior. Separate blueprint implementation bindings require the production timestamp, commitment archive, and ciphertext archive materializers to be called by the exported RPC paths with propagated results, and focused regressions corrupt sled rows to prove those paths fail closed.",
+      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for external listeners and unsafe for local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap. Blueprint implementation bindings additionally require timestamp, block-row, and wallet archive materialization helpers to propagate storage/key/value failures before returning JSON rows, and require mining thread parameters to pass through a bounded parser before starting mining.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior. Separate blueprint implementation bindings require the production block metadata, timestamp, commitment archive, and ciphertext archive materializers to be called by the exported RPC paths with propagated results, require mining thread parsing before `start_mining`, and focused regressions corrupt sled rows or malformed explicit parameters to prove those paths fail closed.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -2594,6 +2609,31 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "start_mining_threads_from_params",
+          "required_callers": [
+            "dispatch_rpc_method"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "dispatch_rpc_method",
+              "callee_must_precede": [
+                "node.start_mining"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_block_meta_by_hash",
+          "required_callers": [
+            "NativeNode::header_by_hash"
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -2689,12 +2729,22 @@
           "gate": "cargo test -p hegemon-node wallet_commitments_rejects wallet_ciphertexts_rejects --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-rpc-block-materialization-regressions",
+          "description": "Focused native tests must reject malformed explicit chain RPC block hashes, block records stored under mismatched hash keys, missing canonical timestamp height indexes inside the best range, and canonical timestamp records with wrong embedded height or work hash instead of falling back to latest or returning forged rows.",
+          "gate": "cargo test -p hegemon-node rpc_rejects --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-rpc-mining-thread-regression",
+          "description": "Focused native tests must accept omitted or valid unsafe start-mining thread parameters and reject malformed, zero, or over-limit explicit thread parameters before starting mining.",
+          "gate": "cargo test -p hegemon-node start_mining_thread_param_ --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-rpc-admission-gate",
           "description": "The release formal-core wrapper must generate RPC admission vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native JSON-RPC admission for method policy, unsafe-method exposure, timestamp ranges, byte parser caps, and batch size only. It does not prove RPC authentication, host firewall posture, plaintext control-plane safety, JSON parser correctness, base64/hex parser correctness beyond cap behavior, handler method semantics, mining liveness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native JSON-RPC admission for method policy, unsafe-method exposure, timestamp ranges, byte parser caps, and batch size only. Blueprint bindings and regressions additionally cover selected handler materialization and numeric-parameter fail-closed wiring. It does not prove RPC authentication, host firewall posture, plaintext control-plane safety, JSON parser correctness, base64/hex parser correctness beyond cap behavior, full handler semantics, mining liveness, or complete native-node equivalence."
     },
     {
       "id": "network.secure-channel-key-schedule",

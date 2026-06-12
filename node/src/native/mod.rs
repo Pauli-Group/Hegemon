@@ -103,6 +103,7 @@ const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
 const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
+const MAX_NATIVE_MINING_THREADS: u32 = 64;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
 #[derive(Clone, Debug, Parser)]
@@ -200,8 +201,8 @@ impl NativeConfig {
         let mine = env_bool("HEGEMON_MINE");
         let mine_threads = std::env::var("HEGEMON_MINE_THREADS")
             .ok()
-            .and_then(|raw| raw.parse::<u32>().ok())
-            .filter(|threads| *threads > 0)
+            .map(|raw| parse_mining_thread_count_str(&raw, "HEGEMON_MINE_THREADS"))
+            .transpose()?
             .unwrap_or(1);
         let miner_address = std::env::var("HEGEMON_MINER_ADDRESS")
             .ok()
@@ -3653,11 +3654,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         )),
         "hegemon_miningStatus" => Ok(node.mining_status()),
         "hegemon_startMining" => {
-            let threads = first_param(&params)
-                .and_then(|value| value.get("threads"))
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                .max(1) as u32;
+            let threads = start_mining_threads_from_params(&params)?;
             node.start_mining(threads);
             Ok(json!({
                 "success": true,
@@ -3763,14 +3760,15 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
 }
 
 fn chain_get_header(node: &NativeNode, params: Value) -> Result<Value> {
-    let meta = match first_param(&params).and_then(Value::as_str) {
-        Some(hash_hex) => {
+    let meta = match first_param(&params) {
+        Some(Value::String(hash_hex)) => {
             let Some(hash) = parse_hash32(hash_hex) else {
                 return Ok(Value::Null);
             };
             node.header_by_hash(&hash)?
         }
-        None => Some(node.best_meta()),
+        Some(Value::Null) | None => Some(node.best_meta()),
+        Some(_) => return Ok(Value::Null),
     };
     Ok(meta.as_ref().map(header_json).unwrap_or(Value::Null))
 }
@@ -3792,15 +3790,15 @@ fn chain_get_block_hash(node: &NativeNode, params: Value) -> Result<Value> {
 }
 
 fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value> {
-    let hash = match first_param(&params)
-        .and_then(Value::as_str)
-        .and_then(parse_hash32)
-    {
-        Some(hash) => Some(hash),
-        None => Some(node.best_meta().hash),
-    };
-    let Some(hash) = hash else {
-        return Ok(Value::Null);
+    let hash = match first_param(&params) {
+        Some(Value::String(hash_hex)) => {
+            let Some(hash) = parse_hash32(hash_hex) else {
+                return Ok(Value::Null);
+            };
+            hash
+        }
+        Some(Value::Null) | None => node.best_meta().hash,
+        Some(_) => return Ok(Value::Null),
     };
     let Some(meta) = node.header_by_hash(&hash)? else {
         return Ok(Value::Null);
@@ -3870,10 +3868,15 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
 }
 
 fn timestamp_meta_by_height(node: &NativeNode, height: u64) -> Result<Option<NativeBlockMeta>> {
-    let Some(hash) = node.hash_by_height(height)? else {
+    if node.hash_by_height(height)?.is_none() {
+        if height <= node.best_meta().height {
+            return Err(anyhow!(
+                "missing canonical height index for native block {height}"
+            ));
+        }
         return Ok(None);
     };
-    node.header_by_hash(&hash)
+    node.load_canonical_sync_block_at_height(height).map(Some)
 }
 
 fn decode_wallet_commitment_row(
@@ -4439,10 +4442,25 @@ fn load_block_meta_by_hash(
     hash: &[u8; 32],
 ) -> Result<Option<NativeBlockMeta>> {
     match block_tree.get(hash)? {
-        Some(bytes) => Ok(Some(bincode_deserialize_exact::<NativeBlockMeta>(
-            &bytes,
-            "native block metadata",
-        )?)),
+        Some(bytes) => {
+            let meta =
+                bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata")?;
+            if meta.hash != *hash {
+                return Err(anyhow!(
+                    "stored native block hash mismatch: key={} embedded={}",
+                    hex32(hash),
+                    hex32(&meta.hash)
+                ));
+            }
+            if meta.hash != meta.work_hash {
+                return Err(anyhow!(
+                    "stored native block work-hash mismatch: hash={} work_hash={}",
+                    hex32(&meta.hash),
+                    hex32(&meta.work_hash)
+                ));
+            }
+            Ok(Some(meta))
+        }
         None => Ok(None),
     }
 }
@@ -9354,6 +9372,49 @@ fn first_param(params: &Value) -> Option<&Value> {
     }
 }
 
+fn parse_mining_thread_count_str(raw: &str, context: &str) -> Result<u32> {
+    let requested = raw
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("{context} must be an unsigned integer"))?;
+    parse_mining_thread_count_u64(requested, context)
+}
+
+fn parse_mining_thread_count_u64(requested: u64, context: &str) -> Result<u32> {
+    if requested == 0 {
+        return Err(anyhow!("{context} must be at least 1"));
+    }
+    if requested > u64::from(MAX_NATIVE_MINING_THREADS) {
+        return Err(anyhow!(
+            "{context} exceeds maximum mining threads: {} > {}",
+            requested,
+            MAX_NATIVE_MINING_THREADS
+        ));
+    }
+    Ok(requested as u32)
+}
+
+fn start_mining_threads_from_params(params: &Value) -> Result<u32> {
+    let Some(first) = first_param(params) else {
+        return Ok(1);
+    };
+    let Value::Object(map) = first else {
+        if first.is_null() {
+            return Ok(1);
+        }
+        return Err(anyhow!(
+            "hegemon_startMining params must be an object with optional threads"
+        ));
+    };
+    let Some(value) = map.get("threads") else {
+        return Ok(1);
+    };
+    let requested = value
+        .as_u64()
+        .ok_or_else(|| anyhow!("hegemon_startMining threads must be an unsigned integer"))?;
+    parse_mining_thread_count_u64(requested, "hegemon_startMining threads")
+}
+
 fn nth_param(params: &Value, index: usize) -> Option<&Value> {
     match params {
         Value::Array(values) => values.get(index),
@@ -12202,6 +12263,143 @@ mod tests {
     }
 
     #[test]
+    fn chain_rpc_rejects_malformed_explicit_hash_without_latest_fallback() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+
+        let latest_header = chain_get_header(&node, Value::Array(Vec::new()))
+            .expect("no explicit header hash should return latest");
+        assert_ne!(latest_header, Value::Null);
+        let latest_block = chain_get_block(&node, Value::Array(Vec::new()))
+            .expect("no explicit block hash should return latest");
+        assert_ne!(latest_block, Value::Null);
+
+        assert_eq!(
+            chain_get_header(&node, json!(["0x1234"])).expect("malformed header hash"),
+            Value::Null
+        );
+        assert_eq!(
+            chain_get_header(&node, json!([42])).expect("wrong header param type"),
+            Value::Null
+        );
+        assert_eq!(
+            chain_get_block(&node, json!(["0x1234"])).expect("malformed block hash"),
+            Value::Null
+        );
+        assert_eq!(
+            chain_get_block(&node, json!([{"hash": hex32(&node.best_meta().hash)}]))
+                .expect("wrong block param type"),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn chain_rpc_rejects_block_record_key_hash_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut forged = genesis.clone();
+        forged.hash[0] ^= 1;
+        forged.work_hash = forged.hash;
+        node.block_tree
+            .insert(
+                genesis.hash.as_slice(),
+                bincode::serialize(&forged).expect("serialize forged metadata"),
+            )
+            .expect("forge block record");
+
+        let params = json!([hex32(&genesis.hash)]);
+        let err = chain_get_header(&node, params.clone())
+            .expect_err("header RPC must reject key/hash drift");
+        assert!(err
+            .to_string()
+            .contains("stored native block hash mismatch"));
+        let err = chain_get_block(&node, params).expect_err("block RPC must reject key/hash drift");
+        assert!(err
+            .to_string()
+            .contains("stored native block hash mismatch"));
+    }
+
+    #[test]
+    fn chain_rpc_rejects_block_record_work_hash_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut forged = genesis.clone();
+        forged.work_hash[0] ^= 1;
+        node.block_tree
+            .insert(
+                genesis.hash.as_slice(),
+                bincode::serialize(&forged).expect("serialize forged metadata"),
+            )
+            .expect("forge block record");
+
+        let err = chain_get_block(&node, json!([hex32(&genesis.hash)]))
+            .expect_err("block RPC must reject hash/work-hash drift");
+        assert!(err
+            .to_string()
+            .contains("stored native block work-hash mismatch"));
+    }
+
+    #[test]
+    fn start_mining_thread_param_accepts_default_and_valid_threads() {
+        assert_eq!(start_mining_threads_from_params(&json!({})).unwrap(), 1);
+        assert_eq!(
+            start_mining_threads_from_params(&Value::Array(Vec::new())).unwrap(),
+            1
+        );
+        assert_eq!(
+            start_mining_threads_from_params(&json!({"threads": 1})).unwrap(),
+            1
+        );
+        assert_eq!(
+            start_mining_threads_from_params(&json!([{"threads": 2}])).unwrap(),
+            2
+        );
+        assert_eq!(
+            start_mining_threads_from_params(&json!({"threads": MAX_NATIVE_MINING_THREADS}))
+                .unwrap(),
+            MAX_NATIVE_MINING_THREADS
+        );
+    }
+
+    #[test]
+    fn start_mining_thread_param_rejects_malformed_explicit_threads() {
+        let err = start_mining_threads_from_params(&json!(["bad params"]))
+            .expect_err("non-object explicit params must reject");
+        assert!(err.to_string().contains("params must be an object"));
+
+        let err = start_mining_threads_from_params(&json!({"threads": "many"}))
+            .expect_err("string thread count must reject");
+        assert!(err.to_string().contains("unsigned integer"));
+
+        let err = start_mining_threads_from_params(&json!({"threads": 0}))
+            .expect_err("zero thread count must reject");
+        assert!(err.to_string().contains("at least 1"));
+
+        let err = start_mining_threads_from_params(
+            &json!({"threads": u64::from(MAX_NATIVE_MINING_THREADS) + 1}),
+        )
+        .expect_err("overlarge thread count must reject");
+        assert!(err.to_string().contains("exceeds maximum mining threads"));
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let err = dispatch_rpc_method(&node, "hegemon_startMining", json!({"threads": "many"}))
+            .expect_err("malformed start mining RPC must reject before side effects");
+        let message = err.to_string();
+        assert!(
+            message.contains("unsigned integer"),
+            "unexpected start-mining RPC error: {message}"
+        );
+        assert!(!node.mining.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn timestamp_rpc_rejects_unbounded_ranges() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
@@ -12236,6 +12434,76 @@ mod tests {
         let err = block_timestamps(&node, json!([genesis.height, genesis.height]), false)
             .expect_err("explicit timestamp range must reject corrupt header metadata");
         assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn timestamp_rpc_rejects_missing_canonical_height_inside_best_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let future = block_timestamps(&node, json!([1, 1]), false)
+            .expect("future timestamp rows may be absent");
+        assert_eq!(
+            future,
+            json!([{
+                "height": 1,
+                "timestamp_ms": Value::Null,
+            }])
+        );
+
+        let genesis = node.best_meta();
+        node.height_tree
+            .remove(height_key(genesis.height))
+            .expect("remove canonical genesis height index");
+        node.height_tree.flush().expect("flush height tree");
+
+        let err = block_timestamps(&node, json!([genesis.height, genesis.height]), false)
+            .expect_err("timestamp RPC must reject missing canonical height inside best range");
+        assert!(err.to_string().contains("missing canonical height index"));
+    }
+
+    #[test]
+    fn timestamp_rpc_rejects_canonical_record_height_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut forged = genesis.clone();
+        forged.height = 1;
+        node.block_tree
+            .insert(
+                genesis.hash.as_slice(),
+                bincode::serialize(&forged).expect("serialize forged metadata"),
+            )
+            .expect("forge canonical block record");
+
+        let err = block_timestamps(&node, json!([0, 0]), false)
+            .expect_err("timestamp RPC must reject height/hash metadata drift");
+        assert!(err
+            .to_string()
+            .contains("points to block metadata at height 1"));
+    }
+
+    #[test]
+    fn timestamp_rpc_rejects_canonical_record_work_hash_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut forged = genesis.clone();
+        forged.work_hash[0] ^= 1;
+        node.block_tree
+            .insert(
+                genesis.hash.as_slice(),
+                bincode::serialize(&forged).expect("serialize forged metadata"),
+            )
+            .expect("forge canonical block record");
+
+        let err = block_timestamps(&node, json!([0, 0]), false)
+            .expect_err("timestamp RPC must reject hash/work-hash metadata drift");
+        assert!(err
+            .to_string()
+            .contains("stored native block work-hash mismatch"));
     }
 
     #[test]

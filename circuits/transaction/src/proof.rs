@@ -182,7 +182,20 @@ pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
     transaction_statement_hash_from_public_inputs(&proof.public_inputs)
 }
 
+pub fn transaction_statement_hash_checked(
+    proof: &TransactionProof,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    transaction_statement_hash_from_public_inputs_checked(&proof.public_inputs)
+}
+
 pub fn transaction_statement_hash_from_public_inputs(public: &TransactionPublicInputs) -> [u8; 48] {
+    transaction_statement_hash_from_public_inputs_checked(public)
+        .expect("validated transaction public inputs fit statement hash layout")
+}
+
+pub fn transaction_statement_hash_from_public_inputs_checked(
+    public: &TransactionPublicInputs,
+) -> Result<[u8; 48], TransactionCircuitError> {
     transaction_statement_hash_from_parts(
         &public.merkle_root,
         &public.nullifiers,
@@ -201,7 +214,6 @@ pub fn transaction_statement_hash_from_public_inputs(public: &TransactionPublicI
         public.stablecoin.issuance_delta,
         public.stablecoin.policy_version,
     )
-    .expect("validated transaction public inputs fit statement hash layout")
 }
 
 #[allow(clippy::too_many_arguments)]
