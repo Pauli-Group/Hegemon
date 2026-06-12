@@ -52,7 +52,7 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, BLOCK_PROOF_BUNDLE_SCHEMA,
+    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
     DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
@@ -552,6 +552,7 @@ struct NativeStagedProofReloadInput {
     proof_within_limit: bool,
     capacity_available: bool,
     byte_capacity_available: bool,
+    proof_binding_hash_matches_key: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -743,6 +744,7 @@ enum NativeStagedProofReloadRejection {
     OversizedProof,
     StagedProofCapacityReached,
     StagedProofByteCapacityReached,
+    ProofBindingHashMismatch,
 }
 
 impl NativeStagedProofReloadRejection {
@@ -754,6 +756,7 @@ impl NativeStagedProofReloadRejection {
             Self::OversizedProof => "oversized_proof",
             Self::StagedProofCapacityReached => "staged_proof_capacity_reached",
             Self::StagedProofByteCapacityReached => "staged_proof_byte_capacity_reached",
+            Self::ProofBindingHashMismatch => "proof_binding_hash_mismatch",
         }
     }
 }
@@ -5795,6 +5798,8 @@ fn evaluate_native_staged_proof_reload(
         Err(NativeStagedProofReloadRejection::StagedProofCapacityReached)
     } else if !input.byte_capacity_available {
         Err(NativeStagedProofReloadRejection::StagedProofByteCapacityReached)
+    } else if !input.proof_binding_hash_matches_key {
+        Err(NativeStagedProofReloadRejection::ProofBindingHashMismatch)
     } else {
         Ok(())
     }
@@ -6099,12 +6104,23 @@ fn load_staged_proofs_with_limits(
         let capacity_available = entries.len() < max_staged_count;
         let next_total_bytes = total_bytes.saturating_add(value.len());
         let byte_capacity_available = next_total_bytes <= max_total_bytes;
+        let mut binding_hash = [0u8; 64];
+        if key_well_formed {
+            binding_hash.copy_from_slice(&key);
+        }
+        let proof_binding_hash_matches_key = key_well_formed
+            && proof_nonempty
+            && proof_within_limit
+            && capacity_available
+            && byte_capacity_available
+            && native_tx_leaf_artifact_binding_hash_matches_key(binding_hash, &value);
         if let Err(rejection) = evaluate_native_staged_proof_reload(NativeStagedProofReloadInput {
             key_well_formed,
             proof_nonempty,
             proof_within_limit,
             capacity_available,
             byte_capacity_available,
+            proof_binding_hash_matches_key,
         }) {
             match rejection {
                 NativeStagedProofReloadRejection::MalformedProofKey => warn!(
@@ -6128,13 +6144,15 @@ fn load_staged_proofs_with_limits(
                     max = max_total_bytes,
                     "dropping staged proof sidecar beyond reload byte capacity"
                 ),
+                NativeStagedProofReloadRejection::ProofBindingHashMismatch => warn!(
+                    binding_hash = %hex64(&binding_hash),
+                    "dropping binding-mismatched staged proof sidecar during reload"
+                ),
             }
             stale_keys.push(key.to_vec());
             continue;
         }
 
-        let mut binding_hash = [0u8; 64];
-        binding_hash.copy_from_slice(&key);
         total_bytes = next_total_bytes;
         entries.insert(hex64(&binding_hash), value.to_vec());
     }
@@ -6650,6 +6668,62 @@ fn binding_hash_matches(
     };
     let expected = StarkVerifier::compute_binding_hash(&inputs).data;
     expected == binding_hash
+}
+
+fn native_tx_leaf_artifact_binding_hash(
+    decoded: &consensus::backend_interface::NativeTxLeafArtifact,
+) -> Result<[u8; 64]> {
+    let balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS] = decoded
+        .stark_public_inputs
+        .balance_slot_asset_ids
+        .clone()
+        .try_into()
+        .map_err(|slots: Vec<u64>| {
+            anyhow!(
+                "native tx-leaf balance slot length {} does not match {}",
+                slots.len(),
+                transaction_core::constants::BALANCE_SLOTS
+            )
+        })?;
+    let stablecoin = match decoded.stark_public_inputs.stablecoin_enabled {
+        0 => None,
+        1 => Some(StablecoinPolicyBinding {
+            asset_id: decoded.stark_public_inputs.stablecoin_asset_id,
+            policy_hash: decoded.stark_public_inputs.stablecoin_policy_hash,
+            oracle_commitment: decoded.stark_public_inputs.stablecoin_oracle_commitment,
+            attestation_commitment: decoded
+                .stark_public_inputs
+                .stablecoin_attestation_commitment,
+            issuance_delta: native_tx_leaf_decode_signed_magnitude(
+                decoded.stark_public_inputs.stablecoin_issuance_sign,
+                decoded.stark_public_inputs.stablecoin_issuance_magnitude,
+                "stablecoin_issuance",
+            )?,
+            policy_version: decoded.stark_public_inputs.stablecoin_policy_version,
+        }),
+        other => {
+            return Err(anyhow!(
+                "native tx-leaf stablecoin_enabled flag must be 0 or 1, got {other}"
+            ));
+        }
+    };
+    let inputs = ShieldedTransferInputs {
+        anchor: decoded.stark_public_inputs.merkle_root,
+        nullifiers: decoded.tx.nullifiers.clone(),
+        commitments: decoded.tx.commitments.clone(),
+        ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
+        balance_slot_asset_ids,
+        fee: decoded.stark_public_inputs.fee,
+        value_balance: 0,
+        stablecoin,
+    };
+    Ok(StarkVerifier::compute_binding_hash(&inputs).data)
+}
+
+fn native_tx_leaf_artifact_binding_hash_matches_key(binding_hash: [u8; 64], proof: &[u8]) -> bool {
+    consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(proof)
+        .and_then(|decoded| native_tx_leaf_artifact_binding_hash(&decoded))
+        .is_ok_and(|expected| expected == binding_hash)
 }
 
 fn evaluate_native_transfer_payload_admission(
@@ -12417,6 +12491,7 @@ mod tests {
         proof_within_limit: bool,
         capacity_available: bool,
         byte_capacity_available: bool,
+        proof_binding_hash_matches_key: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -16628,6 +16703,7 @@ mod tests {
             proof_within_limit: case.proof_within_limit,
             capacity_available: case.capacity_available,
             byte_capacity_available: case.byte_capacity_available,
+            proof_binding_hash_matches_key: case.proof_binding_hash_matches_key,
         };
         let actual_rejection = evaluate_native_staged_proof_reload(input)
             .err()
@@ -20274,8 +20350,7 @@ mod tests {
             .open()
             .expect("temporary sled db");
         let tree = db.open_tree("staged_proofs").expect("staged proof tree");
-        let binding_hash = [1u8; 64];
-        let proof = vec![9u8, 8, 7];
+        let (binding_hash, proof) = staged_proof_fixture();
         tree.insert(binding_hash.as_slice(), proof.as_slice())
             .expect("insert staged proof");
 
@@ -20332,8 +20407,7 @@ mod tests {
             .open()
             .expect("temporary sled db");
         let tree = db.open_tree("staged_proofs").expect("staged proof tree");
-        let binding_hash = [3u8; 64];
-        let proof = vec![5u8; 5];
+        let (binding_hash, proof) = staged_proof_fixture();
         tree.insert(binding_hash.as_slice(), proof.as_slice())
             .expect("insert oversized staged proof");
 
@@ -20353,32 +20427,48 @@ mod tests {
     }
 
     #[test]
+    fn load_staged_proofs_drops_binding_hash_mismatch() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+        let (mut binding_hash, proof) = staged_proof_fixture();
+        binding_hash[0] ^= 0xff;
+        tree.insert(binding_hash.as_slice(), proof.as_slice())
+            .expect("insert mismatched staged proof");
+
+        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+
+        assert!(loaded.is_empty());
+        assert!(tree
+            .get(binding_hash.as_slice())
+            .expect("read dropped proof")
+            .is_none());
+    }
+
+    #[test]
     fn load_staged_proofs_drops_capacity_overflow() {
         let db = sled::Config::new()
             .temporary(true)
             .open()
             .expect("temporary sled db");
         let tree = db.open_tree("staged_proofs").expect("staged proof tree");
-        let first_key = [1u8; 64];
-        let second_key = [2u8; 64];
-        tree.insert(first_key.as_slice(), [1u8].as_slice())
-            .expect("insert first staged proof");
-        tree.insert(second_key.as_slice(), [2u8].as_slice())
-            .expect("insert second staged proof");
+        let (binding_hash, proof) = staged_proof_fixture();
+        tree.insert(binding_hash.as_slice(), proof.as_slice())
+            .expect("insert staged proof");
 
         let loaded = load_staged_proofs_with_limits(
             &tree,
-            1,
+            0,
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
             MAX_NATIVE_STAGED_PROOF_BYTES,
         )
         .expect("load staged proofs");
 
-        assert_eq!(loaded.len(), 1);
-        assert!(loaded.contains_key(&hex64(&first_key)));
-        assert_eq!(tree.len(), 1);
+        assert!(loaded.is_empty());
         assert!(tree
-            .get(second_key.as_slice())
+            .get(binding_hash.as_slice())
             .expect("read dropped proof")
             .is_none());
     }
@@ -20390,28 +20480,53 @@ mod tests {
             .open()
             .expect("temporary sled db");
         let tree = db.open_tree("staged_proofs").expect("staged proof tree");
-        let first_key = [1u8; 64];
-        let second_key = [2u8; 64];
-        tree.insert(first_key.as_slice(), [1u8, 2].as_slice())
-            .expect("insert first staged proof");
-        tree.insert(second_key.as_slice(), [3u8, 4, 5, 6].as_slice())
-            .expect("insert second staged proof");
+        let (binding_hash, proof) = staged_proof_fixture();
+        tree.insert(binding_hash.as_slice(), proof.as_slice())
+            .expect("insert staged proof");
 
         let loaded = load_staged_proofs_with_limits(
             &tree,
             MAX_NATIVE_STAGED_PROOFS,
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
-            5,
+            proof.len() - 1,
         )
         .expect("load staged proofs");
 
-        assert_eq!(loaded.len(), 1);
-        assert!(loaded.contains_key(&hex64(&first_key)));
-        assert_eq!(tree.len(), 1);
+        assert!(loaded.is_empty());
         assert!(tree
-            .get(second_key.as_slice())
+            .get(binding_hash.as_slice())
             .expect("read dropped proof")
             .is_none());
+    }
+
+    fn staged_proof_fixture() -> ([u8; 64], Vec<u8>) {
+        let bundle_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/native_backend_vectors/bundle.json");
+        let bundle_bytes = std::fs::read(&bundle_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", bundle_path.display()));
+        let bundle: serde_json::Value = serde_json::from_slice(&bundle_bytes)
+            .unwrap_or_else(|err| panic!("parse {}: {err}", bundle_path.display()));
+        let artifact_hex = bundle["cases"]
+            .as_array()
+            .and_then(|cases| {
+                cases
+                    .iter()
+                    .find(|case| case["name"].as_str() == Some("native_tx_leaf_valid"))
+            })
+            .and_then(|case| case["artifact_hex"].as_str())
+            .expect("bundle must contain native_tx_leaf_valid artifact_hex");
+        let artifact_bytes =
+            hex::decode(artifact_hex).expect("native_tx_leaf_valid artifact hex must decode");
+        let decoded =
+            consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&artifact_bytes)
+                .expect("native_tx_leaf_valid artifact must decode");
+        let binding_hash = native_tx_leaf_artifact_binding_hash(&decoded)
+            .expect("native_tx_leaf_valid artifact binding hash");
+        assert!(native_tx_leaf_artifact_binding_hash_matches_key(
+            binding_hash,
+            &artifact_bytes
+        ));
+        (binding_hash, artifact_bytes)
     }
 
     #[test]

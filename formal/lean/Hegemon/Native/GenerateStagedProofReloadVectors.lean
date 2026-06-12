@@ -17,6 +17,8 @@ def rejectionJson : Option StagedProofReloadReject -> String
       "\"staged_proof_capacity_reached\""
   | some StagedProofReloadReject.stagedProofByteCapacityReached =>
       "\"staged_proof_byte_capacity_reached\""
+  | some StagedProofReloadReject.proofBindingHashMismatch =>
+      "\"proof_binding_hash_mismatch\""
 
 def stagedProofReloadCaseJson
     (name : String)
@@ -34,6 +36,8 @@ def stagedProofReloadCaseJson
     ++ boolJson input.capacityAvailable ++ ",\n"
     ++ "      \"byte_capacity_available\": "
     ++ boolJson input.byteCapacityAvailable ++ ",\n"
+    ++ "      \"proof_binding_hash_matches_key\": "
+    ++ boolJson input.proofBindingHashMatchesKey ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
     ++ "      \"expected_rejection\": " ++ rejectionJson result ++ "\n"
     ++ "    }"
@@ -56,6 +60,9 @@ def vectorJson : String :=
     ++ stagedProofReloadCaseJson
       "staged-proof-byte-capacity-reached-rejected"
       stagedProofByteCapacityReached ++ ",\n"
+    ++ stagedProofReloadCaseJson
+      "proof-binding-hash-mismatch-rejected"
+      proofBindingHashMismatch ++ ",\n"
     ++ stagedProofReloadCaseJson "malformed-key-precedes-empty"
       malformed_key_precedes_empty_input ++ ",\n"
     ++ stagedProofReloadCaseJson "empty-precedes-oversize"
@@ -63,7 +70,9 @@ def vectorJson : String :=
     ++ stagedProofReloadCaseJson "oversize-precedes-capacity"
       oversize_precedes_capacity_input ++ ",\n"
     ++ stagedProofReloadCaseJson "capacity-precedes-byte-capacity"
-      capacity_precedes_byte_capacity_input ++ "\n"
+      capacity_precedes_byte_capacity_input ++ ",\n"
+    ++ stagedProofReloadCaseJson "byte-capacity-precedes-binding-mismatch"
+      byte_capacity_precedes_binding_mismatch_input ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

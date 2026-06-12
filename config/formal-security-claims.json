@@ -2447,7 +2447,7 @@
       "id": "native.staged-proof-reload",
       "component": "native staged proof startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native staged-proof reload kernel proves the deterministic per-entry startup admission/drop table for persisted proof sidecars: non-64-byte keys, empty proofs, oversized proofs, staged proof count overflow, and staged proof byte-budget overflow are rejected in fixed order before restored proof sidecars can feed proposer-local artifact coordination.",
+      "summary": "The Lean native staged-proof reload kernel proves the deterministic per-entry startup admission/drop table for persisted proof sidecars: non-64-byte keys, empty proofs, oversized proofs, staged proof count overflow, staged proof byte-budget overflow, and proof/binding-hash key mismatch are rejected in fixed order before restored proof sidecars can feed proposer-local artifact coordination.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
@@ -2459,15 +2459,17 @@
         "Hegemon.Native.StagedProofReload.oversized_proof_rejects",
         "Hegemon.Native.StagedProofReload.staged_proof_capacity_reached_rejects",
         "Hegemon.Native.StagedProofReload.staged_proof_byte_capacity_reached_rejects",
+        "Hegemon.Native.StagedProofReload.proof_binding_hash_mismatch_rejects",
         "Hegemon.Native.StagedProofReload.malformed_key_precedes_empty",
         "Hegemon.Native.StagedProofReload.empty_precedes_oversize",
         "Hegemon.Native.StagedProofReload.oversize_precedes_capacity",
-        "Hegemon.Native.StagedProofReload.capacity_precedes_byte_capacity"
+        "Hegemon.Native.StagedProofReload.capacity_precedes_byte_capacity",
+        "Hegemon.Native.StagedProofReload.byte_capacity_precedes_binding_mismatch"
       ],
       "assumptions": [
-        "The Lean model represents the per-entry reload decision table over production-derived booleans: 64-byte sled-key shape, nonempty proof bytes, decoded proof byte cap, staged proof count capacity, and aggregate staged proof byte capacity.",
-        "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before empty proof, empty proof before oversize, oversize before staged-count capacity, and staged-count capacity before aggregate byte capacity.",
-        "The theorem covers the executable admission/drop table for observed persisted proof-sidecar cache entries only. It does not prove sled atomicity, filesystem durability, I/O error behavior, RPC parser correctness, DA/proof sidecar availability, native tx-leaf proof soundness, proof byte parser correctness beyond size admission, or complete native-node equivalence."
+        "The Lean model represents the per-entry reload decision table over production-derived booleans: 64-byte sled-key shape, nonempty proof bytes, decoded proof byte cap, staged proof count capacity, aggregate staged proof byte capacity, and native tx-leaf proof public-field binding-hash equality with the persisted sled key.",
+        "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before empty proof, empty proof before oversize, oversize before staged-count capacity, staged-count capacity before aggregate byte capacity, and aggregate byte capacity before binding-hash mismatch.",
+        "The theorem covers the executable admission/drop table for observed persisted proof-sidecar cache entries only. It does not prove sled atomicity, filesystem durability, I/O error behavior, RPC parser correctness, DA/proof sidecar availability, native tx-leaf proof soundness, full proof byte parser correctness, cryptographic binding-hash collision resistance, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/StagedProofReload.lean",

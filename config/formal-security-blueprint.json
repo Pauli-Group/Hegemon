@@ -4707,8 +4707,8 @@
       "id": "native.staged-proof-reload",
       "claim_id": "native.staged-proof-reload",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native staged-proof reload predicate, a persisted proof sidecar entry is accepted into the restored proposer-local proof cache only when its key is well formed, its proof bytes are nonempty, its proof length is within the configured cap, staged-proof count capacity remains, and aggregate staged-proof byte capacity remains; otherwise the entry is dropped with fixed malformed-key, empty-proof, oversize, staged-count-capacity, then staged-byte-capacity precedence.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.StagedProofReload.accepts_iff_staged_proof_reload_preconditions` proves the executable acceptance predicate, while `Hegemon.Native.StagedProofReload.malformed_proof_key_rejects`, `Hegemon.Native.StagedProofReload.empty_proof_rejects`, `Hegemon.Native.StagedProofReload.oversized_proof_rejects`, `Hegemon.Native.StagedProofReload.staged_proof_capacity_reached_rejects`, `Hegemon.Native.StagedProofReload.staged_proof_byte_capacity_reached_rejects`, and the companion precedence theorems pin the drop order. `gen_staged_proof_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_staged_proof_reload`, the helper used by `load_staged_proofs_with_limits` before persisted proof sidecars can feed proposer-local artifact coordination.",
+      "formal_statement": "For the executable Lean native staged-proof reload predicate, a persisted proof sidecar entry is accepted into the restored proposer-local proof cache only when its key is well formed, its proof bytes are nonempty, its proof length is within the configured cap, staged-proof count capacity remains, aggregate staged-proof byte capacity remains, and the decoded native tx-leaf public fields recompute the same binding hash as the persisted key; otherwise the entry is dropped with fixed malformed-key, empty-proof, oversize, staged-count-capacity, staged-byte-capacity, then proof-binding-hash-mismatch precedence.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.StagedProofReload.accepts_iff_staged_proof_reload_preconditions` proves the executable acceptance predicate, while `Hegemon.Native.StagedProofReload.malformed_proof_key_rejects`, `Hegemon.Native.StagedProofReload.empty_proof_rejects`, `Hegemon.Native.StagedProofReload.oversized_proof_rejects`, `Hegemon.Native.StagedProofReload.staged_proof_capacity_reached_rejects`, `Hegemon.Native.StagedProofReload.staged_proof_byte_capacity_reached_rejects`, `Hegemon.Native.StagedProofReload.proof_binding_hash_mismatch_rejects`, and the companion precedence theorems pin the drop order. `gen_staged_proof_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_staged_proof_reload`, the helper used by `load_staged_proofs_with_limits` before persisted proof sidecars can feed proposer-local artifact coordination.",
       "depends_on": [
         "native.sidecar-upload-admission",
         "native.resource-budget-admission",
@@ -4768,7 +4768,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged proof startup reload. Scope is the deterministic admission/drop table over observed persisted proof-cache entries; sled atomicity, filesystem durability, proof byte parser correctness beyond size admission, and native tx-leaf proof soundness remain outside Lean."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged proof startup reload. Scope is the deterministic admission/drop table over observed persisted proof-cache entries, including native tx-leaf public-field binding-hash equality with the persisted key; sled atomicity, filesystem durability, full proof byte parser correctness, cryptographic binding-hash security, and native tx-leaf proof soundness remain outside Lean."
       },
       "falsification_cases": [
         {
@@ -4778,12 +4778,12 @@
         },
         {
           "id": "lean-generated-staged-proof-reload-conformance",
-          "description": "Changing production key-shape, nonempty-proof, byte-cap, count-capacity, byte-capacity, or rejection-precedence behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "description": "Changing production key-shape, nonempty-proof, byte-cap, count-capacity, byte-capacity, proof/key binding-hash equality, or rejection-precedence behavior away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_STAGED_PROOF_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_staged_proof_reload_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
           "id": "native-staged-proof-reload-regressions",
-          "description": "Focused native tests must reload staged proof sidecars only from well-formed nonempty in-budget entries and must purge malformed, empty, oversized, count-overflow, and byte-overflow persisted cache entries.",
+          "description": "Focused native tests must reload staged proof sidecars only from well-formed nonempty in-budget entries whose decoded native tx-leaf public fields bind to the persisted key, and must purge malformed, empty, oversized, count-overflow, byte-overflow, and binding-mismatched persisted cache entries.",
           "gate": "cargo test -p hegemon-node load_staged_proofs_ --lib --no-default-features -- --nocapture"
         },
         {

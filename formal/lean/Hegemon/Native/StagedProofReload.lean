@@ -8,6 +8,7 @@ inductive StagedProofReloadReject where
   | oversizedProof
   | stagedProofCapacityReached
   | stagedProofByteCapacityReached
+  | proofBindingHashMismatch
 deriving DecidableEq, Repr
 
 structure StagedProofReloadInput where
@@ -16,6 +17,7 @@ structure StagedProofReloadInput where
   proofWithinLimit : Bool
   capacityAvailable : Bool
   byteCapacityAvailable : Bool
+  proofBindingHashMatchesKey : Bool
 deriving DecidableEq, Repr
 
 def orderedChecks (input : StagedProofReloadInput) :
@@ -30,7 +32,9 @@ def orderedChecks (input : StagedProofReloadInput) :
     (input.capacityAvailable,
       StagedProofReloadReject.stagedProofCapacityReached),
     (input.byteCapacityAvailable,
-      StagedProofReloadReject.stagedProofByteCapacityReached)
+      StagedProofReloadReject.stagedProofByteCapacityReached),
+    (input.proofBindingHashMatchesKey,
+      StagedProofReloadReject.proofBindingHashMismatch)
   ]
 
 def firstReject :
@@ -83,7 +87,8 @@ def valid : StagedProofReloadInput :=
     proofNonempty := true,
     proofWithinLimit := true,
     capacityAvailable := true,
-    byteCapacityAvailable := true
+    byteCapacityAvailable := true,
+    proofBindingHashMatchesKey := true
   }
 
 theorem valid_accepts :
@@ -128,6 +133,14 @@ def stagedProofByteCapacityReached : StagedProofReloadInput :=
 theorem staged_proof_byte_capacity_reached_rejects :
     evaluateStagedProofReloadRejection stagedProofByteCapacityReached =
       some StagedProofReloadReject.stagedProofByteCapacityReached := by
+  decide
+
+def proofBindingHashMismatch : StagedProofReloadInput :=
+  { valid with proofBindingHashMatchesKey := false }
+
+theorem proof_binding_hash_mismatch_rejects :
+    evaluateStagedProofReloadRejection proofBindingHashMismatch =
+      some StagedProofReloadReject.proofBindingHashMismatch := by
   decide
 
 def malformed_key_precedes_empty_input :
@@ -176,6 +189,18 @@ theorem capacity_precedes_byte_capacity :
     evaluateStagedProofReloadRejection
       capacity_precedes_byte_capacity_input =
         some StagedProofReloadReject.stagedProofCapacityReached := by
+  decide
+
+def byte_capacity_precedes_binding_mismatch_input :
+    StagedProofReloadInput :=
+  { valid with
+    byteCapacityAvailable := false
+    proofBindingHashMatchesKey := false }
+
+theorem byte_capacity_precedes_binding_mismatch :
+    evaluateStagedProofReloadRejection
+      byte_capacity_precedes_binding_mismatch_input =
+        some StagedProofReloadReject.stagedProofByteCapacityReached := by
   decide
 
 end StagedProofReload
