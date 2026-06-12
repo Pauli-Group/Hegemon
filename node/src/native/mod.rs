@@ -51,8 +51,9 @@ use protocol_shielded_pool::family::{
     ACTION_SHIELDED_TRANSFER_SIDECAR, ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL,
 };
 use protocol_shielded_pool::types::{
-    BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
-    BLOCK_PROOF_BUNDLE_SCHEMA, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
+    ProofArtifactKind as PoolProofArtifactKind, BLOCK_PROOF_BUNDLE_SCHEMA,
+    DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -73,7 +74,9 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
+use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
+use wallet::{NoteCiphertext, NotePlaintext, ShieldedAddress};
 
 const META_BEST_KEY: &[u8] = b"best";
 const META_GENESIS_KEY: &[u8] = b"genesis";
@@ -86,6 +89,7 @@ const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
 const NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED: bool = false;
 const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
+const MAX_PREPARED_MINING_WORKS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
@@ -1789,6 +1793,7 @@ pub struct NativeNode {
     mining_task: Mutex<Option<JoinHandle<()>>>,
     sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
     miner_identity: NativeMinerIdentity,
+    prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
 }
 
 impl NativeNode {
@@ -1862,6 +1867,7 @@ impl NativeNode {
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
             miner_identity,
+            prepared_mining_actions: Mutex::new(BTreeMap::new()),
         });
         Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
@@ -1893,10 +1899,140 @@ impl NativeNode {
         }
     }
 
+    fn append_auto_coinbase_action(
+        &self,
+        height: u64,
+        actions: &mut Vec<PendingAction>,
+        received_ms: u64,
+    ) -> Result<Option<PendingAction>> {
+        let Some(action) = self.auto_coinbase_action(height, actions, received_ms)? else {
+            return Ok(None);
+        };
+        actions.push(action.clone());
+        Ok(Some(action))
+    }
+
+    fn auto_coinbase_action(
+        &self,
+        height: u64,
+        actions: &[PendingAction],
+        received_ms: u64,
+    ) -> Result<Option<PendingAction>> {
+        let Some(miner_address) = self.config.miner_address.as_deref() else {
+            return Ok(None);
+        };
+        if actions.iter().any(is_coinbase_action) {
+            return Ok(None);
+        }
+        let amount = expected_coinbase_amount(actions, height)?;
+        if amount == 0 {
+            return Ok(None);
+        }
+
+        let recipient = ShieldedAddress::decode(miner_address)
+            .with_context(|| "decode HEGEMON_MINER_ADDRESS for native coinbase")?;
+        let mut rng = OsRng;
+        let mut public_seed = [0u8; 32];
+        rng.fill_bytes(&mut public_seed);
+
+        let note = NotePlaintext::coinbase(amount, &public_seed);
+        let wallet_ciphertext = NoteCiphertext::encrypt(&recipient, &note, &mut rng)
+            .with_context(|| "encrypt native coinbase note")?;
+        let chain_bytes = wallet_ciphertext
+            .to_chain_bytes()
+            .with_context(|| "serialize native coinbase note")?;
+        let encrypted_note = EncryptedNote::decode(&mut &chain_bytes[..])
+            .map_err(|err| anyhow!("decode generated native coinbase encrypted note: {err}"))?;
+        let note_data = note.to_note_data(recipient.pk_recipient, recipient.pk_auth);
+        let commitment = felts_to_bytes48(&note_data.commitment());
+        let miner_note = CoinbaseNoteData {
+            commitment,
+            encrypted_note,
+            recipient_address: coinbase_recipient_address_bytes(&recipient),
+            amount,
+            public_seed,
+        };
+        let args = MintCoinbaseArgs {
+            reward_bundle: BlockRewardBundle { miner_note },
+        };
+        let (_, ciphertext_metadata) =
+            coinbase_ciphertext_metadata(&args.reward_bundle.miner_note.encrypted_note);
+        let Some((ciphertext_hash, ciphertext_size)) = ciphertext_metadata else {
+            return Err(anyhow!(
+                "generated native coinbase ciphertext exceeds native cap"
+            ));
+        };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_MINT_COINBASE,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: vec![commitment],
+            ciphertext_hashes: vec![ciphertext_hash],
+            ciphertext_sizes: vec![ciphertext_size],
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+            received_ms,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        validate_coinbase_action_payload(&action)?;
+        let mut accounting_actions = actions.to_vec();
+        accounting_actions.push(action.clone());
+        validate_coinbase_accounting(&accounting_actions, height)?;
+        Ok(Some(action))
+    }
+
+    fn cache_prepared_mining_actions(&self, pre_hash: [u8; 32], actions: Vec<PendingAction>) {
+        let mut cache = self.prepared_mining_actions.lock();
+        cache.insert(pre_hash, actions);
+        while cache.len() > MAX_PREPARED_MINING_WORKS {
+            let Some(oldest_key) = cache.keys().next().copied() else {
+                break;
+            };
+            cache.remove(&oldest_key);
+        }
+    }
+
+    fn prepared_mining_actions_for_work(&self, work: &NativeWork) -> Option<Vec<PendingAction>> {
+        self.prepared_mining_actions
+            .lock()
+            .get(&work.pre_hash)
+            .cloned()
+    }
+
+    fn forget_prepared_mining_actions(&self, work: &NativeWork) {
+        self.prepared_mining_actions.lock().remove(&work.pre_hash);
+    }
+
+    fn mineable_actions_for_work(
+        &self,
+        state: &NativeState,
+        work: &NativeWork,
+    ) -> Vec<PendingAction> {
+        if work.tx_count == 0 {
+            return Vec::new();
+        }
+        if let Some(actions) = self.prepared_mining_actions_for_work(work) {
+            if prepared_mining_actions_match_state(state, &actions) {
+                return actions;
+            }
+        }
+        select_mineable_actions(state)
+    }
+
     fn prepare_work(&self) -> Result<NativeWork> {
         let state = self.state.read();
         let best = state.best.clone();
-        let pending_actions = select_mineable_actions(&state);
+        let mut pending_actions = select_mineable_actions(&state);
+        if self.config.miner_address.is_some() {
+            pending_actions.retain(|action| !is_coinbase_action(action));
+        }
         let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
             .map_err(|_| NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow);
         let height = evaluate_native_work_template_admission(NativeWorkTemplateAdmissionInput {
@@ -1905,6 +2041,19 @@ impl NativeNode {
         })
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
+        let received_ms = current_time_ms();
+        let mut prepared_coinbase =
+            match self.append_auto_coinbase_action(height, &mut pending_actions, received_ms) {
+                Ok(action) => action,
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "dropping native pending actions before auto coinbase"
+                    );
+                    pending_actions.clear();
+                    self.append_auto_coinbase_action(height, &mut pending_actions, received_ms)?
+                }
+            };
         let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
             match preview_pending_roots(&self.da_ciphertext_tree, &state, &pending_actions) {
                 Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
@@ -1916,21 +2065,45 @@ impl NativeNode {
                 ),
                 Err(err) => {
                     warn!(error = %err, "failed to preview native pending action roots");
-                    (
-                        Vec::new(),
-                        best.state_root,
-                        best.nullifier_root,
-                        actions_extrinsics_root(&[]),
-                        0,
-                    )
+                    let mut fallback_actions = Vec::new();
+                    prepared_coinbase = self.append_auto_coinbase_action(
+                        height,
+                        &mut fallback_actions,
+                        received_ms,
+                    )?;
+                    match preview_pending_roots(&self.da_ciphertext_tree, &state, &fallback_actions)
+                    {
+                        Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
+                            fallback_actions,
+                            state_root,
+                            nullifier_root,
+                            extrinsics_root,
+                            tx_count,
+                        ),
+                        Err(fallback_err) => {
+                            warn!(
+                                error = %fallback_err,
+                                "failed to preview native auto coinbase fallback"
+                            );
+                            prepared_coinbase = None;
+                            (
+                                Vec::new(),
+                                best.state_root,
+                                best.nullifier_root,
+                                actions_extrinsics_root(&[]),
+                                0,
+                            )
+                        }
+                    }
                 }
             };
-        let timestamp_ms = current_time_ms().max(best.timestamp_ms.saturating_add(1));
+        let timestamp_ms = received_ms.max(best.timestamp_ms.saturating_add(1));
         let supply_digest = match advance_native_supply_digest(best.supply_digest, &actions, height)
         {
             Ok(supply_digest) => supply_digest,
             Err(err) => {
                 warn!(error = %err, "dropping native pending actions with invalid supply accounting");
+                prepared_coinbase = None;
                 actions = Vec::new();
                 state_root = best.state_root;
                 nullifier_root = best.nullifier_root;
@@ -1965,6 +2138,9 @@ impl NativeNode {
             tx_count,
         );
         let pre_hash = pre_header.pre_hash();
+        if prepared_coinbase.is_some() {
+            self.cache_prepared_mining_actions(pre_hash, actions.clone());
+        }
         Ok(NativeWork {
             height,
             parent_hash: best.hash,
@@ -1999,11 +2175,7 @@ impl NativeNode {
             return Ok(None);
         }
 
-        let actions = if work.tx_count == 0 {
-            Vec::new()
-        } else {
-            select_mineable_actions(&state)
-        };
+        let actions = self.mineable_actions_for_work(&state, work);
         let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
             match preview_pending_roots(&self.da_ciphertext_tree, &state, &actions) {
                 Ok(roots) => roots,
@@ -2118,6 +2290,7 @@ impl NativeNode {
         }
 
         self.commit_mined_block_atomically(&actions, &pending_action_effects, &meta)?;
+        self.forget_prepared_mining_actions(work);
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
@@ -6551,6 +6724,32 @@ fn coinbase_ciphertext_metadata(
     )
 }
 
+fn coinbase_recipient_address_bytes(address: &ShieldedAddress) -> [u8; DIVERSIFIED_ADDRESS_SIZE] {
+    let mut out = [0u8; DIVERSIFIED_ADDRESS_SIZE];
+    out[0] = address.version;
+    out[1..5].copy_from_slice(&address.diversifier_index.to_le_bytes());
+    out[5..37].copy_from_slice(&address.pk_recipient);
+    out[37..69].copy_from_slice(&address.pk_auth);
+    out
+}
+
+fn coinbase_note_data_commitment(note: &CoinbaseNoteData) -> [u8; 48] {
+    let mut pk_recipient = [0u8; 32];
+    pk_recipient.copy_from_slice(&note.recipient_address[5..37]);
+    let mut pk_auth = [0u8; 32];
+    pk_auth.copy_from_slice(&note.recipient_address[37..69]);
+    let note_plaintext = NotePlaintext::coinbase(note.amount, &note.public_seed);
+    felts_to_bytes48(
+        &note_plaintext
+            .to_note_data(pk_recipient, pk_auth)
+            .commitment(),
+    )
+}
+
+fn coinbase_note_commitment_matches(action_commitment: &[u8; 48], note: &CoinbaseNoteData) -> bool {
+    *action_commitment == note.commitment && note.commitment == coinbase_note_data_commitment(note)
+}
+
 fn evaluate_native_coinbase_action_payload_admission(
     input: NativeCoinbaseActionPayloadAdmissionInput,
 ) -> Result<(), NativeCoinbaseActionPayloadAdmissionRejection> {
@@ -6618,10 +6817,12 @@ fn validate_coinbase_action_payload(action: &PendingAction) -> Result<()> {
     let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
     let note = &args.reward_bundle.miner_note.encrypted_note;
     let (ciphertext_bytes, ciphertext_metadata) = coinbase_ciphertext_metadata(note);
+    let commitment_matches = action.commitments.first().is_some_and(|commitment| {
+        coinbase_note_commitment_matches(commitment, &args.reward_bundle.miner_note)
+    });
     let input = NativeCoinbaseActionPayloadAdmissionInput {
         amount_nonzero: args.reward_bundle.miner_note.amount != 0,
-        commitment_matches: action.commitments.first()
-            == Some(&args.reward_bundle.miner_note.commitment),
+        commitment_matches,
         commitment_nonzero: action
             .commitments
             .first()
@@ -6960,6 +7161,18 @@ fn select_mineable_actions(state: &NativeState) -> Vec<PendingAction> {
             evaluate_native_mineable_action_admission(input).is_ok()
         })
         .collect()
+}
+
+fn prepared_mining_actions_match_state(state: &NativeState, actions: &[PendingAction]) -> bool {
+    actions
+        .iter()
+        .filter(|action| !is_coinbase_action(action))
+        .all(|action| {
+            state
+                .pending_actions
+                .get(&action.tx_hash)
+                .is_some_and(|pending| pending.encode() == action.encode())
+        })
 }
 
 fn native_mineable_action_admission_input(
@@ -11720,9 +11933,8 @@ mod tests {
         let config = test_config(tmp.path(), test_pow_bits, "safe", false);
         let canonical_reward = consensus::reward::block_subsidy(1);
         let side_reward = consensus::reward::block_subsidy(2);
-        let side_commitment = [13u8; 48];
 
-        let (canonical, old_action_hash, side_one, side_two, side_action_hash) = {
+        let (canonical, old_action_hash, side_one, side_two, side_action_hash, side_commitment) = {
             let node = NativeNode::open(config.clone()).expect("node");
             let genesis = node.best_meta();
 
@@ -11752,6 +11964,7 @@ mod tests {
 
             let side_action = test_coinbase_action(side_reward);
             let side_action_hash = side_action.tx_hash;
+            let side_commitment = side_action.commitments[0];
             let side_two =
                 mined_child_with_actions(&side_one, 2, test_pow_bits, 129, vec![side_action]);
             assert!(
@@ -11780,6 +11993,7 @@ mod tests {
                 side_one,
                 side_two,
                 side_action_hash,
+                side_commitment,
             )
         };
 
@@ -11949,23 +12163,9 @@ mod tests {
         };
         let node = NativeNode::open(config).expect("node");
         let reward = consensus::reward::block_subsidy(1);
-        let note = protocol_shielded_pool::types::EncryptedNote {
-            ciphertext: [11u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
-            kem_ciphertext: vec![12u8; 32],
-        };
-        let commitment = [13u8; 48];
-        let args = MintCoinbaseArgs {
-            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle {
-                miner_note: protocol_shielded_pool::types::CoinbaseNoteData {
-                    commitment,
-                    encrypted_note: note,
-                    recipient_address: [14u8;
-                        protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
-                    amount: reward,
-                    public_seed: [15u8; 32],
-                },
-            },
-        };
+        let coinbase = test_coinbase_action(reward);
+        let args: MintCoinbaseArgs = decode_scale_exact(&coinbase.public_args, "coinbase args")
+            .expect("decode test coinbase args");
         node.validate_and_stage_action(json!({
             "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
             "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
@@ -11985,6 +12185,95 @@ mod tests {
         assert_eq!(imported.supply_digest, reward as u128);
         assert_eq!(node.state.read().commitment_tree.leaf_count(), 1);
         assert_eq!(node.state.read().pending_actions.len(), 0);
+    }
+
+    #[test]
+    fn prepare_work_auto_coinbase_is_imported_and_wallet_decryptable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let keys = wallet::RootSecret::from_bytes([7u8; 32]).derive();
+        let material = keys.address(0).expect("address material");
+        let address = material.shielded_address();
+        let mut config = test_config(tmp.path(), pow_bits, "unsafe", false);
+        config.miner_address = Some(address.encode().expect("encode miner address"));
+        let node = NativeNode::open(config).expect("node");
+
+        let reward = consensus::reward::block_subsidy(1);
+        let work = node.prepare_work().expect("prepare native work");
+        assert_eq!(work.tx_count, 1);
+        let seal = mine_native_round(work.clone(), 0).expect("auto coinbase seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("auto coinbase import")
+            .expect("auto coinbase block");
+        assert_eq!(imported.supply_digest, reward as u128);
+        assert_eq!(node.state.read().commitment_tree.leaf_count(), 1);
+
+        let actions = decode_block_actions(&imported).expect("decode imported actions");
+        assert_eq!(actions.len(), 1);
+        assert!(is_coinbase_action(&actions[0]));
+        let args: MintCoinbaseArgs =
+            decode_scale_exact(&actions[0].public_args, "auto coinbase args")
+                .expect("decode auto coinbase args");
+        let miner_note = &args.reward_bundle.miner_note;
+        assert_eq!(miner_note.amount, reward);
+        assert_eq!(
+            miner_note.recipient_address,
+            coinbase_recipient_address_bytes(&address)
+        );
+        assert_eq!(
+            miner_note.commitment,
+            coinbase_note_data_commitment(miner_note)
+        );
+
+        let ciphertext = NoteCiphertext::from_chain_bytes(&miner_note.encrypted_note.encode())
+            .expect("wallet decode auto coinbase ciphertext");
+        let recovered = ciphertext
+            .decrypt(&material)
+            .expect("decrypt auto coinbase note");
+        assert_eq!(recovered.value, reward);
+        assert_eq!(recovered.asset_id, 0);
+        assert_eq!(recovered.memo.as_bytes(), b"");
+    }
+
+    #[test]
+    fn prepare_work_auto_coinbase_ignores_staged_coinbase_recipient() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let keys = wallet::RootSecret::from_bytes([8u8; 32]).derive();
+        let material = keys.address(0).expect("address material");
+        let address = material.shielded_address();
+        let mut config = test_config(tmp.path(), pow_bits, "unsafe", false);
+        config.miner_address = Some(address.encode().expect("encode miner address"));
+        let node = NativeNode::open(config).expect("node");
+        let reward = consensus::reward::block_subsidy(1);
+        stage_test_coinbase(&node, reward, [0xe5u8; 48]);
+
+        let staged = node
+            .state
+            .read()
+            .pending_actions
+            .values()
+            .next()
+            .cloned()
+            .expect("staged coinbase");
+        let work = node.prepare_work().expect("prepare native work");
+        assert_eq!(work.tx_count, 1);
+        let seal = mine_native_round(work.clone(), 0).expect("auto coinbase seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("auto coinbase import")
+            .expect("auto coinbase block");
+        let actions = decode_block_actions(&imported).expect("decode imported actions");
+        assert_eq!(actions.len(), 1);
+        assert_ne!(actions[0].tx_hash, staged.tx_hash);
+        let args: MintCoinbaseArgs =
+            decode_scale_exact(&actions[0].public_args, "auto coinbase args")
+                .expect("decode auto coinbase args");
+        assert_eq!(
+            args.reward_bundle.miner_note.recipient_address,
+            coinbase_recipient_address_bytes(&address)
+        );
     }
 
     #[test]
@@ -12053,11 +12342,16 @@ mod tests {
         let pow_bits = 0x207f_ffff;
         let config = test_config(tmp.path(), pow_bits, "safe", false);
         let reward = consensus::reward::block_subsidy(1);
-        let commitment = [23u8; 48];
         let stale_ciphertext_hash = [99u8; 48];
-        let (imported, expected_archive, expected_index_hash, expected_index_value) = {
+        let (
+            imported,
+            expected_commitment,
+            expected_archive,
+            expected_index_hash,
+            expected_index_value,
+        ) = {
             let node = NativeNode::open(config.clone()).expect("node");
-            stage_test_coinbase(&node, reward, commitment);
+            stage_test_coinbase(&node, reward, [23u8; 48]);
             let action = node
                 .state
                 .read()
@@ -12066,6 +12360,7 @@ mod tests {
                 .next()
                 .expect("staged coinbase")
                 .clone();
+            let expected_commitment = action.commitments[0];
             let expected_index_hash = action.ciphertext_hashes[0];
             let mut expected_index_value = Vec::with_capacity(32 + 4 + 8);
             expected_index_value.extend_from_slice(&action.tx_hash);
@@ -12090,6 +12385,7 @@ mod tests {
             node.db.flush().expect("flush mined test db");
             (
                 imported,
+                expected_commitment,
                 expected_archive,
                 expected_index_hash,
                 expected_index_value,
@@ -12133,7 +12429,7 @@ mod tests {
                 .expect("read repaired commitment")
                 .expect("repaired commitment")
                 .as_ref(),
-            commitment.as_slice()
+            expected_commitment.as_slice()
         );
         assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
         assert_eq!(
@@ -18599,7 +18895,7 @@ mod tests {
     }
 
     #[test]
-    fn coinbase_action_rejects_zero_commitment() {
+    fn coinbase_action_rejects_zero_or_semantically_mismatched_commitment() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
         let subsidy = consensus::reward::block_subsidy(1);
@@ -18614,7 +18910,25 @@ mod tests {
 
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("zero coinbase commitment must reject");
-        assert!(err.to_string().contains("zero coinbase commitment"));
+        assert!(err.to_string().contains("coinbase commitment mismatch"));
+    }
+
+    #[test]
+    fn coinbase_action_rejects_public_seed_commitment_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut action = test_coinbase_action(subsidy);
+        let mut args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")
+                .expect("decode test coinbase args");
+        args.reward_bundle.miner_note.public_seed[0] ^= 1;
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("coinbase public seed tamper must reject");
+        assert!(err.to_string().contains("coinbase commitment mismatch"));
     }
 
     #[test]
@@ -20150,22 +20464,25 @@ mod tests {
     }
 
     fn test_coinbase_action(amount: u64) -> PendingAction {
+        test_coinbase_action_with_seed(amount, [15u8; 32])
+    }
+
+    fn test_coinbase_action_with_seed(amount: u64, public_seed: [u8; 32]) -> PendingAction {
         let note = protocol_shielded_pool::types::EncryptedNote {
             ciphertext: [11u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
             kem_ciphertext: vec![12u8; 32],
         };
-        let commitment = [13u8; 48];
+        let mut miner_note = protocol_shielded_pool::types::CoinbaseNoteData {
+            commitment: [0u8; 48],
+            encrypted_note: note,
+            recipient_address: [14u8; protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
+            amount,
+            public_seed,
+        };
+        let commitment = coinbase_note_data_commitment(&miner_note);
+        miner_note.commitment = commitment;
         let args = MintCoinbaseArgs {
-            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle {
-                miner_note: protocol_shielded_pool::types::CoinbaseNoteData {
-                    commitment,
-                    encrypted_note: note,
-                    recipient_address: [14u8;
-                        protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
-                    amount,
-                    public_seed: [15u8; 32],
-                },
-            },
+            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle { miner_note },
         };
         let (_, ciphertext_metadata) =
             coinbase_ciphertext_metadata(&args.reward_bundle.miner_note.encrypted_note);
@@ -20383,25 +20700,14 @@ mod tests {
             .expect("Lean native value must be a decimal u64")
     }
 
-    fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment: [u8; 48]) {
+    fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment_hint: [u8; 48]) {
         use base64::Engine;
 
-        let note = protocol_shielded_pool::types::EncryptedNote {
-            ciphertext: [11u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
-            kem_ciphertext: vec![12u8; 32],
-        };
-        let args = MintCoinbaseArgs {
-            reward_bundle: protocol_shielded_pool::types::BlockRewardBundle {
-                miner_note: protocol_shielded_pool::types::CoinbaseNoteData {
-                    commitment,
-                    encrypted_note: note,
-                    recipient_address: [14u8;
-                        protocol_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE],
-                    amount,
-                    public_seed: [15u8; 32],
-                },
-            },
-        };
+        let public_seed = [commitment_hint[0]; 32];
+        let action = test_coinbase_action_with_seed(amount, public_seed);
+        let args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")
+                .expect("decode test coinbase args");
         node.validate_and_stage_action(json!({
             "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
             "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,

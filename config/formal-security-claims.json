@@ -1724,7 +1724,7 @@
       "id": "native.coinbase-action-payload-admission",
       "component": "native coinbase action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native coinbase action payload-admission kernel proves the executable table for decoded coinbase reward-note amount, commitment agreement/nonzero checks, ciphertext byte caps, and ciphertext hash/size metadata agreement; generated Lean vectors are checked against the production native helper used by mempool and block action validation.",
+      "summary": "The Lean native coinbase action payload-admission kernel proves the executable table for decoded coinbase reward-note amount, commitment agreement/nonzero checks, ciphertext byte caps, and ciphertext hash/size metadata agreement; generated Lean vectors are checked against the production native helper used by mempool and block action validation, and the blueprint now requires production validation to recompute the note commitment from the public amount, compact recipient fields, and public seed before entering that table.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -1743,9 +1743,9 @@
         "Hegemon.Native.CoinbaseActionPayloadAdmission.valid_coinbase_payload_accepts"
       ],
       "assumptions": [
-        "The Lean model represents decoded coinbase payload/public metadata admission after action route and scope admission.",
+        "The Lean model represents decoded coinbase payload/public metadata admission after action route and scope admission; the production implementation first reduces the public amount, compact recipient fields, and public seed into the commitment-match Boolean checked by the Lean table.",
         "Generated Lean conformance vectors cover valid payloads, exact ciphertext-cap acceptance, zero amount, commitment mismatch, zero commitment, ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, and rejection precedence.",
-        "The theorem covers executable decoded coinbase payload binding only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, reward accounting, complete action decoding, or complete native-node equivalence."
+        "The theorem covers executable decoded coinbase payload binding only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, wallet decryptability for every possible recipient, reward accounting, complete action decoding, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
@@ -2101,7 +2101,7 @@
       "id": "native.work-template-admission",
       "component": "native mining work-template admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean work-template admission kernel proves the executable native mining-template emission table for checked next-height progression and checked Work48 cumulative-work advancement before header preimage construction; generated Lean vectors are checked against the production helper called by prepare_work.",
+      "summary": "The Lean work-template admission kernel proves the executable native mining-template emission table for checked next-height progression and checked Work48 cumulative-work advancement before header preimage construction; generated Lean vectors are checked against the production helper called by prepare_work, and the blueprint now requires local auto-coinbase assembly to run before root preview, supply advancement, bridge-message extraction, and header preimage construction.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2116,7 +2116,7 @@
       "assumptions": [
         "The Lean model proves the deterministic work-template admission table and checked u64 next-height behavior; it treats successful cumulative-work advancement as a production-derived Boolean from consensus-light-client cumulative_work_after.",
         "Generated Lean conformance vectors cover valid template emission, u64 height overflow rejection, cumulative-work overflow rejection, rejection precedence, and accepting u64::MAX only from a u64::MAX - 1 parent when Work48 advancement succeeds.",
-        "The theorem covers native mining work-template admission only. It does not prove pending-action preview correctness, header preimage hash security, PoW seal search/liveness, import-time body replay, supply accounting, fork-choice, storage durability, or complete native-node equivalence."
+        "The theorem covers native mining work-template admission only. It does not prove pending-action preview correctness, auto-coinbase encryption security, header preimage hash security, PoW seal search/liveness, import-time body replay, supply accounting, fork-choice, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/WorkTemplateAdmission.lean",

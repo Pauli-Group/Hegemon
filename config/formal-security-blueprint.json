@@ -2573,6 +2573,22 @@
             "validate_pending_action_against_mempool_state",
             "validate_block_actions_locked"
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "coinbase_note_commitment_matches",
+          "required_callers": [
+            "validate_coinbase_action_payload"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "validate_coinbase_action_payload",
+              "callee_must_precede": [
+                "evaluate_native_coinbase_action_payload_admission"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
         }
       ],
       "evidence_paths": [
@@ -2601,8 +2617,13 @@
         },
         {
           "id": "native-coinbase-action-payload-regressions",
-          "description": "Focused native tests must reject zero coinbase commitments, ciphertext hash mismatches, ciphertext size mismatches, and oversized coinbase ciphertexts.",
+          "description": "Focused native tests must reject zero or semantically mismatched coinbase commitments, public-seed commitment tampering, ciphertext hash mismatches, ciphertext size mismatches, and oversized coinbase ciphertexts.",
           "gate": "cargo test -p hegemon-node coinbase_action_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-coinbase-public-field-commitment-binding-regression",
+          "description": "Mutating a coinbase note public seed without recomputing the public note commitment must fail native block-action validation before state mutation.",
+          "gate": "cargo test -p hegemon-node coinbase_action_rejects_public_seed_commitment_mismatch --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-coinbase-action-payload-gate",
@@ -3231,7 +3252,7 @@
       "claim_id": "native.mineable-action-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native mineable-action admission predicate, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. `gen_mineable_action_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against the production `evaluate_native_mineable_action_admission` helper used by native candidate selection before `prepare_work` and mined-block import replay pending actions. Native regressions show stale or mismatched sidecar transfers plus candidate artifacts produce an empty template, while matching staged sidecar metadata keeps the transfer and selected candidate in work.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. `gen_mineable_action_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against the production `evaluate_native_mineable_action_admission` helper used by native candidate selection before `prepare_work` and by mined-block import through the prepared mining-action recovery path. Native regressions show stale or mismatched sidecar transfers plus candidate artifacts produce an empty template, while matching staged sidecar metadata keeps the transfer and selected candidate in work.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -3265,7 +3286,7 @@
           "callee": "select_mineable_actions",
           "required_callers": [
             "NativeNode::prepare_work",
-            "import_mined_block"
+            "NativeNode::mineable_actions_for_work"
           ],
           "call_order_constraints": [
             {
@@ -3276,7 +3297,16 @@
                 "native_pow_header_from_parts"
               ],
               "must_dominate_successors": true
-            },
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "mineable_actions_for_work",
+          "required_callers": [
+            "import_mined_block"
+          ],
+          "call_order_constraints": [
             {
               "caller": "import_mined_block",
               "callee_must_precede": [
@@ -3288,6 +3318,13 @@
                 "commit_mined_block_atomically"
               ]
             }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "prepared_mining_actions_match_state",
+          "required_callers": [
+            "NativeNode::mineable_actions_for_work"
           ]
         }
       ],
@@ -3650,6 +3687,25 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "append_auto_coinbase_action",
+          "required_callers": [
+            "NativeNode::prepare_work"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::prepare_work",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "advance_native_supply_digest",
+                "bridge_messages_from_actions",
+                "native_pow_header_from_parts"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
         }
       ],
       "evidence_paths": [
@@ -3686,6 +3742,11 @@
           "id": "prepare-work-cumulative-work-overflow-regression",
           "description": "A best tip whose Work48 value cannot be advanced must not produce a work template with unchanged cumulative work.",
           "gate": "cargo test -p hegemon-node prepare_work_rejects_cumulative_work_overflow --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-work-template-auto-coinbase-regression",
+          "description": "A native miner configured with HEGEMON_MINER_ADDRESS must synthesize a wallet-decryptable shielded coinbase before previewing roots, computing supply, or hashing the work template, and must ignore staged coinbase recipients for local mining.",
+          "gate": "cargo test -p hegemon-node prepare_work_auto_coinbase --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-work-template-admission-gate",
