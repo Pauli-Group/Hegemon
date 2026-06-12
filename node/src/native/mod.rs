@@ -1649,6 +1649,57 @@ struct NativeBlockReplayRefinementSummary {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCanonicalReorgChainAdmissionInput {
+    chain_nonempty: bool,
+    genesis_matches_expected: bool,
+    best_metadata_matches_chain: bool,
+    canonical_heights_contiguous: bool,
+    canonical_chain_ids_match: bool,
+    canonical_rules_hashes_match: bool,
+    canonical_hashes_match_work_hashes: bool,
+    canonical_parent_hashes_contiguous: bool,
+    block_record_count_matches_chain: bool,
+    block_records_match_chain: bool,
+    height_entry_count_matches_chain: bool,
+    height_entries_match_chain: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCanonicalReorgChainAdmissionRejection {
+    ChainEmpty,
+    GenesisMismatch,
+    BestMetadataMismatch,
+    CanonicalHeightMismatch,
+    ChainIdMismatch,
+    RulesHashMismatch,
+    HashWorkHashMismatch,
+    ParentHashMismatch,
+    BlockRecordCountMismatch,
+    BlockRecordMismatch,
+    HeightEntryCountMismatch,
+    HeightEntryMismatch,
+}
+
+impl NativeCanonicalReorgChainAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ChainEmpty => "chain_empty",
+            Self::GenesisMismatch => "genesis_mismatch",
+            Self::BestMetadataMismatch => "best_metadata_mismatch",
+            Self::CanonicalHeightMismatch => "canonical_height_mismatch",
+            Self::ChainIdMismatch => "chain_id_mismatch",
+            Self::RulesHashMismatch => "rules_hash_mismatch",
+            Self::HashWorkHashMismatch => "hash_work_hash_mismatch",
+            Self::ParentHashMismatch => "parent_hash_mismatch",
+            Self::BlockRecordCountMismatch => "block_record_count_mismatch",
+            Self::BlockRecordMismatch => "block_record_mismatch",
+            Self::HeightEntryCountMismatch => "height_entry_count_mismatch",
+            Self::HeightEntryMismatch => "height_entry_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBlockCommitmentAdmissionRejection {
     TxCountMismatch,
     StateRootMismatch,
@@ -3084,9 +3135,6 @@ impl NativeNode {
         new_chain: Vec<NativeBlockMeta>,
     ) -> Result<()> {
         let old_chain = self.chain_to_hash(state.best.hash)?;
-        let mut new_state = self.replay_chain_state(&new_chain)?;
-        let canonical_index_plan =
-            plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
         let block_entries = new_chain
             .iter()
             .map(|meta| Ok((meta.hash, bincode::serialize(meta)?)))
@@ -3095,6 +3143,20 @@ impl NativeNode {
             .iter()
             .map(|meta| (meta.height, meta.hash))
             .collect::<Vec<_>>();
+        evaluate_native_canonical_reorg_chain_admission(
+            native_canonical_reorg_chain_admission_input(
+                &new_chain,
+                &block_entries,
+                &height_entries,
+                new_chain.last(),
+                self.config.pow_bits,
+            )?,
+        )
+        .map_err(native_canonical_reorg_chain_admission_error)?;
+
+        let mut new_state = self.replay_chain_state(&new_chain)?;
+        let canonical_index_plan =
+            plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
         let new_action_hashes = action_hashes_from_chain(&new_chain)?;
         let mut pending = state.pending_actions.clone();
         for hash in &new_action_hashes {
@@ -9313,6 +9375,125 @@ fn native_storage_durability_admission_error(
     anyhow!("{context}: {}", rejection.label())
 }
 
+fn evaluate_native_canonical_reorg_chain_admission(
+    input: NativeCanonicalReorgChainAdmissionInput,
+) -> Result<(), NativeCanonicalReorgChainAdmissionRejection> {
+    if !input.chain_nonempty {
+        Err(NativeCanonicalReorgChainAdmissionRejection::ChainEmpty)
+    } else if !input.genesis_matches_expected {
+        Err(NativeCanonicalReorgChainAdmissionRejection::GenesisMismatch)
+    } else if !input.best_metadata_matches_chain {
+        Err(NativeCanonicalReorgChainAdmissionRejection::BestMetadataMismatch)
+    } else if !input.canonical_heights_contiguous {
+        Err(NativeCanonicalReorgChainAdmissionRejection::CanonicalHeightMismatch)
+    } else if !input.canonical_chain_ids_match {
+        Err(NativeCanonicalReorgChainAdmissionRejection::ChainIdMismatch)
+    } else if !input.canonical_rules_hashes_match {
+        Err(NativeCanonicalReorgChainAdmissionRejection::RulesHashMismatch)
+    } else if !input.canonical_hashes_match_work_hashes {
+        Err(NativeCanonicalReorgChainAdmissionRejection::HashWorkHashMismatch)
+    } else if !input.canonical_parent_hashes_contiguous {
+        Err(NativeCanonicalReorgChainAdmissionRejection::ParentHashMismatch)
+    } else if !input.block_record_count_matches_chain {
+        Err(NativeCanonicalReorgChainAdmissionRejection::BlockRecordCountMismatch)
+    } else if !input.block_records_match_chain {
+        Err(NativeCanonicalReorgChainAdmissionRejection::BlockRecordMismatch)
+    } else if !input.height_entry_count_matches_chain {
+        Err(NativeCanonicalReorgChainAdmissionRejection::HeightEntryCountMismatch)
+    } else if !input.height_entries_match_chain {
+        Err(NativeCanonicalReorgChainAdmissionRejection::HeightEntryMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_canonical_reorg_chain_admission_error(
+    rejection: NativeCanonicalReorgChainAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!(
+        "native canonical reorg chain admission: {}",
+        rejection.label()
+    )
+}
+
+fn native_canonical_reorg_chain_admission_input(
+    chain: &[NativeBlockMeta],
+    block_entries: &[([u8; 32], Vec<u8>)],
+    height_entries: &[(u64, [u8; 32])],
+    best: Option<&NativeBlockMeta>,
+    pow_bits: u32,
+) -> Result<NativeCanonicalReorgChainAdmissionInput> {
+    let expected_genesis = genesis_meta(pow_bits)?;
+    let chain_nonempty = !chain.is_empty();
+    let genesis_matches_expected = chain
+        .first()
+        .map(|genesis| genesis == &expected_genesis)
+        .unwrap_or(false);
+    let best_metadata_matches_chain = match (chain.last(), best) {
+        (Some(chain_best), Some(best)) => chain_best == best,
+        _ => false,
+    };
+    let mut canonical_heights_contiguous = true;
+    let mut canonical_chain_ids_match = true;
+    let mut canonical_rules_hashes_match = true;
+    let mut canonical_hashes_match_work_hashes = true;
+    let mut canonical_parent_hashes_contiguous = true;
+    for (index, meta) in chain.iter().enumerate() {
+        if u64::try_from(index).ok() != Some(meta.height) {
+            canonical_heights_contiguous = false;
+        }
+        if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
+            canonical_chain_ids_match = false;
+        }
+        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
+            canonical_rules_hashes_match = false;
+        }
+        if meta.hash != meta.work_hash {
+            canonical_hashes_match_work_hashes = false;
+        }
+        if index > 0 {
+            let parent = &chain[index - 1];
+            if meta.parent_hash != parent.hash {
+                canonical_parent_hashes_contiguous = false;
+            }
+        }
+    }
+    let block_record_count_matches_chain = block_entries.len() == chain.len();
+    let mut block_records_match_chain = block_record_count_matches_chain;
+    if block_records_match_chain {
+        for (meta, (hash, encoded)) in chain.iter().zip(block_entries.iter()) {
+            let expected = bincode::serialize(meta)?;
+            if hash != &meta.hash || encoded != &expected {
+                block_records_match_chain = false;
+                break;
+            }
+        }
+    }
+    let height_entry_count_matches_chain = height_entries.len() == chain.len();
+    let height_entries_match_chain = height_entry_count_matches_chain
+        && chain
+            .iter()
+            .zip(height_entries.iter())
+            .all(|(meta, entry)| {
+                let (height, hash) = entry;
+                *height == meta.height && *hash == meta.hash
+            });
+    Ok(NativeCanonicalReorgChainAdmissionInput {
+        chain_nonempty,
+        genesis_matches_expected,
+        best_metadata_matches_chain,
+        canonical_heights_contiguous,
+        canonical_chain_ids_match,
+        canonical_rules_hashes_match,
+        canonical_hashes_match_work_hashes,
+        canonical_parent_hashes_contiguous,
+        block_record_count_matches_chain,
+        block_records_match_chain,
+        height_entry_count_matches_chain,
+        height_entries_match_chain,
+    })
+}
+
 fn evaluate_native_block_replay_refinement<'a>(
     input: NativeBlockReplayRefinementInput,
     steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
@@ -12062,6 +12243,33 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCanonicalReorgChainAdmissionVectorFile {
+        schema_version: u32,
+        canonical_reorg_chain_admission_cases: Vec<LeanCanonicalReorgChainAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCanonicalReorgChainAdmissionCase {
+        name: String,
+        chain_nonempty: bool,
+        genesis_matches_expected: bool,
+        best_metadata_matches_chain: bool,
+        canonical_heights_contiguous: bool,
+        canonical_chain_ids_match: bool,
+        canonical_rules_hashes_match: bool,
+        canonical_hashes_match_work_hashes: bool,
+        canonical_parent_hashes_contiguous: bool,
+        block_record_count_matches_chain: bool,
+        block_records_match_chain: bool,
+        height_entry_count_matches_chain: bool,
+        height_entries_match_chain: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanCanonicalStateReloadVectorFile {
         schema_version: u32,
         canonical_state_reload_cases: Vec<LeanCanonicalStateReloadCase>,
@@ -13309,6 +13517,79 @@ mod tests {
                 .unwrap()
                 .hash,
             canonical.hash
+        );
+    }
+
+    #[test]
+    fn canonical_reorg_chain_admission_rejects_write_set_drift() {
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let child = mined_empty_child(&genesis, 1, pow_bits, 11);
+        let chain = vec![genesis.clone(), child.clone()];
+        let block_entries = chain
+            .iter()
+            .map(|meta| {
+                (
+                    meta.hash,
+                    bincode::serialize(meta).expect("serialize block"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let height_entries = chain
+            .iter()
+            .map(|meta| (meta.height, meta.hash))
+            .collect::<Vec<_>>();
+        let valid_input = native_canonical_reorg_chain_admission_input(
+            &chain,
+            &block_entries,
+            &height_entries,
+            Some(&child),
+            pow_bits,
+        )
+        .expect("valid reorg input");
+        assert!(evaluate_native_canonical_reorg_chain_admission(valid_input).is_ok());
+
+        let mut bad_height_entries = height_entries.clone();
+        bad_height_entries[1].1 = genesis.hash;
+        let input = native_canonical_reorg_chain_admission_input(
+            &chain,
+            &block_entries,
+            &bad_height_entries,
+            Some(&child),
+            pow_bits,
+        )
+        .expect("height mismatch input");
+        assert_eq!(
+            evaluate_native_canonical_reorg_chain_admission(input).err(),
+            Some(NativeCanonicalReorgChainAdmissionRejection::HeightEntryMismatch)
+        );
+
+        let mut bad_block_entries = block_entries.clone();
+        bad_block_entries[1].0 = genesis.hash;
+        let input = native_canonical_reorg_chain_admission_input(
+            &chain,
+            &bad_block_entries,
+            &height_entries,
+            Some(&child),
+            pow_bits,
+        )
+        .expect("block mismatch input");
+        assert_eq!(
+            evaluate_native_canonical_reorg_chain_admission(input).err(),
+            Some(NativeCanonicalReorgChainAdmissionRejection::BlockRecordMismatch)
+        );
+
+        let input = native_canonical_reorg_chain_admission_input(
+            &chain,
+            &block_entries,
+            &height_entries,
+            Some(&genesis),
+            pow_bits,
+        )
+        .expect("best mismatch input");
+        assert_eq!(
+            evaluate_native_canonical_reorg_chain_admission(input).err(),
+            Some(NativeCanonicalReorgChainAdmissionRejection::BestMetadataMismatch)
         );
     }
 
@@ -15932,6 +16213,64 @@ mod tests {
         assert_eq!(
             actual_repairs_genesis_marker, case.expected_repairs_genesis_marker,
             "{} native block-index reload repair decision drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_canonical_reorg_chain_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean canonical reorg chain admission vectors");
+        let vectors: LeanCanonicalReorgChainAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean canonical reorg chain admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.canonical_reorg_chain_admission_cases.is_empty(),
+            "Lean canonical reorg chain admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.canonical_reorg_chain_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_canonical_reorg_chain_admission_case(case);
+        }
+    }
+
+    fn verify_lean_canonical_reorg_chain_admission_case(
+        case: &LeanCanonicalReorgChainAdmissionCase,
+    ) {
+        let input = NativeCanonicalReorgChainAdmissionInput {
+            chain_nonempty: case.chain_nonempty,
+            genesis_matches_expected: case.genesis_matches_expected,
+            best_metadata_matches_chain: case.best_metadata_matches_chain,
+            canonical_heights_contiguous: case.canonical_heights_contiguous,
+            canonical_chain_ids_match: case.canonical_chain_ids_match,
+            canonical_rules_hashes_match: case.canonical_rules_hashes_match,
+            canonical_hashes_match_work_hashes: case.canonical_hashes_match_work_hashes,
+            canonical_parent_hashes_contiguous: case.canonical_parent_hashes_contiguous,
+            block_record_count_matches_chain: case.block_record_count_matches_chain,
+            block_records_match_chain: case.block_records_match_chain,
+            height_entry_count_matches_chain: case.height_entry_count_matches_chain,
+            height_entries_match_chain: case.height_entries_match_chain,
+        };
+        let actual_rejection = evaluate_native_canonical_reorg_chain_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native canonical reorg chain admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native canonical reorg chain admission rejection drifted from Lean spec",
             case.name
         );
     }

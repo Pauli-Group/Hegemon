@@ -48,6 +48,7 @@ import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission
 import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.CandidateArtifactCouplingAdmission
+import Hegemon.Native.CanonicalReorgChainAdmission
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission

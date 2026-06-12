@@ -1543,6 +1543,8 @@ pub fn verify_smallwood_candidate_transaction_proof(
             proof_bytes_present: !proof.stark_proof.is_empty(),
             serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
             public_inputs_valid: true,
+            nullifier_vector_agrees: proof.nullifiers == proof.public_inputs.nullifiers,
+            commitment_vector_agrees: proof.commitments == proof.public_inputs.commitments,
             balance_slots_agree: true,
             verifier_accepts: verifier_result.is_ok(),
         },

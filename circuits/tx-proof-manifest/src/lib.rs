@@ -1,4 +1,5 @@
 use p3_field::PrimeField64;
+use protocol_versioning::TxProofBackend;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use transaction_circuit::{
@@ -285,12 +286,17 @@ fn summarize_entries(
         if proof.public_inputs != entry.public_inputs {
             return Err(TxProofManifestError::EntryPublicInputsMismatch);
         }
+        let backend_supported = matches!(
+            proof.backend,
+            TxProofBackend::Plonky3Fri | TxProofBackend::SmallwoodCandidate
+        );
         let stark_public_inputs =
-            transaction_proof_wrapper_public_inputs_for_admission(&proof, true).map_err(|err| {
-                TxProofManifestError::TransactionProofVerification(format!(
-                    "failed to admit tx proof wrapper: {err}"
-                ))
-            })?;
+            transaction_proof_wrapper_public_inputs_for_admission(&proof, backend_supported)
+                .map_err(|err| {
+                    TxProofManifestError::TransactionProofVerification(format!(
+                        "failed to admit tx proof wrapper: {err}"
+                    ))
+                })?;
         let verifier_result = verify_transaction_proof_bytes_for_backend(
             proof.backend,
             &proof.stark_proof,
@@ -301,10 +307,12 @@ fn summarize_entries(
             TransactionProofWrapperAdmissionInput {
                 exact_consumption: true,
                 canonical_reencode: true,
-                backend_supported: true,
+                backend_supported,
                 proof_bytes_present: !proof.stark_proof.is_empty(),
                 serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
                 public_inputs_valid: true,
+                nullifier_vector_agrees: proof.nullifiers == proof.public_inputs.nullifiers,
+                commitment_vector_agrees: proof.commitments == proof.public_inputs.commitments,
                 balance_slots_agree: true,
                 verifier_accepts: verifier_result.is_ok(),
             },
@@ -631,6 +639,18 @@ mod tests {
                     .value_balance_sign = 2;
             },
             "public value balance does not match serialized public inputs",
+        );
+        assert_manifest_rejects_nested_mutation(
+            &proof,
+            &public_inputs,
+            |proof| proof.nullifiers[0] = [0x4eu8; 48],
+            "nullifier vector mismatch",
+        );
+        assert_manifest_rejects_nested_mutation(
+            &proof,
+            &public_inputs,
+            |proof| proof.commitments[0] = [0x43u8; 48],
+            "commitment vector mismatch",
         );
         assert_manifest_rejects_nested_mutation(
             &proof,

@@ -9,6 +9,8 @@ inductive ProofWrapperReject where
   | missingProofBytes
   | missingSerializedPublicInputs
   | invalidPublicInputs
+  | nullifierVectorMismatch
+  | commitmentVectorMismatch
   | balanceSlotMismatch
   | verifierRejected
 deriving DecidableEq, Repr
@@ -20,6 +22,8 @@ structure ProofWrapperInput where
   proofBytesPresent : Bool
   serializedPublicInputsPresent : Bool
   publicInputsValid : Bool
+  nullifierVectorAgrees : Bool
+  commitmentVectorAgrees : Bool
   balanceSlotsAgree : Bool
   verifierAccepts : Bool
 deriving DecidableEq, Repr
@@ -31,6 +35,8 @@ def proofWrapperPreconditions (input : ProofWrapperInput) : Bool :=
     && input.proofBytesPresent
     && input.serializedPublicInputsPresent
     && input.publicInputsValid
+    && input.nullifierVectorAgrees
+    && input.commitmentVectorAgrees
     && input.balanceSlotsAgree
     && input.verifierAccepts
 
@@ -47,6 +53,10 @@ def firstProofWrapperRejection (input : ProofWrapperInput) : ProofWrapperReject 
     ProofWrapperReject.missingSerializedPublicInputs
   else if !input.publicInputsValid then
     ProofWrapperReject.invalidPublicInputs
+  else if !input.nullifierVectorAgrees then
+    ProofWrapperReject.nullifierVectorMismatch
+  else if !input.commitmentVectorAgrees then
+    ProofWrapperReject.commitmentVectorMismatch
   else if !input.balanceSlotsAgree then
     ProofWrapperReject.balanceSlotMismatch
   else if !input.verifierAccepts then
@@ -75,6 +85,8 @@ def validWrapper : ProofWrapperInput :=
     proofBytesPresent := true
     serializedPublicInputsPresent := true
     publicInputsValid := true
+    nullifierVectorAgrees := true
+    commitmentVectorAgrees := true
     balanceSlotsAgree := true
     verifierAccepts := true }
 
@@ -110,6 +122,16 @@ theorem missing_serialized_public_inputs_rejects_before_public_validity :
 theorem invalid_public_inputs_rejects_before_balance_slots :
     evaluateProofWrapperRejection { validWrapper with publicInputsValid := false } =
       some ProofWrapperReject.invalidPublicInputs := by
+  decide
+
+theorem nullifier_vector_mismatch_rejects_before_commitment_vector :
+    evaluateProofWrapperRejection { validWrapper with nullifierVectorAgrees := false } =
+      some ProofWrapperReject.nullifierVectorMismatch := by
+  decide
+
+theorem commitment_vector_mismatch_rejects_before_balance_slots :
+    evaluateProofWrapperRejection { validWrapper with commitmentVectorAgrees := false } =
+      some ProofWrapperReject.commitmentVectorMismatch := by
   decide
 
 theorem balance_slot_mismatch_rejects_before_verifier_acceptance :

@@ -250,7 +250,7 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "component": "transaction proof wrapper admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, wrapper balance-slot agreement, and final verifier acceptance; generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
+      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance; generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2178,7 +2178,7 @@
       "id": "native.atomic-commit-manifest-admission",
       "component": "native atomic commit manifest admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean atomic-commit manifest admission kernel proves the executable table that mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence include the expected row-family write/clear/remove counts before sled mutation; generated Lean vectors are checked against production Rust, and blueprint bindings require the manifest gate before record persistence or atomic transaction execution.",
+      "summary": "The Lean atomic-commit manifest admission kernel proves the executable table that mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence include the expected row-family write/clear/remove counts before sled mutation. The companion canonical-reorg chain admission kernel proves that replacement chains and their block-record/height-index write-set projections are structurally admitted before canonical reorg replay/planning or atomic transaction execution. Generated Lean vectors are checked against production Rust, and blueprint bindings require both gates before canonical persistence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_blueprint_order_gate",
       "production_eligible": true,
@@ -2201,16 +2201,24 @@
         "Hegemon.Native.AtomicCommitManifestAdmission.rejects_bridge_replay_write_mismatch",
         "Hegemon.Native.AtomicCommitManifestAdmission.rejects_ciphertext_index_write_mismatch",
         "Hegemon.Native.AtomicCommitManifestAdmission.rejects_ciphertext_archive_write_mismatch",
-        "Hegemon.Native.AtomicCommitManifestAdmission.rejects_staged_ciphertext_removal_mismatch"
+        "Hegemon.Native.AtomicCommitManifestAdmission.rejects_staged_ciphertext_removal_mismatch",
+        "Hegemon.Native.CanonicalReorgChainAdmission.accepts_iff_canonical_reorg_chain_preconditions",
+        "Hegemon.Native.CanonicalReorgChainAdmission.valid_accepts",
+        "Hegemon.Native.CanonicalReorgChainAdmission.best_metadata_mismatch_rejects",
+        "Hegemon.Native.CanonicalReorgChainAdmission.block_record_mismatch_rejects",
+        "Hegemon.Native.CanonicalReorgChainAdmission.height_entry_mismatch_rejects",
+        "Hegemon.Native.CanonicalReorgChainAdmission.structural_precedes_write_projection"
       ],
       "assumptions": [
         "The Lean model represents the native atomic commit manifest decision table over production-derived counts: commit kind, source action/planning/index counts, and actual row-family write/clear/remove counts.",
-        "Generated Lean conformance vectors cover valid mined-block, canonical-reorg, canonical-index-repair, and noncanonical block-record manifests plus every modeled mismatch rejection.",
-        "The theorem covers the executable manifest table and blueprint wiring before native storage mutation. It does not prove sled transaction implementation correctness, operating-system fsync semantics, or that sled itself atomically applies the declared transaction."
+        "Generated Lean conformance vectors cover valid mined-block, canonical-reorg, canonical-index-repair, and noncanonical block-record manifests plus every modeled mismatch rejection. Canonical-reorg chain vectors cover structural chain checks, best-tip agreement, block-record projection mismatch, height-index projection mismatch, and precedence before write-set checks.",
+        "The theorem covers the executable manifest and canonical-reorg chain/write-set admission tables plus blueprint wiring before native storage mutation. It does not prove sled transaction implementation correctness, operating-system fsync semantics, or that sled itself atomically applies the declared transaction."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CanonicalReorgChainAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalReorgChainAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -2218,6 +2226,8 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_atomic_commit_manifest_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_canonical_reorg_chain_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node canonical_reorg_chain_admission_rejects_write_set_drift --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"

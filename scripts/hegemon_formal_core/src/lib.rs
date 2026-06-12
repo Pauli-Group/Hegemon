@@ -1060,6 +1060,13 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
         );
         for caller in &binding.required_callers {
             validate_rust_caller_symbol(&node.id, "implementation binding caller", caller)?;
+            ensure!(
+                rust_caller_symbol_leaf(caller) != binding.callee,
+                "{} implementation binding for {} cannot list itself as required caller {}",
+                node.id,
+                binding.callee,
+                caller
+            );
         }
         parse_result_obligation(
             &node.id,
@@ -1090,6 +1097,15 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
                     "implementation binding order successor",
                     successor,
                 )?;
+                let successor_selector = parse_rust_call_selector(successor)
+                    .expect("successor selector validated above");
+                ensure!(
+                    successor_selector.last_segment() != binding.callee,
+                    "{} implementation binding order constraint for {} cannot list bound callee {} as its own successor",
+                    node.id,
+                    constraint.caller,
+                    binding.callee
+                );
             }
             parse_result_obligation(
                 &node.id,
@@ -1156,6 +1172,12 @@ fn validate_rust_caller_symbol(claim_id: &str, label: &str, symbol: &str) -> Res
     validate_rust_symbol(claim_id, label, symbol)
 }
 
+fn rust_caller_symbol_leaf(symbol: &str) -> &str {
+    symbol
+        .rsplit_once("::")
+        .map_or(symbol, |(_, method)| method)
+}
+
 fn validate_rust_implementation_binding(
     root: &Path,
     claim_id: &str,
@@ -1172,16 +1194,33 @@ fn validate_rust_implementation_binding(
         &binding.callee,
         binding.result_obligation.as_deref(),
     )?;
+    let non_test_callees = functions
+        .iter()
+        .filter(|function| {
+            function.name == binding.callee
+                && !function.is_test_only(&sanitized, &test_module_spans)
+        })
+        .collect::<Vec<_>>();
     ensure!(
-        functions
-            .iter()
-            .any(|function| function.name == binding.callee
-                && !function.is_test_only(&sanitized, &test_module_spans)),
+        !non_test_callees.is_empty(),
         "{} implementation binding callee {} is missing from non-test Rust code in {}",
         claim_id,
         binding.callee,
         binding.path
     );
+    for function in &non_test_callees {
+        let body = &sanitized[function.body_start..function.body_end];
+        for caller in &binding.required_callers {
+            ensure!(
+                !rust_body_directly_calls_caller(body, caller),
+                "{} implementation binding callee {} in {} directly calls required caller {}; binding is self-feeding",
+                claim_id,
+                binding.callee,
+                binding.path,
+                caller
+            );
+        }
+    }
     for caller in &binding.required_callers {
         let non_test_callers = functions
             .iter()
@@ -1240,6 +1279,11 @@ fn validate_rust_implementation_binding(
         )?;
     }
     Ok(())
+}
+
+fn rust_body_directly_calls_caller(body: &str, caller: &str) -> bool {
+    let caller_leaf = rust_caller_symbol_leaf(caller);
+    !rust_call_sites_for_selector(body, &RustCallSelector::bare(caller_leaf)).is_empty()
 }
 
 fn validate_rust_implementation_order(
@@ -4454,6 +4498,114 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_constraints, 0);
         assert_eq!(report.implementation_order_edges, 0);
+    }
+
+    #[test]
+    fn blueprint_rejects_self_tautological_required_caller() {
+        let root = test_root("self-tautological-required-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["verified_helper"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("self-tautological caller must not satisfy binding");
+        assert!(err
+            .to_string()
+            .contains("cannot list itself as required caller verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_rejects_qualified_same_method_required_caller() {
+        let root = test_root("qualified-same-method-required-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Verifier;\n\
+             impl Verifier { fn verified_helper(&self) { self.verified_helper(); } }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["Verifier::verified_helper"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("qualified self-tautological caller must not satisfy binding");
+        assert!(err
+            .to_string()
+            .contains("cannot list itself as required caller Verifier::verified_helper"));
+    }
+
+    #[test]
+    fn blueprint_rejects_self_feeding_callee_that_calls_required_caller() {
+        let root = test_root("self-feeding-callee-calls-required-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() { import_mined_block(); }\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("self-feeding helper must not satisfy binding");
+        assert!(err
+            .to_string()
+            .contains("directly calls required caller import_mined_block"));
+    }
+
+    #[test]
+    fn blueprint_rejects_degenerate_order_successor_matching_callee() {
+        let root = test_root("degenerate-order-successor-matching-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["verified_helper"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("callee-as-successor order constraint must not satisfy binding");
+        assert!(err
+            .to_string()
+            .contains("cannot list bound callee verified_helper as its own successor"));
     }
 
     #[test]

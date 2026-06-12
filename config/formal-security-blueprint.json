@@ -313,8 +313,8 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "claim_id": "formal.transaction-proof-wrapper-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean transaction proof-wrapper admission predicate, accepted wrappers must pass exact/canonical byte admission, supported backend routing, proof/public-input presence, verifier-facing public-input validity, wrapper balance-slot agreement, and final verifier acceptance in that order.",
-      "informal_argument": "The Lean theorem `Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions` proves the executable predicate. Companion theorems pin valid acceptance, every rejection label, and the codec/backend/public-input/balance/verifier precedence. `gen_proof_wrapper_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_transaction_proof_wrapper_admission`. Production Plonky3 and default SmallWood wrapper verification call the shared admission helper after decoded-field admission and around verifier acceptance, while the tx-proof manifest production summarizer exact-decodes nested proofs, reconstructs verifier public inputs, and routes verifier rejection through the same admission helper.",
+      "formal_statement": "For the executable Lean transaction proof-wrapper admission predicate, accepted wrappers must pass exact/canonical byte admission, supported backend routing, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance in that order.",
+      "informal_argument": "The Lean theorem `Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions` proves the executable predicate. Companion theorems pin valid acceptance, every rejection label, and the codec/backend/public-input/nullifier-vector/commitment-vector/balance/verifier precedence. `gen_proof_wrapper_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_transaction_proof_wrapper_admission`. Production Plonky3 and default SmallWood wrapper verification call the shared admission helper after decoded-field admission and around verifier acceptance, while the tx-proof manifest production summarizer exact-decodes nested proofs, reconstructs verifier public inputs, checks wrapper summary-vector agreement, and routes verifier rejection through the same admission helper.",
       "depends_on": [
         "formal.transaction-public-input-shape",
         "formal.transaction-public-input-binding",
@@ -386,7 +386,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for proof-wrapper admission ordering. Scope is admission over decoded predicates and production Plonky3, SmallWood, and manifest verifier result propagation, not proof-system soundness or a proof of bincode internals."
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for proof-wrapper admission ordering, including wrapper nullifier/commitment summary-vector agreement. Scope is admission over decoded predicates and production Plonky3, SmallWood, and manifest verifier result propagation, not proof-system soundness or a proof of bincode internals."
       },
       "falsification_cases": [
         {
@@ -401,7 +401,7 @@
         },
         {
           "id": "tx-proof-manifest-wrapper-regressions",
-          "description": "The tx-proof manifest must reject nested transaction wrappers with trailing bytes, unsupported backend, missing proof bytes, missing serialized public inputs, invalid serialized public inputs, or balance-slot drift.",
+          "description": "The tx-proof manifest must reject nested transaction wrappers with trailing bytes, unsupported backend, missing proof bytes, missing serialized public inputs, invalid serialized public inputs, nullifier/commitment vector drift, or balance-slot drift.",
           "gate": "cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture"
         },
         {
@@ -410,7 +410,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates and verifier results. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
+      "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates, wrapper summary-vector agreement, and verifier results. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
     },
     {
       "id": "formal.transaction-statement-hash-binding",
@@ -3889,8 +3889,8 @@
       "id": "native.atomic-commit-manifest-admission",
       "claim_id": "native.atomic-commit-manifest-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean atomic-commit manifest transition, native mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence accept only when their declared row-family write, clear, and removal counts match the kind-specific source counts before storage mutation.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.AtomicCommitManifestAdmission.accepts_iff_atomic_commit_manifest_preconditions` proves the executable manifest predicate, with concrete valid-kind and mismatch rejection theorems for mined plan length, block-record writes, height-index writes, best-pointer writes, canonical-index clears, pending-tree clears, pending removals/writes, commitment writes, nullifier writes, bridge replay writes, ciphertext index/archive writes, and staged ciphertext removals. `gen_atomic_commit_manifest_admission_vectors` emits Lean-derived cases checked against the production `evaluate_native_atomic_commit_manifest_admission` helper. The native commit helpers build manifests from the same action/planning/index data they use for persistence and must propagate the gate before noncanonical record persistence or any atomic sled transaction.",
+      "formal_statement": "For the executable Lean atomic-commit manifest transition, native mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence accept only when their declared row-family write, clear, and removal counts match the kind-specific source counts before storage mutation. Canonical reorg acceptance additionally requires the replacement chain and its block-record/height-index write-set projection to pass the Lean-modeled structural admission table before canonical replay, index planning, or commit.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AtomicCommitManifestAdmission.accepts_iff_atomic_commit_manifest_preconditions` proves the executable manifest predicate, with concrete valid-kind and mismatch rejection theorems for mined plan length, block-record writes, height-index writes, best-pointer writes, canonical-index clears, pending-tree clears, pending removals/writes, commitment writes, nullifier writes, bridge replay writes, ciphertext index/archive writes, and staged ciphertext removals. The companion theorem `Hegemon.Native.CanonicalReorgChainAdmission.accepts_iff_canonical_reorg_chain_preconditions` proves the canonical reorg replacement-chain gate over structural chain predicates, best-tip agreement, and block-record/height-index projection equality. `gen_atomic_commit_manifest_admission_vectors` and `gen_canonical_reorg_chain_admission_vectors` emit Lean-derived cases checked against production helpers. The native commit helpers build manifests from the same action/planning/index data they use for persistence and must propagate the gates before noncanonical record persistence, canonical reorg replay/planning, or any atomic sled transaction.",
       "depends_on": [
         "native.storage-durability-admission",
         "native.action-stream-effect-planning",
@@ -3900,6 +3900,8 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CanonicalReorgChainAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalReorgChainAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -3949,6 +3951,26 @@
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_canonical_reorg_chain_admission",
+          "required_callers": [
+            "reorganize_chain_to_best_locked"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_chain_to_best_locked",
+              "callee_must_precede": [
+                "replay_chain_state",
+                "plan_canonical_index_rebuild",
+                "commit_reorg_state_atomically",
+                "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "native_mined_block_commit_manifest",
           "required_callers": [
             "commit_mined_block_atomically"
@@ -3979,6 +4001,8 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CanonicalReorgChainAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalReorgChainAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "formal/lean/README.md",
         "scripts/check_formal_core.sh",
@@ -3988,7 +4012,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
-        "notes": "Accepted as a bounded implementation-equivalence hardening slice for native atomic commit manifests. It proves the declared row-family manifest gate and production ordering, not sled internals or OS durability."
+        "notes": "Accepted as a bounded implementation-equivalence hardening slice for native atomic commit manifests and canonical reorg chain/write-set projection. It proves the declared row-family manifest gate, the replacement-chain admission table, and production ordering, not sled internals or OS durability."
       },
       "falsification_cases": [
         {
@@ -4002,9 +4026,19 @@
           "gate": "HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_atomic_commit_manifest_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "lean-generated-canonical-reorg-chain-conformance",
+          "description": "Changing canonical reorg replacement-chain or write-set projection admission away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_canonical_reorg_chain_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-atomic-commit-manifest-binding",
-          "description": "The blueprint gate must reject native commit paths that stop calling or propagating the manifest gate before noncanonical block-record persistence or sled transaction execution.",
+          "description": "The blueprint gate must reject native commit paths that stop calling or propagating the manifest gate before noncanonical block-record persistence or sled transaction execution, or canonical reorg paths that stop admitting the replacement chain before replay/planning/commit/publication.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "native-canonical-reorg-chain-write-set-regression",
+          "description": "Canonical reorg replacement-chain admission must reject mismatched block-record, height-index, or best-tip projections before reorg commit.",
+          "gate": "cargo test -p hegemon-node canonical_reorg_chain_admission_rejects_write_set_drift --lib --no-default-features -- --nocapture"
         },
         {
           "id": "native-atomic-commit-reload-regressions",
@@ -4017,7 +4051,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the declared native atomic commit manifest table and binds production commit helpers to propagate it before persistence or transaction execution. It does not prove sled transaction implementation correctness, filesystem durability, OS fsync semantics, disk firmware behavior, row byte serialization correctness beyond existing codec gates, raw action replay equivalence, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the declared native atomic commit manifest table plus canonical reorg replacement-chain/write-set projection admission, and binds production commit/reorg helpers to propagate those checks before persistence, replay/planning, transaction execution, or publication. It does not prove sled transaction implementation correctness, filesystem durability, OS fsync semantics, disk firmware behavior, row byte serialization correctness beyond existing codec gates, raw action replay equivalence, or complete native-node equivalence."
     },
     {
       "id": "native.work-template-admission",

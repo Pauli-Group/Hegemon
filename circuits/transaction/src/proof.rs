@@ -113,6 +113,8 @@ pub struct TransactionProofWrapperAdmissionInput {
     pub proof_bytes_present: bool,
     pub serialized_public_inputs_present: bool,
     pub public_inputs_valid: bool,
+    pub nullifier_vector_agrees: bool,
+    pub commitment_vector_agrees: bool,
     pub balance_slots_agree: bool,
     pub verifier_accepts: bool,
 }
@@ -125,6 +127,8 @@ pub enum TransactionProofWrapperAdmissionRejection {
     MissingProofBytes,
     MissingSerializedPublicInputs,
     InvalidPublicInputs,
+    NullifierVectorMismatch,
+    CommitmentVectorMismatch,
     BalanceSlotMismatch,
     VerifierRejected,
 }
@@ -139,6 +143,8 @@ impl TransactionProofWrapperAdmissionRejection {
             Self::MissingProofBytes => "missing_proof_bytes",
             Self::MissingSerializedPublicInputs => "missing_serialized_public_inputs",
             Self::InvalidPublicInputs => "invalid_public_inputs",
+            Self::NullifierVectorMismatch => "nullifier_vector_mismatch",
+            Self::CommitmentVectorMismatch => "commitment_vector_mismatch",
             Self::BalanceSlotMismatch => "balance_slot_mismatch",
             Self::VerifierRejected => "verifier_rejected",
         }
@@ -157,6 +163,12 @@ fn transaction_proof_wrapper_admission_error(
             "missing serialized public inputs"
         }
         TransactionProofWrapperAdmissionRejection::InvalidPublicInputs => "invalid public inputs",
+        TransactionProofWrapperAdmissionRejection::NullifierVectorMismatch => {
+            "nullifier vector mismatch"
+        }
+        TransactionProofWrapperAdmissionRejection::CommitmentVectorMismatch => {
+            "commitment vector mismatch"
+        }
         TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch => "balance slot mismatch",
         TransactionProofWrapperAdmissionRejection::VerifierRejected => "verifier rejected",
     };
@@ -185,6 +197,12 @@ pub fn evaluate_transaction_proof_wrapper_admission(
     }
     if !input.public_inputs_valid {
         return Err(TransactionProofWrapperAdmissionRejection::InvalidPublicInputs);
+    }
+    if !input.nullifier_vector_agrees {
+        return Err(TransactionProofWrapperAdmissionRejection::NullifierVectorMismatch);
+    }
+    if !input.commitment_vector_agrees {
+        return Err(TransactionProofWrapperAdmissionRejection::CommitmentVectorMismatch);
     }
     if !input.balance_slots_agree {
         return Err(TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch);
@@ -305,6 +323,8 @@ pub fn transaction_proof_wrapper_public_inputs_for_admission(
             })?;
             Ok(p3_inputs)
         });
+    let nullifier_vector_result = verify_wrapper_nullifier_vector(proof);
+    let commitment_vector_result = verify_wrapper_commitment_vector(proof);
     let balance_result = verify_balance_slots(proof);
 
     if let Err(rejection) =
@@ -315,6 +335,8 @@ pub fn transaction_proof_wrapper_public_inputs_for_admission(
             proof_bytes_present,
             serialized_public_inputs_present,
             public_inputs_valid: public_inputs_result.is_ok(),
+            nullifier_vector_agrees: nullifier_vector_result.is_ok(),
+            commitment_vector_agrees: commitment_vector_result.is_ok(),
             balance_slots_agree: balance_result.is_ok(),
             verifier_accepts: true,
         })
@@ -323,6 +345,16 @@ pub fn transaction_proof_wrapper_public_inputs_for_admission(
             TransactionProofWrapperAdmissionRejection::InvalidPublicInputs => public_inputs_result
                 .err()
                 .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection)),
+            TransactionProofWrapperAdmissionRejection::NullifierVectorMismatch => {
+                nullifier_vector_result
+                    .err()
+                    .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection))
+            }
+            TransactionProofWrapperAdmissionRejection::CommitmentVectorMismatch => {
+                commitment_vector_result
+                    .err()
+                    .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection))
+            }
             TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch => balance_result
                 .err()
                 .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection)),
@@ -331,6 +363,30 @@ pub fn transaction_proof_wrapper_public_inputs_for_admission(
     }
 
     public_inputs_result
+}
+
+fn verify_wrapper_nullifier_vector(
+    proof: &TransactionProof,
+) -> Result<(), TransactionCircuitError> {
+    if proof.nullifiers == proof.public_inputs.nullifiers {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolation(
+            "transaction proof wrapper nullifier vector mismatch",
+        ))
+    }
+}
+
+fn verify_wrapper_commitment_vector(
+    proof: &TransactionProof,
+) -> Result<(), TransactionCircuitError> {
+    if proof.commitments == proof.public_inputs.commitments {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolation(
+            "transaction proof wrapper commitment vector mismatch",
+        ))
+    }
 }
 
 pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
@@ -690,6 +746,8 @@ fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, Transa
             proof_bytes_present: !proof.stark_proof.is_empty(),
             serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
             public_inputs_valid: true,
+            nullifier_vector_agrees: proof.nullifiers == proof.public_inputs.nullifiers,
+            commitment_vector_agrees: proof.commitments == proof.public_inputs.commitments,
             balance_slots_agree: true,
             verifier_accepts: verifier_result.is_ok(),
         },
@@ -1114,6 +1172,8 @@ mod tests {
         proof_bytes_present: bool,
         serialized_public_inputs_present: bool,
         public_inputs_valid: bool,
+        nullifier_vector_agrees: bool,
+        commitment_vector_agrees: bool,
         balance_slots_agree: bool,
         verifier_accepts: bool,
         expected_valid: bool,
@@ -1373,6 +1433,8 @@ mod tests {
             proof_bytes_present: case.proof_bytes_present,
             serialized_public_inputs_present: case.serialized_public_inputs_present,
             public_inputs_valid: case.public_inputs_valid,
+            nullifier_vector_agrees: case.nullifier_vector_agrees,
+            commitment_vector_agrees: case.commitment_vector_agrees,
             balance_slots_agree: case.balance_slots_agree,
             verifier_accepts: case.verifier_accepts,
         };
@@ -1593,6 +1655,24 @@ mod tests {
         assert!(err
             .to_string()
             .contains("public value balance does not match serialized public inputs"));
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.nullifiers[0] = bytes48(0x4e46);
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("wrapper nullifier vector drift rejects");
+        assert!(
+            err.to_string().contains("nullifier vector mismatch"),
+            "unexpected error: {err:?}"
+        );
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.commitments[0] = bytes48(0x434d);
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("wrapper commitment vector drift rejects");
+        assert!(
+            err.to_string().contains("commitment vector mismatch"),
+            "unexpected error: {err:?}"
+        );
 
         let mut proof = wrapper_admissible_dummy_proof();
         proof.balance_slots[0].delta = 1;

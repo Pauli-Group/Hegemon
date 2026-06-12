@@ -172,6 +172,9 @@ lean_exe gen_candidate_artifact_admission_vectors where
 lean_exe gen_candidate_artifact_coupling_admission_vectors where
   root := `Hegemon.Native.GenerateCandidateArtifactCouplingAdmissionVectors
 
+lean_exe gen_canonical_reorg_chain_admission_vectors where
+  root := `Hegemon.Native.GenerateCanonicalReorgChainAdmissionVectors
+
 lean_exe gen_codec_admission_vectors where
   root := `Hegemon.Native.GenerateCodecAdmissionVectors
 
