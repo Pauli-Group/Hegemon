@@ -5,7 +5,7 @@
 //! mempool, sync, and shielded state machines are native.
 
 use anyhow::{anyhow, Context, Result};
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -110,6 +110,7 @@ const MIN_NATIVE_WALLET_CIPHERTEXT_BYTES: usize =
     ENCRYPTED_NOTE_SIZE + MIN_NATIVE_ARCHIVE_KEM_CIPHERTEXT_BYTES;
 const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
+const MAX_NATIVE_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
@@ -361,6 +362,7 @@ struct NativeWork {
     header_mmr_root: [u8; 32],
     header_mmr_len: u64,
     cumulative_work: [u8; 48],
+    supply_digest: u128,
     tx_count: u32,
     timestamp_ms: u64,
     pow_bits: u32,
@@ -1438,6 +1440,7 @@ struct NativeTxLeafActionBindingAdmissionInput {
     commitments_match: bool,
     ciphertext_hashes_match: bool,
     version_matches: bool,
+    fee_matches: bool,
     ciphertext_payload_hashes_match: bool,
 }
 
@@ -1447,6 +1450,7 @@ enum NativeTxLeafActionBindingAdmissionRejection {
     CommitmentsMismatch,
     CiphertextHashesMismatch,
     VersionMismatch,
+    FeeMismatch,
     CiphertextPayloadHashMismatch,
 }
 
@@ -1458,6 +1462,7 @@ impl NativeTxLeafActionBindingAdmissionRejection {
             Self::CommitmentsMismatch => "commitments_mismatch",
             Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
             Self::VersionMismatch => "version_mismatch",
+            Self::FeeMismatch => "fee_mismatch",
             Self::CiphertextPayloadHashMismatch => "ciphertext_payload_hash_mismatch",
         }
     }
@@ -2154,6 +2159,7 @@ impl NativeNode {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest,
             tx_count,
             timestamp_ms,
             pow_bits: self.config.pow_bits,
@@ -2191,6 +2197,8 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let preview_message_root = bridge_message_root(&preview_bridge_messages);
         let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
+        let supply_digest =
+            advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
         match evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
             tx_count_matches: preview_tx_count == work.tx_count,
             state_root_matches: preview_state_root == work.state_root,
@@ -2202,7 +2210,7 @@ impl NativeNode {
             header_mmr_root_matches: work.header_mmr_root
                 == header_mmr_root_from_hashes(&expected_header_history),
             header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
-            supply_digest_matches: true,
+            supply_digest_matches: supply_digest == work.supply_digest,
         }) {
             Ok(()) => {}
             Err(
@@ -2216,8 +2224,6 @@ impl NativeNode {
             }
             Err(_) => return Ok(None),
         }
-        let supply_digest =
-            advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, work.height)?;
         evaluate_native_block_replay_refinement_for_actions(
             "native mined block replay refinement failed",
@@ -2328,6 +2334,7 @@ impl NativeNode {
             self.replay_state_to_hash(parent.hash)?
         };
         let actions = decode_block_actions(&meta)?;
+        verify_decoded_action_root(&actions, &meta, "announced block action root")?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&self.da_ciphertext_tree, &parent_state, &actions)?;
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
@@ -2533,7 +2540,15 @@ impl NativeNode {
             staged_proofs: BTreeMap::new(),
         };
         for (idx, meta) in chain.iter().cloned().enumerate().skip(1) {
+            verify_native_block_meta_projection(Some(&state.best), &meta).with_context(|| {
+                format!(
+                    "replay stored native block metadata at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            })?;
             let actions = decode_block_actions(&meta)?;
+            verify_decoded_action_root(&actions, &meta, "native replay action root")?;
             validate_block_actions_locked(&state, &actions)?;
             let (state_root, nullifier_root, extrinsics_root, tx_count) =
                 preview_pending_roots(&self.da_ciphertext_tree, &state, &actions)?;
@@ -2927,20 +2942,93 @@ impl NativeNode {
     }
 
     fn ensure_ciphertext_archive_index(&self) -> Result<()> {
-        let expected = self.commitment_tree.len() as u64;
-        if self.ciphertext_archive_tree.len() as u64 == expected {
+        let chain = self.chain_to_hash(self.best_meta().hash)?;
+        let replayed_state = self.replay_chain_state(&chain)?;
+        self.validate_loaded_state_matches_replay(&replayed_state)?;
+        let canonical_index_plan = plan_canonical_index_rebuild(&chain, &self.da_ciphertext_tree)?;
+        if self.canonical_index_matches_plan(&canonical_index_plan)? {
             return Ok(());
         }
 
-        let chain = self.chain_to_hash(self.best_meta().hash)?;
         warn!(
-            expected,
-            observed = self.ciphertext_archive_tree.len(),
-            "rebuilding canonical native ciphertext archive"
+            commitments = canonical_index_plan.commitment_entries.len(),
+            nullifiers = canonical_index_plan.nullifier_entries.len(),
+            bridge_replay = canonical_index_plan.bridge_replay_entries.len(),
+            ciphertext_index = canonical_index_plan.ciphertext_index_entries.len(),
+            ciphertext_archive = canonical_index_plan.ciphertext_archive_entries.len(),
+            "rebuilding canonical native indexes after validated replay"
         );
-        let canonical_index_plan = plan_canonical_index_rebuild(&chain, &self.da_ciphertext_tree)?;
         self.commit_canonical_index_repair_atomically(canonical_index_plan)?;
         Ok(())
+    }
+
+    fn validate_loaded_state_matches_replay(&self, replayed: &NativeState) -> Result<()> {
+        let state = self.state.read();
+        if state.best != replayed.best {
+            return Err(anyhow!("startup canonical replay best metadata mismatch"));
+        }
+        if state.commitment_tree != replayed.commitment_tree {
+            return Err(anyhow!("startup canonical replay commitment tree mismatch"));
+        }
+        if state.nullifiers != replayed.nullifiers {
+            return Err(anyhow!("startup canonical replay nullifier set mismatch"));
+        }
+        if state.consumed_bridge_messages != replayed.consumed_bridge_messages {
+            return Err(anyhow!(
+                "startup canonical replay bridge replay set mismatch"
+            ));
+        }
+        Ok(())
+    }
+
+    fn canonical_index_matches_plan(&self, plan: &NativeCanonicalIndexPlan) -> Result<bool> {
+        if self.commitment_tree.len() != plan.commitment_entries.len()
+            || self.nullifier_tree.len() != plan.nullifier_entries.len()
+            || self.bridge_inbound_tree.len() != plan.bridge_replay_entries.len()
+            || self.ciphertext_index_tree.len() != plan.ciphertext_index_entries.len()
+            || self.ciphertext_archive_tree.len() != plan.ciphertext_archive_entries.len()
+        {
+            return Ok(false);
+        }
+        for (index, commitment) in &plan.commitment_entries {
+            if self.commitment_tree.get(index.to_be_bytes())?.as_deref()
+                != Some(commitment.as_slice())
+            {
+                return Ok(false);
+            }
+        }
+        for nullifier in &plan.nullifier_entries {
+            if self.nullifier_tree.get(nullifier.as_slice())?.as_deref() != Some(b"1".as_slice()) {
+                return Ok(false);
+            }
+        }
+        for replay_key in &plan.bridge_replay_entries {
+            if self
+                .bridge_inbound_tree
+                .get(replay_key.as_slice())?
+                .as_deref()
+                != Some(b"1".as_slice())
+            {
+                return Ok(false);
+            }
+        }
+        for (hash, value) in &plan.ciphertext_index_entries {
+            if self.ciphertext_index_tree.get(hash.as_slice())?.as_deref() != Some(value.as_slice())
+            {
+                return Ok(false);
+            }
+        }
+        for (index, bytes) in &plan.ciphertext_archive_entries {
+            if self
+                .ciphertext_archive_tree
+                .get(index.to_be_bytes())?
+                .as_deref()
+                != Some(bytes.as_slice())
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn header_by_hash(&self, hash: &[u8; 32]) -> Result<Option<NativeBlockMeta>> {
@@ -3150,6 +3238,15 @@ impl NativeNode {
         }))
     }
 
+    fn is_valid_anchor(&self, params: Value) -> Result<Value> {
+        let raw = first_param(&params)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("hegemon_isValidAnchor requires a 48-byte anchor hex string"))?;
+        let anchor = parse_hex48(raw).ok_or_else(|| anyhow!("invalid anchor hex"))?;
+        let state = self.state.read();
+        Ok(json!(state.commitment_tree.contains_root(&anchor)))
+    }
+
     fn submit_action(&self, request: Value) -> Value {
         match self.validate_and_stage_action(request) {
             Ok(action) => {
@@ -3175,6 +3272,24 @@ impl NativeNode {
             return Err(anyhow!("unsupported family {}", request.family_id));
         }
 
+        let transfer_route = request.family_id == FAMILY_SHIELDED_POOL
+            && matches!(
+                request.action_id,
+                ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
+            );
+        if !transfer_route && !request.new_nullifiers.is_empty() {
+            return Err(anyhow!(
+                "new_nullifiers must be empty for non-transfer actions"
+            ));
+        }
+        if request.new_nullifiers.len() > transaction_core::constants::MAX_INPUTS {
+            return Err(anyhow!(
+                "new_nullifiers length {} exceeds MAX_INPUTS {}",
+                request.new_nullifiers.len(),
+                transaction_core::constants::MAX_INPUTS
+            ));
+        }
+
         if request.public_args.len() > encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES) {
             return Err(anyhow!(
                 "public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
@@ -3190,11 +3305,15 @@ impl NativeNode {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
         };
-        let nullifiers = request
-            .new_nullifiers
-            .iter()
-            .map(|raw| parse_hex48(raw).ok_or_else(|| anyhow!("invalid nullifier hex")))
-            .collect::<Result<Vec<_>>>()?;
+        let nullifiers = if transfer_route {
+            request
+                .new_nullifiers
+                .iter()
+                .map(|raw| parse_hex48(raw).ok_or_else(|| anyhow!("invalid nullifier hex")))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
 
         let received_ms = current_time_ms();
         let mut pending = match (request.family_id, request.action_id) {
@@ -3528,7 +3647,6 @@ impl NativeNode {
                 },
             )
             .map_err(native_sidecar_upload_admission_error)?;
-            let binding_hash = binding_hash_value.expect("validated binding_hash presence");
             let binding_hash_bytes = binding_hash_bytes.expect("validated binding_hash hex shape");
             let binding_hash_key = hex64(&binding_hash_bytes);
             let proof = parse_bytes_value(
@@ -3543,7 +3661,8 @@ impl NativeNode {
                 },
             )
             .map_err(native_sidecar_upload_admission_error)?;
-            let proof_hash = hash48_with_parts(&[b"da-proof-v1", binding_hash.as_bytes(), &proof]);
+            let proof_hash =
+                hash48_with_parts(&[b"da-proof-v1", binding_hash_bytes.as_slice(), &proof]);
             let proof_hash_hex = hex48(&proof_hash);
             evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
                 staged_count: state.staged_proofs.len(),
@@ -3560,9 +3679,9 @@ impl NativeNode {
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
             self.da_proof_tree
                 .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
-            state.staged_proofs.insert(binding_hash_key, proof);
+            state.staged_proofs.insert(binding_hash_key.clone(), proof);
             results.push(json!({
-                "binding_hash": binding_hash,
+                "binding_hash": binding_hash_key,
                 "proof_hash": proof_hash_hex,
                 "size": size,
             }));
@@ -3608,6 +3727,7 @@ pub async fn run(cli: NativeCli) -> Result<()> {
             post(rpc_handler).get(root_handler).options(options_handler),
         )
         .route("/health", get(health_handler))
+        .layer(DefaultBodyLimit::max(MAX_NATIVE_RPC_BODY_BYTES))
         .with_state(Arc::clone(&node));
 
     axum::serve(listener, app)
@@ -4000,6 +4120,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         "hegemon_submitAction" => {
             Ok(node.submit_action(first_param(&params).cloned().unwrap_or(params)))
         }
+        "hegemon_isValidAnchor" => node.is_valid_anchor(params),
         "hegemon_walletNotes" => Ok(node.note_status()),
         "hegemon_walletCommitments" => node.wallet_commitments(params),
         "hegemon_walletCiphertexts" => node.wallet_ciphertexts(params),
@@ -8988,6 +9109,8 @@ fn evaluate_native_tx_leaf_action_binding_admission(
         Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch)
     } else if !input.version_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::VersionMismatch)
+    } else if !input.fee_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::FeeMismatch)
     } else if !input.ciphertext_payload_hashes_match {
         Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch)
     } else {
@@ -9010,6 +9133,9 @@ fn native_tx_leaf_action_binding_admission_error(
         }
         NativeTxLeafActionBindingAdmissionRejection::VersionMismatch => {
             anyhow!("native tx-leaf version mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::FeeMismatch => {
+            anyhow!("native tx-leaf fee mismatch")
         }
         NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch => {
             anyhow!("native tx ciphertext payload hash mismatch")
@@ -9223,6 +9349,7 @@ fn consensus_tx_and_artifact_from_action(
             commitments_match: decoded.tx.commitments == action.commitments,
             ciphertext_hashes_match: decoded.tx.ciphertext_hashes == action.ciphertext_hashes,
             version_matches: decoded.tx.version == action_version,
+            fee_matches: decoded.stark_public_inputs.fee == action.fee,
             ciphertext_payload_hashes_match: tx.ciphertext_hashes == action.ciphertext_hashes,
         })
     {
@@ -9414,6 +9541,26 @@ fn actions_extrinsics_root(actions: &[PendingAction]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&action_root_transcript_preimage(&action_hashes));
     *hasher.finalize().as_bytes()
+}
+
+fn verify_decoded_action_root(
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+    context: &'static str,
+) -> Result<()> {
+    evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+        tx_count_matches: true,
+        state_root_matches: true,
+        kernel_root_matches: true,
+        nullifier_root_matches: true,
+        extrinsics_root_matches: actions_extrinsics_root(actions) == meta.extrinsics_root,
+        message_root_matches: true,
+        message_count_matches: true,
+        header_mmr_root_matches: true,
+        header_mmr_len_matches: true,
+        supply_digest_matches: true,
+    })
+    .map_err(|rejection| native_block_commitment_admission_error(context, rejection))
 }
 
 fn nullifier_root_from_set(nullifiers: &BTreeSet<[u8; 48]>) -> [u8; 48] {
@@ -10404,6 +10551,7 @@ fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         "hegemon_consensusStatus",
         "hegemon_exportBridgeWitness",
         "hegemon_generateProof",
+        "hegemon_isValidAnchor",
         "hegemon_latestBlock",
         "hegemon_minedBlockTimestamps",
         "hegemon_miningStatus",
@@ -11205,6 +11353,7 @@ mod tests {
         commitments_match: bool,
         ciphertext_hashes_match: bool,
         version_matches: bool,
+        fee_matches: bool,
         ciphertext_payload_hashes_match: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
@@ -11720,6 +11869,32 @@ mod tests {
                 .hash,
             canonical.hash
         );
+    }
+
+    #[test]
+    fn reorg_replay_revalidates_historical_parent_metadata_before_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let first = mined_empty_child(&genesis, 1, pow_bits, 0);
+        assert!(node
+            .import_announced_block(first.clone())
+            .expect("first block import"));
+        assert_eq!(node.best_meta().hash, first.hash);
+
+        let unsigned_first = unsigned_native_meta(first.clone());
+        persist_block_record(&node.block_tree, &unsigned_first)
+            .expect("replace persisted parent with unsigned metadata");
+        let second = mined_empty_child(&first, 2, pow_bits, 1);
+        let err = node
+            .import_announced_block(second)
+            .expect_err("historical parent metadata must be revalidated during replay");
+        let err = format!("{err:?}");
+        assert!(err.contains("invalid_miner_public_key_length"), "{err}");
+        assert_eq!(node.best_meta().hash, first.hash);
+        assert!(node.hash_by_height(2).expect("height two").is_none());
     }
 
     #[test]
@@ -12462,6 +12637,47 @@ mod tests {
     }
 
     #[test]
+    fn startup_replays_canonical_block_actions_before_accepting_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let imported = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let work = node.prepare_work().expect("prepare empty work");
+            let seal = mine_native_round(work.clone(), 0).expect("empty seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("empty import")
+                .expect("empty block");
+            node.db.flush().expect("flush empty block");
+            imported
+        };
+
+        {
+            let db = sled::open(&config.db_path).expect("open test db for body corruption");
+            let meta_tree = db.open_tree("meta").expect("meta tree");
+            let block_tree = db.open_tree("block_meta_by_hash").expect("block tree");
+            let mut corrupted = imported;
+            corrupted.action_bytes.push(vec![0xaa]);
+            let encoded = bincode::serialize(&corrupted).expect("serialize corrupted metadata");
+            meta_tree
+                .insert(META_BEST_KEY, encoded.clone())
+                .expect("corrupt best body");
+            block_tree
+                .insert(corrupted.hash.as_slice(), encoded)
+                .expect("corrupt block body");
+            db.flush().expect("flush body corruption");
+        }
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("startup must replay canonical block bodies"),
+            Err(err) => err,
+        };
+        let err = format!("{err:?}");
+        assert!(err.contains("block action payload count mismatch"), "{err}");
+    }
+
+    #[test]
     fn wallet_archive_rpcs_are_paginated_and_wallet_compatible() {
         use base64::Engine;
 
@@ -12656,6 +12872,25 @@ mod tests {
     }
 
     #[test]
+    fn mined_block_rejects_supply_digest_template_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+
+        let mut work = node.prepare_work().expect("prepare native work");
+        work.supply_digest = work.supply_digest.saturating_add(1);
+        let seal = mine_native_round(work.clone(), 0).expect("mismatched supply seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("supply mismatch should fail as stale work");
+
+        assert!(imported.is_none());
+        assert_eq!(node.best_meta().height, 0);
+        assert_eq!(node.best_meta().supply_digest, 0);
+    }
+
+    #[test]
     fn prepare_work_drops_actions_after_supply_digest_overflow() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -12678,6 +12913,7 @@ mod tests {
         assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
         assert_eq!(work.message_count, 0);
         assert_eq!(work.message_root, empty_bridge_message_root());
+        assert_eq!(work.supply_digest, parent.supply_digest);
 
         let expected_kernel_root =
             consensus::types::kernel_root_from_shielded_root(&parent.state_root);
@@ -12956,6 +13192,7 @@ mod tests {
             header_mmr_root: [0u8; 32],
             header_mmr_len: 0,
             cumulative_work: best.cumulative_work,
+            supply_digest: best.supply_digest,
             tx_count: 0,
             timestamp_ms: best.timestamp_ms.saturating_add(1),
             pow_bits,
@@ -13094,6 +13331,7 @@ mod tests {
             header_mmr_root: block.header_mmr_root,
             header_mmr_len: block.header_mmr_len,
             cumulative_work: block.cumulative_work,
+            supply_digest: block.supply_digest,
             tx_count: block.tx_count,
             timestamp_ms: block.timestamp_ms,
             pow_bits: block.pow_bits,
@@ -13111,6 +13349,72 @@ mod tests {
         assert!(
             err.to_string().contains("state_root_mismatch"),
             "state-root replay mismatch should not be masked by payload validation: {err}"
+        );
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
+    fn announced_block_action_root_mismatch_precedes_payload_materialization() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let height = parent.height.saturating_add(1);
+        let mut coinbase = test_coinbase_action(consensus::reward::block_subsidy(height));
+        coinbase.ciphertext_hashes[0][0] ^= 1;
+        coinbase.tx_hash = pending_action_hash(&coinbase);
+        let mut block = mined_child_with_actions(&parent, height, pow_bits, 0, vec![coinbase]);
+        block.extrinsics_root[0] ^= 1;
+        let pre_header = native_pow_header_from_parts(
+            block.height,
+            block.timestamp_ms,
+            block.parent_hash,
+            block.pow_bits,
+            [0u8; 32],
+            block.cumulative_work,
+            &block.state_root,
+            &block.kernel_root,
+            &block.nullifier_root,
+            &block.extrinsics_root,
+            &block.message_root,
+            block.message_count,
+            &block.header_mmr_root,
+            block.header_mmr_len,
+            block.supply_digest,
+            block.tx_count,
+        );
+        let work = NativeWork {
+            height: block.height,
+            parent_hash: block.parent_hash,
+            pre_hash: pre_header.pre_hash(),
+            state_root: block.state_root,
+            kernel_root: block.kernel_root,
+            nullifier_root: block.nullifier_root,
+            extrinsics_root: block.extrinsics_root,
+            message_root: block.message_root,
+            message_count: block.message_count,
+            header_mmr_root: block.header_mmr_root,
+            header_mmr_len: block.header_mmr_len,
+            cumulative_work: block.cumulative_work,
+            supply_digest: block.supply_digest,
+            tx_count: block.tx_count,
+            timestamp_ms: block.timestamp_ms,
+            pow_bits: block.pow_bits,
+        };
+        let seal = mine_native_round(work, 2).expect("reseal action-root mutation");
+        block.hash = seal.work_hash;
+        block.work_hash = seal.work_hash;
+        block.nonce = seal.nonce;
+        sign_test_block_meta(&mut block);
+
+        let err = node
+            .import_announced_block(block)
+            .expect_err("action-root mismatch must reject before payload validation");
+
+        assert!(
+            err.to_string().contains("extrinsics_root_mismatch"),
+            "action-root mismatch should not be masked by payload validation: {err}"
         );
         assert_eq!(node.best_meta().height, 0);
     }
@@ -13180,6 +13484,70 @@ mod tests {
         assert!(!methods.contains(&"hegemon_submitAction"));
         let unsafe_methods = native_rpc_methods(RpcMethodPolicy::Unsafe);
         assert!(unsafe_methods.contains(&"hegemon_submitAction"));
+    }
+
+    #[test]
+    fn is_valid_anchor_rpc_matches_commitment_tree() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+
+        let valid =
+            dispatch_rpc_method(&node, "hegemon_isValidAnchor", json!([hex::encode(anchor)]))
+                .expect("valid anchor RPC");
+        assert_eq!(valid, json!(true));
+
+        let unknown =
+            dispatch_rpc_method(&node, "hegemon_isValidAnchor", json!([hex48(&[9u8; 48])]))
+                .expect("unknown anchor RPC");
+        assert_eq!(unknown, json!(false));
+
+        let err = dispatch_rpc_method(&node, "hegemon_isValidAnchor", json!(["aa"]))
+            .expect_err("malformed anchor must reject");
+        assert!(err.to_string().contains("invalid anchor hex"));
+
+        let methods = native_rpc_methods(RpcMethodPolicy::Safe);
+        assert!(methods.contains(&"hegemon_isValidAnchor"));
+    }
+
+    #[test]
+    fn submit_action_rejects_non_transfer_or_excess_nullifiers_before_parsing() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let args = OutboundBridgeArgsV1 {
+            destination_chain_id: [7u8; 32],
+            app_family_id: 9,
+            payload: b"unexpected nullifier".to_vec(),
+        };
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": ["not-hex"],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect_err("non-transfer routes must reject nullifier lists");
+        assert!(err.to_string().contains("new_nullifiers must be empty"));
+
+        let too_many = vec!["00".repeat(48); transaction_core::constants::MAX_INPUTS + 1];
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_SHIELDED_POOL,
+                "action_id": ACTION_SHIELDED_TRANSFER_INLINE,
+                "new_nullifiers": too_many,
+                "public_args": "not-base64",
+            }))
+            .expect_err("oversized nullifier list must reject before public_args decode");
+        assert!(err.to_string().contains("exceeds MAX_INPUTS"));
+        assert_eq!(node.state.read().pending_actions.len(), 0);
     }
 
     #[test]
@@ -13635,6 +14003,10 @@ mod tests {
         assert_eq!(proofs.len(), 1);
         assert_eq!(proofs[0]["size"].as_u64(), Some(3));
         assert!(proofs[0]["proof_hash"].as_str().unwrap().starts_with("0x"));
+        assert_eq!(
+            proofs[0]["binding_hash"],
+            json!(format!("0x{}", "11".repeat(64)))
+        );
 
         let replacement_binding_hash = format!("0x{}", "11".repeat(64));
         node.submit_proofs(json!({
@@ -13646,6 +14018,47 @@ mod tests {
         assert_eq!(state.staged_ciphertexts.len(), 1);
         assert_eq!(state.staged_proofs.len(), 1);
         assert_eq!(state.staged_proofs.values().next().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn submit_proofs_canonicalizes_binding_hash_before_response_hashing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+
+        let prefixed_response = node
+            .submit_proofs(json!({
+                "proofs": [{ "binding_hash": format!("0x{}", "ab".repeat(64)), "proof": "0x010203" }]
+            }))
+            .expect("prefixed proof sidecar");
+        let prefixed = prefixed_response
+            .as_array()
+            .expect("prefixed response")
+            .first()
+            .expect("prefixed response entry")
+            .clone();
+        let uppercase_response = node
+            .submit_proofs(json!({
+                "proofs": [{ "binding_hash": "AB".repeat(64), "proof": "0x010203" }]
+            }))
+            .expect("uppercase unprefixed proof sidecar");
+        let uppercase_unprefixed = uppercase_response
+            .as_array()
+            .expect("uppercase response")
+            .first()
+            .expect("uppercase response entry")
+            .clone();
+
+        assert_eq!(
+            prefixed["binding_hash"],
+            json!(format!("0x{}", "ab".repeat(64)))
+        );
+        assert_eq!(
+            uppercase_unprefixed["binding_hash"],
+            prefixed["binding_hash"]
+        );
+        assert_eq!(uppercase_unprefixed["proof_hash"], prefixed["proof_hash"]);
+        assert_eq!(node.state.read().staged_proofs.len(), 1);
     }
 
     #[test]
@@ -15794,6 +16207,7 @@ mod tests {
             commitments_match: case.commitments_match,
             ciphertext_hashes_match: case.ciphertext_hashes_match,
             version_matches: case.version_matches,
+            fee_matches: case.fee_matches,
             ciphertext_payload_hashes_match: case.ciphertext_payload_hashes_match,
         };
         let actual_rejection = evaluate_native_tx_leaf_action_binding_admission(input)
@@ -15843,6 +16257,7 @@ mod tests {
             commitments_match: true,
             ciphertext_hashes_match: true,
             version_matches: true,
+            fee_matches: true,
             ciphertext_payload_hashes_match: true,
         };
         assert!(evaluate_native_tx_leaf_action_binding_admission(valid).is_ok());
@@ -15862,13 +16277,26 @@ mod tests {
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     version_matches: false,
+                    fee_matches: false,
                     ciphertext_payload_hashes_match: false,
                     ..valid
                 }
             )
-            .expect_err("version mismatch must reject before payload hashes")
+            .expect_err("version mismatch must reject before fee or payload hashes")
             .label(),
             "version_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    fee_matches: false,
+                    ciphertext_payload_hashes_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("fee mismatch must reject before payload hashes")
+            .label(),
+            "fee_mismatch"
         );
     }
 
@@ -19177,6 +19605,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest: parent.supply_digest,
             tx_count,
             timestamp_ms,
             pow_bits,
@@ -19293,6 +19722,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest: parent.supply_digest,
             tx_count: 0,
             timestamp_ms: parent.timestamp_ms.saturating_add(1),
             pow_bits,
@@ -19589,6 +20019,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest: older_bridge.supply_digest,
             tx_count,
             timestamp_ms,
             pow_bits,
@@ -19860,6 +20291,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest: parent.supply_digest,
             tx_count: 0,
             timestamp_ms,
             pow_bits,
@@ -19973,6 +20405,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest,
             tx_count: 0,
             timestamp_ms,
             pow_bits,
@@ -20071,6 +20504,7 @@ mod tests {
             header_mmr_root,
             header_mmr_len,
             cumulative_work,
+            supply_digest,
             tx_count,
             timestamp_ms: parent.timestamp_ms.saturating_add(1),
             pow_bits,

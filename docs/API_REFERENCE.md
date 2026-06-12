@@ -98,6 +98,8 @@ Hegemon-specific RPC methods exposed on the native JSON-RPC server:
 - `hegemon_submitTransaction(...) -> { success: false, error: String }`
   - Disabled compatibility stub. Wallets and applications must use `hegemon_submitAction` for live native protocol actions.
 - `hegemon_consensusStatus() -> ConsensusStatus`
+- `hegemon_isValidAnchor(anchor_hex: String) -> bool`
+  - Read-only wallet precheck. Accepts a 48-byte commitment-tree root as hex, with or without `0x`, and returns whether the native commitment tree recognizes it.
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
 - `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, native genesis identity, listen addresses, PQ verbosity, peer limits)
@@ -206,7 +208,7 @@ Block validity and data-availability RPC methods exposed by the native node:
   - Staged ciphertext bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
 - `da_submitProofs(request: { proofs: Vec<{ binding_hash: String, proof: String }> }) -> Vec<SubmitProofsEntry>`
   - Unsafe-only proposer/local proof staging RPC. Request-count, staged-capacity, proof binding-hash metadata, nonempty proof, and proof byte-cap admission are Lean-conformance-checked against the production native helpers.
-  - Unsafe-only proposer/local staging RPC. Accepts only canonical self-verifying native `tx_leaf` artifact bytes whose derived binding hash matches the requested `binding_hash`. Not part of consensus validity.
+  - This upload path canonicalizes the supplied binding hash and response hash, but it does not verify `tx_leaf` proof bytes at upload time. Consensus validity is enforced later when native block artifact verification decodes the artifact and checks the derived binding against the action/candidate context.
   - Staged proof bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
 - `da_submitWitnesses(...)`
   - Deliberately disabled. Witness sidecars are rejected because they may contain secret material and must not be uploaded over RPC.

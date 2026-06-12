@@ -7,6 +7,7 @@ inductive TxLeafActionBindingReject where
   | commitmentsMismatch
   | ciphertextHashesMismatch
   | versionMismatch
+  | feeMismatch
   | ciphertextPayloadHashMismatch
 deriving DecidableEq, Repr
 
@@ -15,6 +16,7 @@ structure TxLeafActionBindingInput where
   commitmentsMatch : Bool
   ciphertextHashesMatch : Bool
   versionMatches : Bool
+  feeMatches : Bool
   ciphertextPayloadHashesMatch : Bool
 deriving DecidableEq, Repr
 
@@ -29,6 +31,8 @@ def evaluateTxLeafActionBinding
     Except.error TxLeafActionBindingReject.ciphertextHashesMismatch
   else if !input.versionMatches then
     Except.error TxLeafActionBindingReject.versionMismatch
+  else if !input.feeMatches then
+    Except.error TxLeafActionBindingReject.feeMismatch
   else if !input.ciphertextPayloadHashesMatch then
     Except.error TxLeafActionBindingReject.ciphertextPayloadHashMismatch
   else
@@ -53,6 +57,7 @@ def txLeafActionBindingPreconditions
     && input.commitmentsMatch
     && input.ciphertextHashesMatch
     && input.versionMatches
+    && input.feeMatches
     && input.ciphertextPayloadHashesMatch
 
 theorem tx_leaf_action_accepts_iff_preconditions
@@ -61,13 +66,13 @@ theorem tx_leaf_action_accepts_iff_preconditions
       txLeafActionBindingPreconditions input := by
   cases input with
   | mk nullifiersMatch commitmentsMatch ciphertextHashesMatch
-      versionMatches ciphertextPayloadHashesMatch =>
+      versionMatches feeMatches ciphertextPayloadHashesMatch =>
       unfold txLeafActionBindingAccepts
         txLeafActionBindingPreconditions
         evaluateTxLeafActionBinding
       cases nullifiersMatch <;> cases commitmentsMatch <;>
         cases ciphertextHashesMatch <;> cases versionMatches <;>
-        cases ciphertextPayloadHashesMatch <;> simp
+        cases feeMatches <;> cases ciphertextPayloadHashesMatch <;> simp
 
 def validTxLeafActionBinding : TxLeafActionBindingInput :=
   {
@@ -75,6 +80,7 @@ def validTxLeafActionBinding : TxLeafActionBindingInput :=
     commitmentsMatch := true,
     ciphertextHashesMatch := true,
     versionMatches := true,
+    feeMatches := true,
     ciphertextPayloadHashesMatch := true
   }
 
@@ -113,6 +119,12 @@ theorem tx_ciphertext_payload_hash_mismatch_rejects :
       Except.error TxLeafActionBindingReject.ciphertextPayloadHashMismatch := by
   rfl
 
+theorem tx_leaf_fee_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with feeMatches := false } =
+      Except.error TxLeafActionBindingReject.feeMismatch := by
+  rfl
+
 theorem tx_leaf_nullifiers_precede_commitments :
     evaluateTxLeafActionBinding
         { validTxLeafActionBinding with
@@ -133,8 +145,17 @@ theorem tx_leaf_version_precedes_payload_hashes :
     evaluateTxLeafActionBinding
         { validTxLeafActionBinding with
           versionMatches := false,
+          feeMatches := false,
           ciphertextPayloadHashesMatch := false } =
       Except.error TxLeafActionBindingReject.versionMismatch := by
+  rfl
+
+theorem tx_leaf_fee_precedes_payload_hashes :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          feeMatches := false,
+          ciphertextPayloadHashesMatch := false } =
+      Except.error TxLeafActionBindingReject.feeMismatch := by
   rfl
 
 inductive CandidateArtifactBindingReject where

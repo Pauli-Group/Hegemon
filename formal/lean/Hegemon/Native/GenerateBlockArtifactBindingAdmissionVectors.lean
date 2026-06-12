@@ -16,6 +16,8 @@ def txLeafActionRejectionJson :
       "\"ciphertext_hashes_mismatch\""
   | some TxLeafActionBindingReject.versionMismatch =>
       "\"version_mismatch\""
+  | some TxLeafActionBindingReject.feeMismatch =>
+      "\"fee_mismatch\""
   | some TxLeafActionBindingReject.ciphertextPayloadHashMismatch =>
       "\"ciphertext_payload_hash_mismatch\""
 
@@ -39,6 +41,7 @@ def txLeafActionBindingCaseJson
     ++ "      \"ciphertext_hashes_match\": "
       ++ boolJson input.ciphertextHashesMatch ++ ",\n"
     ++ "      \"version_matches\": " ++ boolJson input.versionMatches ++ ",\n"
+    ++ "      \"fee_matches\": " ++ boolJson input.feeMatches ++ ",\n"
     ++ "      \"ciphertext_payload_hashes_match\": "
       ++ boolJson input.ciphertextPayloadHashesMatch ++ ",\n"
     ++ "      \"expected_valid\": "
@@ -84,6 +87,9 @@ def vectorJson : String :=
       "version-mismatch-rejected"
       { validTxLeafActionBinding with versionMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
+      "fee-mismatch-rejected"
+      { validTxLeafActionBinding with feeMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
       "ciphertext-payload-hash-mismatch-rejected"
       { validTxLeafActionBinding with
         ciphertextPayloadHashesMatch := false } ++ ",\n"
@@ -93,9 +99,15 @@ def vectorJson : String :=
         nullifiersMatch := false,
         commitmentsMatch := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
-      "version-precedes-payload-hashes"
+      "version-precedes-fee-and-payload-hashes"
       { validTxLeafActionBinding with
         versionMatches := false,
+        feeMatches := false,
+        ciphertextPayloadHashesMatch := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "fee-precedes-payload-hashes"
+      { validTxLeafActionBinding with
+        feeMatches := false,
         ciphertextPayloadHashesMatch := false } ++ "\n"
     ++ "  ],\n"
     ++ "  \"candidate_artifact_binding_cases\": [\n"

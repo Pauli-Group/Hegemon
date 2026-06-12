@@ -82,7 +82,7 @@
         {
           "id": "forbidden-symbol-scan",
           "description": "Forbidden ECC/pairing/RSA/trusted-setup symbols or dependencies must fail the security audit.",
-          "gate": "bash scripts/security-audit.sh"
+          "gate": "bash scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node"
         },
         {
           "id": "lean-release-pq-policy-vector",
@@ -4546,7 +4546,7 @@
       "id": "native.block-artifact-binding-admission",
       "claim_id": "native.block-artifact-binding-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, version, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
+      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, version, fee, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
       "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions` and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers now called by native block artifact verification.",
       "depends_on": [
         "native.action-scope-admission",
@@ -4637,7 +4637,7 @@
         },
         {
           "id": "native-block-artifact-binding-regressions",
-          "description": "Focused native tests must reject tx-leaf/action binding mismatches and candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches in the specified order.",
+          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including fee mismatches before payload hashes, and candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches in the specified order.",
           "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
         },
         {
@@ -4651,7 +4651,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates only. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, only. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-ordering",
@@ -4831,6 +4831,40 @@
           "callee": "actions_extrinsics_root",
           "required_callers": [
             "preview_pending_roots"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_decoded_action_root",
+          "required_callers": [
+            "import_announced_block",
+            "replay_chain_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "bridge_messages_from_actions",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "replay_chain_state",
+              "callee_must_precede": [
+                "validate_block_actions_locked",
+                "preview_pending_roots",
+                "bridge_messages_from_actions",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "verify_native_block_artifacts_locked",
+                "apply_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         }
       ],
@@ -6355,7 +6389,7 @@
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean block commitment-admission transition, native block admission accepts only when the derived tx count, state root, kernel root, nullifier root, action root, bridge message root, bridge message count, header-MMR root, header-MMR length, and supply digest all agree with the claimed block header fields; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. The mined-block direct precheck is required to fail closed on every commitment-admission error before supply advancement, replay refinement, PoW verification, artifact validation, or atomic commit. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Local mined-block import must first recompute and propagate checked native supply advancement so the work template's claimed supply digest can feed the commitment table; the direct commitment precheck is then required to fail closed before replay refinement, PoW verification, artifact validation, or atomic commit. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
       "depends_on": [
         "native.block-action-hash-admission",
         "native.block-action-validation",
@@ -6395,7 +6429,6 @@
             {
               "caller": "import_mined_block",
               "callee_must_precede": [
-                "advance_native_supply_digest",
                 "evaluate_native_block_replay_refinement_for_actions",
                 "verify_native_pow_meta",
                 "validate_block_actions_locked",
@@ -6451,7 +6484,7 @@
         },
         {
           "id": "formal-core-mined-block-commitment-fail-closed-gate",
-          "description": "Local mined-block import must fail closed on every block commitment-admission error before supply advancement, replay refinement, PoW verification, artifact validation, or atomic commit.",
+          "description": "Local mined-block import must propagate checked supply advancement for the template supply-digest comparison, then fail closed on every block commitment-admission error before replay refinement, PoW verification, artifact validation, or atomic commit.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
@@ -6503,7 +6536,8 @@
           "path": "node/src/native/mod.rs",
           "callee": "replay_chain_state",
           "required_callers": [
-            "reorganize_chain_to_best_locked"
+            "reorganize_chain_to_best_locked",
+            "ensure_ciphertext_archive_index"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
@@ -6513,6 +6547,33 @@
                 "plan_canonical_index_rebuild",
                 "commit_reorg_state_atomically",
                 "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "ensure_ciphertext_archive_index",
+              "callee_must_precede": [
+                "validate_loaded_state_matches_replay",
+                "plan_canonical_index_rebuild",
+                "commit_canonical_index_repair_atomically"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_loaded_state_matches_replay",
+          "required_callers": [
+            "ensure_ciphertext_archive_index"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ensure_ciphertext_archive_index",
+              "callee_must_precede": [
+                "plan_canonical_index_rebuild",
+                "commit_canonical_index_repair_atomically"
               ],
               "must_dominate_successors": true
             }

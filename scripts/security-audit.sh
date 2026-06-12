@@ -4,13 +4,15 @@
 # PQ Security Audit Script - Phase 15.1.1
 # Scans the codebase for forbidden classical cryptographic primitives.
 #
-# This script ensures the codebase contains ZERO elliptic curve, pairing,
-# or Groth16 implementations, as mandated by the PQ-ONLY security policy.
+# This script ensures the codebase contains ZERO elliptic curve, RSA, pairing,
+# Groth16/PLONK/Halo2, or trusted-setup implementations, as mandated by the
+# PQ-ONLY security policy.
 #
 # Usage:
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
+#   ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -30,8 +32,17 @@ NC='\033[0m' # No Color
 # Parse arguments
 QUICK=false
 FIX=false
-for arg in "$@"; do
-    case $arg in
+REQUIRE_BINARY=false
+NODE_BIN=""
+
+usage() {
+    cat <<'USAGE'
+usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--node-bin PATH]
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
         --quick)
             QUICK=true
             shift
@@ -40,8 +51,43 @@ for arg in "$@"; do
             FIX=true
             shift
             ;;
+        --require-binary)
+            REQUIRE_BINARY=true
+            shift
+            ;;
+        --node-bin)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage >&2
+                exit 2
+            fi
+            NODE_BIN="$2"
+            shift 2
+            ;;
+        --node-bin=*)
+            NODE_BIN="${1#*=}"
+            if [ -z "$NODE_BIN" ]; then
+                usage >&2
+                exit 2
+            fi
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
     esac
 done
+
+if [ -z "$NODE_BIN" ]; then
+    NODE_BIN="$PROJECT_ROOT/target/release/hegemon-node"
+elif [[ "$NODE_BIN" != /* ]]; then
+    NODE_BIN="$PROJECT_ROOT/$NODE_BIN"
+fi
 
 cd "$PROJECT_ROOT"
 
@@ -50,7 +96,7 @@ echo "   PQ Security Audit: Hegemon v0.1.0"
 echo "========================================"
 echo ""
 echo "Scanning for forbidden classical cryptographic primitives..."
-echo "Target: ZERO ECC, ZERO pairings, ZERO Groth16"
+echo "Target: ZERO ECC, ZERO RSA, ZERO pairings, ZERO trusted-setup SNARKs"
 echo ""
 
 VIOLATIONS=0
@@ -149,6 +195,7 @@ check_pattern() {
 
 # Check all forbidden patterns
 check_pattern "groth16" "Pairing-based SNARK (BLS12-381), quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])rsa([^[:alnum:]_]|$)" "RSA signature/encryption, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ed25519" "Elliptic curve signature (Curve25519), Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "x25519" "Elliptic curve ECDH (Curve25519), Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ecdh" "Elliptic curve Diffie-Hellman, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
@@ -167,6 +214,9 @@ check_pattern "dalek" "Curve25519 library, quantum-vulnerable" || VIOLATIONS=$((
 check_pattern "ristretto" "Curve25519 variant, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "halo2" "ECC-based zkSNARK, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)" "Polynomial commitment SNARK (often ECC), check dependencies" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "trusted[[:space:]_-]*setup" "Trusted-setup proof system artifact, not PQ-clean release policy" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "powers[[:space:]_-]*of[[:space:]_-]*tau" "Trusted-setup ceremony artifact, not PQ-clean release policy" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" "Pairing-based polynomial commitment, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 
 echo ""
 
@@ -183,7 +233,7 @@ if [ "$QUICK" = false ]; then
         WARNINGS=$((WARNINGS + 1))
     else
         # ECC crates that indicate quantum-vulnerable dependencies
-        ECC_CRATES="curve25519-dalek ed25519-dalek x25519-dalek k256 p256 secp256k1 ark-ec ark-bls12-381 ark-bn254 bellman halo2_proofs halo2_gadgets pasta_curves"
+        ECC_CRATES="curve25519-dalek ed25519-dalek x25519-dalek k256 p256 secp256k1 rsa ark-ec ark-bls12-381 ark-bn254 ark-poly-commit bellman groth16 halo2_proofs halo2_gadgets pasta_curves plonk kzg"
         
         for crate in $ECC_CRATES; do
             echo -n "Checking for '$crate' in Cargo.lock... "
@@ -208,27 +258,38 @@ fi
 echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
-NODE_BIN="$PROJECT_ROOT/target/release/hegemon-node"
 if [ -f "$NODE_BIN" ]; then
     echo "Checking: $NODE_BIN"
-    symbol_matches=$(
-        strings "$NODE_BIN" 2>/dev/null \
-            | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub" \
-            || true
-        strings "$NODE_BIN" 2>/dev/null \
-            | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)" \
-            || true
-    )
-    if [ -n "$symbol_matches" ]; then
-        echo -e "${RED}❌ FOUND${NC}"
-        echo "$symbol_matches" | head -10 | sed 's/^/    /'
+    if ! command -v strings >/dev/null 2>&1; then
+        echo -e "${RED}❌ CANNOT SCAN${NC}"
+        echo "  Required tool not found: strings"
         VIOLATIONS=$((VIOLATIONS + 1))
     else
-        echo -e "${GREEN}✅ No forbidden ECC symbols${NC}"
+        symbol_matches=$(
+            strings "$NODE_BIN" 2>/dev/null \
+                | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|groth16|halo2|trusted[[:space:]_-]*setup|powers[[:space:]_-]*of[[:space:]_-]*tau" \
+                || true
+            strings "$NODE_BIN" 2>/dev/null \
+                | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)|(^|[^[:alnum:]_])rsa([^[:alnum:]_]|$)|(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)|(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" \
+                || true
+        )
+        if [ -n "$symbol_matches" ]; then
+            echo -e "${RED}❌ FOUND${NC}"
+            echo "$symbol_matches" | head -10 | sed 's/^/    /'
+            VIOLATIONS=$((VIOLATIONS + 1))
+        else
+            echo -e "${GREEN}✅ No forbidden ECC symbols${NC}"
+        fi
     fi
 else
-    echo -e "${YELLOW}⚠️  WARNING: release node binary not found; run 'make node' for binary scan${NC}"
-    WARNINGS=$((WARNINGS + 1))
+    if [ "$REQUIRE_BINARY" = true ]; then
+        echo -e "${RED}❌ FOUND${NC}"
+        echo "  Required release node binary not found: $NODE_BIN"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    else
+        echo -e "${YELLOW}⚠️  WARNING: release node binary not found; run 'make node' for binary scan${NC}"
+        WARNINGS=$((WARNINGS + 1))
+    fi
 fi
 
 echo ""
