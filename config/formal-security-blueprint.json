@@ -1228,6 +1228,14 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "verify_native_tx_leaf_artifact_record",
+          "required_callers": [
+            "NativeTxLeafVerifier::verify_tx_artifact"
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
@@ -1344,7 +1352,8 @@
           "callee": "evaluate_proven_batch_binding",
           "required_callers": [
             "validate_proven_batch_binding"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "consensus/src/proof.rs",

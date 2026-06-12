@@ -2060,6 +2060,10 @@ fn call_satisfies_result_obligation(
 }
 
 fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
+    call_result_has_question_propagation(source, call) || call_result_is_tail_returned(source, call)
+}
+
+fn call_result_has_question_propagation(source: &str, call: &RustCallSite) -> bool {
     let bytes = source.as_bytes();
     let mut index = call.close_paren + 1;
     let mut paren_depth = 0usize;
@@ -2082,6 +2086,105 @@ fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
         index += 1;
     }
     false
+}
+
+fn call_result_is_tail_returned(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    if context.block_path.len() != 1 {
+        return false;
+    }
+    let expression_start = rust_call_expression_start(source, call.start);
+    if !source[context.current_statement_start()..expression_start]
+        .trim()
+        .is_empty()
+    {
+        return false;
+    }
+    let Some(expression_end) = rust_tail_result_expression_end(source, call) else {
+        return false;
+    };
+    let expression_end = skip_ascii_whitespace(source, expression_end);
+    let Some(block_start) = context.block_path.last().copied() else {
+        return false;
+    };
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    expression_end == block_end
+}
+
+fn rust_call_expression_start(source: &str, call_start: usize) -> usize {
+    let mut cursor = call_start;
+    loop {
+        let separator_end = skip_ascii_whitespace_back(source, cursor);
+        if separator_end >= 2 && &source[separator_end - 2..separator_end] == "::" {
+            let Some(segment_start) = rust_identifier_start_before(source, separator_end - 2)
+            else {
+                break;
+            };
+            cursor = segment_start;
+            continue;
+        }
+        if separator_end >= 1 && source.as_bytes().get(separator_end - 1) == Some(&b'.') {
+            let receiver_end = skip_ascii_whitespace_back(source, separator_end - 1);
+            let Some(receiver_start) = rust_identifier_start_before(source, receiver_end) else {
+                break;
+            };
+            cursor = receiver_start;
+            continue;
+        }
+        break;
+    }
+    cursor
+}
+
+fn rust_identifier_start_before(source: &str, end: usize) -> Option<usize> {
+    let end = skip_ascii_whitespace_back(source, end);
+    if end == 0 {
+        return None;
+    }
+    let bytes = source.as_bytes();
+    let mut start = end;
+    while start > 0
+        && bytes
+            .get(start - 1)
+            .is_some_and(|byte| is_rust_identifier_byte(*byte))
+    {
+        start -= 1;
+    }
+    if start == end {
+        return None;
+    }
+    let first = *bytes.get(start)?;
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some(start)
+}
+
+fn rust_tail_result_expression_end(source: &str, call: &RustCallSite) -> Option<usize> {
+    let mut cursor = call.close_paren + 1;
+    loop {
+        let method_dot = skip_ascii_whitespace(source, cursor);
+        if source.as_bytes().get(method_dot) != Some(&b'.') {
+            return Some(cursor);
+        }
+        let method_start = skip_ascii_whitespace(source, method_dot + 1);
+        let Some(method_end) = rust_tail_result_method_end(source, method_start) else {
+            return Some(cursor);
+        };
+        let paren_start = skip_ascii_whitespace(source, method_end);
+        if source.as_bytes().get(paren_start) != Some(&b'(') {
+            return None;
+        }
+        let paren_end = match_rust_paren(source, paren_start).ok()?;
+        cursor = paren_end + 1;
+    }
+}
+
+fn rust_tail_result_method_end(source: &str, method_start: usize) -> Option<usize> {
+    rust_token_at(source, "map_err", method_start)
+        .or_else(|| rust_token_at(source, "map", method_start))
 }
 
 fn call_result_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
@@ -3168,6 +3271,97 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_tail_returned_result_implementation_call() {
+        let root = test_root("tail-returned-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 verified_helper()\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("tail-returned result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_tail_map_err_result_implementation_call() {
+        let root = test_root("tail-map-err-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn import_mined_block() {\n\
+                 verified_helper().map_err(convert)\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("tail map_err result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_tail_map_result_implementation_call() {
+        let root = test_root("tail-map-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 verified_helper().map(|record| record.binding)\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("tail map result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
     fn blueprint_rejects_ignored_fallible_implementation_call() {
         let root = test_root("ignored-fallible-implementation-call");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -3177,6 +3371,106 @@ mod tests {
             "src/native.rs",
             "fn verified_helper() {}\n\
              fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_tail_result_assigned_to_underscore() {
+        let root = test_root("tail-result-assigned-to-underscore");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn import_mined_block() {\n\
+                 let _ = verified_helper().map_err(convert);\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_tail_result_chain_with_semicolon() {
+        let root = test_root("tail-result-chain-with-semicolon");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn import_mined_block() {\n\
+                 verified_helper().map_err(convert);\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_nested_tail_result_before_later_work() {
+        let root = test_root("nested-tail-result-before-later-work");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn mutate() {}\n\
+             fn import_mined_block() {\n\
+                 {\n\
+                     verified_helper().map_err(convert)\n\
+                 };\n\
+                 mutate();\n\
+             }\n",
         );
         let claims_path = root.join("claims.json");
         let blueprint_path = root.join("blueprint.json");
