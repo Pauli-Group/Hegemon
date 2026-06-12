@@ -4375,8 +4375,7 @@
           "callee": "evaluate_native_action_stream_effect",
           "required_callers": [
             "evaluate_native_block_replay_refinement_with_trace",
-            "plan_action_effects_for_memory",
-            "plan_pending_action_effects",
+            "plan_materialized_action_effects",
             "plan_canonical_index_rebuild"
           ],
           "result_obligation": "must_check_result_fail_closed",
@@ -4393,10 +4392,36 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "plan_action_effects_for_memory",
+          "callee": "materialize_native_action_payloads",
+          "required_callers": [
+            "evaluate_native_block_replay_refinement_for_actions",
+            "plan_materialized_action_effects"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "evaluate_native_block_replay_refinement_for_actions",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "plan_materialized_action_effects",
+              "callee_must_precede": [
+                "evaluate_native_action_stream_effect"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_materialized_action_effects",
           "required_callers": [
             "preview_pending_roots",
-            "apply_actions_to_memory"
+            "apply_actions_to_memory",
+            "plan_pending_action_effects"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
@@ -6027,7 +6052,7 @@
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean block replay-refinement transition, native replay/accounting acceptance implies the ordered action-stream effect table accepted, checked native supply advancement produced the claimed supply digest, and every block commitment-admission precondition holds. The traced Lean transition has the same result as the untraced transition, and accepted replay has the canonical stage trace action-stream, supply, block-commitment, accepted. In particular, an accepted multi-action replay summary cannot carry a counterfeit state-root predicate or claimed supply under the modeled production-derived predicates.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over ordered action-stream planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `traced_result_matches_untraced` proves that the traced evaluator used for conformance has the same result as the executable transition, and `accepted_trace_is_canonical` pins the accepted-stage order. `valid_two_action_replay_accepts`, `duplicate_nullifier_replay_rejects`, and `cross_action_bridge_replay_duplicate_rejects` pin representative multi-action replay behavior. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against the `node/src/native/mod.rs` production helper used by mined-block import, announced-block import, and canonical replay; that helper composes the production ordered stream helper, block-commitment helper, and checked native supply advancement over height, fee total, and coinbase presence while exposing the production stage trace for differential checking.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockReplayRefinement.accepts_iff_block_replay_preconditions` proves the composed executable predicate over ordered action-stream planning, native supply advancement, and block commitment admission. `accepted_claims_expected_supply`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, and `accepted_forbids_counterfeit_state_root` extract the facts needed by the no-counterfeiting boundary. `traced_result_matches_untraced` proves that the traced evaluator used for conformance has the same result as the executable transition, and `accepted_trace_is_canonical` pins the accepted-stage order. `valid_two_action_replay_accepts`, `duplicate_nullifier_replay_rejects`, and `cross_action_bridge_replay_duplicate_rejects` pin representative multi-action replay behavior. `gen_block_replay_refinement_vectors` emits Lean-derived examples checked against the `node/src/native/mod.rs` production helper used by mined-block import, announced-block import, and canonical replay; that helper now materializes inline/sidecar ciphertext bytes before constructing the action-stream steps, passes materialized ciphertext counts to the production ordered stream helper, and composes block-commitment plus checked native supply advancement over height, fee total, and coinbase presence while exposing the production stage trace for differential checking.",
       "depends_on": [
         "native.action-state-effect-planning",
         "native.action-stream-effect-planning",
@@ -6152,6 +6177,11 @@
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         },
         {
+          "id": "native-replay-materialized-ciphertext-regression",
+          "description": "Native preview, memory replay, and block replay-refinement must reject sidecar actions whose ciphertext payloads are not materialized from canonical DA storage instead of self-fulfilling ciphertext counts from commitments.",
+          "gate": "cargo test -p hegemon-node materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "announced-block-replay-precedes-payload-regression",
           "description": "Announced-block import must reject a forged body commitment through the replay-refinement gate before malformed action payload validation can mask the no-counterfeiting failure.",
           "gate": "cargo test -p hegemon-node announced_block_replay_commitment_mismatch_precedes_payload_validation --lib --no-default-features"
@@ -6162,7 +6192,7 @@
           "gate": "cargo test -p hegemon-node nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, materialized inline/sidecar ciphertext counts, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

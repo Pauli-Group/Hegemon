@@ -1116,6 +1116,12 @@ struct NativePlannedActionEffect {
 }
 
 #[derive(Clone, Debug)]
+struct NativeMaterializedActionPayload {
+    ciphertexts: Vec<Vec<u8>>,
+    replay_key: Option<[u8; 48]>,
+}
+
+#[derive(Clone, Debug)]
 struct NativeCanonicalIndexPlan {
     commitment_entries: Vec<(u64, [u8; 48])>,
     nullifier_entries: Vec<[u8; 48]>,
@@ -1765,7 +1771,7 @@ impl NativeNode {
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
         let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
-            match preview_pending_roots(&state, &pending_actions) {
+            match preview_pending_roots(&self.da_ciphertext_tree, &state, &pending_actions) {
                 Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
                     pending_actions,
                     state_root,
@@ -1864,7 +1870,7 @@ impl NativeNode {
             select_mineable_actions(&state)
         };
         let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
-            match preview_pending_roots(&state, &actions) {
+            match preview_pending_roots(&self.da_ciphertext_tree, &state, &actions) {
                 Ok(roots) => roots,
                 Err(err) => {
                     debug!(error = %err, "native mined work no longer matches pending actions");
@@ -1908,6 +1914,7 @@ impl NativeNode {
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, work.height)?;
         evaluate_native_block_replay_refinement_for_actions(
             "native mined block replay refinement failed",
+            &self.da_ciphertext_tree,
             &state,
             &actions,
             NativeBlockReplayRefinementInput {
@@ -2010,7 +2017,7 @@ impl NativeNode {
         };
         let actions = decode_block_actions(&meta)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
-            preview_pending_roots(&parent_state, &actions)?;
+            preview_pending_roots(&self.da_ciphertext_tree, &parent_state, &actions)?;
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
         let message_root = bridge_message_root(&bridge_messages);
@@ -2019,6 +2026,7 @@ impl NativeNode {
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
+            &self.da_ciphertext_tree,
             &parent_state,
             &actions,
             NativeBlockReplayRefinementInput {
@@ -2196,7 +2204,7 @@ impl NativeNode {
             let actions = decode_block_actions(&meta)?;
             validate_block_actions_locked(&state, &actions)?;
             let (state_root, nullifier_root, extrinsics_root, tx_count) =
-                preview_pending_roots(&state, &actions)?;
+                preview_pending_roots(&self.da_ciphertext_tree, &state, &actions)?;
             let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
             let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
             let message_root = bridge_message_root(&bridge_messages);
@@ -2208,6 +2216,7 @@ impl NativeNode {
                 native_block_replay_supply_parts(&actions, meta.height)?;
             evaluate_native_block_replay_refinement_for_actions(
                 "native replay refinement failed",
+                &self.da_ciphertext_tree,
                 &state,
                 &actions,
                 NativeBlockReplayRefinementInput {
@@ -2233,7 +2242,7 @@ impl NativeNode {
             if !actions.is_empty() {
                 verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
             }
-            apply_actions_to_memory(&mut state, &actions)?;
+            apply_actions_to_memory(&self.da_ciphertext_tree, &mut state, &actions)?;
             state.best = meta;
         }
         Ok(state)
@@ -7793,14 +7802,12 @@ fn native_block_replay_supply_parts(actions: &[PendingAction], height: u64) -> R
 
 fn evaluate_native_block_replay_refinement_for_actions(
     context: &'static str,
+    da_ciphertext_tree: &sled::Tree,
     state: &NativeState,
     actions: &[PendingAction],
     input: NativeBlockReplayRefinementInput,
 ) -> Result<NativeBlockReplayRefinementSummary> {
-    let replay_keys = actions
-        .iter()
-        .map(bridge_inbound_replay_key_from_action)
-        .collect::<Result<Vec<_>>>()?;
+    let materialized = materialize_native_action_payloads(da_ciphertext_tree, actions)?;
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
@@ -7808,12 +7815,12 @@ fn evaluate_native_block_replay_refinement_for_actions(
         input,
         actions
             .iter()
-            .zip(replay_keys.iter())
-            .map(|(action, replay_key)| NativeActionStreamStep {
+            .zip(materialized.iter())
+            .map(|(action, payload)| NativeActionStreamStep {
                 commitment_count: action.commitments.len(),
-                ciphertext_count: action.commitments.len(),
+                ciphertext_count: payload.ciphertexts.len(),
                 nullifiers: action.nullifiers.as_slice(),
-                replay_key: *replay_key,
+                replay_key: payload.replay_key,
             }),
         &mut nullifier_state,
         &mut bridge_replay_state,
@@ -7954,28 +7961,41 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
     Ok(())
 }
 
-fn plan_action_effects_for_memory(
+fn materialize_native_action_payloads(
+    da_ciphertext_tree: &sled::Tree,
+    actions: &[PendingAction],
+) -> Result<Vec<NativeMaterializedActionPayload>> {
+    actions
+        .iter()
+        .map(|action| {
+            Ok(NativeMaterializedActionPayload {
+                ciphertexts: canonical_ciphertexts_for_action(da_ciphertext_tree, action)?,
+                replay_key: bridge_inbound_replay_key_from_action(action)?,
+            })
+        })
+        .collect()
+}
+
+fn plan_materialized_action_effects(
+    da_ciphertext_tree: &sled::Tree,
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<Vec<NativePlannedActionEffect>> {
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let replay_keys = actions
-        .iter()
-        .map(bridge_inbound_replay_key_from_action)
-        .collect::<Result<Vec<_>>>()?;
+    let materialized = materialize_native_action_payloads(da_ciphertext_tree, actions)?;
 
     let stream = evaluate_native_action_stream_effect(
         state.commitment_tree.leaf_count(),
         actions
             .iter()
-            .zip(replay_keys.iter())
-            .map(|(action, replay_key)| NativeActionStreamStep {
+            .zip(materialized.iter())
+            .map(|(action, payload)| NativeActionStreamStep {
                 commitment_count: action.commitments.len(),
-                ciphertext_count: action.commitments.len(),
+                ciphertext_count: payload.ciphertexts.len(),
                 nullifiers: action.nullifiers.as_slice(),
-                replay_key: *replay_key,
+                replay_key: payload.replay_key,
             }),
         &mut nullifier_state,
         &mut bridge_replay_state,
@@ -7985,17 +8005,21 @@ fn plan_action_effects_for_memory(
     Ok(stream
         .planned_starts
         .into_iter()
-        .zip(replay_keys)
-        .map(|(commitment_start, replay_key)| NativePlannedActionEffect {
+        .zip(materialized)
+        .map(|(commitment_start, payload)| NativePlannedActionEffect {
             commitment_start,
-            ciphertexts: Vec::new(),
-            replay_key,
+            ciphertexts: payload.ciphertexts,
+            replay_key: payload.replay_key,
         })
         .collect())
 }
 
-fn apply_actions_to_memory(state: &mut NativeState, actions: &[PendingAction]) -> Result<()> {
-    let planned = plan_action_effects_for_memory(state, actions)?;
+fn apply_actions_to_memory(
+    da_ciphertext_tree: &sled::Tree,
+    state: &mut NativeState,
+    actions: &[PendingAction],
+) -> Result<()> {
+    let planned = plan_materialized_action_effects(da_ciphertext_tree, state, actions)?;
     apply_planned_actions_to_memory(state, actions, &planned)
 }
 
@@ -8133,11 +8157,40 @@ fn canonical_ciphertexts_for_action(
         (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => action
             .ciphertext_hashes
             .iter()
-            .map(|hash| {
-                da_ciphertext_tree
+            .enumerate()
+            .map(|(idx, hash)| {
+                let bytes = da_ciphertext_tree
                     .get(hash.as_slice())?
                     .map(|bytes| bytes.to_vec())
-                    .ok_or_else(|| anyhow!("missing canonical DA ciphertext {}", hex48(hash)))
+                    .ok_or_else(|| anyhow!("missing canonical DA ciphertext {}", hex48(hash)))?;
+                if bytes.len() > MAX_CIPHERTEXT_BYTES {
+                    return Err(anyhow!(
+                        "canonical DA ciphertext {} exceeds limit {}",
+                        hex48(hash),
+                        MAX_CIPHERTEXT_BYTES
+                    ));
+                }
+                let expected_size = action
+                    .ciphertext_sizes
+                    .get(idx)
+                    .copied()
+                    .ok_or_else(|| anyhow!("missing canonical DA ciphertext size"))?;
+                if bytes.len() != expected_size as usize {
+                    return Err(anyhow!(
+                        "canonical DA ciphertext size mismatch: expected {} observed {}",
+                        expected_size,
+                        bytes.len()
+                    ));
+                }
+                let observed_hash = ciphertext_hash_bytes(&bytes);
+                if observed_hash != *hash {
+                    return Err(anyhow!(
+                        "canonical DA ciphertext hash mismatch: expected {} observed {}",
+                        hex48(hash),
+                        hex48(&observed_hash)
+                    ));
+                }
+                Ok(bytes)
             })
             .collect(),
         (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
@@ -8156,48 +8209,7 @@ fn plan_pending_action_effects(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<Vec<NativePlannedActionEffect>> {
-    let mut bridge_replay_state =
-        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
-    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let prepared = actions
-        .iter()
-        .map(|action| {
-            let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, action)?;
-            let replay_key = bridge_inbound_replay_key_from_action(action)?;
-            Ok((ciphertexts, replay_key))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    let stream = evaluate_native_action_stream_effect(
-        state.commitment_tree.leaf_count(),
-        actions
-            .iter()
-            .zip(prepared.iter())
-            .map(
-                |(action, (ciphertexts, replay_key))| NativeActionStreamStep {
-                    commitment_count: action.commitments.len(),
-                    ciphertext_count: ciphertexts.len(),
-                    nullifiers: action.nullifiers.as_slice(),
-                    replay_key: *replay_key,
-                },
-            ),
-        &mut nullifier_state,
-        &mut bridge_replay_state,
-    )
-    .map_err(native_action_state_effect_error)?;
-
-    Ok(stream
-        .planned_starts
-        .into_iter()
-        .zip(prepared)
-        .map(
-            |(commitment_start, (ciphertexts, replay_key))| NativePlannedActionEffect {
-                commitment_start,
-                ciphertexts,
-                replay_key,
-            },
-        )
-        .collect())
+    plan_materialized_action_effects(da_ciphertext_tree, state, actions)
 }
 
 fn action_hashes_from_chain(chain: &[NativeBlockMeta]) -> Result<BTreeSet<[u8; 32]>> {
@@ -8846,6 +8858,7 @@ fn nullifier_root_from_set(nullifiers: &BTreeSet<[u8; 48]>) -> [u8; 48] {
 }
 
 fn preview_pending_roots(
+    da_ciphertext_tree: &sled::Tree,
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
@@ -8868,7 +8881,7 @@ fn preview_pending_roots(
         }
     }
 
-    let planned = plan_action_effects_for_memory(state, actions)?;
+    let planned = plan_materialized_action_effects(da_ciphertext_tree, state, actions)?;
     let mut tree = state.commitment_tree.clone();
     let mut nullifiers = state.nullifiers.clone();
     for (action, effect) in actions.iter().zip(planned.iter()) {
@@ -11367,7 +11380,7 @@ mod tests {
         };
         let err_text = err.to_string();
         assert!(
-            err_text.contains("missing DA ciphertext"),
+            err_text.contains("missing canonical DA ciphertext"),
             "unexpected reorg error: {err_text}"
         );
         assert_eq!(node.best_meta().hash, old_best);
@@ -17027,8 +17040,9 @@ mod tests {
         let before_leaf_count = state.commitment_tree.leaf_count();
         let before_root = state.commitment_tree.root();
         let before_nullifiers = state.nullifiers.clone();
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
 
-        let err = apply_actions_to_memory(&mut state, &[first, second])
+        let err = apply_actions_to_memory(&da_ciphertext_tree, &mut state, &[first, second])
             .expect_err("duplicate nullifier must reject before memory mutation");
         assert!(err.to_string().contains("duplicate_nullifier"));
         assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
@@ -17046,10 +17060,93 @@ mod tests {
             first.tx_hash, second.tx_hash,
             "test actions should differ while sharing the replay key"
         );
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
 
-        let err = preview_pending_roots(&state, &[first, second])
+        let err = preview_pending_roots(&da_ciphertext_tree, &state, &[first, second])
             .expect_err("duplicate bridge replay must reject before root preview");
         assert!(err.to_string().contains("bridge_replay_duplicate"));
+    }
+
+    #[test]
+    fn action_state_effect_preview_requires_materialized_sidecar_ciphertext() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [54u8; 48], [55u8; 48], 0);
+        let candidate = test_candidate_artifact_action(1, 56);
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+
+        let err = preview_pending_roots(&da_ciphertext_tree, &state, &[transfer, candidate])
+            .expect_err("sidecar preview must materialize DA ciphertexts");
+
+        assert!(
+            err.to_string().contains("missing canonical DA ciphertext"),
+            "unexpected preview error: {err}"
+        );
+    }
+
+    #[test]
+    fn action_state_effect_memory_replay_requires_materialized_sidecar_ciphertext() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [57u8; 48], [58u8; 48], 0);
+        let candidate = test_candidate_artifact_action(1, 59);
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let before_nullifiers = state.nullifiers.clone();
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+
+        let err = apply_actions_to_memory(&da_ciphertext_tree, &mut state, &[transfer, candidate])
+            .expect_err("sidecar memory replay must materialize DA ciphertexts");
+
+        assert!(
+            err.to_string().contains("missing canonical DA ciphertext"),
+            "unexpected memory replay error: {err}"
+        );
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+        assert_eq!(state.nullifiers, before_nullifiers);
+    }
+
+    #[test]
+    fn block_replay_refinement_rejects_unmaterialized_sidecar_ciphertext() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [60u8; 48], [61u8; 48], 0);
+        let candidate = test_candidate_artifact_action(1, 62);
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+
+        let err = evaluate_native_block_replay_refinement_for_actions(
+            "test replay",
+            &da_ciphertext_tree,
+            &state,
+            &[transfer, candidate],
+            NativeBlockReplayRefinementInput {
+                leaf_start: state.commitment_tree.leaf_count(),
+                parent_supply: 0,
+                height: 1,
+                fee_total: 0,
+                has_coinbase: false,
+                claimed_supply: 0,
+                tx_count_matches: true,
+                state_root_matches: true,
+                kernel_root_matches: true,
+                nullifier_root_matches: true,
+                extrinsics_root_matches: true,
+                message_root_matches: true,
+                message_count_matches: true,
+                header_mmr_root_matches: true,
+                header_mmr_len_matches: true,
+            },
+        )
+        .expect_err("replay refinement must not self-fulfill sidecar ciphertext count");
+
+        assert!(
+            err.to_string().contains("missing canonical DA ciphertext"),
+            "unexpected replay refinement error: {err}"
+        );
     }
 
     #[test]
@@ -17475,6 +17572,7 @@ mod tests {
         let hash = transfer.ciphertext_hashes[0];
         let size = transfer.ciphertext_sizes[0];
         let candidate = test_candidate_artifact_action(1, 32);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &transfer);
         {
             let mut state = node.state.write();
             state.staged_ciphertexts.insert(hex48(&hash), size);
@@ -17727,9 +17825,12 @@ mod tests {
         let parent = node.best_meta();
         let malformed = malformed_outbound_bridge_action(b"bad announced bridge payload");
         let parent_state = test_state(parent.clone());
-        let (state_root, nullifier_root, extrinsics_root, tx_count) =
-            preview_pending_roots(&parent_state, std::slice::from_ref(&malformed))
-                .expect("preview malformed action roots");
+        let (state_root, nullifier_root, extrinsics_root, tx_count) = preview_pending_roots(
+            &node.da_ciphertext_tree,
+            &parent_state,
+            std::slice::from_ref(&malformed),
+        )
+        .expect("preview malformed action roots");
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let header_history = node
             .header_hashes_to_hash(parent.hash)
@@ -18119,9 +18220,12 @@ mod tests {
         let pow_bits = 0x207f_ffff;
         let malformed = malformed_outbound_bridge_action(b"corrupt newer bridge payload");
         let parent_state = node.state.read().clone();
-        let (state_root, nullifier_root, extrinsics_root, tx_count) =
-            preview_pending_roots(&parent_state, std::slice::from_ref(&malformed))
-                .expect("preview malformed action roots");
+        let (state_root, nullifier_root, extrinsics_root, tx_count) = preview_pending_roots(
+            &node.da_ciphertext_tree,
+            &parent_state,
+            std::slice::from_ref(&malformed),
+        )
+        .expect("preview malformed action roots");
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let header_history = node
             .header_hashes_to_hash(older_bridge.hash)
@@ -18528,8 +18632,13 @@ mod tests {
         actions: Vec<PendingAction>,
     ) -> NativeBlockMeta {
         let parent_state = test_state(parent.clone());
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+        }
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
-            preview_pending_roots(&parent_state, &actions).expect("preview action roots");
+            preview_pending_roots(&da_ciphertext_tree, &parent_state, &actions)
+                .expect("preview action roots");
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let bridge_messages =
             bridge_messages_from_actions(&actions, height).expect("bridge messages");
@@ -18656,19 +18765,56 @@ mod tests {
         }
     }
 
+    fn test_da_ciphertext_tree() -> (sled::Db, sled::Tree) {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db.open_tree("da_ciphertexts").expect("da ciphertext tree");
+        (db, tree)
+    }
+
+    fn test_transfer_encrypted_note() -> protocol_shielded_pool::types::EncryptedNote {
+        protocol_shielded_pool::types::EncryptedNote {
+            ciphertext: [3u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+            kem_ciphertext: vec![4u8; 32],
+        }
+    }
+
+    fn test_transfer_ciphertext_bytes() -> Vec<u8> {
+        let note = test_transfer_encrypted_note();
+        let mut note_bytes = Vec::new();
+        note_bytes.extend_from_slice(&note.ciphertext);
+        note_bytes.extend_from_slice(&note.kem_ciphertext);
+        note_bytes
+    }
+
+    fn insert_test_sidecar_ciphertext(tree: &sled::Tree, action: &PendingAction) {
+        if action.family_id != FAMILY_SHIELDED_POOL
+            || action.action_id != ACTION_SHIELDED_TRANSFER_SIDECAR
+        {
+            return;
+        }
+        let bytes = test_transfer_ciphertext_bytes();
+        let hash = ciphertext_hash_bytes(&bytes);
+        assert_eq!(
+            action.ciphertext_hashes.as_slice(),
+            [hash].as_slice(),
+            "test sidecar action must use the deterministic test ciphertext"
+        );
+        tree.insert(hash.as_slice(), bytes)
+            .expect("insert test sidecar ciphertext");
+        tree.flush().expect("flush test sidecar ciphertext");
+    }
+
     fn test_inline_transfer_action(
         anchor: [u8; 48],
         nullifier: [u8; 48],
         commitment: [u8; 48],
         fee: u64,
     ) -> PendingAction {
-        let note = protocol_shielded_pool::types::EncryptedNote {
-            ciphertext: [3u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
-            kem_ciphertext: vec![4u8; 32],
-        };
-        let mut note_bytes = Vec::new();
-        note_bytes.extend_from_slice(&note.ciphertext);
-        note_bytes.extend_from_slice(&note.kem_ciphertext);
+        let note = test_transfer_encrypted_note();
+        let note_bytes = test_transfer_ciphertext_bytes();
         let ciphertext_hash = ciphertext_hash_bytes(&note_bytes);
         let inputs = ShieldedTransferInputs {
             anchor,
