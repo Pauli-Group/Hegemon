@@ -310,6 +310,109 @@
       "scope_boundary": "This node proves and vector-checks public/serialized input field binding before verifier public-input construction only. It does not prove Poseidon2 or BLAKE3 implementation equivalence, transaction statement-hash preimage binding, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement. Statement-hash preimage binding is covered separately by formal.transaction-statement-hash-binding."
     },
     {
+      "id": "formal.transaction-proof-wrapper-admission",
+      "claim_id": "formal.transaction-proof-wrapper-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean transaction proof-wrapper admission predicate, accepted wrappers must pass exact/canonical byte admission, supported backend routing, proof/public-input presence, verifier-facing public-input validity, wrapper balance-slot agreement, and final verifier acceptance in that order.",
+      "informal_argument": "The Lean theorem `Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions` proves the executable predicate. Companion theorems pin valid acceptance, every rejection label, and the codec/backend/public-input/balance/verifier precedence. `gen_proof_wrapper_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_transaction_proof_wrapper_admission`. Production Plonky3 and default SmallWood wrapper verification call the shared admission helper after decoded-field admission and around verifier acceptance, while the tx-proof manifest production summarizer exact-decodes nested proofs, reconstructs verifier public inputs, and routes verifier rejection through the same admission helper.",
+      "depends_on": [
+        "formal.transaction-public-input-shape",
+        "formal.transaction-public-input-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/tx-proof-manifest/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "circuits/transaction/src/proof.rs",
+          "callee": "evaluate_transaction_proof_wrapper_admission",
+          "required_callers": [
+            "transaction_proof_wrapper_public_inputs_for_admission"
+          ],
+          "result_obligation": "must_check_result_fail_closed"
+        },
+        {
+          "path": "circuits/transaction/src/proof.rs",
+          "callee": "admit_transaction_proof_wrapper",
+          "required_callers": [
+            "verify_with_p3"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "circuits/transaction/src/smallwood_frontend.rs",
+          "callee": "admit_smallwood_transaction_proof_wrapper",
+          "required_callers": [
+            "verify_smallwood_candidate_transaction_proof"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "circuits/tx-proof-manifest/src/lib.rs",
+          "callee": "admit_manifest_transaction_proof_wrapper",
+          "required_callers": [
+            "summarize_entries"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "circuits/tx-proof-manifest/src/lib.rs",
+          "callee": "summarize_entries",
+          "required_callers": [
+            "build_tx_proof_manifest",
+            "verify_tx_proof_manifest"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/tx-proof-manifest/src/lib.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for proof-wrapper admission ordering. Scope is admission over decoded predicates and production Plonky3, SmallWood, and manifest verifier result propagation, not proof-system soundness or a proof of bincode internals."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-proof-wrapper-admission-theorem",
+          "description": "Removing or weakening the proof-wrapper admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-proof-wrapper-conformance",
+          "description": "Changing production proof-wrapper admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_proof_wrapper_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "tx-proof-manifest-wrapper-regressions",
+          "description": "The tx-proof manifest must reject nested transaction wrappers with trailing bytes, unsupported backend, missing proof bytes, missing serialized public inputs, invalid serialized public inputs, or balance-slot drift.",
+          "gate": "cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture"
+        },
+        {
+          "id": "formal-core-proof-wrapper-gate",
+          "description": "The release formal-core wrapper must generate proof-wrapper admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates and verifier results. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
+    },
+    {
       "id": "formal.transaction-statement-hash-binding",
       "claim_id": "formal.transaction-statement-hash-binding",
       "kind": "target_claim",
@@ -4827,8 +4930,8 @@
       "id": "native.block-artifact-binding-admission",
       "claim_id": "native.block-artifact-binding-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, version, fee, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions` and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers now called by native block artifact verification.",
+      "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, input/output flag counts, version, fee, balance-tag projection, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions` and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers called by native block artifact verification. Production now computes the tx-leaf/action input from decoded native artifact fields before building the tx validity artifact.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -4849,6 +4952,14 @@
         "scripts/check_lean_formal.sh"
       ],
       "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_tx_leaf_action_binding_admission",
+          "required_callers": [
+            "consensus_tx_and_artifact_from_action"
+          ],
+          "result_obligation": "must_check_result_fail_closed"
+        },
         {
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_candidate_artifact_binding_admission",
@@ -4918,7 +5029,7 @@
         },
         {
           "id": "native-block-artifact-binding-regressions",
-          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including fee mismatches before payload hashes, and candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches in the specified order.",
+          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including input/output count, fee, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and payload-hash mismatches in the specified order, plus candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches.",
           "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
         },
         {
@@ -4932,7 +5043,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, only. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-ordering",
@@ -7129,7 +7240,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
-        "notes": "Accepted as a narrow Lean/vector/release-regression implementation-equivalence slice for applying action-stream planned starts. Scope excludes row-value equivalence, raw action wire projection, cryptographic binding, and complete native-node equivalence."
+        "notes": "Accepted as a narrow Lean/vector/release-regression implementation-equivalence slice for applying action-stream planned starts. Row-value projection is covered separately by native.action-wire-replay-projection-admission; full raw SCALE grammar and complete native-node equivalence remain out of scope."
       },
       "falsification_cases": [
         {
@@ -7158,7 +7269,87 @@
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks planned-start application over already-decoded action commitment counts and planned starts. It hardens release behavior by replacing debug-only planned-start assertions with propagated errors. It does not prove SCALE decode equivalence, PendingAction field projection, ciphertext materialization row values, tx-leaf proof/artifact binding, commitment-tree hash security, sled transaction correctness, filesystem durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks planned-start application over already-decoded action commitment counts and planned starts. It hardens release behavior by replacing debug-only planned-start assertions with propagated errors. It does not prove SCALE decode equivalence, full PendingAction field projection, ciphertext materialization row values beyond the separate wire-replay projection gate, tx-leaf proof/artifact binding, commitment-tree hash security, sled transaction correctness, filesystem durability, or complete native-node equivalence."
+    },
+    {
+      "id": "native.action-wire-replay-projection-admission",
+      "claim_id": "native.action-wire-replay-projection-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native action wire-replay projection predicate, accepted decoded PendingAction streams must have one planned effect per action, matching ciphertext hash/size/planned ciphertext counts, matching materialized ciphertext hashes and sizes, and matching inbound bridge replay-key projection before replay rows are derived.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionWireReplayProjectionAdmission.accepts_iff_wire_replay_projection_preconditions` pins the executable predicate. Companion theorems cover valid mixed projection, empty projection, plan-length, ciphertext count/hash/size, replay-key rejection, and rejection precedence. `gen_action_wire_replay_projection_admission_vectors` emits Lean-derived examples checked against `evaluate_native_action_wire_replay_projection_admission`. Production calls `admit_native_action_wire_replay_projection` after ciphertext materialization and before materialized action planning returns, preview roots are derived, memory replay mutates state, or canonical-index rebuild emits canonical commitment, replay, ciphertext archive, or ciphertext index rows.",
+      "depends_on": [
+        "native.action-plan-application-admission",
+        "native.action-stream-effect-planning",
+        "native.block-action-hash-admission",
+        "native.bridge-action-payload-admission",
+        "native.transfer-action-payload-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionWireReplayProjectionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_wire_replay_projection_admission",
+          "required_callers": [
+            "admit_native_action_wire_replay_projection"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "admit_native_action_wire_replay_projection",
+          "required_callers": [
+            "plan_materialized_action_effects",
+            "apply_planned_actions_to_memory",
+            "preview_pending_roots",
+            "plan_canonical_index_rebuild"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionWireReplayProjectionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as a Lean/vector/release-regression implementation-equivalence slice for decoded action wire-to-replay row projection. Scope excludes raw SCALE grammar, hash-function security, bridge receipt soundness, and complete native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-wire-replay-projection-theorem",
+          "description": "Removing or weakening the wire replay projection theorem facts or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-wire-replay-projection-conformance",
+          "description": "Changing production wire replay projection admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_wire_replay_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-action-wire-replay-projection-regressions",
+          "description": "Native planned-action application must reject ciphertext hash projection drift or bridge replay-key projection drift before mutating commitment, ciphertext, or bridge-replay state.",
+          "gate": "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-action-wire-replay-projection-binding",
+          "description": "The blueprint gate must reject the slice if preview, memory application, materialized planning, or canonical-index rebuild stop propagating the wire-replay projection gate.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks decoded action wire-to-replay projection for ciphertext row hashes/sizes and inbound bridge replay-key equality before replay rows are derived. It does not prove SCALE decode equivalence, complete raw PendingAction field projection, BLAKE3 ciphertext-hash security or implementation equivalence, bridge replay-key hash security/equivalence, bridge receipt soundness, tx-leaf proof/artifact binding, sled transaction correctness, filesystem durability, or complete native-node equivalence."
     },
     {
       "id": "native.block-replay-refinement",
@@ -7170,6 +7361,7 @@
         "native.action-state-effect-planning",
         "native.action-stream-effect-planning",
         "native.action-plan-application-admission",
+        "native.action-wire-replay-projection-admission",
         "native.block-commitment-admission",
         "consensus.supply-digest-accounting",
         "native.coinbase-accounting-admission",

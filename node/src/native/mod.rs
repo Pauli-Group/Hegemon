@@ -1288,6 +1288,45 @@ impl NativeActionPlanApplicationAdmissionRejection {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct NativeActionWireReplayProjectionStep {
+    ciphertext_hash_count: usize,
+    ciphertext_size_count: usize,
+    planned_ciphertext_count: usize,
+    ciphertext_hashes_match: bool,
+    ciphertext_sizes_match: bool,
+    planned_replay_present: bool,
+    replay_key_matches: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativeActionWireReplayProjectionSummary {
+    projected_action_count: usize,
+    projected_ciphertext_row_count: usize,
+    projected_bridge_replay_row_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeActionWireReplayProjectionAdmissionRejection {
+    PlanLengthMismatch,
+    CiphertextCountMismatch,
+    CiphertextHashMismatch,
+    CiphertextSizeMismatch,
+    ReplayKeyMismatch,
+}
+
+impl NativeActionWireReplayProjectionAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PlanLengthMismatch => "plan_length_mismatch",
+            Self::CiphertextCountMismatch => "ciphertext_count_mismatch",
+            Self::CiphertextHashMismatch => "ciphertext_hash_mismatch",
+            Self::CiphertextSizeMismatch => "ciphertext_size_mismatch",
+            Self::ReplayKeyMismatch => "replay_key_mismatch",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeActionStateEffectRejection {
     CiphertextCountMismatch,
@@ -1462,8 +1501,15 @@ struct NativeTxLeafActionBindingAdmissionInput {
     nullifiers_match: bool,
     commitments_match: bool,
     ciphertext_hashes_match: bool,
+    input_count_matches: bool,
+    output_count_matches: bool,
     version_matches: bool,
     fee_matches: bool,
+    balance_tag_matches: bool,
+    receipt_statement_hash_matches: bool,
+    public_inputs_digest_matches: bool,
+    proof_digest_matches: bool,
+    proof_backend_matches: bool,
     ciphertext_payload_hashes_match: bool,
 }
 
@@ -1472,8 +1518,15 @@ enum NativeTxLeafActionBindingAdmissionRejection {
     NullifiersMismatch,
     CommitmentsMismatch,
     CiphertextHashesMismatch,
+    InputCountMismatch,
+    OutputCountMismatch,
     VersionMismatch,
     FeeMismatch,
+    BalanceTagMismatch,
+    ReceiptStatementHashMismatch,
+    PublicInputsDigestMismatch,
+    ProofDigestMismatch,
+    ProofBackendMismatch,
     CiphertextPayloadHashMismatch,
 }
 
@@ -1484,8 +1537,15 @@ impl NativeTxLeafActionBindingAdmissionRejection {
             Self::NullifiersMismatch => "nullifiers_mismatch",
             Self::CommitmentsMismatch => "commitments_mismatch",
             Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
+            Self::InputCountMismatch => "input_count_mismatch",
+            Self::OutputCountMismatch => "output_count_mismatch",
             Self::VersionMismatch => "version_mismatch",
             Self::FeeMismatch => "fee_mismatch",
+            Self::BalanceTagMismatch => "balance_tag_mismatch",
+            Self::ReceiptStatementHashMismatch => "receipt_statement_hash_mismatch",
+            Self::PublicInputsDigestMismatch => "public_inputs_digest_mismatch",
+            Self::ProofDigestMismatch => "proof_digest_mismatch",
+            Self::ProofBackendMismatch => "proof_backend_mismatch",
             Self::CiphertextPayloadHashMismatch => "ciphertext_payload_hash_mismatch",
         }
     }
@@ -6878,6 +6938,115 @@ fn admit_native_action_plan_application(
     .map_err(|rejection| native_action_plan_application_admission_error(context, rejection))
 }
 
+fn evaluate_native_action_wire_replay_projection_admission(
+    action_count: usize,
+    planned_count: usize,
+    steps: &[NativeActionWireReplayProjectionStep],
+) -> Result<
+    NativeActionWireReplayProjectionSummary,
+    NativeActionWireReplayProjectionAdmissionRejection,
+> {
+    if action_count != planned_count || action_count != steps.len() {
+        return Err(NativeActionWireReplayProjectionAdmissionRejection::PlanLengthMismatch);
+    }
+
+    let mut projected_ciphertext_row_count = 0usize;
+    let mut projected_bridge_replay_row_count = 0usize;
+    for step in steps {
+        if step.ciphertext_hash_count != step.ciphertext_size_count
+            || step.ciphertext_hash_count != step.planned_ciphertext_count
+        {
+            return Err(
+                NativeActionWireReplayProjectionAdmissionRejection::CiphertextCountMismatch,
+            );
+        }
+        if !step.ciphertext_hashes_match {
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextHashMismatch);
+        }
+        if !step.ciphertext_sizes_match {
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextSizeMismatch);
+        }
+        if !step.replay_key_matches {
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::ReplayKeyMismatch);
+        }
+        projected_ciphertext_row_count = projected_ciphertext_row_count
+            .checked_add(step.planned_ciphertext_count)
+            .ok_or(NativeActionWireReplayProjectionAdmissionRejection::CiphertextCountMismatch)?;
+        if step.planned_replay_present {
+            projected_bridge_replay_row_count = projected_bridge_replay_row_count
+                .checked_add(1)
+                .ok_or(NativeActionWireReplayProjectionAdmissionRejection::ReplayKeyMismatch)?;
+        }
+    }
+
+    Ok(NativeActionWireReplayProjectionSummary {
+        projected_action_count: steps.len(),
+        projected_ciphertext_row_count,
+        projected_bridge_replay_row_count,
+    })
+}
+
+fn native_action_wire_replay_projection_admission_error(
+    context: &'static str,
+    rejection: NativeActionWireReplayProjectionAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
+fn native_action_wire_replay_projection_step(
+    action: &PendingAction,
+    effect: &NativePlannedActionEffect,
+) -> Result<NativeActionWireReplayProjectionStep> {
+    let ciphertext_counts_match = action.ciphertext_hashes.len() == action.ciphertext_sizes.len()
+        && action.ciphertext_hashes.len() == effect.ciphertexts.len();
+    let ciphertext_hashes_match = ciphertext_counts_match
+        && effect
+            .ciphertexts
+            .iter()
+            .zip(action.ciphertext_hashes.iter())
+            .all(|(bytes, expected_hash)| ciphertext_hash_bytes(bytes) == *expected_hash);
+    let ciphertext_sizes_match = ciphertext_counts_match
+        && effect
+            .ciphertexts
+            .iter()
+            .zip(action.ciphertext_sizes.iter())
+            .all(|(bytes, expected_size)| bytes.len() == *expected_size as usize);
+    let expected_replay_key = bridge_inbound_replay_key_from_action(action)
+        .map_err(|err| anyhow!("decode native action replay key projection failed: {err}"))?;
+
+    Ok(NativeActionWireReplayProjectionStep {
+        ciphertext_hash_count: action.ciphertext_hashes.len(),
+        ciphertext_size_count: action.ciphertext_sizes.len(),
+        planned_ciphertext_count: effect.ciphertexts.len(),
+        ciphertext_hashes_match,
+        ciphertext_sizes_match,
+        planned_replay_present: effect.replay_key.is_some(),
+        replay_key_matches: effect.replay_key == expected_replay_key,
+    })
+}
+
+fn admit_native_action_wire_replay_projection(
+    context: &'static str,
+    actions: &[PendingAction],
+    planned: &[NativePlannedActionEffect],
+) -> Result<NativeActionWireReplayProjectionSummary> {
+    if actions.len() != planned.len() {
+        return Err(native_action_wire_replay_projection_admission_error(
+            context,
+            NativeActionWireReplayProjectionAdmissionRejection::PlanLengthMismatch,
+        ));
+    }
+    let steps = actions
+        .iter()
+        .zip(planned.iter())
+        .map(|(action, effect)| native_action_wire_replay_projection_step(action, effect))
+        .collect::<Result<Vec<_>>>()?;
+    evaluate_native_action_wire_replay_projection_admission(actions.len(), planned.len(), &steps)
+        .map_err(|rejection| {
+            native_action_wire_replay_projection_admission_error(context, rejection)
+        })
+}
+
 fn mempool_transfer_nullifier_admission_state(
     state: &NativeState,
     action: &PendingAction,
@@ -9543,7 +9712,7 @@ fn plan_materialized_action_effects(
         )
     })?;
 
-    Ok(stream
+    let planned = stream
         .planned_starts
         .into_iter()
         .zip(materialized)
@@ -9552,7 +9721,14 @@ fn plan_materialized_action_effects(
             ciphertexts: payload.ciphertexts,
             replay_key: payload.replay_key,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    admit_native_action_wire_replay_projection(
+        "native materialized action wire replay projection",
+        actions,
+        &planned,
+    )?;
+
+    Ok(planned)
 }
 
 fn apply_actions_to_memory(
@@ -9573,6 +9749,11 @@ fn apply_planned_actions_to_memory(
     admit_native_action_plan_application(
         "native memory action plan application",
         leaf_cursor,
+        actions,
+        planned,
+    )?;
+    admit_native_action_wire_replay_projection(
+        "native memory action wire replay projection",
         actions,
         planned,
     )?;
@@ -9672,10 +9853,31 @@ fn plan_canonical_index_rebuild(
         ciphertext_archive_entries: Vec::new(),
     };
 
-    for ((action, ciphertexts, replay_key), commitment_start) in planned_actions
-        .into_iter()
-        .zip(stream.planned_starts.into_iter())
+    let planned_effects = planned_actions
+        .iter()
+        .zip(stream.planned_starts.iter().copied())
+        .map(
+            |((_, ciphertexts, replay_key), commitment_start)| NativePlannedActionEffect {
+                commitment_start,
+                ciphertexts: ciphertexts.clone(),
+                replay_key: *replay_key,
+            },
+        )
+        .collect::<Vec<_>>();
+    let replay_projection_actions = planned_actions
+        .iter()
+        .map(|(action, _, _)| action.clone())
+        .collect::<Vec<_>>();
+    admit_native_action_wire_replay_projection(
+        "native canonical index rebuild wire replay projection",
+        &replay_projection_actions,
+        &planned_effects,
+    )?;
+
+    for ((action, ciphertexts, replay_key), effect) in
+        planned_actions.into_iter().zip(planned_effects.into_iter())
     {
+        let commitment_start = effect.commitment_start;
         for (offset, commitment) in action.commitments.iter().enumerate() {
             let offset =
                 u64::try_from(offset).map_err(|_| anyhow!("commitment rebuild offset overflow"))?;
@@ -9685,8 +9887,10 @@ fn plan_canonical_index_rebuild(
             plan.commitment_entries.push((index, *commitment));
         }
         for (offset, bytes) in ciphertexts.into_iter().enumerate() {
+            let offset =
+                u64::try_from(offset).map_err(|_| anyhow!("ciphertext archive offset overflow"))?;
             let index = commitment_start
-                .checked_add(offset as u64)
+                .checked_add(offset)
                 .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
             plan.ciphertext_archive_entries.push((index, bytes));
         }
@@ -9697,6 +9901,8 @@ fn plan_canonical_index_rebuild(
             plan.bridge_replay_entries.push(replay_key);
         }
         for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+            let idx_u64 =
+                u64::try_from(idx).map_err(|_| anyhow!("ciphertext index offset overflow"))?;
             let size = action
                 .ciphertext_sizes
                 .get(idx)
@@ -9705,7 +9911,7 @@ fn plan_canonical_index_rebuild(
             let mut value = Vec::with_capacity(32 + 4 + 8);
             value.extend_from_slice(&action.tx_hash);
             value.extend_from_slice(&size.to_le_bytes());
-            value.extend_from_slice(&(idx as u64).to_le_bytes());
+            value.extend_from_slice(&idx_u64.to_le_bytes());
             plan.ciphertext_index_entries.push((*hash, value));
         }
     }
@@ -9990,10 +10196,24 @@ fn evaluate_native_tx_leaf_action_binding_admission(
         Err(NativeTxLeafActionBindingAdmissionRejection::CommitmentsMismatch)
     } else if !input.ciphertext_hashes_match {
         Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch)
+    } else if !input.input_count_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::InputCountMismatch)
+    } else if !input.output_count_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::OutputCountMismatch)
     } else if !input.version_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::VersionMismatch)
     } else if !input.fee_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::FeeMismatch)
+    } else if !input.balance_tag_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch)
+    } else if !input.receipt_statement_hash_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHashMismatch)
+    } else if !input.public_inputs_digest_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigestMismatch)
+    } else if !input.proof_digest_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::ProofDigestMismatch)
+    } else if !input.proof_backend_matches {
+        Err(NativeTxLeafActionBindingAdmissionRejection::ProofBackendMismatch)
     } else if !input.ciphertext_payload_hashes_match {
         Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch)
     } else {
@@ -10014,15 +10234,136 @@ fn native_tx_leaf_action_binding_admission_error(
         NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch => {
             anyhow!("native tx-leaf ciphertext hashes mismatch")
         }
+        NativeTxLeafActionBindingAdmissionRejection::InputCountMismatch => {
+            anyhow!("native tx-leaf input count mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::OutputCountMismatch => {
+            anyhow!("native tx-leaf output count mismatch")
+        }
         NativeTxLeafActionBindingAdmissionRejection::VersionMismatch => {
             anyhow!("native tx-leaf version mismatch")
         }
         NativeTxLeafActionBindingAdmissionRejection::FeeMismatch => {
             anyhow!("native tx-leaf fee mismatch")
         }
+        NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch => {
+            anyhow!("native tx-leaf balance tag mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHashMismatch => {
+            anyhow!("native tx-leaf receipt statement hash mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigestMismatch => {
+            anyhow!("native tx-leaf public inputs digest mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::ProofDigestMismatch => {
+            anyhow!("native tx-leaf proof digest mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::ProofBackendMismatch => {
+            anyhow!("native tx-leaf proof backend/profile mismatch")
+        }
         NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch => {
             anyhow!("native tx ciphertext payload hash mismatch")
         }
+    }
+}
+
+fn native_tx_leaf_active_flag_count(flags: &[u8]) -> Option<usize> {
+    let mut count = 0usize;
+    for flag in flags {
+        match *flag {
+            0 => {}
+            1 => count = count.checked_add(1)?,
+            _ => return None,
+        }
+    }
+    Some(count)
+}
+
+fn native_tx_leaf_decode_signed_magnitude(sign: u8, magnitude: u64, label: &str) -> Result<i128> {
+    match sign {
+        0 => Ok(i128::from(magnitude)),
+        1 => Ok(-i128::from(magnitude)),
+        other => Err(anyhow!("{label} sign flag must be 0 or 1, got {other}")),
+    }
+}
+
+fn native_tx_leaf_statement_hash_from_decoded(
+    decoded: &consensus::backend_interface::NativeTxLeafArtifact,
+) -> Result<[u8; 48]> {
+    let value_balance = native_tx_leaf_decode_signed_magnitude(
+        decoded.stark_public_inputs.value_balance_sign,
+        decoded.stark_public_inputs.value_balance_magnitude,
+        "value_balance",
+    )?;
+    let stablecoin_issuance = native_tx_leaf_decode_signed_magnitude(
+        decoded.stark_public_inputs.stablecoin_issuance_sign,
+        decoded.stark_public_inputs.stablecoin_issuance_magnitude,
+        "stablecoin_issuance",
+    )?;
+    consensus::backend_interface::transaction_statement_hash_from_parts(
+        &decoded.stark_public_inputs.merkle_root,
+        &decoded.tx.nullifiers,
+        &decoded.tx.commitments,
+        &decoded.tx.ciphertext_hashes,
+        decoded.stark_public_inputs.fee,
+        value_balance,
+        &decoded.tx.balance_tag,
+        decoded.tx.version.circuit,
+        decoded.tx.version.crypto,
+        decoded.stark_public_inputs.stablecoin_enabled,
+        decoded.stark_public_inputs.stablecoin_asset_id,
+        &decoded.stark_public_inputs.stablecoin_policy_hash,
+        &decoded.stark_public_inputs.stablecoin_oracle_commitment,
+        &decoded
+            .stark_public_inputs
+            .stablecoin_attestation_commitment,
+        stablecoin_issuance,
+        decoded.stark_public_inputs.stablecoin_policy_version,
+    )
+    .map_err(|err| anyhow!("derive native tx-leaf statement hash failed: {err}"))
+}
+
+fn native_tx_leaf_action_binding_admission_input(
+    decoded: &consensus::backend_interface::NativeTxLeafArtifact,
+    action: &PendingAction,
+    tx: &Transaction,
+) -> NativeTxLeafActionBindingAdmissionInput {
+    let input_count = native_tx_leaf_active_flag_count(&decoded.stark_public_inputs.input_flags);
+    let output_count = native_tx_leaf_active_flag_count(&decoded.stark_public_inputs.output_flags);
+    let expected_backend = protocol_versioning::tx_proof_backend_for_version(decoded.tx.version)
+        .unwrap_or(protocol_versioning::DEFAULT_TX_PROOF_BACKEND);
+    let expected_statement_hash = native_tx_leaf_statement_hash_from_decoded(decoded).ok();
+    let expected_public_inputs_digest =
+        consensus::backend_interface::transaction_public_inputs_digest_from_serialized(
+            &decoded.stark_public_inputs,
+        )
+        .ok();
+    let expected_proof_digest = transaction_circuit::proof::transaction_proof_digest_from_parts(
+        decoded.proof_backend,
+        &decoded.stark_proof,
+    );
+    NativeTxLeafActionBindingAdmissionInput {
+        nullifiers_match: decoded.tx.nullifiers == action.nullifiers,
+        commitments_match: decoded.tx.commitments == action.commitments,
+        ciphertext_hashes_match: decoded.tx.ciphertext_hashes == action.ciphertext_hashes,
+        input_count_matches: input_count == Some(action.nullifiers.len())
+            && input_count == Some(decoded.tx.nullifiers.len()),
+        output_count_matches: output_count == Some(action.commitments.len())
+            && output_count == Some(action.ciphertext_hashes.len())
+            && output_count == Some(decoded.tx.commitments.len())
+            && output_count == Some(decoded.tx.ciphertext_hashes.len()),
+        version_matches: decoded.tx.version == action.binding.into(),
+        fee_matches: decoded.stark_public_inputs.fee == action.fee,
+        balance_tag_matches: tx.balance_tag == decoded.tx.balance_tag,
+        receipt_statement_hash_matches: expected_statement_hash
+            == Some(decoded.receipt.statement_hash),
+        public_inputs_digest_matches: expected_public_inputs_digest
+            == Some(decoded.receipt.public_inputs_digest),
+        proof_digest_matches: decoded.receipt.proof_digest == expected_proof_digest,
+        proof_backend_matches: decoded.proof_backend == expected_backend
+            && decoded.receipt.verifier_profile
+                == consensus::proof_interface::experimental_native_tx_leaf_verifier_profile(),
+        ciphertext_payload_hashes_match: tx.ciphertext_hashes == action.ciphertext_hashes,
     }
 }
 
@@ -10226,16 +10567,8 @@ fn consensus_tx_and_artifact_from_action(
         action_version,
         ciphertexts,
     );
-    if let Err(rejection) =
-        evaluate_native_tx_leaf_action_binding_admission(NativeTxLeafActionBindingAdmissionInput {
-            nullifiers_match: decoded.tx.nullifiers == action.nullifiers,
-            commitments_match: decoded.tx.commitments == action.commitments,
-            ciphertext_hashes_match: decoded.tx.ciphertext_hashes == action.ciphertext_hashes,
-            version_matches: decoded.tx.version == action_version,
-            fee_matches: decoded.stark_public_inputs.fee == action.fee,
-            ciphertext_payload_hashes_match: tx.ciphertext_hashes == action.ciphertext_hashes,
-        })
-    {
+    let admission_input = native_tx_leaf_action_binding_admission_input(&decoded, action, &tx);
+    if let Err(rejection) = evaluate_native_tx_leaf_action_binding_admission(admission_input) {
         return Err(native_tx_leaf_action_binding_admission_error(rejection));
     }
     let artifact = consensus::proof::tx_validity_artifact_from_native_tx_leaf_bytes(proof_bytes)
@@ -10483,6 +10816,11 @@ fn preview_pending_roots(
     admit_native_action_plan_application(
         "native preview action plan application",
         leaf_cursor,
+        actions,
+        &planned,
+    )?;
+    admit_native_action_wire_replay_projection(
+        "native preview action wire replay projection",
         actions,
         &planned,
     )?;
@@ -12272,6 +12610,40 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanActionWireReplayProjectionAdmissionVectorFile {
+        schema_version: u32,
+        action_wire_replay_projection_admission_cases:
+            Vec<LeanActionWireReplayProjectionAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionWireReplayProjectionAdmissionCase {
+        name: String,
+        action_count: usize,
+        planned_count: usize,
+        actions: Vec<LeanActionWireReplayProjectionActionCase>,
+        expected_projected_action_count: Option<usize>,
+        expected_projected_ciphertext_row_count: Option<usize>,
+        expected_projected_bridge_replay_row_count: Option<usize>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionWireReplayProjectionActionCase {
+        ciphertext_hash_count: usize,
+        ciphertext_size_count: usize,
+        planned_ciphertext_count: usize,
+        ciphertext_hashes_match: bool,
+        ciphertext_sizes_match: bool,
+        planned_replay_present: bool,
+        replay_key_matches: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockActionValidationVectorFile {
         schema_version: u32,
         block_action_validation_cases: Vec<LeanBlockActionValidationCase>,
@@ -12414,8 +12786,15 @@ mod tests {
         nullifiers_match: bool,
         commitments_match: bool,
         ciphertext_hashes_match: bool,
+        input_count_matches: bool,
+        output_count_matches: bool,
         version_matches: bool,
         fee_matches: bool,
+        balance_tag_matches: bool,
+        receipt_statement_hash_matches: bool,
+        public_inputs_digest_matches: bool,
+        proof_digest_matches: bool,
+        proof_backend_matches: bool,
         ciphertext_payload_hashes_match: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
@@ -14358,8 +14737,7 @@ mod tests {
         let parent = node.best_meta();
         let height = parent.height.saturating_add(1);
         let mut coinbase = test_coinbase_action(consensus::reward::block_subsidy(height));
-        coinbase.ciphertext_hashes[0][0] ^= 1;
-        coinbase.tx_hash = pending_action_hash(&coinbase);
+        tamper_coinbase_public_seed_without_rebinding(&mut coinbase);
         let mut block = mined_child_with_actions(&parent, height, pow_bits, 0, vec![coinbase]);
         block.state_root[0] ^= 1;
         let pre_header = native_pow_header_from_parts(
@@ -14424,8 +14802,7 @@ mod tests {
         let parent = node.best_meta();
         let height = parent.height.saturating_add(1);
         let mut coinbase = test_coinbase_action(consensus::reward::block_subsidy(height));
-        coinbase.ciphertext_hashes[0][0] ^= 1;
-        coinbase.tx_hash = pending_action_hash(&coinbase);
+        tamper_coinbase_public_seed_without_rebinding(&mut coinbase);
         let mut block = mined_child_with_actions(&parent, height, pow_bits, 0, vec![coinbase]);
         block.extrinsics_root[0] ^= 1;
         let pre_header = native_pow_header_from_parts(
@@ -17326,6 +17703,99 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_action_wire_replay_projection_admission_vectors_match_production() {
+        let Ok(path) =
+            std::env::var("HEGEMON_LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action wire replay projection admission vectors");
+        let vectors: LeanActionWireReplayProjectionAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean action wire replay projection admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .action_wire_replay_projection_admission_cases
+                .is_empty(),
+            "Lean action wire replay projection cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_wire_replay_projection_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_wire_replay_projection_admission_case(case);
+        }
+    }
+
+    fn verify_lean_action_wire_replay_projection_admission_case(
+        case: &LeanActionWireReplayProjectionAdmissionCase,
+    ) {
+        let steps = case
+            .actions
+            .iter()
+            .map(|action| NativeActionWireReplayProjectionStep {
+                ciphertext_hash_count: action.ciphertext_hash_count,
+                ciphertext_size_count: action.ciphertext_size_count,
+                planned_ciphertext_count: action.planned_ciphertext_count,
+                ciphertext_hashes_match: action.ciphertext_hashes_match,
+                ciphertext_sizes_match: action.ciphertext_sizes_match,
+                planned_replay_present: action.planned_replay_present,
+                replay_key_matches: action.replay_key_matches,
+            })
+            .collect::<Vec<_>>();
+        let actual = evaluate_native_action_wire_replay_projection_admission(
+            case.action_count,
+            case.planned_count,
+            &steps,
+        );
+        match actual {
+            Ok(summary) => {
+                assert!(
+                    case.expected_valid,
+                    "{} action wire replay projection unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.projected_action_count),
+                    case.expected_projected_action_count,
+                    "{} wire replay projected action count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.projected_ciphertext_row_count),
+                    case.expected_projected_ciphertext_row_count,
+                    "{} wire replay projected ciphertext rows drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.projected_bridge_replay_row_count),
+                    case.expected_projected_bridge_replay_row_count,
+                    "{} wire replay projected bridge replay rows drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} action wire replay projection unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} wire replay projection rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn lean_generated_block_action_validation_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS") else {
             eprintln!(
@@ -17769,8 +18239,15 @@ mod tests {
             nullifiers_match: case.nullifiers_match,
             commitments_match: case.commitments_match,
             ciphertext_hashes_match: case.ciphertext_hashes_match,
+            input_count_matches: case.input_count_matches,
+            output_count_matches: case.output_count_matches,
             version_matches: case.version_matches,
             fee_matches: case.fee_matches,
+            balance_tag_matches: case.balance_tag_matches,
+            receipt_statement_hash_matches: case.receipt_statement_hash_matches,
+            public_inputs_digest_matches: case.public_inputs_digest_matches,
+            proof_digest_matches: case.proof_digest_matches,
+            proof_backend_matches: case.proof_backend_matches,
             ciphertext_payload_hashes_match: case.ciphertext_payload_hashes_match,
         };
         let actual_rejection = evaluate_native_tx_leaf_action_binding_admission(input)
@@ -17819,8 +18296,15 @@ mod tests {
             nullifiers_match: true,
             commitments_match: true,
             ciphertext_hashes_match: true,
+            input_count_matches: true,
+            output_count_matches: true,
             version_matches: true,
             fee_matches: true,
+            balance_tag_matches: true,
+            receipt_statement_hash_matches: true,
+            public_inputs_digest_matches: true,
+            proof_digest_matches: true,
+            proof_backend_matches: true,
             ciphertext_payload_hashes_match: true,
         };
         assert!(evaluate_native_tx_leaf_action_binding_admission(valid).is_ok());
@@ -17860,6 +18344,93 @@ mod tests {
             .expect_err("fee mismatch must reject before payload hashes")
             .label(),
             "fee_mismatch"
+        );
+    }
+
+    #[test]
+    fn block_artifact_binding_rejects_extended_tx_leaf_mismatches_in_order() {
+        let valid = NativeTxLeafActionBindingAdmissionInput {
+            nullifiers_match: true,
+            commitments_match: true,
+            ciphertext_hashes_match: true,
+            input_count_matches: true,
+            output_count_matches: true,
+            version_matches: true,
+            fee_matches: true,
+            balance_tag_matches: true,
+            receipt_statement_hash_matches: true,
+            public_inputs_digest_matches: true,
+            proof_digest_matches: true,
+            proof_backend_matches: true,
+            ciphertext_payload_hashes_match: true,
+        };
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    input_count_matches: false,
+                    output_count_matches: false,
+                    version_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("input count mismatch must reject before output count or version")
+            .label(),
+            "input_count_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    output_count_matches: false,
+                    version_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("output count mismatch must reject before version")
+            .label(),
+            "output_count_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    balance_tag_matches: false,
+                    receipt_statement_hash_matches: false,
+                    public_inputs_digest_matches: false,
+                    proof_digest_matches: false,
+                    proof_backend_matches: false,
+                    ciphertext_payload_hashes_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("balance tag mismatch must reject before receipt and digest fields")
+            .label(),
+            "balance_tag_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    receipt_statement_hash_matches: false,
+                    public_inputs_digest_matches: false,
+                    proof_digest_matches: false,
+                    proof_backend_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("statement hash mismatch must reject before digest fields")
+            .label(),
+            "receipt_statement_hash_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_tx_leaf_action_binding_admission(
+                NativeTxLeafActionBindingAdmissionInput {
+                    proof_digest_matches: false,
+                    proof_backend_matches: false,
+                    ciphertext_payload_hashes_match: false,
+                    ..valid
+                }
+            )
+            .expect_err("proof digest mismatch must reject before backend or payload")
+            .label(),
+            "proof_digest_mismatch"
         );
     }
 
@@ -20580,6 +21151,52 @@ mod tests {
     }
 
     #[test]
+    fn apply_planned_actions_rejects_ciphertext_hash_projection_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [67u8; 48], [68u8; 48], 0);
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let mut ciphertext = test_transfer_ciphertext_bytes();
+        ciphertext[0] ^= 1;
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: before_leaf_count,
+            ciphertexts: vec![ciphertext],
+            replay_key: None,
+        }];
+
+        let err = apply_planned_actions_to_memory(&mut state, &[action], &planned)
+            .expect_err("planned ciphertext hash drift must reject");
+
+        assert!(err.to_string().contains("ciphertext_hash_mismatch"));
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+    }
+
+    #[test]
+    fn apply_planned_actions_rejects_replay_key_projection_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action = test_inbound_bridge_action(b"wire replay key mismatch");
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: before_leaf_count,
+            ciphertexts: Vec::new(),
+            replay_key: Some([99u8; 48]),
+        }];
+
+        let err = apply_planned_actions_to_memory(&mut state, &[action], &planned)
+            .expect_err("planned replay key drift must reject");
+
+        assert!(err.to_string().contains("replay_key_mismatch"));
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+        assert!(state.consumed_bridge_messages.is_empty());
+    }
+
+    #[test]
     fn mined_commit_removes_pending_sidecar_ciphertext() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -22544,6 +23161,15 @@ mod tests {
         };
         action.tx_hash = pending_action_hash(&action);
         action
+    }
+
+    fn tamper_coinbase_public_seed_without_rebinding(action: &mut PendingAction) {
+        let mut args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")
+                .expect("decode test coinbase args");
+        args.reward_bundle.miner_note.public_seed[0] ^= 1;
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(action);
     }
 
     #[test]

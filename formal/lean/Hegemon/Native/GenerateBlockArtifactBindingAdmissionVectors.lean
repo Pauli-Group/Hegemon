@@ -14,10 +14,24 @@ def txLeafActionRejectionJson :
       "\"commitments_mismatch\""
   | some TxLeafActionBindingReject.ciphertextHashesMismatch =>
       "\"ciphertext_hashes_mismatch\""
+  | some TxLeafActionBindingReject.inputCountMismatch =>
+      "\"input_count_mismatch\""
+  | some TxLeafActionBindingReject.outputCountMismatch =>
+      "\"output_count_mismatch\""
   | some TxLeafActionBindingReject.versionMismatch =>
       "\"version_mismatch\""
   | some TxLeafActionBindingReject.feeMismatch =>
       "\"fee_mismatch\""
+  | some TxLeafActionBindingReject.balanceTagMismatch =>
+      "\"balance_tag_mismatch\""
+  | some TxLeafActionBindingReject.receiptStatementHashMismatch =>
+      "\"receipt_statement_hash_mismatch\""
+  | some TxLeafActionBindingReject.publicInputsDigestMismatch =>
+      "\"public_inputs_digest_mismatch\""
+  | some TxLeafActionBindingReject.proofDigestMismatch =>
+      "\"proof_digest_mismatch\""
+  | some TxLeafActionBindingReject.proofBackendMismatch =>
+      "\"proof_backend_mismatch\""
   | some TxLeafActionBindingReject.ciphertextPayloadHashMismatch =>
       "\"ciphertext_payload_hash_mismatch\""
 
@@ -40,8 +54,22 @@ def txLeafActionBindingCaseJson
     ++ "      \"commitments_match\": " ++ boolJson input.commitmentsMatch ++ ",\n"
     ++ "      \"ciphertext_hashes_match\": "
       ++ boolJson input.ciphertextHashesMatch ++ ",\n"
+    ++ "      \"input_count_matches\": "
+      ++ boolJson input.inputCountMatches ++ ",\n"
+    ++ "      \"output_count_matches\": "
+      ++ boolJson input.outputCountMatches ++ ",\n"
     ++ "      \"version_matches\": " ++ boolJson input.versionMatches ++ ",\n"
     ++ "      \"fee_matches\": " ++ boolJson input.feeMatches ++ ",\n"
+    ++ "      \"balance_tag_matches\": "
+      ++ boolJson input.balanceTagMatches ++ ",\n"
+    ++ "      \"receipt_statement_hash_matches\": "
+      ++ boolJson input.receiptStatementHashMatches ++ ",\n"
+    ++ "      \"public_inputs_digest_matches\": "
+      ++ boolJson input.publicInputsDigestMatches ++ ",\n"
+    ++ "      \"proof_digest_matches\": "
+      ++ boolJson input.proofDigestMatches ++ ",\n"
+    ++ "      \"proof_backend_matches\": "
+      ++ boolJson input.proofBackendMatches ++ ",\n"
     ++ "      \"ciphertext_payload_hashes_match\": "
       ++ boolJson input.ciphertextPayloadHashesMatch ++ ",\n"
     ++ "      \"expected_valid\": "
@@ -84,11 +112,34 @@ def vectorJson : String :=
       "ciphertext-hashes-mismatch-rejected"
       { validTxLeafActionBinding with ciphertextHashesMatch := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
+      "input-count-mismatch-rejected"
+      { validTxLeafActionBinding with inputCountMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "output-count-mismatch-rejected"
+      { validTxLeafActionBinding with outputCountMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
       "version-mismatch-rejected"
       { validTxLeafActionBinding with versionMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
       "fee-mismatch-rejected"
       { validTxLeafActionBinding with feeMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "balance-tag-mismatch-rejected"
+      { validTxLeafActionBinding with balanceTagMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "receipt-statement-hash-mismatch-rejected"
+      { validTxLeafActionBinding with
+        receiptStatementHashMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "public-inputs-digest-mismatch-rejected"
+      { validTxLeafActionBinding with
+        publicInputsDigestMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "proof-digest-mismatch-rejected"
+      { validTxLeafActionBinding with proofDigestMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "proof-backend-mismatch-rejected"
+      { validTxLeafActionBinding with proofBackendMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
       "ciphertext-payload-hash-mismatch-rejected"
       { validTxLeafActionBinding with
@@ -99,6 +150,23 @@ def vectorJson : String :=
         nullifiersMatch := false,
         commitmentsMatch := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
+      "ciphertext-hashes-precede-counts"
+      { validTxLeafActionBinding with
+        ciphertextHashesMatch := false,
+        inputCountMatches := false,
+        outputCountMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "input-count-precedes-output-count-and-version"
+      { validTxLeafActionBinding with
+        inputCountMatches := false,
+        outputCountMatches := false,
+        versionMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "output-count-precedes-version"
+      { validTxLeafActionBinding with
+        outputCountMatches := false,
+        versionMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
       "version-precedes-fee-and-payload-hashes"
       { validTxLeafActionBinding with
         versionMatches := false,
@@ -108,6 +176,37 @@ def vectorJson : String :=
       "fee-precedes-payload-hashes"
       { validTxLeafActionBinding with
         feeMatches := false,
+        ciphertextPayloadHashesMatch := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "balance-tag-precedes-receipt-and-digests"
+      { validTxLeafActionBinding with
+        balanceTagMatches := false,
+        receiptStatementHashMatches := false,
+        publicInputsDigestMatches := false,
+        proofDigestMatches := false,
+        proofBackendMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "receipt-statement-precedes-digests"
+      { validTxLeafActionBinding with
+        receiptStatementHashMatches := false,
+        publicInputsDigestMatches := false,
+        proofDigestMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "public-inputs-digest-precedes-proof-digest"
+      { validTxLeafActionBinding with
+        publicInputsDigestMatches := false,
+        proofDigestMatches := false,
+        proofBackendMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "proof-digest-precedes-backend-and-payload"
+      { validTxLeafActionBinding with
+        proofDigestMatches := false,
+        proofBackendMatches := false,
+        ciphertextPayloadHashesMatch := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "proof-backend-precedes-payload"
+      { validTxLeafActionBinding with
+        proofBackendMatches := false,
         ciphertextPayloadHashesMatch := false } ++ "\n"
     ++ "  ],\n"
     ++ "  \"candidate_artifact_binding_cases\": [\n"

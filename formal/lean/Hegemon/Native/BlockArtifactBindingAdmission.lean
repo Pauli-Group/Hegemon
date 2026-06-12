@@ -6,8 +6,15 @@ inductive TxLeafActionBindingReject where
   | nullifiersMismatch
   | commitmentsMismatch
   | ciphertextHashesMismatch
+  | inputCountMismatch
+  | outputCountMismatch
   | versionMismatch
   | feeMismatch
+  | balanceTagMismatch
+  | receiptStatementHashMismatch
+  | publicInputsDigestMismatch
+  | proofDigestMismatch
+  | proofBackendMismatch
   | ciphertextPayloadHashMismatch
 deriving DecidableEq, Repr
 
@@ -15,8 +22,15 @@ structure TxLeafActionBindingInput where
   nullifiersMatch : Bool
   commitmentsMatch : Bool
   ciphertextHashesMatch : Bool
+  inputCountMatches : Bool
+  outputCountMatches : Bool
   versionMatches : Bool
   feeMatches : Bool
+  balanceTagMatches : Bool
+  receiptStatementHashMatches : Bool
+  publicInputsDigestMatches : Bool
+  proofDigestMatches : Bool
+  proofBackendMatches : Bool
   ciphertextPayloadHashesMatch : Bool
 deriving DecidableEq, Repr
 
@@ -29,10 +43,24 @@ def evaluateTxLeafActionBinding
     Except.error TxLeafActionBindingReject.commitmentsMismatch
   else if !input.ciphertextHashesMatch then
     Except.error TxLeafActionBindingReject.ciphertextHashesMismatch
+  else if !input.inputCountMatches then
+    Except.error TxLeafActionBindingReject.inputCountMismatch
+  else if !input.outputCountMatches then
+    Except.error TxLeafActionBindingReject.outputCountMismatch
   else if !input.versionMatches then
     Except.error TxLeafActionBindingReject.versionMismatch
   else if !input.feeMatches then
     Except.error TxLeafActionBindingReject.feeMismatch
+  else if !input.balanceTagMatches then
+    Except.error TxLeafActionBindingReject.balanceTagMismatch
+  else if !input.receiptStatementHashMatches then
+    Except.error TxLeafActionBindingReject.receiptStatementHashMismatch
+  else if !input.publicInputsDigestMatches then
+    Except.error TxLeafActionBindingReject.publicInputsDigestMismatch
+  else if !input.proofDigestMatches then
+    Except.error TxLeafActionBindingReject.proofDigestMismatch
+  else if !input.proofBackendMatches then
+    Except.error TxLeafActionBindingReject.proofBackendMismatch
   else if !input.ciphertextPayloadHashesMatch then
     Except.error TxLeafActionBindingReject.ciphertextPayloadHashMismatch
   else
@@ -56,31 +84,78 @@ def txLeafActionBindingPreconditions
   input.nullifiersMatch
     && input.commitmentsMatch
     && input.ciphertextHashesMatch
+    && input.inputCountMatches
+    && input.outputCountMatches
     && input.versionMatches
     && input.feeMatches
+    && input.balanceTagMatches
+    && input.receiptStatementHashMatches
+    && input.publicInputsDigestMatches
+    && input.proofDigestMatches
+    && input.proofBackendMatches
     && input.ciphertextPayloadHashesMatch
 
 theorem tx_leaf_action_accepts_iff_preconditions
     (input : TxLeafActionBindingInput) :
     txLeafActionBindingAccepts input =
       txLeafActionBindingPreconditions input := by
-  cases input with
-  | mk nullifiersMatch commitmentsMatch ciphertextHashesMatch
-      versionMatches feeMatches ciphertextPayloadHashesMatch =>
-      unfold txLeafActionBindingAccepts
-        txLeafActionBindingPreconditions
-        evaluateTxLeafActionBinding
-      cases nullifiersMatch <;> cases commitmentsMatch <;>
-        cases ciphertextHashesMatch <;> cases versionMatches <;>
-        cases feeMatches <;> cases ciphertextPayloadHashesMatch <;> simp
+  unfold txLeafActionBindingAccepts
+    txLeafActionBindingPreconditions
+    evaluateTxLeafActionBinding
+  by_cases h0 : input.nullifiersMatch
+  · simp [h0]
+    by_cases h1 : input.commitmentsMatch
+    · simp [h1]
+      by_cases h2 : input.ciphertextHashesMatch
+      · simp [h2]
+        by_cases h3 : input.inputCountMatches
+        · simp [h3]
+          by_cases h4 : input.outputCountMatches
+          · simp [h4]
+            by_cases h5 : input.versionMatches
+            · simp [h5]
+              by_cases h6 : input.feeMatches
+              · simp [h6]
+                by_cases h7 : input.balanceTagMatches
+                · simp [h7]
+                  by_cases h8 : input.receiptStatementHashMatches
+                  · simp [h8]
+                    by_cases h9 : input.publicInputsDigestMatches
+                    · simp [h9]
+                      by_cases h10 : input.proofDigestMatches
+                      · simp [h10]
+                        by_cases h11 : input.proofBackendMatches
+                        · simp [h11]
+                          by_cases h12 : input.ciphertextPayloadHashesMatch
+                          · simp [h12]
+                          · simp [h12]
+                        · simp [h11]
+                      · simp [h10]
+                    · simp [h9]
+                  · simp [h8]
+                · simp [h7]
+              · simp [h6]
+            · simp [h5]
+          · simp [h4]
+        · simp [h3]
+      · simp [h2]
+    · simp [h1]
+  · simp [h0]
 
 def validTxLeafActionBinding : TxLeafActionBindingInput :=
   {
     nullifiersMatch := true,
     commitmentsMatch := true,
     ciphertextHashesMatch := true,
+    inputCountMatches := true,
+    outputCountMatches := true,
     versionMatches := true,
     feeMatches := true,
+    balanceTagMatches := true,
+    receiptStatementHashMatches := true,
+    publicInputsDigestMatches := true,
+    proofDigestMatches := true,
+    proofBackendMatches := true,
     ciphertextPayloadHashesMatch := true
   }
 
@@ -106,6 +181,18 @@ theorem tx_leaf_ciphertext_hashes_mismatch_rejects :
       Except.error TxLeafActionBindingReject.ciphertextHashesMismatch := by
   rfl
 
+theorem tx_leaf_input_count_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with inputCountMatches := false } =
+      Except.error TxLeafActionBindingReject.inputCountMismatch := by
+  rfl
+
+theorem tx_leaf_output_count_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with outputCountMatches := false } =
+      Except.error TxLeafActionBindingReject.outputCountMismatch := by
+  rfl
+
 theorem tx_leaf_version_mismatch_rejects :
     evaluateTxLeafActionBinding
         { validTxLeafActionBinding with versionMatches := false } =
@@ -125,6 +212,36 @@ theorem tx_leaf_fee_mismatch_rejects :
       Except.error TxLeafActionBindingReject.feeMismatch := by
   rfl
 
+theorem tx_leaf_balance_tag_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with balanceTagMatches := false } =
+      Except.error TxLeafActionBindingReject.balanceTagMismatch := by
+  rfl
+
+theorem tx_leaf_receipt_statement_hash_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with receiptStatementHashMatches := false } =
+      Except.error TxLeafActionBindingReject.receiptStatementHashMismatch := by
+  rfl
+
+theorem tx_leaf_public_inputs_digest_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with publicInputsDigestMatches := false } =
+      Except.error TxLeafActionBindingReject.publicInputsDigestMismatch := by
+  rfl
+
+theorem tx_leaf_proof_digest_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with proofDigestMatches := false } =
+      Except.error TxLeafActionBindingReject.proofDigestMismatch := by
+  rfl
+
+theorem tx_leaf_proof_backend_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with proofBackendMatches := false } =
+      Except.error TxLeafActionBindingReject.proofBackendMismatch := by
+  rfl
+
 theorem tx_leaf_nullifiers_precede_commitments :
     evaluateTxLeafActionBinding
         { validTxLeafActionBinding with
@@ -139,6 +256,32 @@ theorem tx_leaf_commitments_precede_ciphertext_hashes :
           commitmentsMatch := false,
           ciphertextHashesMatch := false } =
       Except.error TxLeafActionBindingReject.commitmentsMismatch := by
+  rfl
+
+theorem tx_leaf_ciphertext_hashes_precede_counts :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          ciphertextHashesMatch := false,
+          inputCountMatches := false,
+          outputCountMatches := false } =
+      Except.error TxLeafActionBindingReject.ciphertextHashesMismatch := by
+  rfl
+
+theorem tx_leaf_input_count_precedes_output_count :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          inputCountMatches := false,
+          outputCountMatches := false,
+          versionMatches := false } =
+      Except.error TxLeafActionBindingReject.inputCountMismatch := by
+  rfl
+
+theorem tx_leaf_output_count_precedes_version :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          outputCountMatches := false,
+          versionMatches := false } =
+      Except.error TxLeafActionBindingReject.outputCountMismatch := by
   rfl
 
 theorem tx_leaf_version_precedes_payload_hashes :
@@ -156,6 +299,52 @@ theorem tx_leaf_fee_precedes_payload_hashes :
           feeMatches := false,
           ciphertextPayloadHashesMatch := false } =
       Except.error TxLeafActionBindingReject.feeMismatch := by
+  rfl
+
+theorem tx_leaf_balance_tag_precedes_receipt :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          balanceTagMatches := false,
+          receiptStatementHashMatches := false,
+          publicInputsDigestMatches := false,
+          proofDigestMatches := false,
+          proofBackendMatches := false } =
+      Except.error TxLeafActionBindingReject.balanceTagMismatch := by
+  rfl
+
+theorem tx_leaf_receipt_statement_precedes_public_inputs_digest :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          receiptStatementHashMatches := false,
+          publicInputsDigestMatches := false,
+          proofDigestMatches := false } =
+      Except.error TxLeafActionBindingReject.receiptStatementHashMismatch := by
+  rfl
+
+theorem tx_leaf_public_inputs_digest_precedes_proof_digest :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          publicInputsDigestMatches := false,
+          proofDigestMatches := false,
+          proofBackendMatches := false } =
+      Except.error TxLeafActionBindingReject.publicInputsDigestMismatch := by
+  rfl
+
+theorem tx_leaf_proof_digest_precedes_backend :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          proofDigestMatches := false,
+          proofBackendMatches := false,
+          ciphertextPayloadHashesMatch := false } =
+      Except.error TxLeafActionBindingReject.proofDigestMismatch := by
+  rfl
+
+theorem tx_leaf_proof_backend_precedes_payload_hashes :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          proofBackendMatches := false,
+          ciphertextPayloadHashesMatch := false } =
+      Except.error TxLeafActionBindingReject.proofBackendMismatch := by
   rfl
 
 inductive CandidateArtifactBindingReject where

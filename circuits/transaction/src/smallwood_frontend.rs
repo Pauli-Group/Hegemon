@@ -18,8 +18,10 @@ use crate::{
     hashing_pq::{bytes48_to_felts, merkle_node, Felt, HashFelt},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
     proof::{
+        admit_transaction_proof_wrapper as admit_shared_transaction_proof_wrapper,
+        transaction_proof_wrapper_public_inputs_for_admission,
         transaction_public_inputs_p3_from_parts, SerializedStarkInputs, TransactionProof,
-        VerificationReport,
+        TransactionProofWrapperAdmissionInput, VerificationReport,
     },
     public_inputs::TransactionPublicInputs,
     smallwood_engine::{
@@ -1494,19 +1496,19 @@ pub fn verify_smallwood_candidate_proof_bytes(
     Ok(())
 }
 
+fn admit_smallwood_transaction_proof_wrapper(
+    input: TransactionProofWrapperAdmissionInput,
+    verifier_result: Result<(), TransactionCircuitError>,
+) -> Result<(), TransactionCircuitError> {
+    admit_shared_transaction_proof_wrapper(input, verifier_result)
+}
+
 pub fn verify_smallwood_candidate_transaction_proof(
     proof: &TransactionProof,
 ) -> Result<VerificationReport, TransactionCircuitError> {
-    if !matches!(proof.backend, TxProofBackend::SmallwoodCandidate) {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate verifier requires smallwood_candidate backend",
-        ));
-    }
-    if proof.stark_proof.is_empty() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood candidate proof bytes must not be empty",
-        ));
-    }
+    let backend_supported = matches!(proof.backend, TxProofBackend::SmallwoodCandidate);
+    let p3_inputs =
+        transaction_proof_wrapper_public_inputs_for_admission(proof, backend_supported)?;
     ensure_smallwood_version(proof.version_binding(), proof.version_binding())?;
     if proof.nullifiers != proof.public_inputs.nullifiers {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -1528,19 +1530,23 @@ pub fn verify_smallwood_candidate_transaction_proof(
             "smallwood candidate public input validation failed: {err}"
         ))
     })?;
-    let serialized_public_inputs =
-        proof
-            .stark_public_inputs
-            .as_ref()
-            .ok_or(TransactionCircuitError::ConstraintViolation(
-                "smallwood candidate serialized public inputs missing",
-            ))?;
-    let p3_inputs =
-        transaction_public_inputs_p3_from_parts(&proof.public_inputs, serialized_public_inputs)?;
-    verify_smallwood_candidate_proof_bytes(
+    let verifier_result = verify_smallwood_candidate_proof_bytes(
         &proof.stark_proof,
         &p3_inputs,
         proof.version_binding(),
+    );
+    admit_smallwood_transaction_proof_wrapper(
+        TransactionProofWrapperAdmissionInput {
+            exact_consumption: true,
+            canonical_reencode: true,
+            backend_supported,
+            proof_bytes_present: !proof.stark_proof.is_empty(),
+            serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
+            public_inputs_valid: true,
+            balance_slots_agree: true,
+            verifier_accepts: verifier_result.is_ok(),
+        },
+        verifier_result,
     )?;
     Ok(VerificationReport { verified: true })
 }

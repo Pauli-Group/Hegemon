@@ -103,6 +103,9 @@ lean_exe gen_action_stream_effect_vectors where
 lean_exe gen_action_plan_application_admission_vectors where
   root := `Hegemon.Native.GenerateActionPlanApplicationAdmissionVectors
 
+lean_exe gen_action_wire_replay_projection_admission_vectors where
+  root := `Hegemon.Native.GenerateActionWireReplayProjectionAdmissionVectors
+
 lean_exe gen_announced_block_admission_vectors where
   root := `Hegemon.Native.GenerateAnnouncedBlockAdmissionVectors
 
@@ -240,6 +243,9 @@ lean_exe gen_public_input_vectors where
 
 lean_exe gen_public_input_binding_vectors where
   root := `Hegemon.Transaction.GeneratePublicInputBindingVectors
+
+lean_exe gen_proof_wrapper_admission_vectors where
+  root := `Hegemon.Transaction.GenerateProofWrapperAdmissionVectors
 
 lean_exe gen_statement_hash_vectors where
   root := `Hegemon.Transaction.GenerateStatementHashVectors

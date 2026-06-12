@@ -105,6 +105,111 @@ pub struct VerificationReport {
     pub verified: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransactionProofWrapperAdmissionInput {
+    pub exact_consumption: bool,
+    pub canonical_reencode: bool,
+    pub backend_supported: bool,
+    pub proof_bytes_present: bool,
+    pub serialized_public_inputs_present: bool,
+    pub public_inputs_valid: bool,
+    pub balance_slots_agree: bool,
+    pub verifier_accepts: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransactionProofWrapperAdmissionRejection {
+    NonExactConsumption,
+    NonCanonicalReencode,
+    UnsupportedBackend,
+    MissingProofBytes,
+    MissingSerializedPublicInputs,
+    InvalidPublicInputs,
+    BalanceSlotMismatch,
+    VerifierRejected,
+}
+
+impl TransactionProofWrapperAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::NonExactConsumption => "non_exact_consumption",
+            Self::NonCanonicalReencode => "non_canonical_reencode",
+            Self::UnsupportedBackend => "unsupported_backend",
+            Self::MissingProofBytes => "missing_proof_bytes",
+            Self::MissingSerializedPublicInputs => "missing_serialized_public_inputs",
+            Self::InvalidPublicInputs => "invalid_public_inputs",
+            Self::BalanceSlotMismatch => "balance_slot_mismatch",
+            Self::VerifierRejected => "verifier_rejected",
+        }
+    }
+}
+
+fn transaction_proof_wrapper_admission_error(
+    rejection: TransactionProofWrapperAdmissionRejection,
+) -> TransactionCircuitError {
+    let label = match rejection {
+        TransactionProofWrapperAdmissionRejection::NonExactConsumption => "non-exact consumption",
+        TransactionProofWrapperAdmissionRejection::NonCanonicalReencode => "non-canonical reencode",
+        TransactionProofWrapperAdmissionRejection::UnsupportedBackend => "unsupported backend",
+        TransactionProofWrapperAdmissionRejection::MissingProofBytes => "missing proof bytes",
+        TransactionProofWrapperAdmissionRejection::MissingSerializedPublicInputs => {
+            "missing serialized public inputs"
+        }
+        TransactionProofWrapperAdmissionRejection::InvalidPublicInputs => "invalid public inputs",
+        TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch => "balance slot mismatch",
+        TransactionProofWrapperAdmissionRejection::VerifierRejected => "verifier rejected",
+    };
+    TransactionCircuitError::ConstraintViolationOwned(format!(
+        "transaction proof wrapper admission failed: {label}"
+    ))
+}
+
+pub fn evaluate_transaction_proof_wrapper_admission(
+    input: TransactionProofWrapperAdmissionInput,
+) -> Result<(), TransactionProofWrapperAdmissionRejection> {
+    if !input.exact_consumption {
+        return Err(TransactionProofWrapperAdmissionRejection::NonExactConsumption);
+    }
+    if !input.canonical_reencode {
+        return Err(TransactionProofWrapperAdmissionRejection::NonCanonicalReencode);
+    }
+    if !input.backend_supported {
+        return Err(TransactionProofWrapperAdmissionRejection::UnsupportedBackend);
+    }
+    if !input.proof_bytes_present {
+        return Err(TransactionProofWrapperAdmissionRejection::MissingProofBytes);
+    }
+    if !input.serialized_public_inputs_present {
+        return Err(TransactionProofWrapperAdmissionRejection::MissingSerializedPublicInputs);
+    }
+    if !input.public_inputs_valid {
+        return Err(TransactionProofWrapperAdmissionRejection::InvalidPublicInputs);
+    }
+    if !input.balance_slots_agree {
+        return Err(TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch);
+    }
+    if !input.verifier_accepts {
+        return Err(TransactionProofWrapperAdmissionRejection::VerifierRejected);
+    }
+    Ok(())
+}
+
+pub fn admit_transaction_proof_wrapper(
+    input: TransactionProofWrapperAdmissionInput,
+    verifier_result: Result<(), TransactionCircuitError>,
+) -> Result<(), TransactionCircuitError> {
+    if let Err(rejection) = evaluate_transaction_proof_wrapper_admission(input) {
+        return Err(match rejection {
+            TransactionProofWrapperAdmissionRejection::VerifierRejected => verifier_result
+                .err()
+                .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection)),
+            other => transaction_proof_wrapper_admission_error(other),
+        });
+    }
+    verifier_result
+}
+
 impl TransactionProof {
     pub fn version_binding(&self) -> VersionBinding {
         self.public_inputs.version_binding()
@@ -176,6 +281,56 @@ pub fn stark_public_inputs_p3(
             ))?;
 
     transaction_public_inputs_p3_from_parts(&proof.public_inputs, stark_inputs)
+}
+
+pub fn transaction_proof_wrapper_public_inputs_for_admission(
+    proof: &TransactionProof,
+    backend_supported: bool,
+) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    let proof_bytes_present = !proof.stark_proof.is_empty();
+    let serialized_public_inputs_present = proof.stark_public_inputs.is_some();
+    let public_inputs_result = proof
+        .stark_public_inputs
+        .as_ref()
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "missing STARK public inputs",
+        ))
+        .and_then(|stark_inputs| {
+            let p3_inputs =
+                transaction_public_inputs_p3_from_parts(&proof.public_inputs, stark_inputs)?;
+            p3_inputs.validate().map_err(|err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "invalid STARK public inputs: {err}"
+                ))
+            })?;
+            Ok(p3_inputs)
+        });
+    let balance_result = verify_balance_slots(proof);
+
+    if let Err(rejection) =
+        evaluate_transaction_proof_wrapper_admission(TransactionProofWrapperAdmissionInput {
+            exact_consumption: true,
+            canonical_reencode: true,
+            backend_supported,
+            proof_bytes_present,
+            serialized_public_inputs_present,
+            public_inputs_valid: public_inputs_result.is_ok(),
+            balance_slots_agree: balance_result.is_ok(),
+            verifier_accepts: true,
+        })
+    {
+        return Err(match rejection {
+            TransactionProofWrapperAdmissionRejection::InvalidPublicInputs => public_inputs_result
+                .err()
+                .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection)),
+            TransactionProofWrapperAdmissionRejection::BalanceSlotMismatch => balance_result
+                .err()
+                .unwrap_or_else(|| transaction_proof_wrapper_admission_error(rejection)),
+            other => transaction_proof_wrapper_admission_error(other),
+        });
+    }
+
+    public_inputs_result
 }
 
 pub fn transaction_statement_hash(proof: &TransactionProof) -> [u8; 48] {
@@ -519,50 +674,37 @@ pub fn verify(
 }
 
 fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, TransactionCircuitError> {
-    ensure_plonky3_backend(proof)?;
-    // Validate public input structure
-    if proof.nullifiers.len() != MAX_INPUTS {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid PQ nullifier length",
-        ));
-    }
-    if proof.commitments.len() != MAX_OUTPUTS {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid PQ commitment length",
-        ));
-    }
-    if proof.public_inputs.ciphertext_hashes.len() != MAX_OUTPUTS {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid ciphertext hash length",
-        ));
-    }
-    if proof.balance_slots.len() != BALANCE_SLOTS {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid balance slot length",
-        ));
-    }
+    let stark_pub_inputs = transaction_proof_wrapper_public_inputs_p3(proof)?;
 
-    // Always validate balance slots against public_inputs
-    // (STARK proofs don't cover balance_slots - they're verified separately)
-    verify_balance_slots(proof)?;
-
-    if proof.stark_proof.is_empty() || proof.stark_public_inputs.is_none() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "missing STARK proof bytes or public inputs",
-        ));
-    }
-
-    let stark_pub_inputs = stark_public_inputs_p3(proof)?;
-
-    match verify_transaction_proof_bytes_for_backend(
+    let verifier_result = verify_transaction_proof_bytes_for_backend(
         proof.backend,
         &proof.stark_proof,
         &stark_pub_inputs,
         proof.version_binding(),
-    ) {
-        Ok(()) => Ok(VerificationReport { verified: true }),
-        Err(e) => Err(e),
-    }
+    );
+    admit_transaction_proof_wrapper(
+        TransactionProofWrapperAdmissionInput {
+            exact_consumption: true,
+            canonical_reencode: true,
+            backend_supported: matches!(proof.backend, TxProofBackend::Plonky3Fri),
+            proof_bytes_present: !proof.stark_proof.is_empty(),
+            serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
+            public_inputs_valid: true,
+            balance_slots_agree: true,
+            verifier_accepts: verifier_result.is_ok(),
+        },
+        verifier_result,
+    )?;
+    Ok(VerificationReport { verified: true })
+}
+
+pub fn transaction_proof_wrapper_public_inputs_p3(
+    proof: &TransactionProof,
+) -> Result<TransactionPublicInputsP3, TransactionCircuitError> {
+    transaction_proof_wrapper_public_inputs_for_admission(
+        proof,
+        matches!(proof.backend, TxProofBackend::Plonky3Fri),
+    )
 }
 
 fn ensure_plonky3_backend(proof: &TransactionProof) -> Result<(), TransactionCircuitError> {
@@ -955,6 +1097,29 @@ mod tests {
         expected_valid: bool,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperAdmissionVectorFile {
+        schema_version: u32,
+        proof_wrapper_admission_cases: Vec<LeanProofWrapperAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperAdmissionCase {
+        name: String,
+        exact_consumption: bool,
+        canonical_reencode: bool,
+        backend_supported: bool,
+        proof_bytes_present: bool,
+        serialized_public_inputs_present: bool,
+        public_inputs_valid: bool,
+        balance_slots_agree: bool,
+        verifier_accepts: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     fn dummy_serialized_inputs() -> SerializedStarkInputs {
         SerializedStarkInputs {
             input_flags: vec![0; MAX_INPUTS],
@@ -987,6 +1152,31 @@ mod tests {
             backend: TxProofBackend::Plonky3Fri,
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(dummy_serialized_inputs()),
+        }
+    }
+
+    fn wrapper_admissible_dummy_proof() -> TransactionProof {
+        let mut public_inputs = TransactionPublicInputs::default();
+        public_inputs.nullifiers = vec![bytes48(11), [0u8; 48]];
+        public_inputs.commitments = vec![bytes48(22), [0u8; 48]];
+        public_inputs.ciphertext_hashes = vec![bytes48(33), [0u8; 48]];
+        public_inputs.balance_tag =
+            balance_commitment_bytes(0, &public_inputs.balance_slots).expect("balance tag");
+        public_inputs.circuit_version = LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit;
+        public_inputs.crypto_suite = LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto;
+
+        let mut serialized = dummy_serialized_inputs();
+        serialized.input_flags = vec![1, 0];
+        serialized.output_flags = vec![1, 0];
+
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            backend: TxProofBackend::Plonky3Fri,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: Some(serialized),
         }
     }
 
@@ -1150,6 +1340,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lean_generated_proof_wrapper_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean proof-wrapper admission vectors");
+        let vectors: LeanProofWrapperAdmissionVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean proof-wrapper vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.proof_wrapper_admission_cases.is_empty(),
+            "Lean proof-wrapper admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.proof_wrapper_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_wrapper_admission_case(case);
+        }
+    }
+
+    fn verify_lean_proof_wrapper_admission_case(case: &LeanProofWrapperAdmissionCase) {
+        let input = TransactionProofWrapperAdmissionInput {
+            exact_consumption: case.exact_consumption,
+            canonical_reencode: case.canonical_reencode,
+            backend_supported: case.backend_supported,
+            proof_bytes_present: case.proof_bytes_present,
+            serialized_public_inputs_present: case.serialized_public_inputs_present,
+            public_inputs_valid: case.public_inputs_valid,
+            balance_slots_agree: case.balance_slots_agree,
+            verifier_accepts: case.verifier_accepts,
+        };
+        let result = evaluate_transaction_proof_wrapper_admission(input);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} proof-wrapper admission validity drifted from Lean spec",
+            case.name
+        );
+        let actual_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} proof-wrapper admission rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn public_inputs_from_binding_case(
         case: &LeanPublicInputBindingCase,
     ) -> TransactionPublicInputs {
@@ -1234,6 +1476,18 @@ mod tests {
         }
     }
 
+    fn wrapper_admissible_dummy_smallwood_proof() -> TransactionProof {
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.backend = TxProofBackend::SmallwoodCandidate;
+        proof.stark_proof = bincode::serialize(&SmallwoodCandidateProof {
+            arithmetization: SmallwoodArithmetization::DirectPacked64V1,
+            ark_proof: vec![1, 2, 3, 4],
+            auxiliary_witness_words: Vec::new(),
+        })
+        .expect("encode dummy smallwood proof");
+        proof
+    }
+
     #[test]
     fn verifier_profile_digest_matches_version_helper() {
         let proof = dummy_proof();
@@ -1303,6 +1557,75 @@ mod tests {
         );
         let decoded = decode_transaction_proof_bytes_exact(&encoded).expect("exact decode");
         assert_eq!(decoded, dummy_proof());
+    }
+
+    #[test]
+    fn wrapper_public_inputs_reject_presence_and_balance_failures() {
+        let mut proof = wrapper_admissible_dummy_proof();
+        transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect("admissible dummy wrapper reaches verifier input construction");
+
+        proof.stark_proof.clear();
+        let err =
+            transaction_proof_wrapper_public_inputs_p3(&proof).expect_err("missing proof rejects");
+        assert!(err.to_string().contains("missing proof bytes"));
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.stark_public_inputs = None;
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("missing serialized inputs reject");
+        assert!(err.to_string().contains("missing serialized public inputs"));
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.backend = TxProofBackend::SmallwoodCandidate;
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("unsupported backend rejects");
+        assert!(err.to_string().contains("unsupported backend"));
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof
+            .stark_public_inputs
+            .as_mut()
+            .expect("serialized inputs")
+            .value_balance_sign = 2;
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("invalid serialized public inputs reject");
+        assert!(err
+            .to_string()
+            .contains("public value balance does not match serialized public inputs"));
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        proof.balance_slots[0].delta = 1;
+        let err = transaction_proof_wrapper_public_inputs_p3(&proof)
+            .expect_err("wrapper balance slot drift rejects");
+        assert!(err.to_string().contains("balance delta"));
+    }
+
+    #[test]
+    fn smallwood_verification_uses_wrapper_admission() {
+        let verifying_key = VerifyingKey {
+            max_inputs: MAX_INPUTS,
+            max_outputs: MAX_OUTPUTS,
+            balance_slots: BALANCE_SLOTS,
+        };
+
+        let mut proof = wrapper_admissible_dummy_smallwood_proof();
+        proof.stark_public_inputs = None;
+        let err = verify(&proof, &verifying_key)
+            .expect_err("smallwood wrapper missing serialized inputs must reject");
+        assert!(
+            err.to_string().contains("missing serialized public inputs"),
+            "unexpected error: {err:?}"
+        );
+
+        let mut proof = wrapper_admissible_dummy_smallwood_proof();
+        proof.stark_proof.clear();
+        let err = verify(&proof, &verifying_key)
+            .expect_err("smallwood wrapper missing proof must reject");
+        assert!(
+            err.to_string().contains("missing proof bytes"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

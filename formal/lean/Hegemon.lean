@@ -32,6 +32,7 @@ import Hegemon.Native.ActionRootTranscript
 import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionStreamEffect
 import Hegemon.Native.ActionPlanApplicationAdmission
+import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.AnnouncedBlockAdmission
 import Hegemon.Native.BlockActionValidation
@@ -78,5 +79,6 @@ import Hegemon.Transaction.Balance
 import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Transaction.PublicInputBinding
+import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.StatementHash
 import Hegemon.Wallet.NoteCiphertextWire
