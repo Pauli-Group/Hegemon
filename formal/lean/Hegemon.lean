@@ -25,7 +25,9 @@ import Hegemon.Consensus.SupplyInvariant
 import Hegemon.Consensus.TreeTransition
 import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionHashAdmission
+import Hegemon.Native.AtomicCommitManifestAdmission
 import Hegemon.Native.ActionOrder
+import Hegemon.Native.ActionRequestProjectionAdmission
 import Hegemon.Native.ActionRootTranscript
 import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionStreamEffect
@@ -60,6 +62,7 @@ import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload
+import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission

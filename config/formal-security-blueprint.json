@@ -2674,7 +2674,7 @@
               "caller": "NativeNode::validate_and_stage_action",
               "callee_must_precede": [
                 "self.action_tree.insert",
-                "self.action_tree.flush",
+                "self.flush_native_durability_barrier",
                 "state.pending_actions.insert"
               ],
               "must_dominate_successors": true
@@ -2701,7 +2701,7 @@
               "caller": "NativeNode::submit_proofs",
               "callee_must_precede": [
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert"
+                "staged_proofs.insert"
               ],
               "must_dominate_successors": true
             }
@@ -2862,7 +2862,7 @@
               "caller": "NativeNode::submit_ciphertexts",
               "callee_must_precede": [
                 "self.da_ciphertext_tree.insert",
-                "state.staged_ciphertexts.insert"
+                "staged_ciphertexts.insert"
               ],
               "must_dominate_successors": true
             },
@@ -2871,7 +2871,7 @@
               "callee_must_precede": [
                 "evaluate_native_proof_sidecar_decoded_admission",
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert"
+                "staged_proofs.insert"
               ],
               "must_dominate_successors": true
             }
@@ -3636,6 +3636,287 @@
       "scope_boundary": "This node proves and vector-checks native local mined-work freshness admission, and the blueprint/regression gate enforces that final local PoW metadata verification precedes the atomic mined-block sled commit, in-memory state publication, and broadcast, and that the atomic commit precedes in-memory state publication plus broadcast. Mined import now commits the block record, height index, best pointer, canonical state/replay/ciphertext indexes, and pending-action removals in one sled transaction before publishing the next in-memory state. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove mining work template construction, pending-action replay, body commitment replay, action payload validation, supply accounting, PoW hash-threshold validity beyond the production verifier call, wall-clock correctness, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, or complete native-node equivalence."
     },
     {
+      "id": "native.storage-durability-admission",
+      "claim_id": "native.storage-durability-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean storage-durability admission transition, critical native storage mutations may be treated as publishable or complete only when the storage transaction/write step accepted and the explicit durability flush step accepted; transaction rejection precedes flush-failure reporting.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.StorageDurabilityAdmission.accepts_iff_storage_durability_preconditions` proves the complete executable predicate, and concrete theorems pin valid acceptance, durability-flush rejection, and transaction-before-flush rejection precedence. `gen_storage_durability_admission_vectors` emits Lean-derived mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, transaction-rejected, and flush-failed examples checked against the production `evaluate_native_storage_durability_admission` helper. The production `flush_native_db_durability_barrier` performs a database flush and maps failures through the same rejection table; `flush_native_durability_barrier` routes initialized-node paths to that helper. Blueprint bindings require mined-block import to propagate the barrier before prepared-work cleanup, in-memory publication, or broadcast; canonical reorg to propagate it before publication; canonical-index repair and nonwinning side-branch persistence to propagate it before completion; pending-action and sidecar staging to propagate it before in-memory publication; and genesis bootstrap/marker repair to propagate it before startup succeeds.",
+      "depends_on": [
+        "native.mined-work-admission",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/StorageDurabilityAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateStorageDurabilityAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_storage_durability_admission",
+          "required_callers": [
+            "flush_native_db_durability_barrier"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "flush_native_db_durability_barrier",
+          "required_callers": [
+            "NativeNode::flush_native_durability_barrier",
+            "load_best_or_genesis",
+            "validate_loaded_block_indexes"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "publish_staged_ciphertexts",
+          "required_callers": [
+            "NativeNode::submit_ciphertexts"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "publish_staged_proofs",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "flush_native_durability_barrier",
+          "required_callers": [
+            "import_mined_block",
+            "reorganize_chain_to_best_locked",
+            "commit_canonical_index_repair_atomically",
+            "persist_noncanonical_block_record",
+            "NativeNode::validate_and_stage_action",
+            "NativeNode::submit_ciphertexts",
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "forget_prepared_mining_actions",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "reorganize_chain_to_best_locked",
+              "callee_must_precede": [
+                "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::validate_and_stage_action",
+              "callee_must_precede": [
+                "state.pending_actions.insert"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::submit_ciphertexts",
+              "callee_must_precede": [
+                "publish_staged_ciphertexts"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "publish_staged_proofs"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/StorageDurabilityAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateStorageDurabilityAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for the explicit native storage durability barrier. Scope is the admission table and production wiring around sled transaction/write success plus explicit database flush; it does not prove sled or operating-system crash semantics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-storage-durability-theorem",
+          "description": "Removing or weakening the storage-durability admission theorems or concrete precedence facts must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-storage-durability-conformance",
+          "description": "Changing the production storage-durability admission table away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_storage_durability_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-storage-durability-barrier-binding",
+          "description": "The blueprint gate must reject storage durability if mined-block import, canonical reorg, canonical-index repair, noncanonical block-record persistence, pending-action staging, sidecar staging, or genesis bootstrap/repair stop propagating the explicit durability barrier or move publication before it.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "native-storage-durability-reload-regressions",
+          "description": "Committed mined blocks, canonical reorgs, startup canonical-index repairs, and nonwinning side-branch records must reload from durable storage after reopen.",
+          "gate": "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-storage-durability-gate",
+          "description": "The release formal-core wrapper must generate native storage-durability admission vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the explicit storage durability admission table and binds production critical mutation paths to propagate the database flush barrier before publication or success, including startup genesis bootstrap/marker repair and user-facing pending-action/sidecar staging. It reduces the filesystem durability residual by making the barrier explicit and gated, but it does not prove sled transaction implementation correctness, operating-system fsync semantics, disk firmware honesty, crash-consistency below sled, or complete native-node equivalence."
+    },
+    {
+      "id": "native.atomic-commit-manifest-admission",
+      "claim_id": "native.atomic-commit-manifest-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean atomic-commit manifest transition, native mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence accept only when their declared row-family write, clear, and removal counts match the kind-specific source counts before storage mutation.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AtomicCommitManifestAdmission.accepts_iff_atomic_commit_manifest_preconditions` proves the executable manifest predicate, with concrete valid-kind and mismatch rejection theorems for mined plan length, block-record writes, height-index writes, best-pointer writes, canonical-index clears, pending-tree clears, pending removals/writes, commitment writes, nullifier writes, bridge replay writes, ciphertext index/archive writes, and staged ciphertext removals. `gen_atomic_commit_manifest_admission_vectors` emits Lean-derived cases checked against the production `evaluate_native_atomic_commit_manifest_admission` helper. The native commit helpers build manifests from the same action/planning/index data they use for persistence and must propagate the gate before noncanonical record persistence or any atomic sled transaction.",
+      "depends_on": [
+        "native.storage-durability-admission",
+        "native.action-stream-effect-planning",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_atomic_commit_manifest_admission",
+          "required_callers": [
+            "persist_noncanonical_block_record",
+            "commit_reorg_state_atomically",
+            "commit_canonical_index_repair_atomically",
+            "commit_mined_block_atomically"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "persist_noncanonical_block_record",
+              "callee_must_precede": [
+                "persist_block_record",
+                "flush_native_durability_barrier"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "commit_reorg_state_atomically",
+              "callee_must_precede": [
+                "transaction"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "commit_canonical_index_repair_atomically",
+              "callee_must_precede": [
+                "transaction"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "commit_mined_block_atomically",
+              "callee_must_precede": [
+                "transaction"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_mined_block_commit_manifest",
+          "required_callers": [
+            "commit_mined_block_atomically"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_reorg_commit_manifest",
+          "required_callers": [
+            "commit_reorg_state_atomically"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_canonical_index_repair_manifest",
+          "required_callers": [
+            "commit_canonical_index_repair_atomically"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_noncanonical_block_record_manifest",
+          "required_callers": [
+            "persist_noncanonical_block_record"
+          ]
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as a bounded implementation-equivalence hardening slice for native atomic commit manifests. It proves the declared row-family manifest gate and production ordering, not sled internals or OS durability."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-atomic-commit-manifest-theorem",
+          "description": "Removing or weakening the atomic commit manifest theorem or its concrete mismatch theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-atomic-commit-manifest-conformance",
+          "description": "Changing native atomic commit manifest admission behavior away from the Lean executable spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_atomic_commit_manifest_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-atomic-commit-manifest-binding",
+          "description": "The blueprint gate must reject native commit paths that stop calling or propagating the manifest gate before noncanonical block-record persistence or sled transaction execution.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "native-atomic-commit-reload-regressions",
+          "description": "Committed mined blocks, canonical reorgs, startup canonical-index repairs, and nonwinning side-branch records must reload from durable storage after reopen.",
+          "gate": "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-atomic-commit-manifest-gate",
+          "description": "The release formal-core wrapper must generate native atomic-commit manifest vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the declared native atomic commit manifest table and binds production commit helpers to propagate it before persistence or transaction execution. It does not prove sled transaction implementation correctness, filesystem durability, OS fsync semantics, disk firmware behavior, row byte serialization correctness beyond existing codec gates, raw action replay equivalence, or complete native-node equivalence."
+    },
+    {
       "id": "native.work-template-admission",
       "claim_id": "native.work-template-admission",
       "kind": "target_claim",
@@ -3866,8 +4147,8 @@
               "caller": "NativeNode::submit_ciphertexts",
               "callee_must_precede": [
                 "self.da_ciphertext_tree.insert",
-                "state.staged_ciphertexts.insert",
-                "self.da_ciphertext_tree.flush"
+                "publish_staged_ciphertexts",
+                "self.flush_native_durability_barrier"
               ],
               "must_dominate_successors": true
             }
@@ -3885,7 +4166,7 @@
               "caller": "NativeNode::submit_ciphertexts",
               "callee_must_precede": [
                 "self.da_ciphertext_tree.insert",
-                "state.staged_ciphertexts.insert"
+                "staged_ciphertexts.insert"
               ],
               "must_dominate_successors": true
             }
@@ -3903,8 +4184,8 @@
               "caller": "NativeNode::submit_proofs",
               "callee_must_precede": [
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert",
-                "self.da_proof_tree.flush"
+                "publish_staged_proofs",
+                "self.flush_native_durability_barrier"
               ],
               "must_dominate_successors": true
             }
@@ -3923,7 +4204,7 @@
               "callee_must_precede": [
                 "evaluate_native_proof_sidecar_decoded_admission",
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert"
+                "staged_proofs.insert"
               ],
               "must_dominate_successors": true
             }
@@ -3943,7 +4224,7 @@
                 "evaluate_native_proof_sidecar_capacity_admission",
                 "validate_staged_proof_byte_budget",
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert"
+                "staged_proofs.insert"
               ],
               "must_dominate_successors": true
             }
@@ -3962,7 +4243,7 @@
               "callee_must_precede": [
                 "validate_staged_proof_byte_budget",
                 "self.da_proof_tree.insert",
-                "state.staged_proofs.insert"
+                "staged_proofs.insert"
               ],
               "must_dominate_successors": true
             }
@@ -5697,6 +5978,110 @@
         }
       ],
       "scope_boundary": "This node proves and vector-checks strict native codec admission only. It does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 collision resistance, sync networking liveness, full action payload validation, tx leaf proof soundness, or complete native-node equivalence."
+    },
+    {
+      "id": "native.action-request-projection-admission",
+      "claim_id": "native.action-request-projection-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native action-request projection transition, hegemon_submitAction request admission accepts only when JSON decoding uses the strict known-field grammar, unimplemented kernel-envelope compatibility fields are absent or empty, the native route is supported, nullifiers are route-scoped, bounded, and valid hex, public_args is within encoded and decoded limits, base64 decoding succeeds, and the route payload exact-decodes before PendingAction staging.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionRequestProjectionAdmission.accepts_iff_action_request_projection_preconditions` proves the executable predicate, with companion rejection theorems for strict JSON failure, non-empty kernel-envelope fields, unsupported routes, nullifier scope/count/hex failures, public_args bounds, base64 rejection, and non-exact route payloads. `gen_action_request_projection_admission_vectors` emits Lean-derived cases for the native Rust helper. The production path now decodes `SubmitActionRpcRequest` with `serde(deny_unknown_fields)`, accepts only empty wallet compatibility envelope fields, runs `admit_native_action_request_projection`, and propagates failure before state validation, sled staging, or in-memory pending publication.",
+      "depends_on": [
+        "native.codec-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionRequestProjectionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_submit_action_rpc_request",
+          "required_callers": [
+            "NativeNode::validate_and_stage_action"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::validate_and_stage_action",
+              "callee_must_precede": [
+                "admit_native_action_request_projection",
+                "self.validate_action_state",
+                "self.action_tree.insert",
+                "state.pending_actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "admit_native_action_request_projection",
+          "required_callers": [
+            "NativeNode::validate_and_stage_action"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::validate_and_stage_action",
+              "callee_must_precede": [
+                "self.validate_action_state",
+                "self.action_tree.insert",
+                "state.pending_actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_action_request_projection_admission",
+          "required_callers": [
+            "evaluate_native_action_request_projection"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateActionRequestProjectionAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as a bounded implementation-equivalence hardening slice for the native RPC action projection boundary. This does not prove complete SCALE parser implementation correctness or the later block replay semantics."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-action-request-projection-theorem",
+          "description": "Removing or weakening the action-request projection theorem or its rejection-precedence proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-action-request-projection-conformance",
+          "description": "Changing native request projection behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_request_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-action-request-projection-regression",
+          "description": "Native action submission must accept wallet-compatible empty envelope fields while rejecting unknown fields and non-empty unimplemented kernel-envelope fields before pending-action publication.",
+          "gate": "cargo test -p hegemon-node submit_action_rejects_unknown_or_nonempty_kernel_projection_fields --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-action-request-projection-binding",
+          "description": "The blueprint gate must keep strict request decoding and projection admission wired before state validation, sled staging, or pending-action publication.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks the native RPC action request projection boundary only. It does not prove serde_json, base64, SCALE Decode/Encode implementation correctness, BLAKE3 action-hash security, semantic payload validity, tx leaf proof soundness, atomic sled commit-manifest equivalence, or complete native-node equivalence."
     },
     {
       "id": "native.action-scope-admission",

@@ -82,6 +82,12 @@ lean_exe gen_version_policy_vectors where
 lean_exe gen_action_order_vectors where
   root := `Hegemon.Native.GenerateActionOrderVectors
 
+lean_exe gen_action_request_projection_admission_vectors where
+  root := `Hegemon.Native.GenerateActionRequestProjectionAdmissionVectors
+
+lean_exe gen_atomic_commit_manifest_admission_vectors where
+  root := `Hegemon.Native.GenerateAtomicCommitManifestAdmissionVectors
+
 lean_exe gen_action_hash_admission_vectors where
   root := `Hegemon.Native.GenerateActionHashAdmissionVectors
 
@@ -198,6 +204,9 @@ lean_exe gen_staged_ciphertext_reload_vectors where
 
 lean_exe gen_staged_proof_reload_vectors where
   root := `Hegemon.Native.GenerateStagedProofReloadVectors
+
+lean_exe gen_storage_durability_admission_vectors where
+  root := `Hegemon.Native.GenerateStorageDurabilityAdmissionVectors
 
 lean_exe gen_sync_admission_vectors where
   root := `Hegemon.Native.GenerateSyncAdmissionVectors

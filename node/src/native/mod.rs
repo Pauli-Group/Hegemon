@@ -1580,6 +1580,103 @@ enum NativeBlockCommitmentAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeAtomicCommitKind {
+    MinedBlockCommit,
+    CanonicalReorgCommit,
+    CanonicalIndexRepair,
+    NoncanonicalBlockRecord,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeAtomicCommitManifestAdmissionInput {
+    kind: NativeAtomicCommitKind,
+    action_count: usize,
+    planned_action_count: usize,
+    chain_block_count: usize,
+    height_entry_count: usize,
+    pending_entry_count: usize,
+    source_commitment_count: usize,
+    source_nullifier_count: usize,
+    source_bridge_replay_count: usize,
+    source_ciphertext_index_count: usize,
+    source_ciphertext_archive_count: usize,
+    source_staged_ciphertext_removal_count: usize,
+    block_record_writes: usize,
+    height_index_writes: usize,
+    best_pointer_writes: usize,
+    canonical_index_cleared: bool,
+    pending_tree_cleared: bool,
+    pending_action_removals: usize,
+    pending_action_writes: usize,
+    commitment_writes: usize,
+    nullifier_writes: usize,
+    bridge_replay_writes: usize,
+    ciphertext_index_writes: usize,
+    ciphertext_archive_writes: usize,
+    staged_ciphertext_removals: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeAtomicCommitManifestAdmissionRejection {
+    MinedPlanLengthMismatch,
+    BlockRecordWritesMismatch,
+    HeightIndexWritesMismatch,
+    BestPointerWritesMismatch,
+    CanonicalIndexClearMismatch,
+    PendingTreeClearMismatch,
+    PendingActionRemovalMismatch,
+    PendingActionWriteMismatch,
+    CommitmentWriteMismatch,
+    NullifierWriteMismatch,
+    BridgeReplayWriteMismatch,
+    CiphertextIndexWriteMismatch,
+    CiphertextArchiveWriteMismatch,
+    StagedCiphertextRemovalMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeStorageDurabilityAdmissionInput {
+    transaction_accepted: bool,
+    durability_flushed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeStorageDurabilityAdmissionRejection {
+    TransactionRejected,
+    DurabilityFlushFailed,
+}
+
+impl NativeStorageDurabilityAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::TransactionRejected => "transaction_rejected",
+            Self::DurabilityFlushFailed => "durability_flush_failed",
+        }
+    }
+}
+
+impl NativeAtomicCommitManifestAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MinedPlanLengthMismatch => "mined_plan_length_mismatch",
+            Self::BlockRecordWritesMismatch => "block_record_writes_mismatch",
+            Self::HeightIndexWritesMismatch => "height_index_writes_mismatch",
+            Self::BestPointerWritesMismatch => "best_pointer_writes_mismatch",
+            Self::CanonicalIndexClearMismatch => "canonical_index_clear_mismatch",
+            Self::PendingTreeClearMismatch => "pending_tree_clear_mismatch",
+            Self::PendingActionRemovalMismatch => "pending_action_removal_mismatch",
+            Self::PendingActionWriteMismatch => "pending_action_write_mismatch",
+            Self::CommitmentWriteMismatch => "commitment_write_mismatch",
+            Self::NullifierWriteMismatch => "nullifier_write_mismatch",
+            Self::BridgeReplayWriteMismatch => "bridge_replay_write_mismatch",
+            Self::CiphertextIndexWriteMismatch => "ciphertext_index_write_mismatch",
+            Self::CiphertextArchiveWriteMismatch => "ciphertext_archive_write_mismatch",
+            Self::StagedCiphertextRemovalMismatch => "staged_ciphertext_removal_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBlockReplayRefinementRejection {
     CiphertextCountMismatch,
     CommitmentIndexOverflow,
@@ -1727,14 +1824,301 @@ impl NativeSidecarUploadAdmissionRejection {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SubmitActionRpcRequest {
     binding_circuit: u16,
     binding_crypto: u16,
     family_id: u16,
     action_id: u16,
     #[serde(default)]
+    object_refs: Vec<SubmitActionObjectRef>,
+    #[serde(default)]
     new_nullifiers: Vec<String>,
     public_args: String,
+    #[serde(default)]
+    authorization_proof: Option<String>,
+    #[serde(default)]
+    authorization_signatures: Vec<SubmitActionSignature>,
+    #[serde(default)]
+    aux_data: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct SubmitActionObjectRef {
+    family_id: u16,
+    object_id: String,
+    expected_root: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct SubmitActionSignature {
+    key_id: String,
+    signature_scheme: u16,
+    signature_bytes: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeActionRequestProjectionAdmissionRejection {
+    JsonDecodeRejected,
+    KernelEnvelopeFieldsPresent,
+    UnsupportedRoute,
+    NonTransferNullifiers,
+    TooManyNullifiers,
+    InvalidNullifierHex,
+    PublicArgsTooLarge,
+    PublicArgsBase64Rejected,
+    DecodedPublicArgsTooLarge,
+    RoutePayloadDecodeNotExact,
+}
+
+#[cfg(test)]
+impl NativeActionRequestProjectionAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::JsonDecodeRejected => "json_decode_rejected",
+            Self::KernelEnvelopeFieldsPresent => "kernel_envelope_fields_present",
+            Self::UnsupportedRoute => "unsupported_route",
+            Self::NonTransferNullifiers => "non_transfer_nullifiers",
+            Self::TooManyNullifiers => "too_many_nullifiers",
+            Self::InvalidNullifierHex => "invalid_nullifier_hex",
+            Self::PublicArgsTooLarge => "public_args_too_large",
+            Self::PublicArgsBase64Rejected => "public_args_base64_rejected",
+            Self::DecodedPublicArgsTooLarge => "decoded_public_args_too_large",
+            Self::RoutePayloadDecodeNotExact => "route_payload_decode_not_exact",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeActionRequestProjectionAdmissionInput {
+    json_decode_accepts: bool,
+    kernel_envelope_fields_absent: bool,
+    route_supported: bool,
+    nullifier_scope_valid: bool,
+    nullifier_count_within_limit: bool,
+    nullifier_hex_valid: bool,
+    public_args_encoded_within_limit: bool,
+    public_args_base64_decodes: bool,
+    public_args_decoded_within_limit: bool,
+    route_payload_decodes_exactly: bool,
+}
+
+fn evaluate_native_action_request_projection_admission(
+    input: NativeActionRequestProjectionAdmissionInput,
+) -> std::result::Result<(), NativeActionRequestProjectionAdmissionRejection> {
+    if !input.json_decode_accepts {
+        Err(NativeActionRequestProjectionAdmissionRejection::JsonDecodeRejected)
+    } else if !input.kernel_envelope_fields_absent {
+        Err(NativeActionRequestProjectionAdmissionRejection::KernelEnvelopeFieldsPresent)
+    } else if !input.route_supported {
+        Err(NativeActionRequestProjectionAdmissionRejection::UnsupportedRoute)
+    } else if !input.nullifier_scope_valid {
+        Err(NativeActionRequestProjectionAdmissionRejection::NonTransferNullifiers)
+    } else if !input.nullifier_count_within_limit {
+        Err(NativeActionRequestProjectionAdmissionRejection::TooManyNullifiers)
+    } else if !input.nullifier_hex_valid {
+        Err(NativeActionRequestProjectionAdmissionRejection::InvalidNullifierHex)
+    } else if !input.public_args_encoded_within_limit {
+        Err(NativeActionRequestProjectionAdmissionRejection::PublicArgsTooLarge)
+    } else if !input.public_args_base64_decodes {
+        Err(NativeActionRequestProjectionAdmissionRejection::PublicArgsBase64Rejected)
+    } else if !input.public_args_decoded_within_limit {
+        Err(NativeActionRequestProjectionAdmissionRejection::DecodedPublicArgsTooLarge)
+    } else if !input.route_payload_decodes_exactly {
+        Err(NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_action_request_projection_error(
+    rejection: NativeActionRequestProjectionAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeActionRequestProjectionAdmissionRejection::JsonDecodeRejected => {
+            anyhow!("native action request JSON decode rejected")
+        }
+        NativeActionRequestProjectionAdmissionRejection::KernelEnvelopeFieldsPresent => anyhow!(
+            "native action request contains non-empty kernel envelope fields not implemented by native consensus"
+        ),
+        NativeActionRequestProjectionAdmissionRejection::UnsupportedRoute => {
+            anyhow!("unsupported native action route")
+        }
+        NativeActionRequestProjectionAdmissionRejection::NonTransferNullifiers => {
+            anyhow!("new_nullifiers must be empty for non-transfer actions")
+        }
+        NativeActionRequestProjectionAdmissionRejection::TooManyNullifiers => anyhow!(
+            "new_nullifiers length exceeds MAX_INPUTS {}",
+            transaction_core::constants::MAX_INPUTS
+        ),
+        NativeActionRequestProjectionAdmissionRejection::InvalidNullifierHex => {
+            anyhow!("invalid nullifier hex")
+        }
+        NativeActionRequestProjectionAdmissionRejection::PublicArgsTooLarge => anyhow!(
+            "public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
+        ),
+        NativeActionRequestProjectionAdmissionRejection::PublicArgsBase64Rejected => {
+            anyhow!("decode public_args failed")
+        }
+        NativeActionRequestProjectionAdmissionRejection::DecodedPublicArgsTooLarge => anyhow!(
+            "decoded public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
+        ),
+        NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact => anyhow!(
+            "native action request route payload decode not exact: trailing bytes or non-canonical payload"
+        ),
+    }
+}
+
+fn decode_submit_action_rpc_request(request: Value) -> Result<SubmitActionRpcRequest> {
+    serde_json::from_value(request).context("decode submit action request")
+}
+
+fn native_submit_action_is_transfer_route(family_id: u16, action_id: u16) -> bool {
+    family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action_id,
+            ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
+        )
+}
+
+fn native_submit_action_route_supported(family_id: u16, action_id: u16) -> bool {
+    matches!(
+        (family_id, action_id),
+        (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND)
+            | (FAMILY_BRIDGE, ACTION_BRIDGE_INBOUND)
+            | (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER)
+            | (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE)
+            | (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR)
+            | (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT)
+            | (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE)
+    )
+}
+
+fn native_action_request_kernel_fields_absent(request: &SubmitActionRpcRequest) -> bool {
+    request.object_refs.is_empty()
+        && request.authorization_proof.is_none()
+        && request.authorization_signatures.is_empty()
+        && request.aux_data.is_none()
+}
+
+fn native_action_request_nullifiers_decode(
+    request: &SubmitActionRpcRequest,
+    transfer_route: bool,
+) -> bool {
+    !transfer_route
+        || request
+            .new_nullifiers
+            .iter()
+            .all(|raw| parse_hex48(raw).is_some())
+}
+
+fn native_action_request_route_payload_decodes_exactly(
+    request: &SubmitActionRpcRequest,
+    public_args: &[u8],
+) -> bool {
+    match (request.family_id, request.action_id) {
+        (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => decode_scale_exact::<OutboundBridgeArgsV1>(
+            public_args,
+            "native outbound bridge action request args",
+        )
+        .is_ok(),
+        (FAMILY_BRIDGE, ACTION_BRIDGE_INBOUND) => decode_scale_exact::<InboundBridgeArgsV1>(
+            public_args,
+            "native inbound bridge action request args",
+        )
+        .is_ok(),
+        (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER) => {
+            decode_scale_exact::<BridgeVerifierRegistrationV1>(
+                public_args,
+                "native bridge verifier registration request args",
+            )
+            .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
+            decode_scale_exact::<ShieldedTransferInlineArgs>(
+                public_args,
+                "native shielded inline action request args",
+            )
+            .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
+            decode_scale_exact::<ShieldedTransferSidecarArgs>(
+                public_args,
+                "native shielded sidecar action request args",
+            )
+            .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
+            decode_scale_exact::<SubmitCandidateArtifactArgs>(
+                public_args,
+                "native candidate artifact action request args",
+            )
+            .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => decode_scale_exact::<MintCoinbaseArgs>(
+            public_args,
+            "native coinbase action request args",
+        )
+        .is_ok(),
+        _ => false,
+    }
+}
+
+fn evaluate_native_action_request_projection(
+    request: &SubmitActionRpcRequest,
+) -> std::result::Result<Vec<u8>, NativeActionRequestProjectionAdmissionRejection> {
+    let transfer_route =
+        native_submit_action_is_transfer_route(request.family_id, request.action_id);
+    let route_supported =
+        native_submit_action_route_supported(request.family_id, request.action_id);
+    let public_args_encoded_within_limit =
+        request.public_args.len() <= encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES);
+    let decoded_public_args = if public_args_encoded_within_limit {
+        decode_base64(&request.public_args).ok()
+    } else {
+        None
+    };
+    let public_args_base64_decodes = decoded_public_args.is_some();
+    let public_args_decoded_within_limit = decoded_public_args
+        .as_ref()
+        .map(|public_args| public_args.len() <= MAX_NATIVE_RPC_ACTION_BYTES)
+        .unwrap_or(false);
+    let route_payload_decodes_exactly = if route_supported && public_args_decoded_within_limit {
+        decoded_public_args
+            .as_ref()
+            .map(|public_args| {
+                native_action_request_route_payload_decodes_exactly(request, public_args)
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let input = NativeActionRequestProjectionAdmissionInput {
+        json_decode_accepts: true,
+        kernel_envelope_fields_absent: native_action_request_kernel_fields_absent(request),
+        route_supported,
+        nullifier_scope_valid: transfer_route || request.new_nullifiers.is_empty(),
+        nullifier_count_within_limit: request.new_nullifiers.len()
+            <= transaction_core::constants::MAX_INPUTS,
+        nullifier_hex_valid: native_action_request_nullifiers_decode(request, transfer_route),
+        public_args_encoded_within_limit,
+        public_args_base64_decodes,
+        public_args_decoded_within_limit,
+        route_payload_decodes_exactly,
+    };
+    evaluate_native_action_request_projection_admission(input)?;
+    decoded_public_args
+        .ok_or(NativeActionRequestProjectionAdmissionRejection::PublicArgsBase64Rejected)
+}
+
+fn admit_native_action_request_projection(request: &SubmitActionRpcRequest) -> Result<Vec<u8>> {
+    evaluate_native_action_request_projection(request)
+        .map_err(native_action_request_projection_error)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1819,8 +2203,10 @@ impl NativeNode {
         let da_ciphertext_tree = db.open_tree("da_pending_ciphertexts")?;
         let da_proof_tree = db.open_tree("da_pending_proofs")?;
 
-        let best = load_best_or_genesis(&meta_tree, &height_tree, &block_tree, config.pow_bits)?;
+        let best =
+            load_best_or_genesis(&db, &meta_tree, &height_tree, &block_tree, config.pow_bits)?;
         validate_loaded_block_indexes(
+            &db,
             &best,
             &meta_tree,
             &height_tree,
@@ -2296,6 +2682,7 @@ impl NativeNode {
         }
 
         self.commit_mined_block_atomically(&actions, &pending_action_effects, &meta)?;
+        self.flush_native_durability_barrier("native mined block commit")?;
         self.forget_prepared_mining_actions(work);
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
@@ -2384,9 +2771,22 @@ impl NativeNode {
     }
 
     fn persist_noncanonical_block_record(&self, meta: &NativeBlockMeta) -> Result<()> {
+        evaluate_native_atomic_commit_manifest_admission(
+            native_noncanonical_block_record_manifest(),
+        )
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(
+                "native noncanonical block record manifest",
+                rejection,
+            )
+        })?;
         persist_block_record(&self.block_tree, meta)?;
-        self.db.flush()?;
+        self.flush_native_durability_barrier("noncanonical native block record")?;
         Ok(())
+    }
+
+    fn flush_native_durability_barrier(&self, context: &'static str) -> Result<()> {
+        flush_native_db_durability_barrier(&self.db, context)
     }
 
     fn broadcast_block_announce(&self, meta: &NativeBlockMeta) {
@@ -2642,6 +3042,7 @@ impl NativeNode {
             &pending_entries,
             &new_state.best,
         )?;
+        self.flush_native_durability_barrier("native canonical reorg commit")?;
 
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
         for meta in new_chain.iter().skip(1) {
@@ -2674,6 +3075,18 @@ impl NativeNode {
             collect_tree_keys(&self.ciphertext_archive_tree, "native ciphertext archive")?;
         let action_keys = collect_tree_keys(&self.action_tree, "native pending action")?;
         let best_record = bincode::serialize(best)?;
+        evaluate_native_atomic_commit_manifest_admission(native_reorg_commit_manifest(
+            &canonical_index_plan,
+            block_entries,
+            height_entries,
+            pending_entries,
+        ))
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(
+                "native canonical reorg manifest",
+                rejection,
+            )
+        })?;
         let NativeCanonicalIndexPlan {
             commitment_entries,
             nullifier_entries,
@@ -2754,7 +3167,6 @@ impl NativeNode {
                         action_tree.insert(tx_hash.to_vec(), encoded.clone())?;
                     }
                     meta_tree.insert(META_BEST_KEY.to_vec(), best_record.clone())?;
-                    meta_tree.flush();
                     Ok(())
                 },
             );
@@ -2774,6 +3186,15 @@ impl NativeNode {
             collect_tree_keys(&self.ciphertext_index_tree, "native ciphertext index")?;
         let ciphertext_archive_keys =
             collect_tree_keys(&self.ciphertext_archive_tree, "native ciphertext archive")?;
+        evaluate_native_atomic_commit_manifest_admission(native_canonical_index_repair_manifest(
+            &canonical_index_plan,
+        ))
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(
+                "native canonical index repair manifest",
+                rejection,
+            )
+        })?;
         let NativeCanonicalIndexPlan {
             commitment_entries,
             nullifier_entries,
@@ -2835,11 +3256,7 @@ impl NativeNode {
             );
         repair_result
             .map_err(|err| anyhow!("atomic native canonical index repair failed: {err}"))?;
-        self.commitment_tree.flush()?;
-        self.nullifier_tree.flush()?;
-        self.bridge_inbound_tree.flush()?;
-        self.ciphertext_index_tree.flush()?;
-        self.ciphertext_archive_tree.flush()?;
+        self.flush_native_durability_barrier("native canonical index repair")?;
         Ok(())
     }
 
@@ -2849,13 +3266,15 @@ impl NativeNode {
         planned: &[NativePlannedActionEffect],
         meta: &NativeBlockMeta,
     ) -> Result<()> {
-        if actions.len() != planned.len() {
-            return Err(anyhow!(
-                "mined block commit plan length mismatch: actions={} planned={}",
-                actions.len(),
-                planned.len()
-            ));
-        }
+        evaluate_native_atomic_commit_manifest_admission(native_mined_block_commit_manifest(
+            actions, planned,
+        ))
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(
+                "native mined block commit manifest",
+                rejection,
+            )
+        })?;
 
         let block_record = bincode::serialize(meta)?;
         let best_record = block_record.clone();
@@ -2932,8 +3351,6 @@ impl NativeNode {
                             da_ciphertext_tree.remove(hash.to_vec())?;
                         }
                     }
-
-                    meta_tree.flush();
                     Ok(())
                 },
             );
@@ -3266,41 +3683,10 @@ impl NativeNode {
     }
 
     fn validate_and_stage_action(&self, request: Value) -> Result<PendingAction> {
-        let request: SubmitActionRpcRequest =
-            serde_json::from_value(request).context("decode submit action request")?;
-        if request.family_id != FAMILY_SHIELDED_POOL && request.family_id != FAMILY_BRIDGE {
-            return Err(anyhow!("unsupported family {}", request.family_id));
-        }
-
-        let transfer_route = request.family_id == FAMILY_SHIELDED_POOL
-            && matches!(
-                request.action_id,
-                ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
-            );
-        if !transfer_route && !request.new_nullifiers.is_empty() {
-            return Err(anyhow!(
-                "new_nullifiers must be empty for non-transfer actions"
-            ));
-        }
-        if request.new_nullifiers.len() > transaction_core::constants::MAX_INPUTS {
-            return Err(anyhow!(
-                "new_nullifiers length {} exceeds MAX_INPUTS {}",
-                request.new_nullifiers.len(),
-                transaction_core::constants::MAX_INPUTS
-            ));
-        }
-
-        if request.public_args.len() > encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES) {
-            return Err(anyhow!(
-                "public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
-            ));
-        }
-        let public_args = decode_base64(&request.public_args).context("decode public_args")?;
-        if public_args.len() > MAX_NATIVE_RPC_ACTION_BYTES {
-            return Err(anyhow!(
-                "decoded public_args exceeds native action limit of {MAX_NATIVE_RPC_ACTION_BYTES} bytes"
-            ));
-        }
+        let request = decode_submit_action_rpc_request(request)?;
+        let public_args = admit_native_action_request_projection(&request)?;
+        let transfer_route =
+            native_submit_action_is_transfer_route(request.family_id, request.action_id);
         let binding = KernelVersionBinding {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
@@ -3555,7 +3941,7 @@ impl NativeNode {
             validate_pending_action_against_mempool_state(&state, &pending)?;
             self.action_tree
                 .insert(pending.tx_hash.as_slice(), pending.encode())?;
-            self.action_tree.flush()?;
+            self.flush_native_durability_barrier("native pending action stage")?;
             state
                 .pending_actions
                 .insert(pending.tx_hash, pending.clone());
@@ -3591,6 +3977,7 @@ impl NativeNode {
         .map_err(native_sidecar_upload_admission_error)?;
         let mut results = Vec::with_capacity(ciphertexts.len());
         let mut state = self.state.write();
+        let mut staged_ciphertexts = state.staged_ciphertexts.clone();
         for ciphertext in ciphertexts {
             let raw =
                 parse_bytes_value(ciphertext, MAX_CIPHERTEXT_BYTES, "ciphertext upload item")?;
@@ -3605,21 +3992,22 @@ impl NativeNode {
             let hash_hex = hex48(&hash);
             evaluate_native_ciphertext_sidecar_capacity_admission(
                 NativeSidecarCapacityAdmissionInput {
-                    staged_count: state.staged_ciphertexts.len(),
+                    staged_count: staged_ciphertexts.len(),
                     max_staged_count: MAX_NATIVE_STAGED_CIPHERTEXTS,
-                    replaces_existing: state.staged_ciphertexts.contains_key(&hash_hex),
+                    replaces_existing: staged_ciphertexts.contains_key(&hash_hex),
                 },
             )
             .map_err(native_sidecar_upload_admission_error)?;
             let size = u32::try_from(raw.len()).unwrap_or(u32::MAX);
             self.da_ciphertext_tree.insert(hash.as_slice(), raw)?;
-            state.staged_ciphertexts.insert(hash_hex.clone(), size);
+            staged_ciphertexts.insert(hash_hex.clone(), size);
             results.push(json!({
                 "hash": hash_hex,
                 "size": size,
             }));
         }
-        self.da_ciphertext_tree.flush()?;
+        self.flush_native_durability_barrier("native staged ciphertext upload")?;
+        publish_staged_ciphertexts(&mut state, staged_ciphertexts);
         Ok(Value::Array(results))
     }
 
@@ -3635,6 +4023,7 @@ impl NativeNode {
         .map_err(native_sidecar_upload_admission_error)?;
         let mut results = Vec::with_capacity(proofs.len());
         let mut state = self.state.write();
+        let mut staged_proofs = state.staged_proofs.clone();
         for item in proofs {
             let binding_hash_value = item.get("binding_hash").and_then(Value::as_str);
             let binding_hash_bytes = binding_hash_value.and_then(parse_hex64);
@@ -3665,13 +4054,13 @@ impl NativeNode {
                 hash48_with_parts(&[b"da-proof-v1", binding_hash_bytes.as_slice(), &proof]);
             let proof_hash_hex = hex48(&proof_hash);
             evaluate_native_proof_sidecar_capacity_admission(NativeSidecarCapacityAdmissionInput {
-                staged_count: state.staged_proofs.len(),
+                staged_count: staged_proofs.len(),
                 max_staged_count: MAX_NATIVE_STAGED_PROOFS,
-                replaces_existing: state.staged_proofs.contains_key(&binding_hash_key),
+                replaces_existing: staged_proofs.contains_key(&binding_hash_key),
             })
             .map_err(native_sidecar_upload_admission_error)?;
             validate_staged_proof_byte_budget(
-                &state.staged_proofs,
+                &staged_proofs,
                 &binding_hash_key,
                 proof.len(),
                 MAX_NATIVE_STAGED_PROOF_BYTES,
@@ -3679,14 +4068,15 @@ impl NativeNode {
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
             self.da_proof_tree
                 .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
-            state.staged_proofs.insert(binding_hash_key.clone(), proof);
+            staged_proofs.insert(binding_hash_key.clone(), proof);
             results.push(json!({
                 "binding_hash": binding_hash_key,
                 "proof_hash": proof_hash_hex,
                 "size": size,
             }));
         }
-        self.da_proof_tree.flush()?;
+        self.flush_native_durability_barrier("native staged proof upload")?;
+        publish_staged_proofs(&mut state, staged_proofs);
         Ok(Value::Array(results))
     }
 
@@ -4790,6 +5180,14 @@ fn publish_reorganized_state(state: &mut NativeState, next_state: NativeState) {
     *state = next_state;
 }
 
+fn publish_staged_ciphertexts(state: &mut NativeState, staged_ciphertexts: BTreeMap<String, u32>) {
+    state.staged_ciphertexts = staged_ciphertexts;
+}
+
+fn publish_staged_proofs(state: &mut NativeState, staged_proofs: BTreeMap<String, Vec<u8>>) {
+    state.staged_proofs = staged_proofs;
+}
+
 fn collect_tree_keys(tree: &sled::Tree, tree_name: &str) -> Result<Vec<Vec<u8>>> {
     tree.iter()
         .keys()
@@ -4801,6 +5199,7 @@ fn collect_tree_keys(tree: &sled::Tree, tree_name: &str) -> Result<Vec<Vec<u8>>>
 }
 
 fn load_best_or_genesis(
+    db: &sled::Db,
     meta_tree: &sled::Tree,
     height_tree: &sled::Tree,
     block_tree: &sled::Tree,
@@ -4813,7 +5212,7 @@ fn load_best_or_genesis(
     let genesis = genesis_meta(pow_bits)?;
     persist_block(meta_tree, height_tree, block_tree, &genesis)?;
     meta_tree.insert(META_GENESIS_KEY, genesis.hash.as_slice())?;
-    meta_tree.flush()?;
+    flush_native_db_durability_barrier(db, "native genesis bootstrap")?;
     Ok(genesis)
 }
 
@@ -5257,6 +5656,7 @@ fn evaluate_native_staged_proof_reload(
 }
 
 fn validate_loaded_block_indexes(
+    db: &sled::Db,
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
     height_tree: &sled::Tree,
@@ -5386,7 +5786,7 @@ fn validate_loaded_block_indexes(
 
     if admission.repair_missing_genesis_marker {
         meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
-        meta_tree.flush()?;
+        flush_native_db_durability_barrier(db, "native genesis marker repair")?;
     }
     for index in 0..chain.len() {
         let parent = if index == 0 {
@@ -8295,6 +8695,366 @@ fn native_block_commitment_admission_error(
     anyhow!("{context}: {}", rejection.label())
 }
 
+fn expected_atomic_block_record_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit => 1,
+        NativeAtomicCommitKind::CanonicalReorgCommit => input.chain_block_count,
+        NativeAtomicCommitKind::CanonicalIndexRepair => 0,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 1,
+    }
+}
+
+fn expected_atomic_height_index_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit => 1,
+        NativeAtomicCommitKind::CanonicalReorgCommit => input.height_entry_count,
+        NativeAtomicCommitKind::CanonicalIndexRepair
+        | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_best_pointer_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::CanonicalReorgCommit => {
+            1
+        }
+        NativeAtomicCommitKind::CanonicalIndexRepair
+        | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_canonical_index_cleared(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> bool {
+    matches!(
+        input.kind,
+        NativeAtomicCommitKind::CanonicalReorgCommit | NativeAtomicCommitKind::CanonicalIndexRepair
+    )
+}
+
+fn expected_atomic_pending_tree_cleared(input: NativeAtomicCommitManifestAdmissionInput) -> bool {
+    matches!(input.kind, NativeAtomicCommitKind::CanonicalReorgCommit)
+}
+
+fn expected_atomic_pending_action_removals(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit => input.action_count,
+        _ => 0,
+    }
+}
+
+fn expected_atomic_pending_action_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::CanonicalReorgCommit => input.pending_entry_count,
+        _ => 0,
+    }
+}
+
+fn expected_atomic_commitment_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_commitment_count,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_nullifier_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_nullifier_count,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_bridge_replay_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_bridge_replay_count,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_ciphertext_index_writes(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_index_count,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_ciphertext_archive_writes(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_archive_count,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
+    }
+}
+
+fn expected_atomic_staged_ciphertext_removals(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> usize {
+    match input.kind {
+        NativeAtomicCommitKind::MinedBlockCommit => input.source_staged_ciphertext_removal_count,
+        _ => 0,
+    }
+}
+
+fn evaluate_native_atomic_commit_manifest_admission(
+    input: NativeAtomicCommitManifestAdmissionInput,
+) -> Result<(), NativeAtomicCommitManifestAdmissionRejection> {
+    if matches!(input.kind, NativeAtomicCommitKind::MinedBlockCommit)
+        && input.action_count != input.planned_action_count
+    {
+        Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLengthMismatch)
+    } else if input.block_record_writes != expected_atomic_block_record_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::BlockRecordWritesMismatch)
+    } else if input.height_index_writes != expected_atomic_height_index_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::HeightIndexWritesMismatch)
+    } else if input.best_pointer_writes != expected_atomic_best_pointer_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::BestPointerWritesMismatch)
+    } else if input.canonical_index_cleared != expected_atomic_canonical_index_cleared(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::CanonicalIndexClearMismatch)
+    } else if input.pending_tree_cleared != expected_atomic_pending_tree_cleared(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingTreeClearMismatch)
+    } else if input.pending_action_removals != expected_atomic_pending_action_removals(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionRemovalMismatch)
+    } else if input.pending_action_writes != expected_atomic_pending_action_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionWriteMismatch)
+    } else if input.commitment_writes != expected_atomic_commitment_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::CommitmentWriteMismatch)
+    } else if input.nullifier_writes != expected_atomic_nullifier_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::NullifierWriteMismatch)
+    } else if input.bridge_replay_writes != expected_atomic_bridge_replay_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::BridgeReplayWriteMismatch)
+    } else if input.ciphertext_index_writes != expected_atomic_ciphertext_index_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextIndexWriteMismatch)
+    } else if input.ciphertext_archive_writes != expected_atomic_ciphertext_archive_writes(input) {
+        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextArchiveWriteMismatch)
+    } else if input.staged_ciphertext_removals != expected_atomic_staged_ciphertext_removals(input)
+    {
+        Err(NativeAtomicCommitManifestAdmissionRejection::StagedCiphertextRemovalMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_atomic_commit_manifest_admission_error(
+    context: &str,
+    rejection: NativeAtomicCommitManifestAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
+fn native_mined_block_commit_manifest(
+    actions: &[PendingAction],
+    planned: &[NativePlannedActionEffect],
+) -> NativeAtomicCommitManifestAdmissionInput {
+    let commitment_count = actions
+        .iter()
+        .map(|action| action.commitments.len())
+        .sum::<usize>();
+    let nullifier_count = actions
+        .iter()
+        .map(|action| action.nullifiers.len())
+        .sum::<usize>();
+    let ciphertext_hash_count = actions
+        .iter()
+        .map(|action| action.ciphertext_hashes.len())
+        .sum::<usize>();
+    let materialized_ciphertext_count = planned
+        .iter()
+        .map(|effect| effect.ciphertexts.len())
+        .sum::<usize>();
+    let bridge_replay_count = planned
+        .iter()
+        .filter(|effect| effect.replay_key.is_some())
+        .count();
+    NativeAtomicCommitManifestAdmissionInput {
+        kind: NativeAtomicCommitKind::MinedBlockCommit,
+        action_count: actions.len(),
+        planned_action_count: planned.len(),
+        chain_block_count: 0,
+        height_entry_count: 0,
+        pending_entry_count: 0,
+        source_commitment_count: commitment_count,
+        source_nullifier_count: nullifier_count,
+        source_bridge_replay_count: bridge_replay_count,
+        source_ciphertext_index_count: ciphertext_hash_count,
+        source_ciphertext_archive_count: materialized_ciphertext_count,
+        source_staged_ciphertext_removal_count: ciphertext_hash_count,
+        block_record_writes: 1,
+        height_index_writes: 1,
+        best_pointer_writes: 1,
+        canonical_index_cleared: false,
+        pending_tree_cleared: false,
+        pending_action_removals: actions.len(),
+        pending_action_writes: 0,
+        commitment_writes: commitment_count,
+        nullifier_writes: nullifier_count,
+        bridge_replay_writes: bridge_replay_count,
+        ciphertext_index_writes: ciphertext_hash_count,
+        ciphertext_archive_writes: materialized_ciphertext_count,
+        staged_ciphertext_removals: ciphertext_hash_count,
+    }
+}
+
+fn native_reorg_commit_manifest(
+    canonical_index_plan: &NativeCanonicalIndexPlan,
+    block_entries: &[([u8; 32], Vec<u8>)],
+    height_entries: &[(u64, [u8; 32])],
+    pending_entries: &[([u8; 32], Vec<u8>)],
+) -> NativeAtomicCommitManifestAdmissionInput {
+    NativeAtomicCommitManifestAdmissionInput {
+        kind: NativeAtomicCommitKind::CanonicalReorgCommit,
+        action_count: 0,
+        planned_action_count: 0,
+        chain_block_count: block_entries.len(),
+        height_entry_count: height_entries.len(),
+        pending_entry_count: pending_entries.len(),
+        source_commitment_count: canonical_index_plan.commitment_entries.len(),
+        source_nullifier_count: canonical_index_plan.nullifier_entries.len(),
+        source_bridge_replay_count: canonical_index_plan.bridge_replay_entries.len(),
+        source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
+        source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
+        source_staged_ciphertext_removal_count: 0,
+        block_record_writes: block_entries.len(),
+        height_index_writes: height_entries.len(),
+        best_pointer_writes: 1,
+        canonical_index_cleared: true,
+        pending_tree_cleared: true,
+        pending_action_removals: 0,
+        pending_action_writes: pending_entries.len(),
+        commitment_writes: canonical_index_plan.commitment_entries.len(),
+        nullifier_writes: canonical_index_plan.nullifier_entries.len(),
+        bridge_replay_writes: canonical_index_plan.bridge_replay_entries.len(),
+        ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
+        ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
+        staged_ciphertext_removals: 0,
+    }
+}
+
+fn native_canonical_index_repair_manifest(
+    canonical_index_plan: &NativeCanonicalIndexPlan,
+) -> NativeAtomicCommitManifestAdmissionInput {
+    NativeAtomicCommitManifestAdmissionInput {
+        kind: NativeAtomicCommitKind::CanonicalIndexRepair,
+        action_count: 0,
+        planned_action_count: 0,
+        chain_block_count: 0,
+        height_entry_count: 0,
+        pending_entry_count: 0,
+        source_commitment_count: canonical_index_plan.commitment_entries.len(),
+        source_nullifier_count: canonical_index_plan.nullifier_entries.len(),
+        source_bridge_replay_count: canonical_index_plan.bridge_replay_entries.len(),
+        source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
+        source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
+        source_staged_ciphertext_removal_count: 0,
+        block_record_writes: 0,
+        height_index_writes: 0,
+        best_pointer_writes: 0,
+        canonical_index_cleared: true,
+        pending_tree_cleared: false,
+        pending_action_removals: 0,
+        pending_action_writes: 0,
+        commitment_writes: canonical_index_plan.commitment_entries.len(),
+        nullifier_writes: canonical_index_plan.nullifier_entries.len(),
+        bridge_replay_writes: canonical_index_plan.bridge_replay_entries.len(),
+        ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
+        ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
+        staged_ciphertext_removals: 0,
+    }
+}
+
+fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitManifestAdmissionInput {
+    NativeAtomicCommitManifestAdmissionInput {
+        kind: NativeAtomicCommitKind::NoncanonicalBlockRecord,
+        action_count: 0,
+        planned_action_count: 0,
+        chain_block_count: 0,
+        height_entry_count: 0,
+        pending_entry_count: 0,
+        source_commitment_count: 0,
+        source_nullifier_count: 0,
+        source_bridge_replay_count: 0,
+        source_ciphertext_index_count: 0,
+        source_ciphertext_archive_count: 0,
+        source_staged_ciphertext_removal_count: 0,
+        block_record_writes: 1,
+        height_index_writes: 0,
+        best_pointer_writes: 0,
+        canonical_index_cleared: false,
+        pending_tree_cleared: false,
+        pending_action_removals: 0,
+        pending_action_writes: 0,
+        commitment_writes: 0,
+        nullifier_writes: 0,
+        bridge_replay_writes: 0,
+        ciphertext_index_writes: 0,
+        ciphertext_archive_writes: 0,
+        staged_ciphertext_removals: 0,
+    }
+}
+
+fn flush_native_db_durability_barrier(db: &sled::Db, context: &'static str) -> Result<()> {
+    match db.flush() {
+        Ok(flushed_bytes) => {
+            evaluate_native_storage_durability_admission(NativeStorageDurabilityAdmissionInput {
+                transaction_accepted: true,
+                durability_flushed: true,
+            })
+            .map_err(|rejection| native_storage_durability_admission_error(context, rejection))?;
+            debug!(
+                context,
+                flushed_bytes, "native storage durability barrier accepted"
+            );
+            Ok(())
+        }
+        Err(err) => {
+            let rejection = evaluate_native_storage_durability_admission(
+                NativeStorageDurabilityAdmissionInput {
+                    transaction_accepted: true,
+                    durability_flushed: false,
+                },
+            )
+            .expect_err("failed durability flush must reject");
+            Err(native_storage_durability_admission_error(
+                context, rejection,
+            ))
+            .with_context(|| format!("native storage durability flush failed: {err}"))
+        }
+    }
+}
+
+fn evaluate_native_storage_durability_admission(
+    input: NativeStorageDurabilityAdmissionInput,
+) -> Result<(), NativeStorageDurabilityAdmissionRejection> {
+    if !input.transaction_accepted {
+        Err(NativeStorageDurabilityAdmissionRejection::TransactionRejected)
+    } else if !input.durability_flushed {
+        Err(NativeStorageDurabilityAdmissionRejection::DurabilityFlushFailed)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_storage_durability_admission_error(
+    context: &str,
+    rejection: NativeStorageDurabilityAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("{context}: {}", rejection.label())
+}
+
 fn evaluate_native_block_replay_refinement<'a>(
     input: NativeBlockReplayRefinementInput,
     steps: impl IntoIterator<Item = NativeActionStreamStep<'a>>,
@@ -11066,6 +11826,32 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanActionRequestProjectionAdmissionVectorFile {
+        schema_version: u32,
+        action_request_projection_admission_cases: Vec<LeanActionRequestProjectionAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionRequestProjectionAdmissionCase {
+        name: String,
+        fixture: String,
+        json_decode_accepts: bool,
+        kernel_envelope_fields_absent: bool,
+        route_supported: bool,
+        nullifier_scope_valid: bool,
+        nullifier_count_within_limit: bool,
+        nullifier_hex_valid: bool,
+        public_args_encoded_within_limit: bool,
+        public_args_base64_decodes: bool,
+        public_args_decoded_within_limit: bool,
+        route_payload_decodes_exactly: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanSyncCodecCase {
         name: String,
         fixture: String,
@@ -11097,6 +11883,64 @@ mod tests {
         declared_tx_count: usize,
         actual_action_payload_count: usize,
         every_action_decodes_exactly: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStorageDurabilityAdmissionVectorFile {
+        schema_version: u32,
+        storage_durability_admission_cases: Vec<LeanStorageDurabilityAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStorageDurabilityAdmissionCase {
+        name: String,
+        operation: String,
+        transaction_accepted: bool,
+        durability_flushed: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAtomicCommitManifestAdmissionVectorFile {
+        schema_version: u32,
+        atomic_commit_manifest_admission_cases: Vec<LeanAtomicCommitManifestAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAtomicCommitManifestAdmissionCase {
+        name: String,
+        kind: String,
+        action_count: usize,
+        planned_action_count: usize,
+        chain_block_count: usize,
+        height_entry_count: usize,
+        pending_entry_count: usize,
+        source_commitment_count: usize,
+        source_nullifier_count: usize,
+        source_bridge_replay_count: usize,
+        source_ciphertext_index_count: usize,
+        source_ciphertext_archive_count: usize,
+        source_staged_ciphertext_removal_count: usize,
+        block_record_writes: usize,
+        height_index_writes: usize,
+        best_pointer_writes: usize,
+        canonical_index_cleared: bool,
+        pending_tree_cleared: bool,
+        pending_action_removals: usize,
+        pending_action_writes: usize,
+        commitment_writes: usize,
+        nullifier_writes: usize,
+        bridge_replay_writes: usize,
+        ciphertext_index_writes: usize,
+        ciphertext_archive_writes: usize,
+        staged_ciphertext_removals: usize,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -13614,6 +14458,44 @@ mod tests {
     }
 
     #[test]
+    fn submit_action_rejects_unknown_or_nonempty_kernel_projection_fields() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+
+        let accepted = node
+            .validate_and_stage_action(action_request_projection_fixture(
+                "valid_empty_wallet_envelope_fields",
+            ))
+            .expect("empty wallet envelope compatibility fields must be accepted");
+        assert_eq!(node.state.read().pending_actions.len(), 1);
+        assert_eq!(accepted.tx_hash, pending_action_hash(&accepted));
+
+        let unknown = node
+            .validate_and_stage_action(action_request_projection_fixture("unknown_field"))
+            .expect_err("unknown action request fields must reject");
+        assert!(
+            unknown.to_string().contains("decode submit action request"),
+            "unexpected unknown-field error: {unknown}"
+        );
+
+        for fixture in [
+            "object_ref_present",
+            "authorization_proof_present",
+            "authorization_signature_present",
+            "aux_data_present",
+        ] {
+            let err = node
+                .validate_and_stage_action(action_request_projection_fixture(fixture))
+                .expect_err("non-empty kernel envelope projection fields must reject");
+            assert!(
+                err.to_string().contains("kernel envelope fields"),
+                "unexpected projection error for {fixture}: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn submit_action_rejects_trailing_public_args() {
         use base64::Engine;
 
@@ -15103,6 +15985,229 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_action_request_projection_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action request projection admission vectors");
+        let vectors: LeanActionRequestProjectionAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean action request projection admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_request_projection_admission_cases.is_empty(),
+            "Lean action request projection admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_request_projection_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_request_projection_admission_case(case);
+        }
+    }
+
+    fn verify_lean_action_request_projection_admission_case(
+        case: &LeanActionRequestProjectionAdmissionCase,
+    ) {
+        let input = NativeActionRequestProjectionAdmissionInput {
+            json_decode_accepts: case.json_decode_accepts,
+            kernel_envelope_fields_absent: case.kernel_envelope_fields_absent,
+            route_supported: case.route_supported,
+            nullifier_scope_valid: case.nullifier_scope_valid,
+            nullifier_count_within_limit: case.nullifier_count_within_limit,
+            nullifier_hex_valid: case.nullifier_hex_valid,
+            public_args_encoded_within_limit: case.public_args_encoded_within_limit,
+            public_args_base64_decodes: case.public_args_base64_decodes,
+            public_args_decoded_within_limit: case.public_args_decoded_within_limit,
+            route_payload_decodes_exactly: case.route_payload_decodes_exactly,
+        };
+        let model = evaluate_native_action_request_projection_admission(input);
+        let model_rejection = model
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            model.is_ok(),
+            case.expected_valid,
+            "{} Lean action request projection predicate fields disagree with expected validity",
+            case.name
+        );
+        assert_eq!(
+            model_rejection, case.expected_rejection,
+            "{} Lean action request projection rejection drifted from Rust model",
+            case.name
+        );
+
+        let request = action_request_projection_fixture(&case.fixture);
+        let actual = decode_submit_action_rpc_request(request)
+            .map_err(|_| NativeActionRequestProjectionAdmissionRejection::JsonDecodeRejected)
+            .and_then(|request| evaluate_native_action_request_projection(&request).map(|_| ()));
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native action request projection validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native action request projection rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn action_request_projection_fixture(fixture: &str) -> Value {
+        use base64::Engine;
+
+        let outbound = OutboundBridgeArgsV1 {
+            destination_chain_id: [7u8; 32],
+            app_family_id: 9,
+            payload: b"lean action projection".to_vec(),
+        };
+        let mut valid_payload = outbound.encode();
+        let mut request = json!({
+            "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            "family_id": FAMILY_BRIDGE,
+            "action_id": ACTION_BRIDGE_OUTBOUND,
+            "new_nullifiers": [],
+            "public_args": base64::engine::general_purpose::STANDARD.encode(&valid_payload),
+        });
+
+        match fixture {
+            "valid_empty_native_request" => request,
+            "valid_empty_wallet_envelope_fields" => {
+                let object = request.as_object_mut().expect("request object");
+                object.insert("object_refs".to_owned(), json!([]));
+                object.insert("authorization_proof".to_owned(), Value::Null);
+                object.insert("authorization_signatures".to_owned(), json!([]));
+                object.insert("aux_data".to_owned(), Value::Null);
+                request
+            }
+            "unknown_field" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("statement_hash".to_owned(), json!("00"));
+                request
+            }
+            "object_ref_present" => {
+                request.as_object_mut().expect("request object").insert(
+                    "object_refs".to_owned(),
+                    json!([{
+                        "family_id": FAMILY_SHIELDED_POOL,
+                        "object_id": "00",
+                        "expected_root": "00",
+                    }]),
+                );
+                request
+            }
+            "authorization_proof_present" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("authorization_proof".to_owned(), json!("AA=="));
+                request
+            }
+            "authorization_signature_present" => {
+                request.as_object_mut().expect("request object").insert(
+                    "authorization_signatures".to_owned(),
+                    json!([{
+                        "key_id": "00",
+                        "signature_scheme": 1,
+                        "signature_bytes": "AA==",
+                    }]),
+                );
+                request
+            }
+            "aux_data_present" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("aux_data".to_owned(), json!("AA=="));
+                request
+            }
+            "unsupported_route" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("action_id".to_owned(), json!(u16::MAX));
+                request
+            }
+            "non_transfer_nullifiers" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("new_nullifiers".to_owned(), json!([hex::encode([0u8; 48])]));
+                request
+            }
+            "too_many_nullifiers" => {
+                let nullifiers =
+                    vec![hex::encode([0u8; 48]); transaction_core::constants::MAX_INPUTS + 1];
+                let object = request.as_object_mut().expect("request object");
+                object.insert("family_id".to_owned(), json!(FAMILY_SHIELDED_POOL));
+                object.insert(
+                    "action_id".to_owned(),
+                    json!(ACTION_SHIELDED_TRANSFER_INLINE),
+                );
+                object.insert("new_nullifiers".to_owned(), json!(nullifiers));
+                request
+            }
+            "invalid_nullifier_hex" => {
+                let object = request.as_object_mut().expect("request object");
+                object.insert("family_id".to_owned(), json!(FAMILY_SHIELDED_POOL));
+                object.insert(
+                    "action_id".to_owned(),
+                    json!(ACTION_SHIELDED_TRANSFER_INLINE),
+                );
+                object.insert("new_nullifiers".to_owned(), json!(["not-hex"]));
+                request
+            }
+            "encoded_public_args_too_large" => {
+                request.as_object_mut().expect("request object").insert(
+                    "public_args".to_owned(),
+                    json!("A".repeat(encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES) + 1)),
+                );
+                request
+            }
+            "base64_public_args_rejected" => {
+                request
+                    .as_object_mut()
+                    .expect("request object")
+                    .insert("public_args".to_owned(), json!("not base64!"));
+                request
+            }
+            "decoded_public_args_too_large" => {
+                request.as_object_mut().expect("request object").insert(
+                    "public_args".to_owned(),
+                    json!(base64::engine::general_purpose::STANDARD.encode(vec![
+                        0u8;
+                        MAX_NATIVE_RPC_ACTION_BYTES
+                            + 1
+                    ])),
+                );
+                request
+            }
+            "route_payload_decode_rejected" => {
+                valid_payload.push(0xaa);
+                request.as_object_mut().expect("request object").insert(
+                    "public_args".to_owned(),
+                    json!(base64::engine::general_purpose::STANDARD.encode(valid_payload)),
+                );
+                request
+            }
+            other => panic!("unknown Lean action request projection fixture {other}"),
+        }
+    }
+
+    #[test]
     fn lean_generated_codec_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_CODEC_ADMISSION_VECTORS") else {
             eprintln!(
@@ -15317,6 +16422,160 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native block-action decode rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_storage_durability_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean storage durability admission vectors");
+        let vectors: LeanStorageDurabilityAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean storage durability admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.storage_durability_admission_cases.is_empty(),
+            "Lean storage durability admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.storage_durability_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_storage_durability_admission_case(case);
+        }
+    }
+
+    fn verify_lean_storage_durability_admission_case(case: &LeanStorageDurabilityAdmissionCase) {
+        assert!(
+            matches!(
+                case.operation.as_str(),
+                "mined_block_commit"
+                    | "canonical_reorg_commit"
+                    | "canonical_index_repair"
+                    | "noncanonical_block_record"
+                    | "pending_action_stage"
+                    | "ciphertext_sidecar_stage"
+                    | "proof_sidecar_stage"
+                    | "genesis_bootstrap"
+                    | "genesis_marker_repair"
+            ),
+            "unknown Lean storage durability operation {}",
+            case.operation
+        );
+        assert_eq!(
+            case.transaction_accepted && case.durability_flushed,
+            case.expected_valid,
+            "{} Lean storage durability predicate fields disagree with expected validity",
+            case.name
+        );
+        let actual =
+            evaluate_native_storage_durability_admission(NativeStorageDurabilityAdmissionInput {
+                transaction_accepted: case.transaction_accepted,
+                durability_flushed: case.durability_flushed,
+            });
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native storage durability validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native storage durability rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_atomic_commit_manifest_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean atomic commit manifest admission vectors");
+        let vectors: LeanAtomicCommitManifestAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean atomic commit manifest admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.atomic_commit_manifest_admission_cases.is_empty(),
+            "Lean atomic commit manifest admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.atomic_commit_manifest_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_atomic_commit_manifest_admission_case(case);
+        }
+    }
+
+    fn native_atomic_commit_kind_from_label(label: &str) -> NativeAtomicCommitKind {
+        match label {
+            "mined_block_commit" => NativeAtomicCommitKind::MinedBlockCommit,
+            "canonical_reorg_commit" => NativeAtomicCommitKind::CanonicalReorgCommit,
+            "canonical_index_repair" => NativeAtomicCommitKind::CanonicalIndexRepair,
+            "noncanonical_block_record" => NativeAtomicCommitKind::NoncanonicalBlockRecord,
+            other => panic!("unknown Lean atomic commit kind {other}"),
+        }
+    }
+
+    fn verify_lean_atomic_commit_manifest_admission_case(
+        case: &LeanAtomicCommitManifestAdmissionCase,
+    ) {
+        let input = NativeAtomicCommitManifestAdmissionInput {
+            kind: native_atomic_commit_kind_from_label(&case.kind),
+            action_count: case.action_count,
+            planned_action_count: case.planned_action_count,
+            chain_block_count: case.chain_block_count,
+            height_entry_count: case.height_entry_count,
+            pending_entry_count: case.pending_entry_count,
+            source_commitment_count: case.source_commitment_count,
+            source_nullifier_count: case.source_nullifier_count,
+            source_bridge_replay_count: case.source_bridge_replay_count,
+            source_ciphertext_index_count: case.source_ciphertext_index_count,
+            source_ciphertext_archive_count: case.source_ciphertext_archive_count,
+            source_staged_ciphertext_removal_count: case.source_staged_ciphertext_removal_count,
+            block_record_writes: case.block_record_writes,
+            height_index_writes: case.height_index_writes,
+            best_pointer_writes: case.best_pointer_writes,
+            canonical_index_cleared: case.canonical_index_cleared,
+            pending_tree_cleared: case.pending_tree_cleared,
+            pending_action_removals: case.pending_action_removals,
+            pending_action_writes: case.pending_action_writes,
+            commitment_writes: case.commitment_writes,
+            nullifier_writes: case.nullifier_writes,
+            bridge_replay_writes: case.bridge_replay_writes,
+            ciphertext_index_writes: case.ciphertext_index_writes,
+            ciphertext_archive_writes: case.ciphertext_archive_writes,
+            staged_ciphertext_removals: case.staged_ciphertext_removals,
+        };
+        let actual = evaluate_native_atomic_commit_manifest_admission(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native atomic commit manifest validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native atomic commit manifest rejection drifted from Lean spec",
             case.name
         );
     }
