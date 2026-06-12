@@ -16,6 +16,49 @@ fn wire_codec() -> LengthDelimitedCodec {
     codec
 }
 
+fn identity_finalize_handshake_for_connection(
+    identity: &PeerIdentity,
+    offer: &HandshakeOffer,
+    acceptance: &HandshakeAcceptance,
+    offer_bytes: &[u8],
+    acceptance_bytes: &[u8],
+) -> Result<(SecureChannel, HandshakeConfirmation, Vec<u8>), NetworkError> {
+    identity.finalize_handshake(offer, acceptance, offer_bytes, acceptance_bytes)
+}
+
+fn identity_complete_handshake_for_connection(
+    identity: &PeerIdentity,
+    offer: &HandshakeOffer,
+    confirmation: &HandshakeConfirmation,
+    offer_bytes: &[u8],
+    acceptance_bytes: &[u8],
+    confirmation_bytes: &[u8],
+    responder_secret: crate::MlKemSharedSecret,
+) -> Result<SecureChannel, NetworkError> {
+    identity.complete_handshake(
+        offer,
+        confirmation,
+        offer_bytes,
+        acceptance_bytes,
+        confirmation_bytes,
+        responder_secret,
+    )
+}
+
+fn encrypt_connection_frame(
+    channel: &mut SecureChannel,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    channel.encrypt(plaintext)
+}
+
+fn decrypt_connection_frame(
+    channel: &mut SecureChannel,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    channel.decrypt(ciphertext)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CompactAddress {
     V4 { ip: [u8; 4], port: u16 },
@@ -109,7 +152,13 @@ where
 
         // 3. Finalize handshake
         let (channel, _confirmation, confirmation_bytes) =
-            identity.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
+            identity_finalize_handshake_for_connection(
+                identity,
+                &offer,
+                &acceptance,
+                &offer_bytes,
+                &acceptance_bytes,
+            )?;
 
         let peer_id = sha256(&acceptance.identity_key);
 
@@ -141,7 +190,8 @@ where
 
         // 4. Complete handshake
         let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
-        let channel = identity.complete_handshake(
+        let channel = identity_complete_handshake_for_connection(
+            identity,
             &offer,
             &confirmation,
             &offer_bytes,
@@ -164,7 +214,7 @@ where
             return Err(NetworkError::Handshake("wire message too large"));
         }
         if let Some(channel) = &mut self.channel {
-            let encrypted = channel.encrypt(&bytes)?;
+            let encrypted = encrypt_connection_frame(channel, &bytes)?;
             if encrypted.len() > wire::MAX_WIRE_FRAME_LEN {
                 return Err(NetworkError::Handshake("encrypted frame too large"));
             }
@@ -183,7 +233,7 @@ where
         };
 
         if let Some(channel) = &mut self.channel {
-            let decrypted = channel.decrypt(&frame)?;
+            let decrypted = decrypt_connection_frame(channel, &frame)?;
             let msg = wire::decode(&decrypted, wire::MAX_WIRE_FRAME_LEN)?;
             Ok(Some(msg))
         } else {

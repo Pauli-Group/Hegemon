@@ -250,7 +250,7 @@
       "id": "formal.transaction-statement-hash-binding",
       "component": "transaction statement-hash byte binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean statement-hash kernel proves executable facts for the exact transaction statement-hash preimage grammar, and generated Lean vectors are checked byte-for-byte against the shared Rust preimage/hash helper used by transaction receipts and consensus tx-leaf binding.",
+      "summary": "The Lean statement-hash kernel proves executable facts for the exact transaction statement-hash preimage grammar, and generated Lean vectors are checked byte-for-byte against the shared Rust preimage/hash helper used by transaction receipts, consensus tx-leaf binding, and SuperNeo canonical/native receipt construction.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -274,6 +274,7 @@
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
         "circuits/transaction/src/proof.rs",
+        "circuits/superneo-hegemon/src/lib.rs",
         "consensus/src/proof.rs",
         "consensus/src/backend_interface.rs",
         "scripts/check_formal_core.sh",
@@ -282,6 +283,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture",
+        "cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -326,7 +328,7 @@
       "id": "formal.pow-fork-choice",
       "component": "native PoW consensus",
       "claim_class": "lean_theorem",
-      "summary": "The Lean fork-choice kernel proves deterministic work, height, and hash tie-break ordering, and generated Lean vectors are checked against the production helper used by PoW consensus and native block import.",
+      "summary": "The Lean fork-choice kernel proves deterministic work, height, and hash tie-break ordering; generated Lean vectors are checked against the production helper used by PoW consensus and native block import, and the blueprint binds native fork-choice before side-branch persistence or canonical reorg publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
@@ -343,7 +345,7 @@
       ],
       "assumptions": [
         "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not PoW admission arithmetic or SHA-256 header-hash implementation equivalence.",
-        "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import.",
+        "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import; blueprint bindings require native announced-block import to call the native fork-choice wrapper before reorg or side-branch persistence.",
         "The theorem covers deterministic two-tip fork-choice ordering, not every network partition, timestamp edge case, or long-range adversarial mining schedule."
       ],
       "evidence_paths": [
@@ -723,7 +725,7 @@
       "id": "consensus.version-policy",
       "component": "consensus transaction version admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean version-policy kernel proves executable admission facts for initial protocol versions, activation-height boundaries, retirement-height boundaries, same-height retirement precedence, duplicate initial bindings, and first unsupported transaction-version reporting; generated Lean vectors are checked against the VersionSchedule helper used by PoW and BFT block import.",
+      "summary": "The Lean version-policy kernel proves executable admission facts for initial protocol versions, activation-height boundaries, retirement-height boundaries, same-height retirement precedence, duplicate initial bindings, and first unsupported transaction-version reporting; generated Lean vectors are checked against the VersionSchedule helper, and the blueprint binds PoW and BFT import to propagate version admission before proof verification or fork-state mutation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -740,6 +742,7 @@
       "assumptions": [
         "The Lean model represents version bindings as circuit/crypto pairs and schedule events as explicit activation and retirement lists.",
         "Generated Lean conformance vectors cover accepted initial versions, unknown-version rejection, pre-activation rejection, activation-boundary acceptance, pre-retirement acceptance, retirement-boundary rejection, same-height retirement precedence, first-unsupported transaction ordering, and duplicate initial binding deduplication.",
+        "PoW and BFT block import call wrapper helpers around VersionSchedule admission so the formal-core blueprint can require result propagation before proof verification and fork-state mutation.",
         "The theorem covers executable VersionSchedule admission semantics, not social upgrade governance, protocol manifest correctness, proof-system soundness for each version, or full native-node equivalence."
       ],
       "evidence_paths": [
@@ -1775,7 +1778,7 @@
       "id": "network.secure-channel-key-schedule",
       "component": "legacy network secure channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean network secure-channel kernel proves executable KDF domain and directional label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, and u64 counter overflow rejection; generated Lean vectors are checked against the production network helpers used by SecureChannel.",
+      "summary": "The Lean network secure-channel kernel proves executable KDF domain and directional label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, and u64 counter overflow rejection; generated Lean vectors are checked against the production network helpers used by SecureChannel, and blueprint bindings connect the active P2P handshake/send/recv path to those helpers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -1800,12 +1803,14 @@
       "assumptions": [
         "The Lean model represents the legacy network SecureChannel KDF preimage grammar and role/nonce control logic, not SHA-256 or AES-GCM cryptographic security.",
         "Generated Lean conformance vectors cover patterned and alternate handshake byte inputs, exact KDF domain and i2r/r2i/aad labels, distinct directional preimages, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, and max-counter rejection.",
+        "The active P2P connection path propagates secure-channel construction during initiator/responder handshakes and propagates encrypt/decrypt helpers before framed publication or wire decode.",
         "The theorem covers executable secure-channel key-schedule and nonce admission only. It does not prove SHA-256 implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, full PQ Noise handshake correctness, network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
         "network/src/lib.rs",
+        "network/src/p2p.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -2132,7 +2137,7 @@
       "id": "native.pending-action-reload",
       "component": "native pending action startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native pending-action reload kernel proves the deterministic startup admission table for persisted pending actions: malformed persisted keys, sled-key/embedded-hash mismatches, recomputed pending_action_hash mismatches, and duplicate loaded hashes are rejected in fixed order before reloaded mempool entries can feed mining selection.",
+      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions, and blueprint bindings plus regressions require semantic mempool re-admission against loaded canonical state, bridge replay, staged sidecars, and resource budgets before reloaded entries can feed mining selection.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
@@ -2150,7 +2155,7 @@
       "assumptions": [
         "The Lean model represents the per-entry startup reload decision table over production-derived booleans: 32-byte sled-key shape, embedded tx_hash equality with the key, recomputed pending_action_hash equality with the embedded tx_hash, and loaded-action hash uniqueness.",
         "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before key/hash mismatch, key/hash mismatch before recomputed-hash mismatch, and recomputed-hash mismatch before duplicate reporting.",
-        "The theorem covers the executable startup admission table for observed persisted pending-action entries only. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, full action payload validation, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
@@ -2163,6 +2168,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_PENDING_ACTION_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_pending_action_reload_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -2592,7 +2598,7 @@
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean announced-block admission kernel proves the executable pre-PoW native import table for checked next-height progression, parent-hash binding, timestamp monotonicity, future-skew bounds, and block-hash/work-hash equality before an announced block reaches body replay; generated Lean vectors are checked against the production native admission helper.",
+      "summary": "The Lean announced-block admission kernel proves the executable pre-PoW native import table for checked next-height progression, parent-hash binding, timestamp monotonicity, future-skew bounds, and block-hash/work-hash equality before an announced block reaches body replay; generated Lean vectors are checked against the production native admission helper, and the blueprint requires final native PoW metadata verification to propagate from announced-block validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2611,7 +2617,7 @@
       "assumptions": [
         "The Lean model proves the deterministic pre-PoW header admission table and checked u64 next-height behavior; it does not prove PoW hash-threshold arithmetic or light-client header verification, which are covered separately by consensus.pow-admission and consensus header/light-client gates.",
         "Generated Lean conformance vectors cover valid admission, height mismatch, height overflow at u64::MAX, parent-hash mismatch, non-advancing timestamps, future-skew rejection, hash/work-hash mismatch, rejection precedence, and saturated future-limit acceptance.",
-        "The theorem covers native announced-block pre-PoW admission only. It does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
+        "The theorem covers native announced-block pre-PoW admission only. Blueprint bindings additionally require `validate_announced_block` to propagate `verify_native_pow_meta` and require import to propagate validation before body replay, persistence, or reorg work. This does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice liveness, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
@@ -2771,7 +2777,7 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, SCALE action payloads, bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, SCALE action payloads, bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2798,7 +2804,7 @@
       "assumptions": [
         "The Lean model treats underlying wire, SCALE, and bincode parsers as parser-acceptance predicates and proves the executable exact-consumption and count-admission table around those parsers.",
         "Generated Lean conformance vectors cover valid bounded sync messages, legacy bincode sync-message rejection, sync trailing-byte rejection, valid and trailing SCALE PendingAction decode, valid and trailing bincode NativeBlockMeta decode, block action count mismatch rejection, and trailing action payload rejection.",
-        "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. It does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence."
+        "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CodecAdmission.lean",

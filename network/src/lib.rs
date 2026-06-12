@@ -206,14 +206,14 @@ impl PeerIdentity {
             nonce,
         };
         let confirmation_bytes = wire::encode(&confirmation, wire::MAX_HANDSHAKE_FRAME_LEN)?;
-        let material = derive_session_material(
+        let channel = secure_channel_from_transcript(
             offer_bytes,
             acceptance_bytes,
             &confirmation_bytes,
             responder_secret.as_bytes(),
             initiator_secret.as_bytes(),
-        );
-        let channel = SecureChannel::new(material, ChannelRole::Initiator)?;
+            ChannelRole::Initiator,
+        )?;
         Ok((channel, confirmation, confirmation_bytes))
     }
 
@@ -236,14 +236,14 @@ impl PeerIdentity {
 
         let ciphertext = MlKemCiphertext::from_bytes(&confirmation.ciphertext_to_responder)?;
         let initiator_secret = self.kem.decapsulate(&ciphertext)?;
-        let material = derive_session_material(
+        secure_channel_from_transcript(
             offer_bytes,
             acceptance_bytes,
             confirmation_bytes,
             responder_secret.as_bytes(),
             initiator_secret.as_bytes(),
-        );
-        SecureChannel::new(material, ChannelRole::Responder)
+            ChannelRole::Responder,
+        )
     }
 }
 
@@ -466,6 +466,18 @@ fn random_encapsulation_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
     OsRng.fill_bytes(&mut seed);
     seed
+}
+
+fn secure_channel_from_transcript(
+    offer: &[u8],
+    acceptance: &[u8],
+    confirmation: &[u8],
+    secret_a: &[u8],
+    secret_b: &[u8],
+    role: ChannelRole,
+) -> Result<SecureChannel, NetworkError> {
+    let material = derive_session_material(offer, acceptance, confirmation, secret_a, secret_b);
+    SecureChannel::new(material, role)
 }
 
 fn derive_session_material(

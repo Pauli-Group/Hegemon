@@ -204,6 +204,21 @@ fn evaluate_pow_admission(
     Ok(PowAdmission { cumulative_work })
 }
 
+fn validate_pow_block_versions(
+    schedule: &VersionSchedule,
+    block: &ConsensusBlock,
+) -> Result<(), ConsensusError> {
+    schedule
+        .validate_versions(
+            block.header.height,
+            block.transactions.iter().map(|tx| tx.version),
+        )
+        .map_err(|version| ConsensusError::UnsupportedVersion {
+            version,
+            height: block.header.height,
+        })
+}
+
 fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
     if new_height == 0 {
         return None;
@@ -381,15 +396,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
         block.header.ensure_structure()?;
         self.verify_pow_miner_signature(&block.header)?;
         verify_commitments(&block)?;
-        self.version_schedule
-            .validate_versions(
-                block.header.height,
-                block.transactions.iter().map(|tx| tx.version),
-            )
-            .map_err(|version| ConsensusError::UnsupportedVersion {
-                version,
-                height: block.header.height,
-            })?;
+        validate_pow_block_versions(&self.version_schedule, &block)?;
 
         let pow = block
             .header

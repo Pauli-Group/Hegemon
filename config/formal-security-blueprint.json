@@ -324,6 +324,7 @@
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
         "circuits/transaction/src/proof.rs",
+        "circuits/superneo-hegemon/src/lib.rs",
         "consensus/src/proof.rs",
         "consensus/src/backend_interface.rs",
         "scripts/check_formal_core.sh",
@@ -337,12 +338,22 @@
             "tx_validity_receipt_from_proof"
           ],
           "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "circuits/superneo-hegemon/src/lib.rs",
+          "callee": "checked_transaction_statement_hash_for_superneo_receipt",
+          "required_callers": [
+            "canonical_tx_validity_receipt_from_transaction_proof",
+            "native_tx_leaf_receipt_from_transaction_proof"
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
         "circuits/transaction/src/proof.rs",
+        "circuits/superneo-hegemon/src/lib.rs",
         "consensus/src/proof.rs",
         "consensus/src/backend_interface.rs",
         "formal/lean/README.md",
@@ -375,9 +386,14 @@
           "id": "consensus-inline-statement-hash-regression",
           "description": "Focused consensus tests must reject malformed inline transaction public-input vectors during receipt and claim derivation without panicking.",
           "gate": "cargo test -p consensus tx_validity_ --lib -- --nocapture"
+        },
+        {
+          "id": "superneo-receipt-statement-hash-regression",
+          "description": "Focused SuperNeo receipt tests must reject malformed transaction public-input vectors during canonical and native receipt construction without panicking.",
+          "gate": "cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. Blueprint bindings and regressions additionally require consensus receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. Blueprint bindings and regressions additionally require consensus and SuperNeo receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "shielded.nullifier-state",
@@ -430,7 +446,7 @@
       "claim_id": "formal.pow-fork-choice",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean fork-choice transition, a candidate tip is selected over the current tip exactly when it has greater work, or equal work with greater height, or equal work and height with a lexicographically lower hash.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.higher_work_wins`, `Hegemon.Consensus.lower_work_loses`, `Hegemon.Consensus.equal_work_higher_height_wins`, `Hegemon.Consensus.equal_work_lower_height_loses`, `Hegemon.Consensus.equal_work_height_uses_hash_order`, and `Hegemon.Consensus.same_tip_not_better` prove deterministic two-tip ordering over the executable fork-choice kernel. `gen_consensus_vectors` emits Lean-derived fork-choice examples, and the formal-core gate runs the production `consensus::fork_choice` conformance test against them. `PowConsensus` and native block import both call that helper. The existing TLA+ model remains the bounded aggregate-work/finality abstraction.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.higher_work_wins`, `Hegemon.Consensus.lower_work_loses`, `Hegemon.Consensus.equal_work_higher_height_wins`, `Hegemon.Consensus.equal_work_lower_height_loses`, `Hegemon.Consensus.equal_work_height_uses_hash_order`, and `Hegemon.Consensus.same_tip_not_better` prove deterministic two-tip ordering over the executable fork-choice kernel. `gen_consensus_vectors` emits Lean-derived fork-choice examples, and the formal-core gate runs the production `consensus::fork_choice` conformance test against them. `PowConsensus` and native block import both call that helper, and the blueprint now binds native announced-block fork-choice to the side-branch persistence or canonical reorg publication split. The existing TLA+ model remains the bounded aggregate-work/finality abstraction.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -483,9 +499,34 @@
           "id": "optional-model-checker",
           "description": "When local model checkers are installed, the wrapper can run TLC/Apalache against the PoW model.",
           "gate": "HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-fork-choice-publication-binding",
+          "description": "Native announced-block import must bind fork-choice comparison before either canonical reorg publication or noncanonical side-branch persistence can run.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
-      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, or long-range adversarial mining schedule."
+      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, or long-range adversarial mining schedule.",
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_meta_better_than",
+          "required_callers": [
+            "NativeNode::import_announced_block"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::import_announced_block",
+              "callee_must_precede": [
+                "chain_to_hash",
+                "reorganize_chain_to_best_locked",
+                "persist_noncanonical_block_record"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "consensus.pow-admission",
@@ -937,6 +978,48 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "validate_pow_block_versions",
+          "required_callers": [
+            "PowConsensus::apply_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::apply_block",
+              "callee_must_precede": [
+                "evaluate_pow_admission",
+                "self.verifier.verify_block",
+                "self.nodes.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/bft.rs",
+          "callee": "validate_bft_block_versions",
+          "required_callers": [
+            "BftConsensus::apply_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "BftConsensus::apply_block",
+              "callee_must_precede": [
+                "self.validator_set.verify_signatures",
+                "self.verifier.verify_block",
+                "self.vote_history.entry",
+                "self.validator_set.mark_slashed",
+                "self.fork.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/VersionPolicy.lean",
         "formal/lean/Hegemon/Consensus/GenerateVersionPolicyVectors.lean",
@@ -969,6 +1052,11 @@
           "id": "version-policy-regression",
           "description": "The existing consensus integration test must continue rejecting unsupported versions before activation and accepting them at activation.",
           "gate": "cargo test -p consensus --test version_policy -- --nocapture"
+        },
+        {
+          "id": "formal-core-version-policy-apply-block-gates",
+          "description": "PoW and BFT block import must propagate version-policy admission before proof verification, voting-state mutation, or fork/node insertion.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
       "scope_boundary": "This node proves and vector-checks schedule admission semantics only. It does not prove social upgrade governance, protocol manifest correctness, proof-system soundness for each version, transaction-proof backend security, or full native-node equivalence."
@@ -2419,7 +2507,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_coinbase_action_payload",
           "required_callers": [
-            "validate_action_state",
+            "validate_pending_action_against_mempool_state",
             "validate_block_actions_locked"
           ]
         }
@@ -2493,7 +2581,8 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_mempool_byte_budget",
           "required_callers": [
-            "NativeNode::validate_and_stage_action"
+            "NativeNode::validate_and_stage_action",
+            "validate_startup_mempool_byte_budget"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
@@ -2529,6 +2618,23 @@
               "callee_must_precede": [
                 "self.da_proof_tree.insert",
                 "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_startup_mempool_byte_budget",
+          "required_callers": [
+            "build_validated_startup_state_with_limits"
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "build_validated_startup_state_with_limits",
+              "callee_must_precede": [
+                "state.pending_actions.insert"
               ],
               "must_dominate_successors": true
             }
@@ -2759,13 +2865,76 @@
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
         "network/src/lib.rs",
+        "network/src/p2p.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "network/src/lib.rs",
+          "callee": "secure_channel_from_transcript",
+          "required_callers": [
+            "PeerIdentity::finalize_handshake",
+            "PeerIdentity::complete_handshake"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "network/src/p2p.rs",
+          "callee": "identity_finalize_handshake_for_connection",
+          "required_callers": [
+            "Connection::handshake_initiator"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "network/src/p2p.rs",
+          "callee": "identity_complete_handshake_for_connection",
+          "required_callers": [
+            "Connection::handshake_responder"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "network/src/p2p.rs",
+          "callee": "encrypt_connection_frame",
+          "required_callers": [
+            "Connection::send"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "Connection::send",
+              "callee_must_precede": [
+                "self.stream.send"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "network/src/p2p.rs",
+          "callee": "decrypt_connection_frame",
+          "required_callers": [
+            "Connection::recv"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "Connection::recv",
+              "callee_must_precede": [
+                "wire::decode"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
         "network/src/lib.rs",
+        "network/src/p2p.rs",
         "formal/lean/README.md",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -2796,9 +2965,14 @@
           "id": "formal-core-network-secure-channel-gate",
           "description": "The release formal-core wrapper must generate secure-channel vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-network-p2p-channel-wiring-gate",
+          "description": "Active P2P handshakes must propagate secure-channel construction, and encrypted send/receive must propagate channel encryption/decryption before frame publication or decode.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks legacy network secure-channel KDF preimage labels/order, role-to-directional-key mapping, nonce layout, and counter overflow rejection only. It does not prove SHA-256 implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, full PQ Noise handshake correctness, network liveness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks legacy network secure-channel KDF preimage labels/order, role-to-directional-key mapping, nonce layout, and counter overflow rejection only. Blueprint bindings additionally require the active P2P handshake and encrypted frame path to propagate secure-channel construction and encrypt/decrypt helpers. It does not prove SHA-256 implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, full PQ Noise handshake correctness, network liveness, or complete native-node equivalence."
     },
     {
       "id": "network.pq-noise-key-schedule",
@@ -3579,10 +3753,19 @@
       "claim_id": "native.pending-action-reload",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native pending-action reload predicate, a persisted pending action is accepted into the reloaded local mempool only when its key is well formed, its embedded tx_hash equals the 32-byte sled key, the production pending_action_hash recomputation equals the embedded tx_hash, and no equal action hash has already been loaded; otherwise startup reload rejects with fixed malformed-key, key/hash-mismatch, recomputed-hash-mismatch, then duplicate precedence.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions` before persisted local mempool entries can feed mining selection. Focused sled-backed regressions also reject malformed keys, key/hash drift, and recomputed-hash drift.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable key/hash acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions`. Blueprint bindings and focused regressions additionally require semantically re-admitting those loaded entries before persisted local mempool entries can feed mining selection.",
       "depends_on": [
         "native.codec-admission",
         "native.block-action-hash-admission",
+        "native.action-scope-admission",
+        "native.bridge-action-payload-admission",
+        "native.transfer-action-payload-admission",
+        "native.transfer-state-admission",
+        "native.resource-budget-admission",
+        "native.canonical-state-reload",
+        "native.bridge-replay-reload",
+        "native.staged-ciphertext-reload",
+        "native.staged-proof-reload",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
@@ -3634,6 +3817,59 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "build_validated_startup_state",
+          "required_callers": [
+            "NativeNode::open"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::open",
+              "callee_must_precede": [
+                "RwLock::new"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "build_validated_startup_state_with_limits",
+          "required_callers": [
+            "build_validated_startup_state"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_pending_action_against_mempool_state",
+          "required_callers": [
+            "NativeNode::validate_action_state",
+            "validate_startup_pending_action_against_mempool_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": []
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_startup_pending_action_against_mempool_state",
+          "required_callers": [
+            "build_validated_startup_state_with_limits"
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "build_validated_startup_state_with_limits",
+              "callee_must_precede": [
+                "validate_startup_mempool_byte_budget",
+                "state.pending_actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
         }
       ],
       "evidence_paths": [
@@ -3648,7 +3884,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup reload. Scope is the deterministic admission table over observed persisted entries; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup key/hash reload. Semantic startup re-admission is covered by Rust implementation bindings and focused regressions; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean."
       },
       "falsification_cases": [
         {
@@ -3667,12 +3903,17 @@
           "gate": "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-pending-action-startup-semantic-regressions",
+          "description": "Focused native tests must reject semantically invalid persisted pending actions after canonical state, bridge replay, staged ciphertext, and staged proof reload but before NativeState publication.",
+          "gate": "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-pending-action-reload-gate",
           "description": "The release formal-core wrapper must generate pending-action reload vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native pending-action startup reload per-entry admission behavior only. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash derivation/security or implementation equivalence, full action payload validation, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.staged-ciphertext-reload",
@@ -3898,7 +4139,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_candidate_action_payload",
           "required_callers": [
-            "validate_action_state"
+            "validate_pending_action_against_mempool_state"
           ],
           "result_obligation": "must_propagate_result"
         }
@@ -4523,7 +4764,7 @@
       "claim_id": "native.announced-block-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean announced-block admission transition, native announced-block pre-PoW import accepts only when parent height has a checked u64 next height equal to the announced height, the parent hash matches, the timestamp strictly advances, the timestamp is within the saturating future-skew bound, and the claimed block hash equals the work hash; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay. The same blueprint node now also requires `validate_announced_block` to propagate `verify_native_pow_meta` rather than treating PoW metadata checks as advisory.",
       "depends_on": [
         "consensus.pow-admission",
         "consensus.header-preimage-binding",
@@ -4553,6 +4794,14 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_native_pow_meta",
+          "required_callers": [
+            "validate_announced_block"
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -4612,6 +4861,11 @@
           "id": "native-announced-block-future-skew-regression",
           "description": "Native announced-block validation must reject timestamps beyond the configured future-skew bound.",
           "gate": "cargo test -p hegemon-node announced_block_rejects_future_timestamp_skew --lib --no-default-features"
+        },
+        {
+          "id": "announced-pow-meta-propagation-binding",
+          "description": "Native announced-block validation must propagate final PoW metadata verification errors before import-side replay, persistence, or reorg work can observe the block as validated.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
       "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
@@ -4859,7 +5113,7 @@
       "claim_id": "native.codec-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native codec-admission transition, native sync decode, SCALE exact decode, bincode exact decode, and block-action payload decode accept only when the underlying parser accepts, every byte is consumed, and declared action count matches the action payload count.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, action count mismatch, and non-exact action payloads. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection and trailing-byte rejection. Native bridge message extraction now propagates exact outbound bridge payload decode failures before message-root construction, block commitment admission, replay, witness export, or latest-message backscan selection.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, action count mismatch, and non-exact action payloads. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection and trailing-byte rejection. Native bridge message extraction now propagates exact outbound bridge payload decode failures before message-root construction, block commitment admission, replay, witness export, or latest-message backscan selection. Outbound native sync publication is bound too: sync messages must encode successfully before announcement queueing or peer sends.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -4885,6 +5139,31 @@
                 "node.import_announced_block",
                 "node.block_range",
                 "evaluate_native_sync_response_count_admission"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "encode_sync_message",
+          "required_callers": [
+            "NativeNode::broadcast_block_announce",
+            "send_sync_message"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::broadcast_block_announce",
+              "callee_must_precede": [
+                "sync_tx.try_send"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "send_sync_message",
+              "callee_must_precede": [
+                "handle.send_to"
               ],
               "must_dominate_successors": true
             }
@@ -5096,6 +5375,11 @@
           "id": "native-action-exact-decode-regression",
           "description": "Native action submission and block action decoding must reject SCALE payloads with trailing bytes or action-count mismatches.",
           "gate": "cargo test -p hegemon-node submit_action_rejects_trailing_public_args decode_block_actions_rejects_action_count_mismatch --lib --no-default-features"
+        },
+        {
+          "id": "native-sync-encode-before-publication-binding",
+          "description": "Outbound native sync publication must encode through the bounded native sync codec and return on encode failure before queueing announcements or sending peer messages.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
       "scope_boundary": "This node proves and vector-checks strict native codec admission only. It does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 collision resistance, sync networking liveness, full action payload validation, tx leaf proof soundness, or complete native-node equivalence."
@@ -5124,13 +5408,13 @@
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_action_scope_admission",
           "required_callers": [
-            "validate_action_state",
+            "validate_pending_action_against_mempool_state",
             "evaluate_native_block_action_validation_step"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
-              "caller": "validate_action_state",
+              "caller": "validate_pending_action_against_mempool_state",
               "callee_must_precede": [
                 "validate_bridge_action_payload",
                 "validate_candidate_action_payload",
@@ -5246,12 +5530,12 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_bridge_action_payload",
           "required_callers": [
-            "validate_action_state"
+            "validate_pending_action_against_mempool_state"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
-              "caller": "validate_action_state",
+              "caller": "validate_pending_action_against_mempool_state",
               "callee_must_precede": [
                 "bridge_inbound_replay_key_from_action",
                 "inbound_replay_state_for_mempool"
@@ -5486,12 +5770,12 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_transfer_action_payload",
           "required_callers": [
-            "validate_action_state"
+            "validate_pending_action_against_mempool_state"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
-              "caller": "validate_action_state",
+              "caller": "validate_pending_action_against_mempool_state",
               "callee_must_precede": [
                 "native_transfer_state_admission_input_for_mempool",
                 "evaluate_native_transfer_state_admission"
@@ -5574,7 +5858,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_transfer_state_admission",
           "required_callers": [
-            "validate_action_state",
+            "validate_pending_action_against_mempool_state",
             "evaluate_native_block_action_validation_step"
           ],
           "result_obligation": "must_propagate_result"
@@ -5583,7 +5867,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "native_transfer_state_admission_input_for_mempool",
           "required_callers": [
-            "validate_action_state"
+            "validate_pending_action_against_mempool_state"
           ]
         },
         {

@@ -30,9 +30,10 @@ use transaction_circuit::proof::{
     prove_with_params as prove_transaction_with_params,
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
-    transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
-    transaction_verifier_profile_digest, verify as verify_transaction_proof,
-    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
+    transaction_public_inputs_digest_from_serialized, transaction_statement_hash_checked,
+    transaction_statement_hash_from_public_inputs_checked, transaction_verifier_profile_digest,
+    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
+    SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
 use transaction_circuit::SmallwoodArithmetization;
@@ -1512,13 +1513,20 @@ pub fn canonical_tx_validity_receipt_from_transaction_proof(
     proof: &TransactionProof,
 ) -> Result<CanonicalTxValidityReceipt> {
     Ok(CanonicalTxValidityReceipt {
-        statement_hash: transaction_statement_hash(proof),
+        statement_hash: checked_transaction_statement_hash_for_superneo_receipt(proof)?,
         proof_digest: transaction_proof_digest(proof),
         public_inputs_digest: transaction_public_inputs_digest(proof)
             .map_err(|err| anyhow::anyhow!("failed to derive tx public inputs digest: {err}"))?,
         verifier_profile: transaction_verifier_profile_digest(proof)
             .map_err(|err| anyhow::anyhow!("failed to derive tx verifier profile digest: {err}"))?,
     })
+}
+
+fn checked_transaction_statement_hash_for_superneo_receipt(
+    proof: &TransactionProof,
+) -> Result<[u8; 48]> {
+    transaction_statement_hash_checked(proof)
+        .map_err(|err| anyhow::anyhow!("failed to derive tx statement hash: {err}"))
 }
 
 pub fn recursive_leaf_payload_v1(
@@ -1604,7 +1612,8 @@ pub fn native_tx_validity_statement_from_witness_with_params(
         .map_err(|err| anyhow::anyhow!("failed to derive native tx public inputs: {err}"))?;
     let serialized = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
     Ok(NativeTxValidityStatement {
-        statement_hash: transaction_statement_hash_from_public_inputs(&public_inputs),
+        statement_hash: transaction_statement_hash_from_public_inputs_checked(&public_inputs)
+            .map_err(|err| anyhow::anyhow!("failed to hash native tx statement: {err}"))?,
         public_inputs_digest: transaction_public_inputs_digest_from_serialized(&serialized)
             .map_err(|err| anyhow::anyhow!("failed to hash native tx public inputs: {err}"))?,
         verifier_profile: experimental_native_tx_verifier_profile_for_params(params),
@@ -1690,7 +1699,7 @@ fn native_tx_leaf_receipt_from_transaction_proof(
     params: &NativeBackendParams,
 ) -> Result<CanonicalTxValidityReceipt> {
     Ok(CanonicalTxValidityReceipt {
-        statement_hash: transaction_statement_hash(proof),
+        statement_hash: checked_transaction_statement_hash_for_superneo_receipt(proof)?,
         proof_digest: transaction_proof_digest(proof),
         public_inputs_digest: transaction_public_inputs_digest(proof).map_err(|err| {
             anyhow::anyhow!("failed to derive native tx public inputs digest: {err}")
@@ -1879,36 +1888,6 @@ fn serialized_stark_inputs_from_witness(
     })
 }
 
-fn transaction_statement_hash_from_public_inputs(
-    public_inputs: &TransactionPublicInputs,
-) -> [u8; 48] {
-    let mut message = Vec::new();
-    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
-    message.extend_from_slice(&public_inputs.merkle_root);
-    for nf in &public_inputs.nullifiers {
-        message.extend_from_slice(nf);
-    }
-    for cm in &public_inputs.commitments {
-        message.extend_from_slice(cm);
-    }
-    for ct in &public_inputs.ciphertext_hashes {
-        message.extend_from_slice(ct);
-    }
-    message.extend_from_slice(&public_inputs.native_fee.to_le_bytes());
-    message.extend_from_slice(&public_inputs.value_balance.to_le_bytes());
-    message.extend_from_slice(&public_inputs.balance_tag);
-    message.extend_from_slice(&public_inputs.circuit_version.to_le_bytes());
-    message.extend_from_slice(&public_inputs.crypto_suite.to_le_bytes());
-    message.push(public_inputs.stablecoin.enabled as u8);
-    message.extend_from_slice(&public_inputs.stablecoin.asset_id.to_le_bytes());
-    message.extend_from_slice(&public_inputs.stablecoin.policy_hash);
-    message.extend_from_slice(&public_inputs.stablecoin.oracle_commitment);
-    message.extend_from_slice(&public_inputs.stablecoin.attestation_commitment);
-    message.extend_from_slice(&public_inputs.stablecoin.issuance_delta.to_le_bytes());
-    message.extend_from_slice(&public_inputs.stablecoin.policy_version.to_le_bytes());
-    blake3_384_bytes(&message)
-}
-
 fn validate_native_tx_witness(
     statement: &NativeTxValidityStatement,
     witness: &TransactionWitness,
@@ -1922,7 +1901,9 @@ fn validate_native_tx_witness(
         .map_err(|err| anyhow::anyhow!("failed to derive native tx public inputs: {err}"))?;
     let serialized = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
     ensure!(
-        transaction_statement_hash_from_public_inputs(&public_inputs) == statement.statement_hash,
+        transaction_statement_hash_from_public_inputs_checked(&public_inputs)
+            .map_err(|err| anyhow::anyhow!("failed to hash native tx statement: {err}"))?
+            == statement.statement_hash,
         "native tx statement hash mismatch"
     );
     ensure!(
@@ -5534,6 +5515,41 @@ mod tests {
     }
 
     #[test]
+    fn canonical_tx_validity_receipt_rejects_oversized_public_inputs_without_panic() {
+        let proof = oversized_public_inputs_proof();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            canonical_tx_validity_receipt_from_transaction_proof(&proof)
+        }));
+        let err = result
+            .expect("canonical tx validity receipt constructor panicked")
+            .expect_err("oversized tx public inputs must fail receipt construction");
+        let message = err.to_string();
+        assert!(
+            message.contains("failed to derive tx statement hash")
+                && message.contains("MAX_INPUTS"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_receipt_rejects_oversized_public_inputs_without_panic() {
+        let proof = oversized_public_inputs_proof();
+        let params = native_backend_params();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            native_tx_leaf_receipt_from_transaction_proof(&proof, &params)
+        }));
+        let err = result
+            .expect("native tx-leaf receipt constructor panicked")
+            .expect_err("oversized native tx public inputs must fail receipt construction");
+        let message = err.to_string();
+        assert!(
+            message.contains("failed to derive tx statement hash")
+                && message.contains("MAX_INPUTS"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
     fn tx_leaf_artifact_rejects_trailing_bytes() {
         let proof = sample_transaction_proof(11);
         let mut built = build_tx_leaf_artifact_bytes(&proof).unwrap();
@@ -6344,6 +6360,47 @@ mod tests {
             TransactionProofParams::release_for_version(witness.version),
         )
         .expect("sample tx proof")
+    }
+
+    fn oversized_public_inputs_proof() -> TransactionProof {
+        let mut public_inputs = TransactionPublicInputs::default();
+        public_inputs.circuit_version = LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit;
+        public_inputs.crypto_suite = LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto;
+        let top_level_nullifiers = public_inputs.nullifiers.clone();
+        let top_level_commitments = public_inputs.commitments.clone();
+        let top_level_balance_slots = public_inputs.balance_slots.clone();
+        public_inputs.nullifiers.push([0x5au8; 48]);
+        TransactionProof {
+            public_inputs,
+            nullifiers: top_level_nullifiers,
+            commitments: top_level_commitments,
+            balance_slots: top_level_balance_slots,
+            backend: TxProofBackend::Plonky3Fri,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: Some(serialized_stark_inputs_for_receipt_hash_regression()),
+        }
+    }
+
+    fn serialized_stark_inputs_for_receipt_hash_regression() -> SerializedStarkInputs {
+        SerializedStarkInputs {
+            input_flags: vec![0; MAX_INPUTS],
+            output_flags: vec![0; MAX_OUTPUTS],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: (0..BALANCE_SLOTS)
+                .map(|idx| if idx == 0 { NATIVE_ASSET_ID } else { u64::MAX })
+                .collect(),
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        }
     }
 
     fn sample_native_tx_leaf_artifact(seed: u64) -> BuiltNativeTxLeafArtifact {

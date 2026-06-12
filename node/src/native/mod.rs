@@ -1694,6 +1694,16 @@ impl NativeNode {
         validate_loaded_bridge_replay_state(&best, &block_tree, &consumed_bridge_messages)?;
         let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&da_proof_tree)?;
+        let startup_state = build_validated_startup_state(
+            &action_tree,
+            best,
+            pending_actions,
+            commitment_state,
+            nullifiers,
+            consumed_bridge_messages,
+            staged_ciphertexts,
+            staged_proofs,
+        )?;
 
         let node = Arc::new(Self {
             config,
@@ -1709,15 +1719,7 @@ impl NativeNode {
             ciphertext_archive_tree,
             da_ciphertext_tree,
             da_proof_tree,
-            state: RwLock::new(NativeState {
-                best,
-                pending_actions,
-                commitment_tree: commitment_state,
-                nullifiers,
-                consumed_bridge_messages,
-                staged_ciphertexts,
-                staged_proofs,
-            }),
+            state: RwLock::new(startup_state),
             start_instant: Instant::now(),
             mining: AtomicBool::new(false),
             mining_threads: AtomicU32::new(0),
@@ -2052,7 +2054,8 @@ impl NativeNode {
             validate_block_actions_locked(&parent_state, &actions)?;
             verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
         }
-        if native_meta_better_than(&meta, &state.best) {
+        let candidate_wins = native_meta_better_than(&meta, &state.best);
+        if candidate_wins {
             let mut new_chain = self.chain_to_hash(parent.hash)?;
             new_chain.push(meta.clone());
             self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
@@ -2078,22 +2081,23 @@ impl NativeNode {
         let Some(sync_tx) = self.sync_tx.lock().clone() else {
             return;
         };
-        match encode_sync_message(&NativeSyncMessage::Announce(Box::new(meta.clone()))) {
-            Ok(payload) => {
-                let message = DirectedProtocolMessage {
-                    target: None,
-                    message: ProtocolMessage {
-                        protocol: NATIVE_SYNC_PROTOCOL_ID,
-                        payload,
-                    },
-                };
-                if let Err(err) = sync_tx.try_send(message) {
-                    debug!(error = %err, "failed to queue native block announce");
-                }
-            }
+        let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
+        let payload = match encode_sync_message(&announce) {
+            Ok(payload) => payload,
             Err(err) => {
                 warn!(error = %err, "failed to encode native block announce");
+                return;
             }
+        };
+        let message = DirectedProtocolMessage {
+            target: None,
+            message: ProtocolMessage {
+                protocol: NATIVE_SYNC_PROTOCOL_ID,
+                payload,
+            },
+        };
+        if let Err(err) = sync_tx.try_send(message) {
+            debug!(error = %err, "failed to queue native block announce");
         }
     }
 
@@ -2296,8 +2300,13 @@ impl NativeNode {
             &new_state.best,
         )?;
 
-        new_state.pending_actions = pending;
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
+        for meta in new_chain.iter().skip(1) {
+            for action in decode_block_actions(meta)? {
+                clear_staged_ciphertext_markers(&mut new_state, &action);
+            }
+        }
+        new_state.pending_actions = pending;
         new_state.staged_proofs = state.staged_proofs.clone();
         publish_reorganized_state(state, new_state);
         Ok(())
@@ -2517,6 +2526,7 @@ impl NativeNode {
             &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
             &self.ciphertext_archive_tree,
+            &self.da_ciphertext_tree,
             &self.action_tree,
         )
             .transaction(
@@ -2529,6 +2539,7 @@ impl NativeNode {
                     bridge_inbound_tree,
                     ciphertext_index_tree,
                     ciphertext_archive_tree,
+                    da_ciphertext_tree,
                     action_tree,
                 )| {
                     block_tree.insert(meta.hash.to_vec(), block_record.clone())?;
@@ -2574,6 +2585,9 @@ impl NativeNode {
                         }
 
                         action_tree.remove(action.tx_hash.to_vec())?;
+                        for hash in &action.ciphertext_hashes {
+                            da_ciphertext_tree.remove(hash.to_vec())?;
+                        }
                     }
 
                     meta_tree.flush();
@@ -3088,6 +3102,7 @@ impl NativeNode {
             if state.pending_actions.contains_key(&pending.tx_hash) {
                 return Err(anyhow!("duplicate pending action"));
             }
+            validate_pending_action_against_mempool_state(&state, &pending)?;
             self.action_tree
                 .insert(pending.tx_hash.as_slice(), pending.encode())?;
             self.action_tree.flush()?;
@@ -3100,49 +3115,8 @@ impl NativeNode {
     }
 
     fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
-        match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
-            .map_err(native_action_scope_admission_error)?
-        {
-            NativeActionScopeAdmissionRoute::Bridge => {
-                validate_bridge_action_payload(action)?;
-                if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
-                    let state = self.state.read();
-                    let mut replay_state = inbound_replay_state_for_mempool(&state)?;
-                    match replay_state.stage(replay_key) {
-                        Ok(()) => {}
-                        Err(InboundReplayReject::AlreadyConsumed) => {
-                            return Err(anyhow!("inbound bridge message already consumed"));
-                        }
-                        Err(InboundReplayReject::AlreadyPending) => {
-                            return Err(anyhow!("inbound bridge message already pending"));
-                        }
-                    }
-                }
-                Ok(())
-            }
-            NativeActionScopeAdmissionRoute::CandidateArtifact => {
-                validate_candidate_action_payload(action)?;
-                Ok(())
-            }
-            NativeActionScopeAdmissionRoute::Coinbase => {
-                validate_coinbase_action_payload(action)?;
-                Ok(())
-            }
-            NativeActionScopeAdmissionRoute::Transfer => {
-                validate_transfer_action_payload(action)?;
-
-                let state = self.state.read();
-                let input = native_transfer_state_admission_input_for_mempool(&state, action);
-                evaluate_native_transfer_state_admission(input).map_err(|rejection| {
-                    native_transfer_state_admission_error(
-                        NativeTransferStateAdmissionContext::Mempool,
-                        rejection,
-                    )
-                })?;
-
-                Ok(())
-            }
-        }
+        let state = self.state.read();
+        validate_pending_action_against_mempool_state(&state, action)
     }
 
     fn submit_transaction(&self, _bundle: Value) -> Value {
@@ -5190,6 +5164,152 @@ fn validate_loaded_pending_action_hash(
         action_hash_unique,
     })
     .map_err(|rejection| native_pending_action_reload_error(rejection, Some(hash), Some(action)))
+}
+
+fn build_validated_startup_state(
+    action_tree: &sled::Tree,
+    best: NativeBlockMeta,
+    pending_actions: BTreeMap<[u8; 32], PendingAction>,
+    commitment_tree: CommitmentTreeState,
+    nullifiers: BTreeSet<[u8; 48]>,
+    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    staged_ciphertexts: BTreeMap<String, u32>,
+    staged_proofs: BTreeMap<String, Vec<u8>>,
+) -> Result<NativeState> {
+    build_validated_startup_state_with_limits(
+        action_tree,
+        best,
+        pending_actions,
+        commitment_tree,
+        nullifiers,
+        consumed_bridge_messages,
+        staged_ciphertexts,
+        staged_proofs,
+        MAX_NATIVE_MEMPOOL_ACTIONS,
+        MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+    )
+}
+
+fn build_validated_startup_state_with_limits(
+    action_tree: &sled::Tree,
+    best: NativeBlockMeta,
+    pending_actions: BTreeMap<[u8; 32], PendingAction>,
+    commitment_tree: CommitmentTreeState,
+    nullifiers: BTreeSet<[u8; 48]>,
+    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    staged_ciphertexts: BTreeMap<String, u32>,
+    staged_proofs: BTreeMap<String, Vec<u8>>,
+    max_pending_actions: usize,
+    max_pending_action_bytes: usize,
+) -> Result<NativeState> {
+    let mut state = NativeState {
+        best,
+        pending_actions: BTreeMap::new(),
+        commitment_tree,
+        nullifiers,
+        consumed_bridge_messages,
+        staged_ciphertexts,
+        staged_proofs,
+    };
+    let mut dropped_pending = Vec::new();
+    for (hash, action) in pending_actions {
+        if state.pending_actions.len() >= max_pending_actions {
+            dropped_pending.push(hash);
+            continue;
+        }
+        if let Err(err) = validate_startup_pending_action_against_mempool_state(&state, &action) {
+            debug!(
+                tx_hash = %hex32(&hash),
+                error = %err,
+                "dropping semantically invalid persisted pending action during startup"
+            );
+            dropped_pending.push(hash);
+            continue;
+        }
+        if let Err(err) = validate_startup_mempool_byte_budget(
+            &state.pending_actions,
+            &action,
+            max_pending_action_bytes,
+        ) {
+            debug!(
+                tx_hash = %hex32(&hash),
+                error = %err,
+                "dropping over-budget persisted pending action during startup"
+            );
+            dropped_pending.push(hash);
+            continue;
+        }
+        state.pending_actions.insert(hash, action);
+    }
+    if !dropped_pending.is_empty() {
+        for hash in dropped_pending {
+            action_tree.remove(hash.as_slice()).with_context(|| {
+                format!("remove invalid persisted pending action {}", hex32(&hash))
+            })?;
+        }
+        action_tree.flush()?;
+    }
+    Ok(state)
+}
+
+fn validate_startup_pending_action_against_mempool_state(
+    state: &NativeState,
+    action: &PendingAction,
+) -> Result<()> {
+    validate_pending_action_against_mempool_state(state, action)
+}
+
+fn validate_startup_mempool_byte_budget(
+    pending: &BTreeMap<[u8; 32], PendingAction>,
+    candidate: &PendingAction,
+    max_bytes: usize,
+) -> Result<()> {
+    validate_mempool_byte_budget(pending, candidate, max_bytes)
+}
+
+fn validate_pending_action_against_mempool_state(
+    state: &NativeState,
+    action: &PendingAction,
+) -> Result<()> {
+    match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
+        .map_err(native_action_scope_admission_error)?
+    {
+        NativeActionScopeAdmissionRoute::Bridge => {
+            validate_bridge_action_payload(action)?;
+            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                let mut replay_state = inbound_replay_state_for_mempool(state)?;
+                match replay_state.stage(replay_key) {
+                    Ok(()) => {}
+                    Err(InboundReplayReject::AlreadyConsumed) => {
+                        return Err(anyhow!("inbound bridge message already consumed"));
+                    }
+                    Err(InboundReplayReject::AlreadyPending) => {
+                        return Err(anyhow!("inbound bridge message already pending"));
+                    }
+                }
+            }
+            Ok(())
+        }
+        NativeActionScopeAdmissionRoute::CandidateArtifact => {
+            validate_candidate_action_payload(action)?;
+            Ok(())
+        }
+        NativeActionScopeAdmissionRoute::Coinbase => {
+            validate_coinbase_action_payload(action)?;
+            Ok(())
+        }
+        NativeActionScopeAdmissionRoute::Transfer => {
+            validate_transfer_action_payload(action)?;
+            let input = native_transfer_state_admission_input_for_mempool(state, action);
+            evaluate_native_transfer_state_admission(input).map_err(|rejection| {
+                native_transfer_state_admission_error(
+                    NativeTransferStateAdmissionContext::Mempool,
+                    rejection,
+                )
+            })?;
+            Ok(())
+        }
+    }
 }
 
 fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
@@ -8057,9 +8177,16 @@ fn apply_planned_actions_to_memory(
         if let Some(replay_key) = effect.replay_key {
             state.consumed_bridge_messages.insert(replay_key);
         }
+        clear_staged_ciphertext_markers(state, action);
         state.pending_actions.remove(&action.tx_hash);
     }
     Ok(())
+}
+
+fn clear_staged_ciphertext_markers(state: &mut NativeState, action: &PendingAction) {
+    for hash in &action.ciphertext_hashes {
+        state.staged_ciphertexts.remove(&hex48(hash));
+    }
 }
 
 fn plan_canonical_index_rebuild(
@@ -10997,8 +11124,7 @@ mod tests {
             let genesis = node.best_meta();
 
             let canonical_work = node.prepare_work().expect("prepare canonical native work");
-            let canonical_seal =
-                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
             let canonical = node
                 .import_mined_block(&canonical_work, canonical_seal)
                 .expect("canonical import")
@@ -11066,8 +11192,7 @@ mod tests {
             let genesis = node.best_meta();
 
             let canonical_work = node.prepare_work().expect("prepare canonical native work");
-            let canonical_seal =
-                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
             let canonical = node
                 .import_mined_block(&canonical_work, canonical_seal)
                 .expect("canonical import")
@@ -16922,6 +17047,155 @@ mod tests {
     }
 
     #[test]
+    fn pending_action_startup_drops_unknown_anchor_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let action = test_inline_transfer_action([99u8; 48], [101u8; 48], [102u8; 48], 0);
+        persist_pending_action_for_startup(&node, &action);
+        drop(node);
+
+        let reopened =
+            NativeNode::open(config).expect("unknown-anchor pending action should be quarantined");
+
+        assert!(reopened.state.read().pending_actions.is_empty());
+        assert_eq!(reopened.action_tree.len(), 0);
+    }
+
+    #[test]
+    fn pending_action_startup_drops_duplicate_pending_nullifier_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [103u8; 48], [104u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [103u8; 48], [105u8; 48], 0);
+        persist_pending_action_for_startup(&node, &first);
+        persist_pending_action_for_startup(&node, &second);
+        drop(node);
+
+        let reopened = NativeNode::open(config)
+            .expect("duplicate pending nullifier should quarantine one action");
+
+        assert_eq!(reopened.state.read().pending_actions.len(), 1);
+        assert_eq!(reopened.action_tree.len(), 1);
+    }
+
+    #[test]
+    fn pending_action_startup_drops_disabled_risc0_inbound_bridge_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let action =
+            test_disabled_risc0_inbound_bridge_action(b"startup disabled RISC0 inbound bridge");
+        persist_pending_action_for_startup(&node, &action);
+        drop(node);
+
+        let reopened = NativeNode::open(config)
+            .expect("disabled RISC Zero inbound bridge action should be quarantined");
+
+        assert!(reopened.state.read().pending_actions.is_empty());
+        assert_eq!(reopened.action_tree.len(), 0);
+    }
+
+    #[test]
+    fn pending_action_startup_drops_sidecar_transfer_without_reloaded_ciphertext_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [106u8; 48], [107u8; 48], 0);
+        persist_pending_action_for_startup(&node, &action);
+        drop(node);
+
+        let reopened = NativeNode::open(config)
+            .expect("sidecar pending action without ciphertext should be quarantined");
+
+        assert!(reopened.state.read().pending_actions.is_empty());
+        assert_eq!(reopened.action_tree.len(), 0);
+    }
+
+    #[test]
+    fn pending_action_startup_accepts_sidecar_transfer_with_matching_reloaded_ciphertext_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [108u8; 48], [109u8; 48], 0);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+        persist_pending_action_for_startup(&node, &action);
+        drop(node);
+
+        let reopened = NativeNode::open(config)
+            .expect("sidecar pending action with reloaded ciphertext should pass startup");
+        assert!(reopened
+            .state
+            .read()
+            .pending_actions
+            .contains_key(&action.tx_hash));
+    }
+
+    #[test]
+    fn pending_action_startup_drops_mempool_byte_budget_with_small_limit() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action = test_outbound_bridge_action(b"startup byte budget");
+        let max_bytes = pending_action_mempool_bytes(&action).saturating_sub(1);
+        let mut pending_actions = BTreeMap::new();
+        pending_actions.insert(action.tx_hash, action);
+        let (_db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
+
+        let startup = build_validated_startup_state_with_limits(
+            &action_tree,
+            state.best,
+            pending_actions,
+            state.commitment_tree,
+            state.nullifiers,
+            state.consumed_bridge_messages,
+            state.staged_ciphertexts,
+            state.staged_proofs,
+            MAX_NATIVE_MEMPOOL_ACTIONS,
+            max_bytes,
+        )
+        .expect("startup pending action byte budget should quarantine over-budget action");
+
+        assert!(startup.pending_actions.is_empty());
+        assert_eq!(action_tree.len(), 0);
+    }
+
+    #[test]
+    fn pending_action_startup_drops_mempool_count_with_small_limit() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action = test_outbound_bridge_action(b"startup count budget");
+        let mut pending_actions = BTreeMap::new();
+        pending_actions.insert(action.tx_hash, action);
+        let (_db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
+
+        let startup = build_validated_startup_state_with_limits(
+            &action_tree,
+            state.best,
+            pending_actions,
+            state.commitment_tree,
+            state.nullifiers,
+            state.consumed_bridge_messages,
+            state.staged_ciphertexts,
+            state.staged_proofs,
+            0,
+            MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+        )
+        .expect("startup pending action count budget should quarantine over-count action");
+
+        assert!(startup.pending_actions.is_empty());
+        assert_eq!(action_tree.len(), 0);
+    }
+
+    #[test]
     fn imported_block_actions_recompute_binding_hash() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -17295,6 +17569,65 @@ mod tests {
 
         node.validate_action_state(&action)
             .expect("matching staged sidecar ciphertext should pass state admission");
+    }
+
+    #[test]
+    fn apply_planned_actions_clears_staged_sidecar_markers() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let action =
+            test_sidecar_transfer_action(state.commitment_tree.root(), [56u8; 48], [57u8; 48], 0);
+        state.staged_ciphertexts.insert(
+            hex48(&action.ciphertext_hashes[0]),
+            action.ciphertext_sizes[0],
+        );
+        state.pending_actions.insert(action.tx_hash, action.clone());
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: state.commitment_tree.leaf_count(),
+            ciphertexts: vec![test_transfer_ciphertext_bytes()],
+            replay_key: None,
+        }];
+
+        apply_planned_actions_to_memory(&mut state, std::slice::from_ref(&action), &planned)
+            .expect("apply planned sidecar action");
+
+        assert!(!state.pending_actions.contains_key(&action.tx_hash));
+        assert!(!state
+            .staged_ciphertexts
+            .contains_key(&hex48(&action.ciphertext_hashes[0])));
+    }
+
+    #[test]
+    fn mined_commit_removes_pending_sidecar_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let parent = node.best_meta();
+        let action = test_sidecar_transfer_action(parent.state_root, [58u8; 48], [59u8; 48], 0);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+        assert!(node
+            .da_ciphertext_tree
+            .get(action.ciphertext_hashes[0])
+            .expect("read staged sidecar")
+            .is_some());
+        let mut meta = mined_empty_child(&parent, 1, pow_bits, 0);
+        meta.action_bytes = vec![action.encode()];
+        meta.tx_count = 1;
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: 0,
+            ciphertexts: vec![test_transfer_ciphertext_bytes()],
+            replay_key: None,
+        }];
+
+        node.commit_mined_block_atomically(std::slice::from_ref(&action), &planned, &meta)
+            .expect("commit sidecar action");
+
+        assert!(node
+            .da_ciphertext_tree
+            .get(action.ciphertext_hashes[0])
+            .expect("read staged sidecar after commit")
+            .is_none());
     }
 
     #[test]
@@ -18428,6 +18761,13 @@ mod tests {
         )
     }
 
+    fn strongest_test_seal(work: &NativeWork, rounds: std::ops::Range<u64>) -> NativeSeal {
+        rounds
+            .filter_map(|round| mine_native_round(work.clone(), round))
+            .min_by(|left, right| left.work_hash.cmp(&right.work_hash))
+            .expect("test mining rounds must produce at least one seal")
+    }
+
     fn mined_empty_child_at(
         parent: &NativeBlockMeta,
         height: u64,
@@ -18774,6 +19114,33 @@ mod tests {
         (db, tree)
     }
 
+    fn temporary_action_tree_with_pending(
+        pending_actions: &BTreeMap<[u8; 32], PendingAction>,
+    ) -> (sled::Db, sled::Tree) {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        for (hash, action) in pending_actions {
+            tree.insert(hash.as_slice(), action.encode())
+                .expect("insert temporary pending action");
+        }
+        tree.flush().expect("flush temporary pending actions");
+        (db, tree)
+    }
+
+    fn persist_pending_action_for_startup(node: &NativeNode, action: &PendingAction) {
+        node.action_tree
+            .insert(action.tx_hash.as_slice(), action.encode())
+            .expect("insert persisted pending action");
+        node.action_tree
+            .flush()
+            .expect("flush persisted pending action");
+    }
+
     fn test_transfer_encrypted_note() -> protocol_shielded_pool::types::EncryptedNote {
         protocol_shielded_pool::types::EncryptedNote {
             ciphertext: [3u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
@@ -18947,6 +19314,30 @@ mod tests {
             proof_receipt: vec![1, 2, 3],
             message,
         };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: KernelVersionBinding {
+                circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+            },
+            family_id: FAMILY_BRIDGE,
+            action_id: ACTION_BRIDGE_INBOUND,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn test_disabled_risc0_inbound_bridge_action(payload: &[u8]) -> PendingAction {
+        let args = test_disabled_risc0_bridge_inbound_args(payload);
         let mut action = PendingAction {
             tx_hash: [0u8; 32],
             binding: KernelVersionBinding {

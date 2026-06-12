@@ -84,6 +84,21 @@ impl ForkTree {
     }
 }
 
+fn validate_bft_block_versions(
+    schedule: &VersionSchedule,
+    block: &ConsensusBlock,
+) -> Result<(), ConsensusError> {
+    schedule
+        .validate_versions(
+            block.header.height,
+            block.transactions.iter().map(|tx| tx.version),
+        )
+        .map_err(|version| ConsensusError::UnsupportedVersion {
+            version,
+            height: block.header.height,
+        })
+}
+
 #[derive(Debug, Clone)]
 pub struct ConsensusUpdate {
     pub block_hash: [u8; 32],
@@ -142,15 +157,7 @@ impl<V: ProofVerifier> BftConsensus<V> {
         }
         block.header.ensure_structure()?;
         verify_commitments(&block)?;
-        self.version_schedule
-            .validate_versions(
-                block.header.height,
-                block.transactions.iter().map(|tx| tx.version),
-            )
-            .map_err(|version| ConsensusError::UnsupportedVersion {
-                version,
-                height: block.header.height,
-            })?;
+        validate_bft_block_versions(&self.version_schedule, &block)?;
         if block.header.validator_set_commitment != self.validator_set.validator_set_commitment() {
             return Err(ConsensusError::ValidatorSetMismatch);
         }

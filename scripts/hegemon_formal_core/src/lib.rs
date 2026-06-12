@@ -2583,6 +2583,7 @@ fn call_result_is_filter_ok_predicate(source: &str, call: &RustCallSite) -> bool
     }
 
     skip_ascii_whitespace(source, is_ok_end) == body.end
+        && filter_call_result_is_used(source, &filter_call)
 }
 
 fn call_result_direct_is_ok_end(source: &str, call: &RustCallSite) -> Option<usize> {
@@ -2646,6 +2647,160 @@ fn filter_closure_body(source: &str, filter_call: &RustCallSite) -> Option<RustC
         end: filter_call.close_paren,
         kind: RustClosureBodyKind::Expression,
     })
+}
+
+fn filter_call_result_is_used(source: &str, filter_call: &RustCallSite) -> bool {
+    let Some(terminal_end) = filter_chain_terminal_end(source, filter_call) else {
+        return false;
+    };
+    let context = rust_statement_context(source, filter_call.start);
+    let Some(block_start) = context.block_path.last().copied() else {
+        return false;
+    };
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    let Some((statement_end, has_semicolon)) =
+        top_level_statement_end_after(source, terminal_end, block_end)
+    else {
+        return false;
+    };
+    if skip_ascii_whitespace(source, terminal_end) != statement_end {
+        return false;
+    }
+
+    let prefix = source[context.current_statement_start()..filter_call.start].trim();
+    if has_semicolon {
+        if prefix.starts_with("return ") {
+            return true;
+        }
+        if let Some(binding) = statement_prefix_named_let_binding(prefix) {
+            identifier_is_used_later_in_block(source, &binding, statement_end, block_end)
+        } else {
+            false
+        }
+    } else {
+        true
+    }
+}
+
+fn filter_chain_terminal_end(source: &str, filter_call: &RustCallSite) -> Option<usize> {
+    let mut cursor = filter_call.close_paren + 1;
+    loop {
+        let method_dot = skip_ascii_whitespace(source, cursor);
+        if source.as_bytes().get(method_dot) != Some(&b'.') {
+            return None;
+        }
+        let method_start = skip_ascii_whitespace(source, method_dot + 1);
+        let (method, method_end) = rust_method_name_at(source, method_start)?;
+        let paren_start = rust_call_paren_start_after_ident(source, method_end)?;
+        if source.as_bytes().get(paren_start) != Some(&b'(') {
+            return None;
+        }
+        let paren_end = match_rust_paren(source, paren_start).ok()?;
+        cursor = paren_end + 1;
+        if iterator_terminal_method_consumes_filtered_result(method) {
+            return Some(cursor);
+        }
+        if !iterator_method_preserves_filtered_result(method) {
+            return None;
+        }
+    }
+}
+
+fn rust_method_name_at(source: &str, start: usize) -> Option<(&str, usize)> {
+    let bytes = source.as_bytes();
+    let first = *bytes.get(start)?;
+    if !(first == b'_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut end = start + 1;
+    while bytes
+        .get(end)
+        .is_some_and(|byte| is_rust_identifier_byte(*byte))
+    {
+        end += 1;
+    }
+    Some((&source[start..end], end))
+}
+
+fn iterator_terminal_method_consumes_filtered_result(method: &str) -> bool {
+    matches!(
+        method,
+        "all"
+            | "any"
+            | "collect"
+            | "count"
+            | "find"
+            | "fold"
+            | "for_each"
+            | "next"
+            | "partition"
+            | "try_collect"
+            | "try_fold"
+            | "try_for_each"
+    )
+}
+
+fn iterator_method_preserves_filtered_result(method: &str) -> bool {
+    matches!(
+        method,
+        "by_ref" | "cloned" | "copied" | "enumerate" | "fuse" | "inspect" | "take"
+    )
+}
+
+fn statement_prefix_named_let_binding(prefix: &str) -> Option<String> {
+    let Some(rest) = prefix.strip_prefix("let ") else {
+        return None;
+    };
+    let Some((lhs, _rhs_prefix)) = rest.split_once('=') else {
+        return None;
+    };
+    let mut lhs = lhs.trim_start();
+    if let Some(after_mut) = lhs.strip_prefix("mut ") {
+        lhs = after_mut.trim_start();
+    }
+    let bytes = lhs.as_bytes();
+    let Some(first) = bytes.first().copied() else {
+        return None;
+    };
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+    let mut ident_end = 1usize;
+    while bytes
+        .get(ident_end)
+        .is_some_and(|byte| is_rust_identifier_byte(*byte))
+    {
+        ident_end += 1;
+    }
+    let ident = &lhs[..ident_end];
+    (!ident.starts_with('_')).then(|| ident.to_owned())
+}
+
+fn identifier_is_used_later_in_block(source: &str, ident: &str, from: usize, to: usize) -> bool {
+    let bytes = source.as_bytes();
+    let ident_bytes = ident.as_bytes();
+    let mut cursor = from;
+    while cursor < to {
+        let Some(relative) = source[cursor..to].find(ident) else {
+            return false;
+        };
+        let start = cursor + relative;
+        let end = start + ident_bytes.len();
+        let before_is_ident = start
+            .checked_sub(1)
+            .and_then(|idx| bytes.get(idx))
+            .is_some_and(|byte| is_rust_identifier_byte(*byte));
+        let after_is_ident = bytes
+            .get(end)
+            .is_some_and(|byte| is_rust_identifier_byte(*byte));
+        if !before_is_ident && !after_is_ident {
+            return true;
+        }
+        cursor = end;
+    }
+    false
 }
 
 fn rust_call_open_paren(source: &str, call: &RustCallSite, ident: &str) -> Option<usize> {
@@ -5950,13 +6105,15 @@ mod tests {
             "src/native.rs",
             "fn verified_helper<T>(_value: T) {}\n\
              fn select_mineable_actions() {\n\
-                 actions().into_iter().filter(|action| {\n\
+                 let selected = actions().into_iter().filter(|action| {\n\
                      let input = build_input(action);\n\
                      verified_helper(input).is_ok()\n\
                  }).collect();\n\
+                 use_selected(selected);\n\
              }\n\
              fn actions() {}\n\
-             fn build_input<T>(_value: T) {}\n",
+             fn build_input<T>(_value: T) {}\n\
+             fn use_selected<T>(_value: T) {}\n",
         );
         let claims_path = root.join("claims.json");
         let blueprint_path = root.join("blueprint.json");
@@ -5986,7 +6143,7 @@ mod tests {
             "src/native.rs",
             "fn verified_helper<T>(_value: T) {}\n\
              fn select_mineable_actions() {\n\
-                 actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect();\n\
+                 actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect()\n\
              }\n\
              fn actions() {}\n",
         );
@@ -6151,6 +6308,171 @@ mod tests {
              }\n\
              fn actions() {}\n\
              fn input() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_dead_filter_ok_result_not_used_for_selection() {
+        let root = test_root("dead-filter-ok-result-not-used-for-selection");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 let _ = actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect();\n\
+                 actions().to_vec()\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_dead_named_filter_ok_result_not_used_for_selection() {
+        let root = test_root("dead-named-filter-ok-result-not-used-for-selection");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 let selected = actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect::<Vec<_>>();\n\
+                 actions().to_vec()\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_underscore_named_filter_ok_result() {
+        let root = test_root("underscore-named-filter-ok-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 let _selected = actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect::<Vec<_>>();\n\
+                 _selected\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_filter_ok_result_mapped_to_unchecked_values() {
+        let root = test_root("filter-ok-result-mapped-to-unchecked-values");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| verified_helper(action).is_ok()).map(|_| unchecked_action()).collect::<Vec<_>>()\n\
+             }\n\
+             fn actions() {}\n\
+             fn unchecked_action() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_unconsumed_filter_ok_iterator() {
+        let root = test_root("unconsumed-filter-ok-iterator");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 let selected = actions().into_iter().filter(|action| verified_helper(action).is_ok());\n\
+                 selected\n\
+             }\n\
+             fn actions() {}\n",
         );
         let claims_path = root.join("claims.json");
         let blueprint_path = root.join("blueprint.json");
