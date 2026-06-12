@@ -1184,7 +1184,22 @@ fn validate_rust_implementation_binding(
         );
         for function in non_test_callers {
             let body = &sanitized[function.body_start..function.body_end];
-            let call_sites = rust_call_sites(body, &binding.callee);
+            ensure!(
+                !rust_body_has_local_shadow_of_callee(body, &binding.callee),
+                "{} implementation binding caller {} in {} locally shadows bound callee {}",
+                claim_id,
+                caller,
+                binding.path,
+                binding.callee
+            );
+            let call_sites = rust_bound_callee_call_sites(
+                body,
+                &binding.callee,
+                function,
+                &sanitized,
+                &test_module_spans,
+                &functions,
+            );
             ensure!(
                 !call_sites.is_empty()
                     && call_sites.iter().all(|call| {
@@ -1250,12 +1265,17 @@ fn validate_rust_implementation_order(
     );
     for function in matching_callers {
         let body = &source[function.body_start..function.body_end];
-        let callee_calls = rust_call_sites(body, &binding.callee)
-            .into_iter()
-            .filter(|call| {
-                call_satisfies_result_obligation(body, call, constraint_result_obligation)
-            })
-            .collect::<Vec<_>>();
+        let callee_calls = rust_bound_callee_call_sites(
+            body,
+            &binding.callee,
+            function,
+            source,
+            test_module_spans,
+            functions,
+        )
+        .into_iter()
+        .filter(|call| call_satisfies_result_obligation(body, call, constraint_result_obligation))
+        .collect::<Vec<_>>();
         if callee_calls.is_empty() {
             return Err(anyhow!(
                 "{} implementation binding order caller {} in {} does not call {}{} in non-test Rust code",
@@ -1390,6 +1410,7 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
 #[derive(Debug, Clone)]
 struct RustFunctionSpan {
     name: String,
+    impl_type: Option<String>,
     qualified_name: Option<String>,
     start: usize,
     end: usize,
@@ -1430,10 +1451,13 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
         let body_end = match_rust_brace(source, body_start).with_context(|| {
             format!("match Rust function body for {name} starting at byte {body_start}")
         })?;
-        let qualified_name = enclosing_impl_type(&impl_spans, fn_start, body_end + 1)
+        let impl_type = enclosing_impl_type(&impl_spans, fn_start, body_end + 1).map(str::to_owned);
+        let qualified_name = impl_type
+            .as_ref()
             .map(|impl_type| format!("{impl_type}::{name}"));
         functions.push(RustFunctionSpan {
             name,
+            impl_type,
             qualified_name,
             start: fn_start,
             end: body_end + 1,
@@ -1443,6 +1467,114 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
         cursor = body_end + 1;
     }
     Ok(functions)
+}
+
+fn rust_body_has_local_shadow_of_callee(source: &str, callee: &str) -> bool {
+    rust_body_has_let_shadow(source, callee)
+        || rust_body_has_for_shadow(source, callee)
+        || rust_body_has_nested_fn_shadow(source, callee)
+        || rust_body_has_use_shadow(source, callee)
+        || rust_body_has_closure_parameter_shadow(source, callee)
+}
+
+fn rust_body_has_let_shadow(source: &str, callee: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(let_start) = find_rust_token(source, "let", cursor) {
+        let statement_end = top_level_statement_end_after(source, let_start, source.len())
+            .map(|(end, _)| end)
+            .unwrap_or(source.len());
+        let statement = &source[let_start + "let".len()..statement_end];
+        let pattern_end = statement
+            .find('=')
+            .or_else(|| statement.find(':'))
+            .unwrap_or(statement.len());
+        if rust_pattern_binds_identifier(&statement[..pattern_end], callee) {
+            return true;
+        }
+        cursor = statement_end.saturating_add(1);
+    }
+    false
+}
+
+fn rust_body_has_for_shadow(source: &str, callee: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(for_start) = find_rust_token(source, "for", cursor) {
+        let statement_end = top_level_statement_end_after(source, for_start, source.len())
+            .map(|(end, _)| end)
+            .unwrap_or(source.len());
+        let statement = &source[for_start + "for".len()..statement_end];
+        let pattern_end = statement.find(" in ").unwrap_or(statement.len());
+        if rust_pattern_binds_identifier(&statement[..pattern_end], callee) {
+            return true;
+        }
+        cursor = statement_end.saturating_add(1);
+    }
+    false
+}
+
+fn rust_body_has_nested_fn_shadow(source: &str, callee: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(fn_start) = find_rust_token(source, "fn", cursor) {
+        if let Some((name, _)) = parse_rust_identifier_after(source, fn_start + "fn".len()) {
+            if name == callee {
+                return true;
+            }
+        }
+        cursor = fn_start + "fn".len();
+    }
+    false
+}
+
+fn rust_body_has_use_shadow(source: &str, callee: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(use_start) = find_rust_token(source, "use", cursor) {
+        let statement_end = top_level_statement_end_after(source, use_start, source.len())
+            .map(|(end, _)| end)
+            .unwrap_or(source.len());
+        let statement = &source[use_start + "use".len()..statement_end];
+        if statement
+            .split(|c: char| !(c == '_' || c == ':' || c.is_ascii_alphanumeric()))
+            .any(|token| token == callee)
+        {
+            return true;
+        }
+        cursor = statement_end.saturating_add(1);
+    }
+    false
+}
+
+fn rust_body_has_closure_parameter_shadow(source: &str, callee: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = 0usize;
+    while let Some(relative) = source[cursor..].find('|') {
+        let first_bar = cursor + relative;
+        let Some(second_relative) = source[first_bar + 1..].find('|') else {
+            break;
+        };
+        let second_bar = first_bar + 1 + second_relative;
+        if second_bar - first_bar <= 256
+            && rust_pattern_binds_identifier(&source[first_bar + 1..second_bar], callee)
+        {
+            return true;
+        }
+        cursor = second_bar + 1;
+        if bytes.get(cursor) == Some(&b'|') {
+            cursor += 1;
+        }
+    }
+    false
+}
+
+fn rust_pattern_binds_identifier(pattern: &str, ident: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(index) = find_rust_identifier_from(pattern, ident, cursor) {
+        let before = pattern[..index].trim_end();
+        if !before.ends_with("::") {
+            return true;
+        }
+        cursor = index + ident.len();
+    }
+    false
 }
 
 #[derive(Debug, Clone)]
@@ -1731,6 +1863,9 @@ fn looks_like_rust_char_literal_start(bytes: &[u8], index: usize) -> bool {
 }
 
 fn find_rust_token(source: &str, token: &str, from: usize) -> Option<usize> {
+    if from >= source.len() {
+        return None;
+    }
     let mut cursor = from;
     while let Some(relative) = source[cursor..].find(token) {
         let index = cursor + relative;
@@ -1922,6 +2057,52 @@ fn rust_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
     rust_call_sites_for_selector(source, &RustCallSelector::bare(ident))
 }
 
+fn rust_bound_callee_call_sites(
+    body: &str,
+    ident: &str,
+    caller: &RustFunctionSpan,
+    full_source: &str,
+    test_module_spans: &[(usize, usize)],
+    functions: &[RustFunctionSpan],
+) -> Vec<RustCallSite> {
+    let mut calls = rust_unqualified_call_sites(body, ident);
+    if caller.impl_type.as_ref().is_some_and(|impl_type| {
+        rust_same_impl_method_exists(full_source, test_module_spans, functions, impl_type, ident)
+    }) {
+        calls.extend(rust_qualified_call_sites(
+            body,
+            &RustCallSelector {
+                segments: vec!["self".to_owned(), ident.to_owned()],
+                separators: vec![RustCallSelectorSeparator::Member],
+            },
+        ));
+        calls.extend(rust_qualified_call_sites(
+            body,
+            &RustCallSelector {
+                segments: vec!["Self".to_owned(), ident.to_owned()],
+                separators: vec![RustCallSelectorSeparator::Path],
+            },
+        ));
+    }
+    calls.sort_by_key(|call| (call.start, call.close_paren));
+    calls.dedup_by_key(|call| (call.start, call.close_paren));
+    calls
+}
+
+fn rust_same_impl_method_exists(
+    full_source: &str,
+    test_module_spans: &[(usize, usize)],
+    functions: &[RustFunctionSpan],
+    impl_type: &str,
+    ident: &str,
+) -> bool {
+    functions.iter().any(|function| {
+        function.name == ident
+            && function.impl_type.as_deref() == Some(impl_type)
+            && !function.is_test_only(full_source, test_module_spans)
+    })
+}
+
 fn rust_call_sites_for_selector(source: &str, selector: &RustCallSelector) -> Vec<RustCallSite> {
     if selector.is_bare() {
         return rust_bare_call_sites(source, selector.last_segment());
@@ -1933,7 +2114,11 @@ fn rust_bare_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
     let mut calls = Vec::new();
     let mut cursor = 0usize;
     while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
-        let after_ident = skip_ascii_whitespace(source, index + ident.len());
+        let Some(after_ident) = rust_call_paren_start_after_ident(source, index + ident.len())
+        else {
+            cursor = index + ident.len();
+            continue;
+        };
         if source.as_bytes().get(after_ident) == Some(&b'(') {
             if let Ok(close_paren) = match_rust_paren(source, after_ident) {
                 calls.push(RustCallSite {
@@ -1947,12 +2132,53 @@ fn rust_bare_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
     calls
 }
 
+fn rust_unqualified_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
+    let mut calls = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
+        if !rust_identifier_is_unqualified(source, index) {
+            cursor = index + ident.len();
+            continue;
+        }
+        let Some(after_ident) = rust_call_paren_start_after_ident(source, index + ident.len())
+        else {
+            cursor = index + ident.len();
+            continue;
+        };
+        if source.as_bytes().get(after_ident) == Some(&b'(') {
+            if let Ok(close_paren) = match_rust_paren(source, after_ident) {
+                calls.push(RustCallSite {
+                    start: index,
+                    close_paren,
+                });
+            }
+        }
+        cursor = index + ident.len();
+    }
+    calls
+}
+
+fn rust_identifier_is_unqualified(source: &str, ident_start: usize) -> bool {
+    let qualifier_end = skip_ascii_whitespace_back(source, ident_start);
+    if qualifier_end >= 2 && &source[qualifier_end - 2..qualifier_end] == "::" {
+        return false;
+    }
+    qualifier_end
+        .checked_sub(1)
+        .and_then(|index| source.as_bytes().get(index))
+        != Some(&b'.')
+}
+
 fn rust_qualified_call_sites(source: &str, selector: &RustCallSelector) -> Vec<RustCallSite> {
     let mut calls = Vec::new();
     let ident = selector.last_segment();
     let mut cursor = 0usize;
     while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
-        let after_ident = skip_ascii_whitespace(source, index + ident.len());
+        let Some(after_ident) = rust_call_paren_start_after_ident(source, index + ident.len())
+        else {
+            cursor = index + ident.len();
+            continue;
+        };
         if source.as_bytes().get(after_ident) == Some(&b'(') {
             if let Some(start) = rust_qualified_call_selector_start(source, selector, index) {
                 if let Ok(close_paren) = match_rust_paren(source, after_ident) {
@@ -1963,6 +2189,16 @@ fn rust_qualified_call_sites(source: &str, selector: &RustCallSelector) -> Vec<R
         cursor = index + ident.len();
     }
     calls
+}
+
+fn rust_call_paren_start_after_ident(source: &str, ident_end: usize) -> Option<usize> {
+    let mut cursor = skip_ascii_whitespace(source, ident_end);
+    if source[cursor..].starts_with("::<") {
+        let open_angle = cursor + 2;
+        cursor = match_rust_angle(source, open_angle)? + 1;
+        cursor = skip_ascii_whitespace(source, cursor);
+    }
+    Some(cursor)
 }
 
 fn rust_qualified_call_selector_start(
@@ -2011,6 +2247,9 @@ fn rust_qualified_call_selector_start(
 }
 
 fn find_rust_identifier_from(source: &str, ident: &str, from: usize) -> Option<usize> {
+    if from >= source.len() {
+        return None;
+    }
     let mut cursor = from;
     while let Some(relative) = source[cursor..].find(ident) {
         let index = cursor + relative;
@@ -2086,7 +2325,7 @@ fn call_satisfies_result_obligation(
             call_result_is_propagated(source, call) || call_result_is_fail_closed(source, call)
         }
         ResultObligation::MustCheckResultLoopSkipFailClosed => {
-            call_result_if_let_err_branch_continues_loop(source, call)
+            call_result_is_loop_skip_fail_closed(source, call)
         }
         ResultObligation::MustFilterOkResult => call_result_is_filter_ok_predicate(source, call),
         ResultObligation::MustReturnTupleResultComponent => {
@@ -2231,6 +2470,8 @@ fn rust_tail_result_expression_end(source: &str, call: &RustCallSite) -> Option<
 fn rust_tail_result_method_end(source: &str, method_start: usize) -> Option<usize> {
     rust_token_at(source, "map_err", method_start)
         .or_else(|| rust_token_at(source, "map", method_start))
+        .or_else(|| rust_token_at(source, "context", method_start))
+        .or_else(|| rust_token_at(source, "with_context", method_start))
 }
 
 fn call_result_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
@@ -2266,10 +2507,15 @@ fn call_result_if_let_err_branch_return(source: &str, call: &RustCallSite) -> bo
     fail_closed_branch_after(source, call.close_paren + 1)
 }
 
-fn call_result_if_let_err_branch_continues_loop(source: &str, call: &RustCallSite) -> bool {
+fn call_result_is_loop_skip_fail_closed(source: &str, call: &RustCallSite) -> bool {
     if !call_is_inside_loop(source, call.start) {
         return false;
     }
+    call_result_if_let_err_branch_continues_loop(source, call)
+        || call_result_match_err_branch_continues_loop(source, call)
+}
+
+fn call_result_if_let_err_branch_continues_loop(source: &str, call: &RustCallSite) -> bool {
     let context = rust_statement_context(source, call.start);
     let prefix = source[context.current_statement_start()..call.start].trim();
     if !prefix.starts_with("if let Err") {
@@ -2290,6 +2536,22 @@ fn call_result_if_let_err_branch_continues_loop(source: &str, call: &RustCallSit
         return false;
     };
     rust_block_has_top_level_terminal_continue(source, branch_start + 1, branch_end)
+}
+
+fn call_result_match_err_branch_continues_loop(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if !prefix.ends_with("match") {
+        return false;
+    }
+    let branch_start = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(branch_start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    match_body_has_only_continuing_err_arms(source, branch_start + 1, branch_end)
 }
 
 fn call_result_is_filter_ok_predicate(source: &str, call: &RustCallSite) -> bool {
@@ -3037,8 +3299,43 @@ fn match_body_has_only_returning_err_arms(
         let pattern = source[cursor..arrow].trim();
         let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
         let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
+        if !saw_err && match_pattern_may_catch_result_err_before_plain_err(pattern) {
+            return false;
+        }
         if match_pattern_is_plain_err(pattern) {
             if !match_arm_body_returns(source, arm_body_start, arm_body_end) {
+                return false;
+            }
+            saw_err = true;
+        }
+        cursor = arm_body_end.saturating_add(1);
+    }
+    saw_err
+}
+
+fn match_body_has_only_continuing_err_arms(
+    source: &str,
+    body_start: usize,
+    body_end: usize,
+) -> bool {
+    let mut cursor = body_start;
+    let mut saw_err = false;
+    while cursor < body_end {
+        cursor = skip_match_arm_separator(source, cursor, body_end);
+        if cursor >= body_end {
+            break;
+        }
+        let Some(arrow) = find_top_level_fat_arrow(source, cursor, body_end) else {
+            return false;
+        };
+        let pattern = source[cursor..arrow].trim();
+        let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
+        let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
+        if !saw_err && match_pattern_may_catch_result_err_before_plain_err(pattern) {
+            return false;
+        }
+        if match_pattern_is_plain_err(pattern) {
+            if !match_arm_body_continues(source, arm_body_start, arm_body_end) {
                 return false;
             }
             saw_err = true;
@@ -3120,7 +3417,25 @@ fn match_pattern_is_plain_err(pattern: &str) -> bool {
         return false;
     }
     let pattern = pattern.trim();
+    if pattern.contains('|') {
+        return false;
+    }
     pattern == "Err" || pattern.starts_with("Err(") || pattern.starts_with("Err {")
+}
+
+fn match_pattern_is_plain_ok(pattern: &str) -> bool {
+    if pattern.contains(" if ") {
+        return false;
+    }
+    let pattern = pattern.trim();
+    if pattern.contains('|') {
+        return false;
+    }
+    pattern == "Ok" || pattern.starts_with("Ok(") || pattern.starts_with("Ok {")
+}
+
+fn match_pattern_may_catch_result_err_before_plain_err(pattern: &str) -> bool {
+    !match_pattern_is_plain_err(pattern) && !match_pattern_is_plain_ok(pattern)
 }
 
 fn match_arm_body_returns(source: &str, start: usize, end: usize) -> bool {
@@ -3138,6 +3453,23 @@ fn match_arm_body_returns(source: &str, start: usize, end: usize) -> bool {
         return rust_block_has_top_level_terminal_return(source, start + 1, block_end);
     }
     span_is_terminal_return_statement(source, start, end)
+}
+
+fn match_arm_body_continues(source: &str, start: usize, end: usize) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if start >= end {
+        return false;
+    }
+    if source.as_bytes().get(start) == Some(&b'{') {
+        let Ok(block_end) = match_rust_brace(source, start) else {
+            return false;
+        };
+        if block_end > end {
+            return false;
+        }
+        return rust_block_has_top_level_terminal_continue(source, start + 1, block_end);
+    }
+    span_is_terminal_continue_statement(source, start, end)
 }
 
 fn fail_closed_branch_after(source: &str, from: usize) -> bool {
@@ -3219,6 +3551,17 @@ fn rust_block_has_top_level_terminal_continue(source: &str, start: usize, end: u
         index += 1;
     }
     false
+}
+
+fn span_is_terminal_continue_statement(source: &str, start: usize, end: usize) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    let end = skip_ascii_whitespace_back(source, end);
+    let Some(after_continue) = rust_token_at(source, "continue", start) else {
+        return false;
+    };
+    let after_continue = skip_ascii_whitespace(source, after_continue);
+    source.as_bytes().get(after_continue) == Some(&b';')
+        && source[after_continue + 1..end].trim().is_empty()
 }
 
 fn rust_block_has_top_level_terminal_return(source: &str, start: usize, end: usize) -> bool {
@@ -4152,6 +4495,237 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_turbofish_propagated_result_implementation_call() {
+        let root = test_root("turbofish-propagated-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>() {}\n\
+             fn import_mined_block() { verified_helper::<PendingAction>()?; }\n\
+             struct PendingAction;\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("turbofish propagated result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_method_call_for_bare_bound_callee() {
+        let root = test_root("method-call-bare-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             struct Dummy;\n\
+             impl Dummy { fn verified_helper(&self) -> Result<(), ()> { Ok(()) } }\n\
+             fn import_mined_block(dummy: Dummy) { dummy.verified_helper()?; }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("method call must not satisfy bare bound callee");
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_associated_call_for_bare_bound_callee() {
+        let root = test_root("associated-call-bare-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             struct Dummy;\n\
+             impl Dummy { fn verified_helper() -> Result<(), ()> { Ok(()) } }\n\
+             fn import_mined_block() { Dummy::verified_helper()?; }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("associated call must not satisfy bare bound callee");
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_accepts_same_impl_self_call_for_bound_callee() {
+        let root = test_root("same-impl-self-call-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Verifier;\n\
+             impl Verifier {\n\
+                 fn verified_helper(&self) -> Result<(), ()> { Ok(()) }\n\
+                 fn import_mined_block(&self) { self.verified_helper()?; }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["Verifier::import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("same-impl self call should satisfy bound callee");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_local_let_shadow_for_bound_callee() {
+        let root = test_root("local-let-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 let verified_helper = || Ok(());\n\
+                 verified_helper()?;\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("local let shadow must not satisfy binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_nested_fn_shadow_for_bound_callee() {
+        let root = test_root("nested-fn-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+                 verified_helper()?;\n\
+                 persist_block();\n\
+             }\n\
+             fn persist_block() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["persist_block"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("nested fn shadow must not satisfy ordered binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_closure_parameter_shadow_for_bound_callee() {
+        let root = test_root("closure-parameter-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn expected_supply_after_transition() {}\n\
+             fn apply_block() {\n\
+                 callbacks().map(|expected_supply_after_transition| expected_supply_after_transition());\n\
+             }\n\
+             fn callbacks() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("expected_supply_after_transition", &["apply_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("closure parameter shadow must not satisfy binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee expected_supply_after_transition"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn blueprint_accepts_tail_returned_result_implementation_call() {
         let root = test_root("tail-returned-result-implementation-call");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -4240,6 +4814,37 @@ mod tests {
         let report = check_blueprint_file(&blueprint_path, &claims_path)
             .expect("tail map result implementation binding");
         assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_context_propagated_result_implementation_call() {
+        let root = test_root("context-propagated-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 verified_helper().with_context(|| \"decode block\")?;\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("context propagated result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
     }
 
     #[test]
@@ -4951,6 +5556,141 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_edges, 1);
         assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_loop_skip_fail_closed_match_err() {
+        let root = test_root("loop-skip-fail-closed-match-err");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     let entry = match verified_helper() {\n\
+                         Ok(entry) => entry,\n\
+                         Err(rejection) => { warn(rejection); continue; }\n\
+                     };\n\
+                     accept(entry);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("match Err loop-skip fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_match_err_loop_skip_without_continue() {
+        let root = test_root("match-err-loop-skip-without-continue");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     let entry = match verified_helper() {\n\
+                         Ok(entry) => entry,\n\
+                         Err(rejection) => { warn(rejection); fallback() }\n\
+                     };\n\
+                     accept(entry);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn fallback() {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("match Err without continue must not satisfy loop-skip obligation");
+        assert!(
+            err.to_string()
+                .contains("with loop-skip fail-closed result handling"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_match_wildcard_before_err_loop_skip() {
+        let root = test_root("match-wildcard-before-err-loop-skip");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     let entry = match verified_helper() {\n\
+                         _ => fallback(),\n\
+                         Err(rejection) => { warn(rejection); continue; }\n\
+                     };\n\
+                     accept(entry);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn fallback() {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("wildcard before Err must not satisfy loop-skip obligation");
+        assert!(
+            err.to_string()
+                .contains("with loop-skip fail-closed result handling"),
+            "{err:#}"
+        );
     }
 
     #[test]

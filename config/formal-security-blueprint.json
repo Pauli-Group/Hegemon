@@ -4650,6 +4650,111 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_sync_message",
+          "required_callers": [
+            "native_sync_loop"
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "native_sync_loop",
+              "callee_must_precede": [
+                "node.import_announced_block",
+                "node.block_range",
+                "evaluate_native_sync_response_count_admission"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_block_actions",
+          "required_callers": [
+            "import_announced_block",
+            "replay_chain_state",
+            "plan_canonical_index_rebuild",
+            "expected_consumed_bridge_messages_from_chain",
+            "action_hashes_from_chain",
+            "orphaned_actions",
+            "export_bridge_witness",
+            "latest_bridge_message_block_hash"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "reorganize_chain_to_best_locked",
+                "persist_noncanonical_block_record"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "replay_chain_state",
+              "callee_must_precede": [
+                "validate_block_actions_locked",
+                "preview_pending_roots",
+                "verify_native_block_artifacts_locked",
+                "apply_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "plan_canonical_index_rebuild",
+              "callee_must_precede": [
+                "canonical_ciphertexts_for_action",
+                "evaluate_native_action_stream_effect"
+              ]
+            },
+            {
+              "caller": "export_bridge_witness",
+              "callee_must_precede": [
+                "bridge_messages_from_actions",
+                "evaluate_native_bridge_witness_export_admission",
+                "build_long_range_bridge_proof"
+              ]
+            },
+            {
+              "caller": "latest_bridge_message_block_hash",
+              "callee_must_precede": [
+                "bridge_messages_from_actions",
+                "evaluate_native_bridge_witness_backscan"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_scale_exact",
+          "required_callers": [
+            "decode_block_actions",
+            "load_pending_actions",
+            "NativeNode::validate_and_stage_action",
+            "validate_transfer_action_payload",
+            "validate_bridge_action_payload",
+            "validate_coinbase_action_payload",
+            "coinbase_action_amount",
+            "verify_inbound_bridge_receipt"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "bincode_deserialize_exact",
+          "required_callers": [
+            "load_best_or_genesis",
+            "load_block_meta_by_hash"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CodecAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
@@ -4674,6 +4779,11 @@
           "id": "lean-generated-codec-admission-conformance",
           "description": "Changing native sync, exact-decode, or block-action decode behavior away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-codec-admission-implementation-gate",
+          "description": "The blueprint gate must keep native sync, block-action, SCALE exact, and bincode exact decode helpers wired into production sync, import/replay, payload, reload, and metadata load paths with propagated or loop-skip fail-closed results before semantic validation or mutation work.",
+          "gate": "bash scripts/check_formal_core.sh"
         },
         {
           "id": "native-sync-codec-regression",
@@ -5759,7 +5869,7 @@
           "gate": "cargo test -p hegemon-node nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features"
         }
       ],
-  "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

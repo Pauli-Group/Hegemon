@@ -1718,7 +1718,7 @@ impl NativeNode {
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
         });
-        node.ensure_ciphertext_archive_index()?;
+        Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
     }
 
@@ -3855,16 +3855,9 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         (Some(meta), Some(hash)) => hash == meta.hash,
         (Some(_), None) | (None, _) => true,
     };
-    let mut block_actions_decoded = true;
     let actions = match meta.as_ref() {
         Some(meta) if canonical_height_present && block_is_canonical => {
-            match decode_block_actions(meta) {
-                Ok(actions) => Some(actions),
-                Err(_) => {
-                    block_actions_decoded = false;
-                    None
-                }
-            }
+            Some(decode_block_actions(meta).context("decode bridge witness block actions")?)
         }
         _ => None,
     };
@@ -3877,12 +3870,7 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         None => true,
     };
     let parent = match meta.as_ref() {
-        Some(meta)
-            if canonical_height_present
-                && block_is_canonical
-                && block_actions_decoded
-                && message_index_in_bounds =>
-        {
+        Some(meta) if canonical_height_present && block_is_canonical && message_index_in_bounds => {
             node.header_by_hash(&meta.parent_hash)?
         }
         _ => None,
@@ -3894,13 +3882,12 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
             block_known: meta.is_some(),
             canonical_height_present,
             block_is_canonical,
-            block_actions_decoded,
+            block_actions_decoded: true,
             message_index_in_bounds,
             parent_known: parent.is_some()
                 || !(meta.is_some()
                     && canonical_height_present
                     && block_is_canonical
-                    && block_actions_decoded
                     && message_index_in_bounds),
             best_height: best.height,
             message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
@@ -4012,23 +3999,16 @@ fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> 
             message_index_in_bounds: false,
         };
         let mut selected_hash = None;
-        let mut decode_error = None;
         if let Some(hash) = node.hash_by_height(height)? {
             entry.canonical_hash_present = true;
             if let Some(meta) = node.header_by_hash(&hash)? {
                 entry.block_known = true;
                 selected_hash = Some(meta.hash);
-                match decode_block_actions(&meta) {
-                    Ok(actions) => {
-                        entry.message_index_in_bounds =
-                            bridge_messages_from_actions(&actions, meta.height).len()
-                                > message_index;
-                    }
-                    Err(error) => {
-                        entry.block_actions_decoded = false;
-                        decode_error = Some(error);
-                    }
-                }
+                let actions = decode_block_actions(&meta).with_context(|| {
+                    format!("decode bridge witness backscan block actions at height {height}")
+                })?;
+                entry.message_index_in_bounds =
+                    bridge_messages_from_actions(&actions, meta.height).len() > message_index;
             }
         }
         entries.push(entry);
@@ -4046,15 +4026,10 @@ fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> 
                 });
             }
             Err(NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed) => {
-                return Err(decode_error.unwrap_or_else(|| {
-                    anyhow!(
-                        "bridge witness backscan block action decode failed ({})",
-                        NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed.label()
-                    )
-                }))
-                .with_context(|| {
-                    format!("decode bridge witness backscan block actions at height {height}")
-                });
+                return Err(anyhow!(
+                    "bridge witness backscan block action decode failed ({})",
+                    NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed.label()
+                ))
             }
             Err(NativeBridgeWitnessBackscanRejection::NoBridgeMessageInBackscan) => {}
         }
@@ -4366,10 +4341,13 @@ fn load_block_meta_by_hash(
     block_tree: &sled::Tree,
     hash: &[u8; 32],
 ) -> Result<Option<NativeBlockMeta>> {
-    block_tree
-        .get(hash)?
-        .map(|bytes| bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata"))
-        .transpose()
+    match block_tree.get(hash)? {
+        Some(bytes) => Ok(Some(bincode_deserialize_exact::<NativeBlockMeta>(
+            &bytes,
+            "native block metadata",
+        )?)),
+        None => Ok(None),
+    }
 }
 
 fn load_chain_to_hash(block_tree: &sled::Tree, hash: [u8; 32]) -> Result<Vec<NativeBlockMeta>> {
@@ -7108,11 +7086,13 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
         action_hashes_unique: true,
     })
     .map_err(native_action_hash_admission_error)?;
-    let actions = meta
-        .action_bytes
-        .iter()
-        .map(|bytes| decode_scale_exact::<PendingAction>(bytes, "native block action"))
-        .collect::<Result<Vec<_>>>()?;
+    let mut actions = Vec::with_capacity(meta.action_bytes.len());
+    for bytes in &meta.action_bytes {
+        actions.push(decode_scale_exact::<PendingAction>(
+            bytes,
+            "native block action",
+        )?);
+    }
     evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
         action_count_matches: true,
         action_hashes_match: block_action_hashes_match(&actions),
