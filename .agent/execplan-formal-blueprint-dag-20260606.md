@@ -22,7 +22,8 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - [x] (2026-06-06T06:13:00Z) Ran `bash scripts/check_formal_core.sh`; it passed the new 9-step gate.
 - [x] (2026-06-12T07:19:02Z) Hardened native timestamp RPC implementation equivalence by adding the production helper `timestamp_meta_by_height` in `node/src/native/mod.rs`, requiring `block_timestamps` to propagate hash/header storage decode failures instead of treating corrupt rows as missing data, and binding that helper in `config/formal-security-blueprint.json`.
 - [x] (2026-06-12T07:19:02Z) Added the focused regression `timestamp_rpc_rejects_corrupt_explicit_range_header`, updated the formal-core documentation counts to 117 implementation bindings and 102 result obligations, and ran `cargo fmt --all -- --check`, the focused blueprint check, `cargo test -p hegemon-node timestamp_rpc_rejects_corrupt_explicit_range_header --lib --no-default-features -- --nocapture`, `git diff --check`, `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features -- --nocapture`, and `cargo build --release -p hegemon-node --bin hegemon-node --no-default-features`.
-- [ ] Deploy the timestamp RPC fail-closed slice to `hegemon-dev`, rerun the remote formal gate and focused regression, restart the miner, and record mining/transaction smoke results before moving to the next implementation-equivalence gap.
+- [x] (2026-06-12T07:31:25Z) Deployed the timestamp RPC fail-closed slice to `hegemon-dev` at commit `5aee82c7f7ef4079e57d2cc0dae9e8c918cce559`. The remote formal-core gate passed with 117 implementation bindings, 94 order constraints covering 276 order edges, 102 result obligations, 78 dominance constraints covering 233 dominance edges, 943 named Lean theorem declarations, and no temporary or unwaived axiom dependencies. The remote release binary SHA was `c20c6525bb640db624727218c9ebb9906ed505be6b008e70f11e4f0578955f76`.
+- [x] (2026-06-12T07:31:25Z) Restarted `hegemon-node.service` on `hegemon-dev` after backing up the service unit to `/home/ubuntu/hegemon-devnet/deploy-backups/hegemon-node.service.20260612T072958Z`. Service PID `1311168` stayed active/running with zero restarts. RPC smoke showed `system_health` not syncing, consensus height `436645`, empty pending extrinsics, `rpcExternal=false`, `rpcMethods=unsafe`, NTP synchronized, `HEGEMON_MINE=1`, `HEGEMON_MINE_THREADS=1`, and `HEGEMON_MAX_PEERS=140`. `bash scripts/test-node.sh wallet-send` passed, the focused `timestamp_rpc_rejects_corrupt_explicit_range_header` regression passed, and mining advanced from height `436643`/`blocks_found=3` to height `436644`/`blocks_found=4` during the sample.
 
 ## Surprises & Discoveries
 
@@ -75,6 +76,8 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 The branch now has a stricter formal-core gate that treats formal-security claims as a reviewed dependency graph instead of isolated checklist rows. The new gate catches missing blueprint nodes, claim/blueprint branch drift, dangling dependencies, dependency cycles, path escapes, missing implementation/evidence bindings, missing accepted target review for production claims, and missing falsification cases.
 
 This is still not a full formal proof of Hegemon's Rust implementation. It is an enforceable release methodology layer that makes the next Lean or model-checking work sharper by keeping claim targets, assumptions, scope boundaries, and cheap counterexamples explicit.
+
+2026-06-12 update: The timestamp RPC storage-materialization slice shows how this blueprint work now catches implementation-equivalence failures, not just missing formal metadata. Range admission was already modeled, but storage metadata lookup still swallowed corrupt canonical rows. The new binding forces the production RPC to propagate header lookup/decode failures, and the `hegemon-dev` deployment confirmed the formal gate, focused regression, transaction compatibility test, service restart, and live mining all work on the branch.
 
 ## Context and Orientation
 
@@ -203,3 +206,5 @@ Revision note 2026-06-06T06:13:00Z: Recorded the implemented blueprint DAG file,
 Revision note 2026-06-06T06:19:00Z: Recorded the `hegemon-dev` non-interactive PATH discovery and the shell wrapper fix that makes Cargo-installed audit tools visible.
 
 Revision note 2026-06-12T07:19:02Z: Recorded the timestamp RPC fail-closed implementation-equivalence slice, including the new storage metadata helper, blueprint binding, focused regression, and local formal/node/release validation.
+
+Revision note 2026-06-12T07:31:25Z: Recorded `hegemon-dev` deployment evidence for the timestamp RPC slice, including remote formal-core counts, release binary hash, service restart, RPC smoke, wallet submission compatibility, focused regression, NTP/environment posture, and mining advancement.
