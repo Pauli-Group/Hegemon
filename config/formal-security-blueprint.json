@@ -1717,6 +1717,16 @@
         "reviewed_at": "2026-06-07",
         "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus commitment-tree transition control flow. Scope excludes Merkle/hash cryptographic soundness and complete block proof validity."
       },
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "verify_and_apply_tree_transition_without_anchors",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
       "falsification_cases": [
         {
           "id": "lean-block-tree-transition-theorem",
