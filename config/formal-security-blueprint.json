@@ -2316,6 +2316,56 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "is_unsafe_rpc_method",
+          "required_callers": [
+            "dispatch_rpc_method",
+            "native_rpc_methods"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "dispatch_rpc_method",
+              "callee_must_precede": [
+                "node.start_mining",
+                "node.stop_mining",
+                "node.submit_ciphertexts",
+                "node.submit_proofs"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "parse_bytes_value",
+          "required_callers": [
+            "NativeNode::submit_ciphertexts",
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_ciphertexts",
+              "callee_must_precede": [
+                "self.da_ciphertext_tree.insert",
+                "state.staged_ciphertexts.insert"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "evaluate_native_proof_sidecar_decoded_admission",
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/RpcAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateRpcAdmissionVectors.lean",
@@ -2491,6 +2541,58 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_sync_response_range",
+          "required_callers": [
+            "NativeNode::block_range"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::block_range",
+              "callee_must_precede": [
+                "self.hash_by_height",
+                "blocks.push"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_sync_missing_request_range",
+          "required_callers": [
+            "request_missing_blocks"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "request_missing_blocks",
+              "callee_must_precede": [
+                "send_sync_message"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_sync_response_count_admission",
+          "required_callers": [
+            "native_sync_loop"
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "native_sync_loop",
+              "callee_must_precede": [
+                "blocks.sort_by_key"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
@@ -2552,6 +2654,45 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_mineable_action_admission",
+          "required_callers": [
+            "select_mineable_actions"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "select_mineable_actions",
+          "required_callers": [
+            "NativeNode::prepare_work",
+            "import_mined_block"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::prepare_work",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "advance_native_supply_digest",
+                "native_pow_header_from_parts"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "preview_pending_roots",
+                "evaluate_native_block_commitment_admission",
+                "advance_native_supply_digest",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "commit_mined_block_atomically"
+              ]
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
@@ -3179,7 +3320,8 @@
           "callee": "evaluate_native_staged_ciphertext_reload",
           "required_callers": [
             "load_staged_sizes_with_limits"
-          ]
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -3269,7 +3411,8 @@
           "callee": "evaluate_native_staged_proof_reload",
           "required_callers": [
             "load_staged_proofs_with_limits"
-          ]
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -5152,6 +5295,25 @@
       "implementation_bindings": [
         {
           "path": "node/src/native/mod.rs",
+          "callee": "replay_chain_state",
+          "required_callers": [
+            "reorganize_chain_to_best_locked"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_chain_to_best_locked",
+              "callee_must_precede": [
+                "plan_canonical_index_rebuild",
+                "commit_reorg_state_atomically",
+                "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "plan_canonical_index_rebuild",
           "required_callers": [
             "reorganize_chain_to_best_locked",
@@ -5197,6 +5359,14 @@
           "callee": "commit_canonical_index_repair_atomically",
           "required_callers": [
             "ensure_ciphertext_archive_index"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "ensure_ciphertext_archive_index",
+          "required_callers": [
+            "NativeNode::open"
           ],
           "result_obligation": "must_propagate_result"
         }

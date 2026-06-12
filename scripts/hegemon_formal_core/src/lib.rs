@@ -1330,6 +1330,7 @@ enum ResultObligation {
     None,
     MustPropagateResult,
     MustCheckResultFailClosed,
+    MustCheckResultLoopSkipFailClosed,
     MustGuardFalseFailClosed,
 }
 
@@ -1342,6 +1343,9 @@ fn parse_result_obligation(
         None => Ok(ResultObligation::None),
         Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
         Some("must_check_result_fail_closed") => Ok(ResultObligation::MustCheckResultFailClosed),
+        Some("must_check_result_loop_skip_fail_closed") => {
+            Ok(ResultObligation::MustCheckResultLoopSkipFailClosed)
+        }
         Some("must_guard_false_fail_closed") => Ok(ResultObligation::MustGuardFalseFailClosed),
         Some(other) => Err(anyhow!(
             "{} implementation binding for {} has unknown result_obligation {}",
@@ -1357,6 +1361,9 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
         ResultObligation::None => "",
         ResultObligation::MustPropagateResult => " with propagated result",
         ResultObligation::MustCheckResultFailClosed => " with fail-closed result handling",
+        ResultObligation::MustCheckResultLoopSkipFailClosed => {
+            " with loop-skip fail-closed result handling"
+        }
         ResultObligation::MustGuardFalseFailClosed => " with fail-closed false guard handling",
     }
 }
@@ -2059,6 +2066,9 @@ fn call_satisfies_result_obligation(
         ResultObligation::MustCheckResultFailClosed => {
             call_result_is_propagated(source, call) || call_result_is_fail_closed(source, call)
         }
+        ResultObligation::MustCheckResultLoopSkipFailClosed => {
+            call_result_if_let_err_branch_continues_loop(source, call)
+        }
         ResultObligation::MustGuardFalseFailClosed => {
             call_bool_false_guard_is_fail_closed(source, call)
         }
@@ -2239,6 +2249,32 @@ fn call_result_if_let_err_branch_return(source: &str, call: &RustCallSite) -> bo
         return false;
     }
     fail_closed_branch_after(source, call.close_paren + 1)
+}
+
+fn call_result_if_let_err_branch_continues_loop(source: &str, call: &RustCallSite) -> bool {
+    if !call_is_inside_loop(source, call.start) {
+        return false;
+    }
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if !prefix.starts_with("if let Err") {
+        return false;
+    }
+    let Some((lhs, rhs)) = prefix.rsplit_once('=') else {
+        return false;
+    };
+    if !lhs.trim_start().starts_with("if let Err") || !rhs.trim().is_empty() {
+        return false;
+    }
+    let Some(branch_start) =
+        next_top_level_rust_brace_before_statement_end(source, call.close_paren + 1)
+    else {
+        return false;
+    };
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    rust_block_has_top_level_terminal_continue(source, branch_start + 1, branch_end)
 }
 
 fn call_result_match_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -2468,6 +2504,77 @@ fn fail_closed_branch_after(source: &str, from: usize) -> bool {
         return false;
     };
     contains_rust_token(&source[branch_start + 1..branch_end], "return")
+}
+
+fn call_is_inside_loop(source: &str, target: usize) -> bool {
+    let context = rust_statement_context(source, target);
+    context
+        .block_path
+        .iter()
+        .copied()
+        .any(|block_start| rust_block_is_loop_body(source, block_start))
+}
+
+fn rust_block_is_loop_body(source: &str, block_start: usize) -> bool {
+    let prefix_start = rust_control_prefix_start_before_block(source, block_start);
+    let prefix = source[prefix_start..block_start].trim_start();
+    prefix.starts_with("for ")
+        || prefix.starts_with("while ")
+        || prefix.starts_with("while let ")
+        || prefix == "loop"
+        || prefix.ends_with(" loop")
+}
+
+fn rust_control_prefix_start_before_block(source: &str, block_start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut cursor = block_start;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    while cursor > 0 {
+        cursor -= 1;
+        match bytes[cursor] {
+            b')' => paren_depth += 1,
+            b'(' => paren_depth = paren_depth.saturating_sub(1),
+            b']' => bracket_depth += 1,
+            b'[' => bracket_depth = bracket_depth.saturating_sub(1),
+            b';' | b'{' | b'}' if paren_depth == 0 && bracket_depth == 0 => return cursor + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+fn rust_block_has_top_level_terminal_continue(source: &str, start: usize, end: usize) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = start;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index < end {
+        if paren_depth == 0
+            && bracket_depth == 0
+            && brace_depth == 0
+            && rust_token_at(source, "continue", index).is_some()
+        {
+            let after_continue = index + "continue".len();
+            let after_continue = skip_ascii_whitespace(source, after_continue);
+            if bytes.get(after_continue) != Some(&b';') {
+                return false;
+            }
+            return source[after_continue + 1..end].trim().is_empty();
+        }
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
 }
 
 fn next_top_level_rust_brace_before_statement_end(source: &str, from: usize) -> Option<usize> {
@@ -3845,6 +3952,338 @@ mod tests {
             .expect("bound result if-let Err fail-closed implementation binding");
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_loop_skip_fail_closed_if_let_err() {
+        let root = test_root("loop-skip-fail-closed-if-let-err");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     if let Err(rejection) = verified_helper() { warn(rejection); continue; }\n\
+                     accept(item);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("loop-skip fail-closed implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_loop_drop_branch_with_match_then_continue() {
+        let root = test_root("loop-drop-branch-with-match-then-continue");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for key in keys() {\n\
+                     if let Err(rejection) = verified_helper() {\n\
+                         match rejection { _ => warn(), }\n\
+                         stale_keys_push(key);\n\
+                         continue;\n\
+                     }\n\
+                     entries_insert(key);\n\
+                 }\n\
+             }\n\
+             fn keys() {}\n\
+             fn warn() {}\n\
+             fn stale_keys_push<T>(_key: T) {}\n\
+             fn entries_insert<T>(_key: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["entries_insert"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("loop drop branch with match then continue");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_sync_response_continue_branch() {
+        let root = test_root("sync-response-continue-branch");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "enum Message { Response(Vec<u8>), Other }\n\
+             fn verified_helper() {}\n\
+             fn native_sync_loop() {\n\
+                 while let Some(msg) = recv() {\n\
+                     match msg {\n\
+                         Message::Response(mut blocks) => {\n\
+                             if let Err(rejection) = verified_helper() { warn(rejection); continue; }\n\
+                             blocks_sort_by_key(&mut blocks);\n\
+                         }\n\
+                         Message::Other => {}\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn recv() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn blocks_sort_by_key<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["native_sync_loop"],
+                "native_sync_loop",
+                &["blocks_sort_by_key"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("sync response continue branch");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_loop_skip_branch_without_continue() {
+        let root = test_root("loop-skip-branch-without-continue");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     if let Err(rejection) = verified_helper() { warn(rejection); }\n\
+                     accept(item);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with loop-skip fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_nested_continue_only() {
+        let root = test_root("nested-continue-only");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     if let Err(_) = verified_helper() { if cond() { continue; } }\n\
+                     accept(item);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn cond() {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with loop-skip fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_break_or_return_for_loop_skip_obligation() {
+        for (case, branch) in [
+            ("break", "if let Err(_) = verified_helper() { break; }"),
+            ("return", "if let Err(_) = verified_helper() { return; }"),
+        ] {
+            let root = test_root(&format!("{case}-for-loop-skip-obligation"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn verified_helper() {{}}\n\
+                     fn load_entries() {{\n\
+                         for item in items() {{\n\
+                             {branch}\n\
+                             accept(item);\n\
+                         }}\n\
+                     }}\n\
+                     fn items() {{}}\n\
+                     fn accept<T>(_value: T) {{}}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_dominating_ordered_binding(
+                    "verified_helper",
+                    &["load_entries"],
+                    "load_entries",
+                    &["accept"],
+                    Some("must_check_result_loop_skip_fail_closed"),
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+            assert!(err.to_string().contains(
+                "does not call verified_helper with loop-skip fail-closed result handling"
+            ));
+        }
+    }
+
+    #[test]
+    fn blueprint_rejects_indirect_bound_result_loop_skip() {
+        let root = test_root("indirect-bound-result-loop-skip");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     let result = verified_helper();\n\
+                     if result.is_err() { continue; }\n\
+                     accept(item);\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with loop-skip fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_loop_skip_admission_after_ordered_successor() {
+        let root = test_root("loop-skip-admission-after-ordered-successor");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn load_entries() {\n\
+                 for item in items() {\n\
+                     accept(item);\n\
+                     if let Err(rejection) = verified_helper() { warn(rejection); continue; }\n\
+                 }\n\
+             }\n\
+             fn items() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn accept<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["load_entries"],
+                "load_entries",
+                &["accept"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not dominate verified_helper before accept"));
     }
 
     #[test]
