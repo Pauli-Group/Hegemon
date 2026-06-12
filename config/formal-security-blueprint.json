@@ -4639,7 +4639,7 @@
       "claim_id": "native.codec-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native codec-admission transition, native sync decode, SCALE exact decode, bincode exact decode, and block-action payload decode accept only when the underlying parser accepts, every byte is consumed, and declared action count matches the action payload count.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, action count mismatch, and non-exact action payloads. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection and trailing-byte rejection.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, action count mismatch, and non-exact action payloads. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection and trailing-byte rejection. Native bridge message extraction now propagates exact outbound bridge payload decode failures before message-root construction, block commitment admission, replay, witness export, or latest-message backscan selection.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -4734,6 +4734,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "decode_scale_exact",
           "required_callers": [
+            "bridge_messages_from_actions",
             "decode_block_actions",
             "load_pending_actions",
             "NativeNode::validate_and_stage_action",
@@ -4744,6 +4745,77 @@
             "verify_inbound_bridge_receipt"
           ],
           "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "bridge_messages_from_actions",
+          "required_callers": [
+            "NativeNode::prepare_work",
+            "NativeNode::import_mined_block",
+            "NativeNode::import_announced_block",
+            "NativeNode::replay_chain_state",
+            "export_bridge_witness",
+            "latest_bridge_message_block_hash"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::prepare_work",
+              "callee_must_precede": [
+                "bridge_message_root",
+                "native_pow_header_from_parts"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::import_mined_block",
+              "callee_must_precede": [
+                "evaluate_native_block_commitment_admission",
+                "advance_native_supply_digest",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "verify_native_pow_meta",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "commit_mined_block_atomically"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::import_announced_block",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "reorganize_chain_to_best_locked",
+                "persist_noncanonical_block_record"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "NativeNode::replay_chain_state",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement_for_actions",
+                "verify_native_block_artifacts_locked",
+                "apply_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "export_bridge_witness",
+              "callee_must_precede": [
+                "evaluate_native_bridge_witness_export_admission",
+                "bridge_checkpoint_output_with_tip",
+                "bridge_checkpoint_output",
+                "build_long_range_bridge_proof"
+              ]
+            },
+            {
+              "caller": "latest_bridge_message_block_hash",
+              "callee_must_precede": [
+                "evaluate_native_bridge_witness_backscan"
+              ]
+            }
+          ]
         },
         {
           "path": "node/src/native/mod.rs",
@@ -4782,8 +4854,13 @@
         },
         {
           "id": "formal-core-codec-admission-implementation-gate",
-          "description": "The blueprint gate must keep native sync, block-action, SCALE exact, and bincode exact decode helpers wired into production sync, import/replay, payload, reload, and metadata load paths with propagated or loop-skip fail-closed results before semantic validation or mutation work.",
+          "description": "The blueprint gate must keep native sync, block-action, SCALE exact, bincode exact, and bridge-message extraction helpers wired into production sync, import/replay, payload, reload, metadata load, message-root, witness, and backscan paths with propagated or loop-skip fail-closed results before semantic validation or mutation work.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-bridge-message-extraction-regression",
+          "description": "Native bridge message extraction and mining/backscan paths must reject malformed outbound bridge action payloads instead of silently treating them as no-message actions.",
+          "gate": "cargo test -p hegemon-node bridge_messages_rejects_malformed_outbound_payload prepare_work_rejects_malformed_outbound_bridge_message bridge_witness_latest_backscan_rejects_malformed_outbound_payload --lib --no-default-features"
         },
         {
           "id": "native-sync-codec-regression",

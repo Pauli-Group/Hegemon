@@ -1795,7 +1795,7 @@ impl NativeNode {
             }
         };
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-        let bridge_messages = bridge_messages_from_actions(&actions, height);
+        let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
         let header_history = self.header_hashes_to_hash(best.hash).unwrap_or_else(|err| {
@@ -1872,7 +1872,7 @@ impl NativeNode {
             };
         let preview_kernel_root =
             consensus::types::kernel_root_from_shielded_root(&preview_state_root);
-        let preview_bridge_messages = bridge_messages_from_actions(&actions, work.height);
+        let preview_bridge_messages = bridge_messages_from_actions(&actions, work.height)?;
         let preview_message_count = u32::try_from(preview_bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let preview_message_root = bridge_message_root(&preview_bridge_messages);
@@ -2011,7 +2011,7 @@ impl NativeNode {
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&parent_state, &actions)?;
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-        let bridge_messages = bridge_messages_from_actions(&actions, meta.height);
+        let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
@@ -2148,7 +2148,7 @@ impl NativeNode {
             let (state_root, nullifier_root, extrinsics_root, tx_count) =
                 preview_pending_roots(&state, &actions)?;
             let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-            let bridge_messages = bridge_messages_from_actions(&actions, meta.height);
+            let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
             let message_root = bridge_message_root(&bridge_messages);
             let message_count = u32::try_from(bridge_messages.len())
                 .map_err(|_| anyhow!("native bridge message count overflow"))?;
@@ -3861,10 +3861,10 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         }
         _ => None,
     };
-    let messages = actions.as_ref().and_then(|actions| {
-        meta.as_ref()
-            .map(|meta| bridge_messages_from_actions(actions, meta.height))
-    });
+    let messages = match (actions.as_ref(), meta.as_ref()) {
+        (Some(actions), Some(meta)) => Some(bridge_messages_from_actions(actions, meta.height)?),
+        _ => None,
+    };
     let message_index_in_bounds = match &messages {
         Some(messages) => messages.get(message_index).is_some(),
         None => true,
@@ -4007,8 +4007,8 @@ fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> 
                 let actions = decode_block_actions(&meta).with_context(|| {
                     format!("decode bridge witness backscan block actions at height {height}")
                 })?;
-                entry.message_index_in_bounds =
-                    bridge_messages_from_actions(&actions, meta.height).len() > message_index;
+                let messages = bridge_messages_from_actions(&actions, meta.height)?;
+                entry.message_index_in_bounds = messages.len() > message_index;
             }
         }
         entries.push(entry);
@@ -7053,18 +7053,16 @@ fn shielded_nullifier_state_for_mempool(state: &NativeState) -> NullifierState {
 fn bridge_messages_from_actions(
     actions: &[PendingAction],
     source_height: u64,
-) -> Vec<BridgeMessageV1> {
+) -> Result<Vec<BridgeMessageV1>> {
     let mut messages = Vec::new();
     for action in actions {
         if action.family_id != FAMILY_BRIDGE || action.action_id != ACTION_BRIDGE_OUTBOUND {
             continue;
         }
-        let Ok(args) = decode_scale_exact::<OutboundBridgeArgsV1>(
+        let args = decode_scale_exact::<OutboundBridgeArgsV1>(
             &action.public_args,
             "outbound bridge action args",
-        ) else {
-            continue;
-        };
+        )?;
         let message_nonce = ((source_height as u128) << 64) | messages.len() as u128;
         messages.push(BridgeMessageV1 {
             source_chain_id: HEGEMON_CHAIN_ID_V1,
@@ -7076,7 +7074,7 @@ fn bridge_messages_from_actions(
             payload: args.payload,
         });
     }
-    messages
+    Ok(messages)
 }
 
 fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
@@ -17047,6 +17045,129 @@ mod tests {
     }
 
     #[test]
+    fn bridge_messages_reject_malformed_outbound_payload() {
+        let bad = malformed_outbound_bridge_action(b"malformed bridge message");
+        let good = test_outbound_bridge_action(b"good bridge message after malformed one");
+
+        let err = bridge_messages_from_actions(&[bad, good], 1)
+            .expect_err("malformed outbound bridge args must reject");
+
+        assert!(err.to_string().contains("outbound bridge action args"));
+    }
+
+    #[test]
+    fn prepare_work_rejects_malformed_outbound_bridge_message() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let action = malformed_outbound_bridge_action(b"bad message-root payload");
+        node.state
+            .write()
+            .pending_actions
+            .insert(action.tx_hash, action);
+
+        let err = node
+            .prepare_work()
+            .expect_err("malformed outbound bridge payload must block template construction");
+
+        assert!(err.to_string().contains("outbound bridge action args"));
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
+    fn announced_block_rejects_malformed_outbound_payload_before_message_commitment() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let malformed = malformed_outbound_bridge_action(b"bad announced bridge payload");
+        let parent_state = test_state(parent.clone());
+        let (state_root, nullifier_root, extrinsics_root, tx_count) =
+            preview_pending_roots(&parent_state, std::slice::from_ref(&malformed))
+                .expect("preview malformed action roots");
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let header_history = node
+            .header_hashes_to_hash(parent.hash)
+            .expect("header history");
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&parent.cumulative_work, pow_bits).expect("work");
+        let height = parent.height.saturating_add(1);
+        let timestamp_ms = parent.timestamp_ms.saturating_add(1);
+        let message_root = empty_bridge_message_root();
+        let message_count = 1;
+        let pre_header = native_pow_header_from_parts(
+            height,
+            timestamp_ms,
+            parent.hash,
+            pow_bits,
+            [0u8; 32],
+            cumulative_work,
+            &state_root,
+            &kernel_root,
+            &nullifier_root,
+            &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            parent.supply_digest,
+            tx_count,
+        );
+        let work = NativeWork {
+            height,
+            parent_hash: parent.hash,
+            pre_hash: pre_header.pre_hash(),
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
+            tx_count,
+            timestamp_ms,
+            pow_bits,
+        };
+        let seal = mine_native_round(work, 0).expect("malformed announced bridge seal");
+        let meta = NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            height,
+            hash: seal.work_hash,
+            parent_hash: parent.hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            timestamp_ms,
+            pow_bits,
+            nonce: seal.nonce,
+            work_hash: seal.work_hash,
+            cumulative_work,
+            supply_digest: parent.supply_digest,
+            tx_count,
+            action_bytes: vec![malformed.encode()],
+        };
+
+        let err = node
+            .import_announced_block(meta)
+            .expect_err("malformed outbound payload must reject before message count mismatch");
+
+        assert!(err.to_string().contains("outbound bridge action args"));
+        assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
     fn prepare_work_drops_actions_after_preview_failure() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -17080,7 +17201,7 @@ mod tests {
         let nullifier_root = parent.nullifier_root;
         let extrinsics_root = actions_extrinsics_root(&[]);
         let bridge = test_outbound_bridge_action(b"message without action bytes");
-        let bridge_messages = bridge_messages_from_actions(&[bridge], 1);
+        let bridge_messages = bridge_messages_from_actions(&[bridge], 1).expect("bridge messages");
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).expect("message count");
         assert_ne!(message_root, empty_bridge_message_root());
@@ -17170,7 +17291,8 @@ mod tests {
         assert_eq!(imported.message_root, work.message_root);
 
         let actions = decode_block_actions(&imported).expect("decode block actions");
-        let messages = bridge_messages_from_actions(&actions, imported.height);
+        let messages =
+            bridge_messages_from_actions(&actions, imported.height).expect("bridge messages");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].source_chain_id, HEGEMON_CHAIN_ID_V1);
         assert_eq!(messages[0].message_nonce, 1u128 << 64);
@@ -17345,6 +17467,108 @@ mod tests {
         assert!(err
             .to_string()
             .contains("decode bridge witness backscan block actions"));
+    }
+
+    #[test]
+    fn bridge_witness_latest_backscan_rejects_malformed_outbound_payload() {
+        let (_tmp, node, older_bridge) =
+            node_with_exportable_bridge_block(b"older bridge behind malformed payload");
+        let pow_bits = 0x207f_ffff;
+        let malformed = malformed_outbound_bridge_action(b"corrupt newer bridge payload");
+        let parent_state = node.state.read().clone();
+        let (state_root, nullifier_root, extrinsics_root, tx_count) =
+            preview_pending_roots(&parent_state, std::slice::from_ref(&malformed))
+                .expect("preview malformed action roots");
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let header_history = node
+            .header_hashes_to_hash(older_bridge.hash)
+            .expect("header history");
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let header_mmr_len = header_history.len() as u64;
+        let cumulative_work =
+            cumulative_work_after(&older_bridge.cumulative_work, pow_bits).expect("work");
+        let height = older_bridge.height.saturating_add(1);
+        let timestamp_ms = older_bridge.timestamp_ms.saturating_add(1);
+        let message_root = empty_bridge_message_root();
+        let message_count = 0;
+        let pre_header = native_pow_header_from_parts(
+            height,
+            timestamp_ms,
+            older_bridge.hash,
+            pow_bits,
+            [0u8; 32],
+            cumulative_work,
+            &state_root,
+            &kernel_root,
+            &nullifier_root,
+            &extrinsics_root,
+            &message_root,
+            message_count,
+            &header_mmr_root,
+            header_mmr_len,
+            older_bridge.supply_digest,
+            tx_count,
+        );
+        let work = NativeWork {
+            height,
+            parent_hash: older_bridge.hash,
+            pre_hash: pre_header.pre_hash(),
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            cumulative_work,
+            tx_count,
+            timestamp_ms,
+            pow_bits,
+        };
+        let seal = mine_native_round(work, 0).expect("malformed bridge child seal");
+        let malformed_meta = NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            height,
+            hash: seal.work_hash,
+            parent_hash: older_bridge.hash,
+            state_root,
+            kernel_root,
+            nullifier_root,
+            extrinsics_root,
+            message_root,
+            message_count,
+            header_mmr_root,
+            header_mmr_len,
+            timestamp_ms,
+            pow_bits,
+            nonce: seal.nonce,
+            work_hash: seal.work_hash,
+            cumulative_work,
+            supply_digest: older_bridge.supply_digest,
+            tx_count,
+            action_bytes: vec![malformed.encode()],
+        };
+        let malformed_hash = malformed_meta.hash;
+        persist_block_record(&node.block_tree, &malformed_meta)
+            .expect("persist malformed canonical block");
+        node.height_tree
+            .insert(height_key(height), malformed_meta.hash.as_slice())
+            .expect("persist malformed canonical height");
+        node.height_tree.flush().expect("flush height tree");
+        node.state.write().best = malformed_meta;
+
+        let explicit_err = export_bridge_witness(&node, json!([hex32(&malformed_hash), 0]))
+            .expect_err("explicit witness export must fail on malformed outbound payload");
+        assert!(explicit_err
+            .to_string()
+            .contains("outbound bridge action args"));
+
+        let err = export_bridge_witness(&node, json!([Value::Null, 0]))
+            .expect_err("latest backscan must fail on malformed outbound payload");
+
+        assert!(err.to_string().contains("outbound bridge action args"));
     }
 
     #[test]
@@ -17664,7 +17888,8 @@ mod tests {
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&parent_state, &actions).expect("preview action roots");
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-        let bridge_messages = bridge_messages_from_actions(&actions, height);
+        let bridge_messages =
+            bridge_messages_from_actions(&actions, height).expect("bridge messages");
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).expect("message count");
         let header_history = if parent.height == 0 {
@@ -17895,6 +18120,13 @@ mod tests {
             candidate_artifact: None,
             received_ms: 0,
         };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn malformed_outbound_bridge_action(payload: &[u8]) -> PendingAction {
+        let mut action = test_outbound_bridge_action(payload);
+        action.public_args.push(0xaa);
         action.tx_hash = pending_action_hash(&action);
         action
     }
