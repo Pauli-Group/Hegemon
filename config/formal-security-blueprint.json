@@ -2060,14 +2060,16 @@
           "callee": "evaluate_native_coinbase_accounting_admission",
           "required_callers": [
             "validate_coinbase_accounting"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
           "callee": "validate_coinbase_accounting",
           "required_callers": [
             "native_block_replay_supply_parts"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -2076,6 +2078,40 @@
             "import_mined_block",
             "import_announced_block",
             "replay_chain_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "commit_mined_block_atomically",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "import_announced_block",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "persist_noncanonical_block_record",
+                "reorganize_chain_to_best_locked"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "replay_chain_state",
+              "callee_must_precede": [
+                "evaluate_native_block_replay_refinement_for_actions",
+                "apply_actions_to_memory"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         }
       ],
@@ -2661,7 +2697,8 @@
           "callee": "evaluate_native_mineable_action_admission",
           "required_callers": [
             "select_mineable_actions"
-          ]
+          ],
+          "result_obligation": "must_filter_ok_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -3505,7 +3542,8 @@
           "required_callers": [
             "validate_candidate_artifact",
             "validate_candidate_action_payload"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -4985,7 +5023,8 @@
           "required_callers": [
             "validate_action_state",
             "evaluate_native_block_action_validation_step"
-          ]
+          ],
+          "result_obligation": "must_propagate_result"
         },
         {
           "path": "node/src/native/mod.rs",
@@ -5460,7 +5499,8 @@
           "callee": "evaluate_native_block_replay_refinement_with_trace",
           "required_callers": [
             "evaluate_native_block_replay_refinement"
-          ]
+          ],
+          "result_obligation": "must_return_tuple_result_component"
         },
         {
           "path": "node/src/native/mod.rs",

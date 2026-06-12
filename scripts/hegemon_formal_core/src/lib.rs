@@ -1331,6 +1331,8 @@ enum ResultObligation {
     MustPropagateResult,
     MustCheckResultFailClosed,
     MustCheckResultLoopSkipFailClosed,
+    MustFilterOkResult,
+    MustReturnTupleResultComponent,
     MustGuardFalseFailClosed,
 }
 
@@ -1345,6 +1347,10 @@ fn parse_result_obligation(
         Some("must_check_result_fail_closed") => Ok(ResultObligation::MustCheckResultFailClosed),
         Some("must_check_result_loop_skip_fail_closed") => {
             Ok(ResultObligation::MustCheckResultLoopSkipFailClosed)
+        }
+        Some("must_filter_ok_result") => Ok(ResultObligation::MustFilterOkResult),
+        Some("must_return_tuple_result_component") => {
+            Ok(ResultObligation::MustReturnTupleResultComponent)
         }
         Some("must_guard_false_fail_closed") => Ok(ResultObligation::MustGuardFalseFailClosed),
         Some(other) => Err(anyhow!(
@@ -1364,6 +1370,8 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
         ResultObligation::MustCheckResultLoopSkipFailClosed => {
             " with loop-skip fail-closed result handling"
         }
+        ResultObligation::MustFilterOkResult => " with filter Ok-result gating",
+        ResultObligation::MustReturnTupleResultComponent => " with returned tuple result component",
         ResultObligation::MustGuardFalseFailClosed => " with fail-closed false guard handling",
     }
 }
@@ -2069,6 +2077,10 @@ fn call_satisfies_result_obligation(
         ResultObligation::MustCheckResultLoopSkipFailClosed => {
             call_result_if_let_err_branch_continues_loop(source, call)
         }
+        ResultObligation::MustFilterOkResult => call_result_is_filter_ok_predicate(source, call),
+        ResultObligation::MustReturnTupleResultComponent => {
+            call_tuple_result_component_is_tail_returned(source, call)
+        }
         ResultObligation::MustGuardFalseFailClosed => {
             call_bool_false_guard_is_fail_closed(source, call)
         }
@@ -2275,6 +2287,193 @@ fn call_result_if_let_err_branch_continues_loop(source: &str, call: &RustCallSit
         return false;
     };
     rust_block_has_top_level_terminal_continue(source, branch_start + 1, branch_end)
+}
+
+fn call_result_is_filter_ok_predicate(source: &str, call: &RustCallSite) -> bool {
+    let Some(is_ok_end) = call_result_direct_is_ok_end(source, call) else {
+        return false;
+    };
+    let Some(filter_call) = enclosing_filter_call(source, call) else {
+        return false;
+    };
+    let Some(body) = filter_closure_body(source, &filter_call) else {
+        return false;
+    };
+    if call.start < body.start || is_ok_end > body.end {
+        return false;
+    }
+
+    let expression_start = rust_call_expression_start(source, call.start);
+    if expression_start < body.start {
+        return false;
+    }
+    let statement_start = match body.kind {
+        RustClosureBodyKind::Block => {
+            top_level_statement_start_in_span(source, body.start, call.start)
+        }
+        RustClosureBodyKind::Expression => body.start,
+    };
+    if !source[statement_start..expression_start].trim().is_empty() {
+        return false;
+    }
+
+    skip_ascii_whitespace(source, is_ok_end) == body.end
+}
+
+fn call_result_direct_is_ok_end(source: &str, call: &RustCallSite) -> Option<usize> {
+    let dot = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(dot) != Some(&b'.') {
+        return None;
+    }
+    let method_start = skip_ascii_whitespace(source, dot + 1);
+    let after_method = rust_token_at(source, "is_ok", method_start)?;
+    let paren_start = skip_ascii_whitespace(source, after_method);
+    if source.as_bytes().get(paren_start) != Some(&b'(') {
+        return None;
+    }
+    let paren_end = match_rust_paren(source, paren_start).ok()?;
+    if !source[paren_start + 1..paren_end].trim().is_empty() {
+        return None;
+    }
+    Some(paren_end + 1)
+}
+
+fn enclosing_filter_call(source: &str, call: &RustCallSite) -> Option<RustCallSite> {
+    rust_call_sites(source, "filter")
+        .into_iter()
+        .filter(|filter_call| {
+            filter_call.start < call.start && call.close_paren < filter_call.close_paren
+        })
+        .min_by_key(|filter_call| filter_call.close_paren - filter_call.start)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustClosureBodyKind {
+    Block,
+    Expression,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RustClosureBody {
+    start: usize,
+    end: usize,
+    kind: RustClosureBodyKind,
+}
+
+fn filter_closure_body(source: &str, filter_call: &RustCallSite) -> Option<RustClosureBody> {
+    let open_paren = rust_call_open_paren(source, filter_call, "filter")?;
+    let first_bar = find_top_level_byte(source, open_paren + 1, filter_call.close_paren, b'|')?;
+    let second_bar = find_top_level_byte(source, first_bar + 1, filter_call.close_paren, b'|')?;
+    let body_start = skip_ascii_whitespace(source, second_bar + 1);
+    if source.as_bytes().get(body_start) == Some(&b'{') {
+        let body_end = match_rust_brace(source, body_start).ok()?;
+        if body_end > filter_call.close_paren {
+            return None;
+        }
+        return Some(RustClosureBody {
+            start: body_start + 1,
+            end: body_end,
+            kind: RustClosureBodyKind::Block,
+        });
+    }
+    Some(RustClosureBody {
+        start: body_start,
+        end: filter_call.close_paren,
+        kind: RustClosureBodyKind::Expression,
+    })
+}
+
+fn rust_call_open_paren(source: &str, call: &RustCallSite, ident: &str) -> Option<usize> {
+    let open_paren = skip_ascii_whitespace(source, call.start + ident.len());
+    (source.as_bytes().get(open_paren) == Some(&b'(')).then_some(open_paren)
+}
+
+fn find_top_level_byte(source: &str, from: usize, end: usize, target: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index < end {
+        let byte = *bytes.get(index)?;
+        if byte == target && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+            return Some(index);
+        }
+        match byte {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn top_level_statement_start_in_span(source: &str, start: usize, target: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut index = start;
+    let mut statement_start = start;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index < target && index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                statement_start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    skip_ascii_whitespace(source, statement_start)
+}
+
+fn call_tuple_result_component_is_tail_returned(source: &str, call: &RustCallSite) -> bool {
+    let Some(result_name) = direct_tuple_result_binding_name(source, call) else {
+        return false;
+    };
+    let statement_end = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(statement_end) != Some(&b';') {
+        return false;
+    }
+    let tail_start = skip_ascii_whitespace(source, statement_end + 1);
+    let Some(after_result) = rust_identifier_at(source, &result_name, tail_start) else {
+        return false;
+    };
+    let after_result = skip_ascii_whitespace(source, after_result);
+    let context = rust_statement_context(source, call.start);
+    let Some(block_start) = context.block_path.last().copied() else {
+        return false;
+    };
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    after_result == block_end
+}
+
+fn direct_tuple_result_binding_name(source: &str, call: &RustCallSite) -> Option<String> {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    let rest = prefix.strip_prefix("let ")?.trim();
+    let lhs = rest.strip_suffix('=')?.trim();
+    let inner = lhs.strip_prefix('(')?.strip_suffix(')')?;
+    let mut parts = inner.split(',').map(str::trim);
+    let _first = parts.next()?;
+    let second = parts.next()?;
+    if parts.next().is_some() || !is_plain_rust_identifier(second) || second == "_" {
+        return None;
+    }
+    Some(second.to_owned())
 }
 
 fn call_result_match_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -4284,6 +4483,366 @@ mod tests {
         assert!(err
             .to_string()
             .contains("does not dominate verified_helper before accept"));
+    }
+
+    #[test]
+    fn blueprint_accepts_filter_ok_result_block_predicate() {
+        let root = test_root("filter-ok-result-block-predicate");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| {\n\
+                     let input = build_input(action);\n\
+                     verified_helper(input).is_ok()\n\
+                 }).collect();\n\
+             }\n\
+             fn actions() {}\n\
+             fn build_input<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("filter Ok-result block predicate implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_filter_ok_result_expression_predicate() {
+        let root = test_root("filter-ok-result-expression-predicate");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect();\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("filter Ok-result expression predicate implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_ignored_filter_helper_then_true() {
+        let root = test_root("ignored-filter-helper-then-true");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| { verified_helper(action); true }).collect();\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_filter_is_err_predicate() {
+        let root = test_root("filter-is-err-predicate");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| verified_helper(action).is_err()).collect();\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_filter_ok_or_true_predicate() {
+        let root = test_root("filter-ok-or-true-predicate");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| verified_helper(action).is_ok() || true).collect();\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_filter_ok_side_effect_then_true() {
+        let root = test_root("filter-ok-side-effect-then-true");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 actions().into_iter().filter(|action| { verified_helper(action).is_ok(); true }).collect();\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_rejects_ok_result_outside_filter() {
+        let root = test_root("ok-result-outside-filter");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) {}\n\
+             fn select_mineable_actions() {\n\
+                 verified_helper(input()).is_ok();\n\
+                 actions().into_iter().filter(|_| true).collect();\n\
+             }\n\
+             fn actions() {}\n\
+             fn input() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with filter Ok-result gating"));
+    }
+
+    #[test]
+    fn blueprint_accepts_returned_tuple_result_component() {
+        let root = test_root("returned-tuple-result-component");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn wrapper() {\n\
+                 let (_trace, result) = verified_helper();\n\
+                 result\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["wrapper"],
+                "must_return_tuple_result_component",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("returned tuple result component implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_tuple_result_component_not_tail_returned() {
+        let root = test_root("tuple-result-component-not-tail-returned");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn wrapper() {\n\
+                 let (_trace, result) = verified_helper();\n\
+                 log(&result);\n\
+                 result\n\
+             }\n\
+             fn log<T>(_value: &T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["wrapper"],
+                "must_return_tuple_result_component",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with returned tuple result component"));
+    }
+
+    #[test]
+    fn blueprint_rejects_tuple_helper_returning_ok_anyway() {
+        let root = test_root("tuple-helper-returning-ok-anyway");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn wrapper() {\n\
+                 let (_trace, _result) = verified_helper();\n\
+                 Ok(())\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["wrapper"],
+                "must_return_tuple_result_component",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with returned tuple result component"));
+    }
+
+    #[test]
+    fn blueprint_rejects_returned_wrong_tuple_component() {
+        let root = test_root("returned-wrong-tuple-component");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn wrapper() {\n\
+                 let (trace, result) = verified_helper();\n\
+                 trace\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["wrapper"],
+                "must_return_tuple_result_component",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with returned tuple result component"));
     }
 
     #[test]
