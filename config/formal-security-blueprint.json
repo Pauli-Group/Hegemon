@@ -2208,6 +2208,61 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_mempool_byte_budget_admission",
+          "required_callers": [
+            "validate_mempool_byte_budget"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_mempool_byte_budget",
+          "required_callers": [
+            "NativeNode::validate_and_stage_action"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::validate_and_stage_action",
+              "callee_must_precede": [
+                "self.action_tree.insert",
+                "self.action_tree.flush",
+                "state.pending_actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_staged_proof_byte_budget_admission",
+          "required_callers": [
+            "validate_staged_proof_byte_budget"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_staged_proof_byte_budget",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ResourceBudgetAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean",
@@ -2846,6 +2901,122 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_ciphertext_sidecar_request_admission",
+          "required_callers": [
+            "NativeNode::submit_ciphertexts"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_ciphertexts",
+              "callee_must_precede": [
+                "self.da_ciphertext_tree.insert",
+                "state.staged_ciphertexts.insert",
+                "self.da_ciphertext_tree.flush"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_ciphertext_sidecar_capacity_admission",
+          "required_callers": [
+            "NativeNode::submit_ciphertexts"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_ciphertexts",
+              "callee_must_precede": [
+                "self.da_ciphertext_tree.insert",
+                "state.staged_ciphertexts.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_proof_sidecar_request_admission",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert",
+                "self.da_proof_tree.flush"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_proof_sidecar_metadata_admission",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "evaluate_native_proof_sidecar_decoded_admission",
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_proof_sidecar_decoded_admission",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "evaluate_native_proof_sidecar_capacity_admission",
+                "validate_staged_proof_byte_budget",
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_proof_sidecar_capacity_admission",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_proofs",
+              "callee_must_precede": [
+                "validate_staged_proof_byte_budget",
+                "self.da_proof_tree.insert",
+                "state.staged_proofs.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
