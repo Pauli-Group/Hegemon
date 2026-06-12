@@ -2191,7 +2191,7 @@ impl NativeNode {
         state: &mut NativeState,
         new_chain: Vec<NativeBlockMeta>,
     ) -> Result<()> {
-        let old_chain = self.chain_to_hash(state.best.hash).unwrap_or_default();
+        let old_chain = self.chain_to_hash(state.best.hash)?;
         let mut new_state = self.replay_chain_state(&new_chain)?;
         let canonical_index_plan =
             plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
@@ -10946,6 +10946,69 @@ mod tests {
         assert!(
             node.header_by_hash(&side_child.hash)
                 .expect("side child lookup after failed import")
+                .is_none(),
+            "failed reorg child must not be persisted"
+        );
+    }
+
+    #[test]
+    fn reorg_rejects_missing_old_canonical_chain_before_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let genesis = node.best_meta();
+
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [81u8; 48]);
+        let canonical_work = node.prepare_work().expect("prepare canonical native work");
+        let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+        let canonical = node
+            .import_mined_block(&canonical_work, canonical_seal)
+            .expect("canonical import")
+            .expect("canonical block");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        let old_height_one = node.hash_by_height(1).expect("height one before reorg");
+        let old_pending_len = node.state.read().pending_actions.len();
+        let old_state_root = node.state.read().commitment_tree.root();
+
+        let side_one = (1..128)
+            .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &canonical))
+            .expect("side child that does not beat canonical tip");
+        persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
+
+        node.block_tree
+            .remove(canonical.hash)
+            .expect("remove old canonical best block record");
+        node.block_tree.flush().expect("flush corrupted old chain");
+
+        let side_two = mined_empty_child(&side_one, 2, test_pow_bits, 129);
+        let err = node
+            .import_announced_block(side_two.clone())
+            .expect_err("missing old canonical chain must reject winning reorg");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("missing native block"),
+            "unexpected reorg error: {err_text}"
+        );
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert_eq!(
+            node.hash_by_height(1)
+                .expect("height index after rejected reorg"),
+            old_height_one,
+            "failed reorg must not replace the old canonical height index"
+        );
+        assert_eq!(
+            node.hash_by_height(2)
+                .expect("height two after rejected reorg"),
+            None,
+            "failed reorg must not publish the side tip height index"
+        );
+        assert_eq!(node.state.read().pending_actions.len(), old_pending_len);
+        assert_eq!(node.state.read().commitment_tree.root(), old_state_root);
+        assert!(
+            node.header_by_hash(&side_two.hash)
+                .expect("side tip lookup after rejected reorg")
                 .is_none(),
             "failed reorg child must not be persisted"
         );

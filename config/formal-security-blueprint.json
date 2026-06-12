@@ -5701,6 +5701,27 @@
       "implementation_bindings": [
         {
           "path": "node/src/native/mod.rs",
+          "callee": "chain_to_hash",
+          "required_callers": [
+            "reorganize_chain_to_best_locked"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_chain_to_best_locked",
+              "callee_must_precede": [
+                "replay_chain_state",
+                "plan_canonical_index_rebuild",
+                "orphaned_actions",
+                "commit_reorg_state_atomically",
+                "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "replay_chain_state",
           "required_callers": [
             "reorganize_chain_to_best_locked"
