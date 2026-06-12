@@ -48,7 +48,7 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, CandidateArtifact, ProofArtifactKind as PoolProofArtifactKind,
-    BLOCK_PROOF_BUNDLE_SCHEMA, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    BLOCK_PROOF_BUNDLE_SCHEMA, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -96,6 +96,9 @@ const MAX_NATIVE_STAGED_PROOFS: usize = 10_000;
 const MAX_NATIVE_STAGED_PROOF_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_NATIVE_WALLET_PAGE_LIMIT: u64 = 128;
 const MAX_NATIVE_WALLET_PAGE_LIMIT: u64 = 1024;
+const MIN_NATIVE_ARCHIVE_KEM_CIPHERTEXT_BYTES: usize = 32;
+const MIN_NATIVE_WALLET_CIPHERTEXT_BYTES: usize =
+    ENCRYPTED_NOTE_SIZE + MIN_NATIVE_ARCHIVE_KEM_CIPHERTEXT_BYTES;
 const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
 const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
@@ -2096,16 +2099,65 @@ impl NativeNode {
             return Ok(Vec::new());
         };
         let mut blocks = Vec::new();
+        let mut parent = if range.from_height == 0 {
+            None
+        } else {
+            Some(self.load_canonical_sync_block_at_height(range.from_height - 1)?)
+        };
         for height in range.from_height..=range.to_height {
-            let Some(hash) = self.hash_by_height(height)? else {
-                break;
-            };
-            let Some(meta) = self.header_by_hash(&hash)? else {
-                break;
-            };
+            let meta = self.load_canonical_sync_block_at_height(height)?;
+            if let Some(parent) = parent.as_ref() {
+                if meta.parent_hash != parent.hash {
+                    return Err(anyhow!(
+                        "canonical native block parent mismatch at height {}: expected {}, got {}",
+                        height,
+                        hex32(&parent.hash),
+                        hex32(&meta.parent_hash)
+                    ));
+                }
+            }
+            parent = Some(meta.clone());
             blocks.push(meta);
         }
         Ok(blocks)
+    }
+
+    fn load_canonical_sync_block_at_height(&self, height: u64) -> Result<NativeBlockMeta> {
+        let hash = self
+            .hash_by_height(height)?
+            .ok_or_else(|| anyhow!("missing canonical height index for native block {height}"))?;
+        let meta = self.header_by_hash(&hash)?.ok_or_else(|| {
+            anyhow!(
+                "missing native block record for canonical height {} ({})",
+                height,
+                hex32(&hash)
+            )
+        })?;
+        if meta.hash != hash {
+            return Err(anyhow!(
+                "canonical height {} points to {} but block metadata hash is {}",
+                height,
+                hex32(&hash),
+                hex32(&meta.hash)
+            ));
+        }
+        if meta.height != height {
+            return Err(anyhow!(
+                "canonical height {} points to block metadata at height {} ({})",
+                height,
+                meta.height,
+                hex32(&hash)
+            ));
+        }
+        if meta.hash != meta.work_hash {
+            return Err(anyhow!(
+                "canonical native block {} has hash/work-hash mismatch: {} != {}",
+                height,
+                hex32(&meta.hash),
+                hex32(&meta.work_hash)
+            ));
+        }
+        Ok(meta)
     }
 
     fn chain_to_hash(&self, hash: [u8; 32]) -> Result<Vec<NativeBlockMeta>> {
@@ -2669,23 +2721,17 @@ impl NativeNode {
     fn wallet_commitments(&self, params: Value) -> Result<Value> {
         let page = pagination_from_params(params)?;
         let mut entries = Vec::new();
-        let start_key = page.start.to_be_bytes();
-        for item in self.commitment_tree.range(start_key..) {
-            let Ok((key, value)) = item else {
-                continue;
-            };
-            if key.len() == 8 && value.len() == 48 {
-                let mut index = [0u8; 8];
-                index.copy_from_slice(&key);
-                let index = u64::from_be_bytes(index);
-                if index < page.start {
-                    continue;
-                }
-                if entries.len() >= page.limit as usize {
-                    break;
-                }
-                let mut commitment = [0u8; 48];
-                commitment.copy_from_slice(&value);
+        let mut expected_index = 0u64;
+        for item in self.commitment_tree.iter() {
+            let (index, commitment) = decode_wallet_commitment_row(item)?;
+            if index != expected_index {
+                return Err(anyhow!(
+                    "native commitment archive index gap: expected {}, got {}",
+                    expected_index,
+                    index
+                ));
+            }
+            if index >= page.start && entries.len() < page.limit as usize {
                 let commitment_hex = hex48(&commitment);
                 entries.push(json!({
                     "index": index,
@@ -2693,12 +2739,14 @@ impl NativeNode {
                     "commitment": commitment_hex,
                 }));
             }
+            expected_index = expected_index
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native commitment archive index overflow"))?;
         }
-        let total = self.commitment_tree.len() as u64;
         Ok(json!({
             "entries": entries,
-            "total": total,
-            "has_more": page.start.saturating_add(page.limit) < total,
+            "total": expected_index,
+            "has_more": page.start.saturating_add(page.limit) < expected_index,
         }))
     }
 
@@ -2716,27 +2764,20 @@ impl NativeNode {
         use base64::Engine;
 
         let mut entries = Vec::new();
-        let start_key = page.start.to_be_bytes();
-        for item in self.ciphertext_archive_tree.range(start_key..) {
-            let (key, value) = item?;
-            if key.len() != 8 {
-                continue;
+        let mut total = 0u64;
+        for item in self.ciphertext_archive_tree.iter() {
+            let (index, value) = decode_wallet_ciphertext_row(item)?;
+            if index >= page.start && entries.len() < page.limit as usize {
+                entries.push(json!({
+                    "index": index,
+                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_slice()),
+                }));
             }
-            if entries.len() >= page.limit as usize {
-                break;
-            }
-            let mut index = [0u8; 8];
-            index.copy_from_slice(&key);
-            let index = u64::from_be_bytes(index);
-            if index < page.start {
-                continue;
-            }
-            entries.push(json!({
-                "index": index,
-                "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_ref()),
-            }));
+            total = total
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native ciphertext archive count overflow"))?;
         }
-        Ok((entries, self.ciphertext_archive_tree.len() as u64))
+        Ok((entries, total))
     }
 
     fn wallet_nullifiers(&self, params: Value) -> Result<Value> {
@@ -3833,6 +3874,63 @@ fn timestamp_meta_by_height(node: &NativeNode, height: u64) -> Result<Option<Nat
         return Ok(None);
     };
     node.header_by_hash(&hash)
+}
+
+fn decode_wallet_commitment_row(
+    item: sled::Result<(sled::IVec, sled::IVec)>,
+) -> Result<(u64, [u8; 48])> {
+    let (key, value) = item.context("read native commitment archive row")?;
+    if key.len() != 8 {
+        return Err(anyhow!(
+            "native commitment archive key has invalid length: expected 8, got {}",
+            key.len()
+        ));
+    }
+    if value.len() != 48 {
+        return Err(anyhow!(
+            "native commitment archive value has invalid length: expected 48, got {}",
+            value.len()
+        ));
+    }
+    let mut index = [0u8; 8];
+    index.copy_from_slice(key.as_ref());
+    let mut commitment = [0u8; 48];
+    commitment.copy_from_slice(value.as_ref());
+    Ok((u64::from_be_bytes(index), commitment))
+}
+
+fn decode_wallet_ciphertext_row(
+    item: sled::Result<(sled::IVec, sled::IVec)>,
+) -> Result<(u64, Vec<u8>)> {
+    let (key, value) = item.context("read native ciphertext archive row")?;
+    if key.len() != 8 {
+        return Err(anyhow!(
+            "native ciphertext archive key has invalid length: expected 8, got {}",
+            key.len()
+        ));
+    }
+    validate_wallet_ciphertext_archive_value(value.as_ref())?;
+    let mut index = [0u8; 8];
+    index.copy_from_slice(key.as_ref());
+    Ok((u64::from_be_bytes(index), value.to_vec()))
+}
+
+fn validate_wallet_ciphertext_archive_value(bytes: &[u8]) -> Result<()> {
+    if bytes.len() < MIN_NATIVE_WALLET_CIPHERTEXT_BYTES {
+        return Err(anyhow!(
+            "native ciphertext archive value is too short: expected at least {}, got {}",
+            MIN_NATIVE_WALLET_CIPHERTEXT_BYTES,
+            bytes.len()
+        ));
+    }
+    if bytes.len() > MAX_CIPHERTEXT_BYTES {
+        return Err(anyhow!(
+            "native ciphertext archive value exceeds max: {} > {}",
+            bytes.len(),
+            MAX_CIPHERTEXT_BYTES
+        ));
+    }
+    Ok(())
 }
 
 fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
@@ -11551,6 +11649,104 @@ mod tests {
     }
 
     #[test]
+    fn wallet_commitments_rejects_malformed_commitment_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        node.commitment_tree
+            .insert(b"bad-key", [1u8; 48].as_slice())
+            .expect("insert malformed commitment key");
+
+        let err = node
+            .wallet_commitments(json!({"start": 0, "limit": 1024}))
+            .expect_err("malformed commitment key must reject wallet RPC");
+        assert!(err
+            .to_string()
+            .contains("native commitment archive key has invalid length"));
+    }
+
+    #[test]
+    fn wallet_commitments_rejects_malformed_commitment_value() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        node.commitment_tree
+            .insert(0u64.to_be_bytes(), vec![2u8; 47])
+            .expect("insert malformed commitment value");
+
+        let err = node
+            .wallet_commitments(json!({"start": 0, "limit": 1024}))
+            .expect_err("malformed commitment value must reject wallet RPC");
+        assert!(err
+            .to_string()
+            .contains("native commitment archive value has invalid length"));
+    }
+
+    #[test]
+    fn wallet_commitments_rejects_commitment_index_gap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        node.commitment_tree
+            .insert(1u64.to_be_bytes(), [3u8; 48].as_slice())
+            .expect("insert gapped commitment value");
+
+        let err = node
+            .wallet_commitments(json!({"start": 0, "limit": 1024}))
+            .expect_err("commitment index gap must reject wallet RPC");
+        assert!(err
+            .to_string()
+            .contains("native commitment archive index gap"));
+    }
+
+    #[test]
+    fn wallet_ciphertexts_rejects_malformed_archive_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        node.ciphertext_archive_tree
+            .insert(b"bad-key", vec![4u8; MIN_NATIVE_WALLET_CIPHERTEXT_BYTES])
+            .expect("insert malformed ciphertext key");
+
+        let err = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
+            .expect_err("malformed ciphertext key must reject wallet RPC");
+        assert!(err
+            .to_string()
+            .contains("native ciphertext archive key has invalid length"));
+    }
+
+    #[test]
+    fn wallet_ciphertexts_rejects_malformed_archive_value() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        node.ciphertext_archive_tree
+            .insert(
+                0u64.to_be_bytes(),
+                vec![5u8; MIN_NATIVE_WALLET_CIPHERTEXT_BYTES - 1],
+            )
+            .expect("insert short ciphertext value");
+
+        let short_err = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
+            .expect_err("short ciphertext value must reject wallet RPC");
+        assert!(short_err
+            .to_string()
+            .contains("native ciphertext archive value is too short"));
+
+        node.ciphertext_archive_tree
+            .insert(0u64.to_be_bytes(), vec![6u8; MAX_CIPHERTEXT_BYTES + 1])
+            .expect("insert oversized ciphertext value");
+        let oversize_err = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
+            .expect_err("oversized ciphertext value must reject wallet RPC");
+        assert!(oversize_err
+            .to_string()
+            .contains("native ciphertext archive value exceeds max"));
+    }
+
+    #[test]
     fn empty_block_does_not_advance_supply_digest() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -15497,6 +15693,70 @@ mod tests {
     }
 
     #[test]
+    fn block_range_rejects_missing_canonical_height_inside_admitted_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let first = mine_empty_native_block(&node);
+        let second = mine_empty_native_block(&node);
+        assert_eq!(first.height, 1);
+        assert_eq!(second.height, 2);
+
+        node.height_tree
+            .remove(height_key(1))
+            .expect("remove height index");
+        node.height_tree.flush().expect("flush height tree");
+
+        let err = node
+            .block_range(0, 2)
+            .expect_err("missing admitted canonical height must reject sync range");
+        assert!(err.to_string().contains("missing canonical height index"));
+    }
+
+    #[test]
+    fn block_range_rejects_missing_header_inside_admitted_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let first = mine_empty_native_block(&node);
+        let second = mine_empty_native_block(&node);
+        assert_eq!(second.height, 2);
+
+        node.block_tree
+            .remove(first.hash.as_slice())
+            .expect("remove block record");
+        node.block_tree.flush().expect("flush block tree");
+
+        let err = node
+            .block_range(0, 2)
+            .expect_err("missing admitted block record must reject sync range");
+        assert!(err.to_string().contains("missing native block record"));
+    }
+
+    #[test]
+    fn block_range_rejects_height_index_pointing_to_wrong_header() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let first = mine_empty_native_block(&node);
+        let second = mine_empty_native_block(&node);
+        assert_eq!(first.height, 1);
+        assert_eq!(second.height, 2);
+
+        node.height_tree
+            .insert(height_key(1), second.hash.as_slice())
+            .expect("forge height index");
+        node.height_tree.flush().expect("flush height tree");
+
+        let err = node
+            .block_range(0, 2)
+            .expect_err("wrong admitted block metadata must reject sync range");
+        assert!(err
+            .to_string()
+            .contains("points to block metadata at height 2"));
+    }
+
+    #[test]
     fn imported_block_actions_reject_hash_mismatch() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -18106,6 +18366,14 @@ mod tests {
             miner_address: None,
             pow_bits,
         }
+    }
+
+    fn mine_empty_native_block(node: &NativeNode) -> NativeBlockMeta {
+        let work = node.prepare_work().expect("prepare empty native work");
+        let seal = mine_native_round(work.clone(), 0).expect("empty native seal");
+        node.import_mined_block(&work, seal)
+            .expect("empty native import")
+            .expect("empty native block")
     }
 
     fn test_state(best: NativeBlockMeta) -> NativeState {

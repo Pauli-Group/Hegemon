@@ -24,6 +24,9 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - [x] (2026-06-12T07:19:02Z) Added the focused regression `timestamp_rpc_rejects_corrupt_explicit_range_header`, updated the formal-core documentation counts to 117 implementation bindings and 102 result obligations, and ran `cargo fmt --all -- --check`, the focused blueprint check, `cargo test -p hegemon-node timestamp_rpc_rejects_corrupt_explicit_range_header --lib --no-default-features -- --nocapture`, `git diff --check`, `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features -- --nocapture`, and `cargo build --release -p hegemon-node --bin hegemon-node --no-default-features`.
 - [x] (2026-06-12T07:31:25Z) Deployed the timestamp RPC fail-closed slice to `hegemon-dev` at commit `5aee82c7f7ef4079e57d2cc0dae9e8c918cce559`. The remote formal-core gate passed with 117 implementation bindings, 94 order constraints covering 276 order edges, 102 result obligations, 78 dominance constraints covering 233 dominance edges, 943 named Lean theorem declarations, and no temporary or unwaived axiom dependencies. The remote release binary SHA was `c20c6525bb640db624727218c9ebb9906ed505be6b008e70f11e4f0578955f76`.
 - [x] (2026-06-12T07:31:25Z) Restarted `hegemon-node.service` on `hegemon-dev` after backing up the service unit to `/home/ubuntu/hegemon-devnet/deploy-backups/hegemon-node.service.20260612T072958Z`. Service PID `1311168` stayed active/running with zero restarts. RPC smoke showed `system_health` not syncing, consensus height `436645`, empty pending extrinsics, `rpcExternal=false`, `rpcMethods=unsafe`, NTP synchronized, `HEGEMON_MINE=1`, `HEGEMON_MINE_THREADS=1`, and `HEGEMON_MAX_PEERS=140`. `bash scripts/test-node.sh wallet-send` passed, the focused `timestamp_rpc_rejects_corrupt_explicit_range_header` regression passed, and mining advanced from height `436643`/`blocks_found=3` to height `436644`/`blocks_found=4` during the sample.
+- [x] (2026-06-12T07:42:01Z) Hardened the next implementation-equivalence slice locally: `NativeNode::block_range` now materializes every admitted canonical sync row through `load_canonical_sync_block_at_height` and errors on missing height indexes, missing block records, height/hash mismatches, hash/work-hash mismatches, or parent discontinuity; `wallet_commitments` now decodes every commitment archive row through `decode_wallet_commitment_row` and errors on iterator errors, malformed keys, malformed values, or index gaps; `ciphertext_entries_page` now decodes every ciphertext archive row through `decode_wallet_ciphertext_row` and errors on iterator errors, malformed keys, too-short values, or oversized values.
+- [x] (2026-06-12T07:42:01Z) Added focused regressions `block_range_rejects_*`, `wallet_commitments_rejects_*`, and `wallet_ciphertexts_rejects_*`; updated the blueprint to 120 implementation bindings, 95 order constraints covering 277 order edges, 105 result obligations, 79 dominance constraints covering 234 dominance edges, and 307 falsification cases; and ran the focused block-range tests, wallet archive tests, and blueprint checker successfully.
+- [ ] Run full local formatting, formal-core, node-library, and release-build gates for the sync/wallet materialization slice, then deploy it to `hegemon-dev` and rerun remote smoke/mining/transaction validation.
 
 ## Surprises & Discoveries
 
@@ -44,6 +47,12 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 
 - Observation: The explicit-range timestamp RPC path had a storage fail-open shape even though timestamp range admission was already Lean-conformance checked.
   Evidence: The old `block_timestamps` path converted `header_by_hash` failures through `.ok().flatten()`, so a corrupt canonical header could be indistinguishable from a missing height. The new `timestamp_meta_by_height` helper returns `Result<Option<NativeBlockMeta>>`, the blueprint requires `block_timestamps` to propagate it, and `timestamp_rpc_rejects_corrupt_explicit_range_header` now corrupts genesis metadata and observes a `trailing bytes` error.
+
+- Observation: Sync range admission was correct but response materialization could still lie by omission.
+  Evidence: `native_sync_response_range` capped the requested window correctly, but the old `block_range` loop used `break` on missing canonical height rows or missing block records and then returned `Ok(blocks)`. The new `block_range_rejects_missing_canonical_height_inside_admitted_range`, `block_range_rejects_missing_header_inside_admitted_range`, and `block_range_rejects_height_index_pointing_to_wrong_header` tests prove those cases now return errors.
+
+- Observation: Wallet archive RPCs were weaker than startup reload validation.
+  Evidence: Startup canonical state reload already rejects malformed commitment keys/values and gaps before trusting state, but `wallet_commitments` skipped bad rows and `ciphertext_entries_page` skipped bad ciphertext keys while serving unchecked values. The new archive row helpers and focused wallet tests make exported wallet pages fail closed on those corrupt sled rows.
 
 ## Decision Log
 
@@ -69,6 +78,10 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 
 - Decision: Treat timestamp metadata lookup as part of RPC implementation equivalence, not as advisory display logic.
   Rationale: Wallets, explorers, and monitoring tools use native RPCs to reason about canonical history. Returning a truncated or partially decoded timestamp list after corrupt storage hides a state-integrity fault. Propagating metadata decode errors keeps the RPC aligned with the same fail-closed stance used by startup reload and sync admission.
+  Date/Author: 2026-06-12 / Codex.
+
+- Decision: Treat admitted sync response materialization and wallet archive row decoding as implementation-equivalence gates.
+  Rationale: A formally checked range or page cap is not enough if the production code can skip corrupt rows after admission. The release branch should either return rows that match the canonical storage invariant or fail closed with an error. This keeps peer sync, wallets, and monitoring from treating local corruption as an empty or shorter valid response.
   Date/Author: 2026-06-12 / Codex.
 
 ## Outcomes & Retrospective
@@ -208,3 +221,5 @@ Revision note 2026-06-06T06:19:00Z: Recorded the `hegemon-dev` non-interactive P
 Revision note 2026-06-12T07:19:02Z: Recorded the timestamp RPC fail-closed implementation-equivalence slice, including the new storage metadata helper, blueprint binding, focused regression, and local formal/node/release validation.
 
 Revision note 2026-06-12T07:31:25Z: Recorded `hegemon-dev` deployment evidence for the timestamp RPC slice, including remote formal-core counts, release binary hash, service restart, RPC smoke, wallet submission compatibility, focused regression, NTP/environment posture, and mining advancement.
+
+Revision note 2026-06-12T07:42:01Z: Recorded the local sync response and wallet archive materialization fail-closed slice, including the new production helpers, focused regressions, blueprint count increase, discoveries, and rationale. Remote deployment remains pending until the full local gates pass.

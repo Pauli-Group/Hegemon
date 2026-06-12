@@ -2561,8 +2561,8 @@
       "id": "native.rpc-admission",
       "claim_id": "native.rpc-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for external listeners and unsafe for local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior.",
+      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for external listeners and unsafe for local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap. Blueprint implementation bindings additionally require timestamp and wallet archive row materialization helpers to propagate storage/key/value failures before returning JSON rows.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior. Separate blueprint implementation bindings require the production timestamp, commitment archive, and ciphertext archive materializers to be called by the exported RPC paths with propagated results, and focused regressions corrupt sled rows to prove those paths fail closed.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -2600,6 +2600,22 @@
           "callee": "timestamp_meta_by_height",
           "required_callers": [
             "block_timestamps"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_wallet_commitment_row",
+          "required_callers": [
+            "NativeNode::wallet_commitments"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_wallet_ciphertext_row",
+          "required_callers": [
+            "NativeNode::ciphertext_entries_page"
           ],
           "result_obligation": "must_propagate_result"
         },
@@ -2666,6 +2682,11 @@
           "id": "native-rpc-range-byte-batch-regressions",
           "description": "Focused native tests must reject unbounded timestamp ranges, oversized raw or decoded byte strings, and oversized JSON-RPC batches.",
           "gate": "cargo test -p hegemon-node timestamp_rpc_rejects_unbounded_ranges rpc_byte_parser_rejects_oversized_strings_before_trust_boundary_decode rpc_handler_rejects_oversized_batches --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-rpc-wallet-archive-regressions",
+          "description": "Focused native tests must reject malformed commitment archive keys/values/gaps and malformed ciphertext archive keys/values instead of returning shortened or junk wallet pages.",
+          "gate": "cargo test -p hegemon-node wallet_commitments_rejects wallet_ciphertexts_rejects --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-rpc-admission-gate",
@@ -2792,8 +2813,8 @@
       "id": "native.sync-admission",
       "claim_id": "native.sync-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sync admission predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap`, `Hegemon.Native.SyncAdmission.missing_request_none_when_announced_not_ahead`, `Hegemon.Native.SyncAdmission.missing_request_none_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.missing_request_some_when_announced_ahead`, and `Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit` prove the executable native sync range and count-admission behavior. `gen_sync_admission_vectors` emits Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, and over-limit examples, and the formal-core gate checks them against production helpers used by `NativeNode::block_range`, `request_missing_blocks`, and inbound `NativeSyncMessage::Response` handling.",
+      "formal_statement": "For the executable Lean native sync admission predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Blueprint implementation bindings additionally require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap`, `Hegemon.Native.SyncAdmission.missing_request_none_when_announced_not_ahead`, `Hegemon.Native.SyncAdmission.missing_request_none_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.missing_request_some_when_announced_ahead`, and `Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit` prove the executable native sync range and count-admission behavior. `gen_sync_admission_vectors` emits Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, and over-limit examples, and the formal-core gate checks them against production helpers used by `NativeNode::block_range`, `request_missing_blocks`, and inbound `NativeSyncMessage::Response` handling. Separate blueprint implementation bindings require `NativeNode::block_range` to call a propagated canonical block-row materializer after range admission and before response rows are pushed; focused regressions corrupt local canonical indexes to prove an admitted range errors instead of returning a truncated prefix or mismatched row.",
       "depends_on": [
         "native.codec-admission",
         "network.pq-noise-key-schedule",
@@ -2818,7 +2839,24 @@
             {
               "caller": "NativeNode::block_range",
               "callee_must_precede": [
-                "self.hash_by_height",
+                "self.load_canonical_sync_block_at_height",
+                "blocks.push"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "load_canonical_sync_block_at_height",
+          "required_callers": [
+            "NativeNode::block_range"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::block_range",
+              "callee_must_precede": [
                 "blocks.push"
               ],
               "must_dominate_successors": true
@@ -2887,6 +2925,11 @@
           "id": "native-sync-admission-regressions",
           "description": "Focused native tests must reject oversized inbound sync responses and keep zero-cap range/request helpers fail-closed.",
           "gate": "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture && cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-sync-materialization-regressions",
+          "description": "Focused native tests must reject admitted sync response ranges when canonical height rows or block records are missing or point at mismatched metadata.",
+          "gate": "cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-sync-admission-gate",
