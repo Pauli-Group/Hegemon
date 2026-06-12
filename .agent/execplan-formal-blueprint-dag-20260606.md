@@ -20,6 +20,9 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - [x] (2026-06-06T06:13:00Z) Updated `DESIGN.md`, `METHODS.md`, `docs/CONTRIBUTING.md`, `docs/SECURITY_REVIEWS.md`, `circuits/formal/README.md`, `consensus/spec/formal/README.md`, and `scripts/hegemon_formal_core/README.md` to describe the new standard truthfully.
 - [x] (2026-06-06T06:13:00Z) Ran `cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml`; it passed 6 tests.
 - [x] (2026-06-06T06:13:00Z) Ran `bash scripts/check_formal_core.sh`; it passed the new 9-step gate.
+- [x] (2026-06-12T07:19:02Z) Hardened native timestamp RPC implementation equivalence by adding the production helper `timestamp_meta_by_height` in `node/src/native/mod.rs`, requiring `block_timestamps` to propagate hash/header storage decode failures instead of treating corrupt rows as missing data, and binding that helper in `config/formal-security-blueprint.json`.
+- [x] (2026-06-12T07:19:02Z) Added the focused regression `timestamp_rpc_rejects_corrupt_explicit_range_header`, updated the formal-core documentation counts to 117 implementation bindings and 102 result obligations, and ran `cargo fmt --all -- --check`, the focused blueprint check, `cargo test -p hegemon-node timestamp_rpc_rejects_corrupt_explicit_range_header --lib --no-default-features -- --nocapture`, `git diff --check`, `bash scripts/check_formal_core.sh`, `cargo test -p hegemon-node --lib --no-default-features -- --nocapture`, and `cargo build --release -p hegemon-node --bin hegemon-node --no-default-features`.
+- [ ] Deploy the timestamp RPC fail-closed slice to `hegemon-dev`, rerun the remote formal gate and focused regression, restart the miner, and record mining/transaction smoke results before moving to the next implementation-equivalence gap.
 
 ## Surprises & Discoveries
 
@@ -37,6 +40,9 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 
 - Observation: `hegemon-dev` had `cargo-audit` installed but not visible to non-interactive SSH shells.
   Evidence: `/home/ubuntu/.cargo/bin/cargo-audit` existed, but `bash scripts/check_formal_core.sh` failed with `cargo-audit is not installed` because the SSH PATH did not include `/home/ubuntu/.cargo/bin`.
+
+- Observation: The explicit-range timestamp RPC path had a storage fail-open shape even though timestamp range admission was already Lean-conformance checked.
+  Evidence: The old `block_timestamps` path converted `header_by_hash` failures through `.ok().flatten()`, so a corrupt canonical header could be indistinguishable from a missing height. The new `timestamp_meta_by_height` helper returns `Result<Option<NativeBlockMeta>>`, the blueprint requires `block_timestamps` to propagate it, and `timestamp_rpc_rejects_corrupt_explicit_range_header` now corrupts genesis metadata and observes a `trailing bytes` error.
 
 ## Decision Log
 
@@ -59,6 +65,10 @@ A contributor can run `bash scripts/check_formal_core.sh` from the repository ro
 - Decision: Prepend `$HOME/.cargo/bin` inside `scripts/check_formal_core.sh` when that directory exists.
   Rationale: CI and VPS validation should find Cargo-installed tools in non-interactive shells without requiring global symlinks. The script still fails clearly if `cargo-audit` is genuinely missing.
   Date/Author: 2026-06-06 / Codex.
+
+- Decision: Treat timestamp metadata lookup as part of RPC implementation equivalence, not as advisory display logic.
+  Rationale: Wallets, explorers, and monitoring tools use native RPCs to reason about canonical history. Returning a truncated or partially decoded timestamp list after corrupt storage hides a state-integrity fault. Propagating metadata decode errors keeps the RPC aligned with the same fail-closed stance used by startup reload and sync admission.
+  Date/Author: 2026-06-12 / Codex.
 
 ## Outcomes & Retrospective
 
@@ -191,3 +201,5 @@ Revision note 2026-06-06T05:52:34Z: Created this plan after reviewing the existi
 Revision note 2026-06-06T06:13:00Z: Recorded the implemented blueprint DAG file, checker command, shell-gate wiring, documentation updates, focused regression tests, and passing local formal-core validation.
 
 Revision note 2026-06-06T06:19:00Z: Recorded the `hegemon-dev` non-interactive PATH discovery and the shell wrapper fix that makes Cargo-installed audit tools visible.
+
+Revision note 2026-06-12T07:19:02Z: Recorded the timestamp RPC fail-closed implementation-equivalence slice, including the new storage metadata helper, blueprint binding, focused regression, and local formal/node/release validation.

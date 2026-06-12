@@ -3789,13 +3789,11 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
             .max(1);
         let mut rows = Vec::new();
         for height in start..=best.height {
-            if let Some(hash) = node.hash_by_height(height)? {
-                if let Some(meta) = node.header_by_hash(&hash)? {
-                    rows.push(json!({
-                        "height": meta.height,
-                        "timestamp_ms": meta.timestamp_ms,
-                    }));
-                }
+            if let Some(meta) = timestamp_meta_by_height(node, height)? {
+                rows.push(json!({
+                    "height": meta.height,
+                    "timestamp_ms": meta.timestamp_ms,
+                }));
             }
         }
         return Ok(Value::Array(rows));
@@ -3821,16 +3819,20 @@ fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Resul
     }
     let mut rows = Vec::new();
     for height in start..=end {
-        let timestamp_ms = node
-            .hash_by_height(height)?
-            .and_then(|hash| node.header_by_hash(&hash).ok().flatten())
-            .map(|meta| meta.timestamp_ms);
+        let timestamp_ms = timestamp_meta_by_height(node, height)?.map(|meta| meta.timestamp_ms);
         rows.push(json!({
             "height": height,
             "timestamp_ms": timestamp_ms,
         }));
     }
     Ok(Value::Array(rows))
+}
+
+fn timestamp_meta_by_height(node: &NativeNode, height: u64) -> Result<Option<NativeBlockMeta>> {
+    let Some(hash) = node.hash_by_height(height)? else {
+        return Ok(None);
+    };
+    node.header_by_hash(&hash)
 }
 
 fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
@@ -12020,6 +12022,24 @@ mod tests {
         let mined = block_timestamps(&node, Value::Array(Vec::new()), true)
             .expect("genesis-only mined timestamps");
         assert_eq!(mined, Value::Array(Vec::new()));
+    }
+
+    #[test]
+    fn timestamp_rpc_rejects_corrupt_explicit_range_header() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let mut block_record = bincode::serialize(&genesis).expect("serialize genesis metadata");
+        block_record.push(0xaa);
+        node.block_tree
+            .insert(genesis.hash.as_slice(), block_record)
+            .expect("corrupt block record");
+
+        let err = block_timestamps(&node, json!([genesis.height, genesis.height]), false)
+            .expect_err("explicit timestamp range must reject corrupt header metadata");
+        assert!(err.to_string().contains("trailing bytes"));
     }
 
     #[test]

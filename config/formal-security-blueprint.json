@@ -2597,6 +2597,14 @@
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "timestamp_meta_by_height",
+          "required_callers": [
+            "block_timestamps"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "parse_bytes_value",
           "required_callers": [
             "NativeNode::submit_ciphertexts",
