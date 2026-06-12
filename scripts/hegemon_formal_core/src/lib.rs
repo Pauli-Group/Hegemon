@@ -2060,7 +2060,9 @@ fn call_satisfies_result_obligation(
 }
 
 fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
-    call_result_has_question_propagation(source, call) || call_result_is_tail_returned(source, call)
+    call_result_has_question_propagation(source, call)
+        || call_result_is_tail_returned(source, call)
+        || call_result_is_explicit_returned(source, call)
 }
 
 fn call_result_has_question_propagation(source: &str, call: &RustCallSite) -> bool {
@@ -2111,6 +2113,19 @@ fn call_result_is_tail_returned(source: &str, call: &RustCallSite) -> bool {
         return false;
     };
     expression_end == block_end
+}
+
+fn call_result_is_explicit_returned(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let expression_start = rust_call_expression_start(source, call.start);
+    if source[context.current_statement_start()..expression_start].trim() != "return" {
+        return false;
+    }
+    let Some(expression_end) = rust_tail_result_expression_end(source, call) else {
+        return false;
+    };
+    let expression_end = skip_ascii_whitespace(source, expression_end);
+    source.as_bytes().get(expression_end) == Some(&b';')
 }
 
 fn rust_call_expression_start(source: &str, call_start: usize) -> usize {
@@ -3362,6 +3377,37 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_explicit_returned_map_err_result_implementation_call() {
+        let root = test_root("explicit-returned-map-err-result-implementation-call");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn import_mined_block() {\n\
+                 return verified_helper().map_err(convert);\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("explicit returned map_err result implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
     fn blueprint_rejects_ignored_fallible_implementation_call() {
         let root = test_root("ignored-fallible-implementation-call");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -3434,6 +3480,38 @@ mod tests {
              fn convert(_: ()) -> () {}\n\
              fn import_mined_block() {\n\
                  verified_helper().map_err(convert);\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with propagated result"));
+    }
+
+    #[test]
+    fn blueprint_rejects_explicit_return_block_with_discarded_result() {
+        let root = test_root("explicit-return-block-with-discarded-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn convert(_: ()) -> () {}\n\
+             fn import_mined_block() {\n\
+                 return { verified_helper().map_err(convert); };\n\
              }\n",
         );
         let claims_path = root.join("claims.json");

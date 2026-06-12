@@ -6731,7 +6731,8 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
             );
             evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
                 native_bridge_action_payload_admission_error(action.action_id, rejection)
-            })
+            })?;
+            Ok(())
         }
     }
 }

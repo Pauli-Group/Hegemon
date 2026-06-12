@@ -4089,6 +4089,34 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_bridge_action_payload_admission",
+          "required_callers": [
+            "validate_bridge_action_payload"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_bridge_action_payload",
+          "required_callers": [
+            "validate_action_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "validate_action_state",
+              "callee_must_precede": [
+                "bridge_inbound_replay_key_from_action",
+                "inbound_replay_state_for_mempool"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
@@ -4262,6 +4290,34 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_transfer_payload_admission",
+          "required_callers": [
+            "validate_transfer_action_payload"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_transfer_action_payload",
+          "required_callers": [
+            "validate_action_state"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "validate_action_state",
+              "callee_must_precede": [
+                "native_transfer_state_admission_input_for_mempool",
+                "evaluate_native_transfer_state_admission"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
