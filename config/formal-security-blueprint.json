@@ -1135,6 +1135,30 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_block_proof_policy",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "ParallelProofVerifier::verify_block_with_backend",
+              "callee_must_precede": [
+                "tx_validity_claims_from_tx_artifacts",
+                "verify_commitment_proof_payload",
+                "validate_proven_batch_binding",
+                "verify_block_artifact",
+                "verify_recursive_block_artifact_against_verified_records",
+                "verify_and_apply_tree_transition_without_anchors"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
         "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
@@ -1321,6 +1345,25 @@
           "required_callers": [
             "validate_proven_batch_binding"
           ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "validate_proven_batch_binding",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ParallelProofVerifier::verify_block_with_backend",
+              "callee_must_precede": [
+                "verify_block_artifact",
+                "verify_recursive_block_artifact_against_verified_records",
+                "verify_and_apply_tree_transition_without_anchors"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
         }
       ],
       "evidence_paths": [
@@ -1388,6 +1431,23 @@
               "callee_must_precede": [
                 "verify_block_recursive_v1",
                 "verify_block_recursive_v2"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "verify_recursive_block_artifact_against_verified_records",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ParallelProofVerifier::verify_block_with_backend",
+              "callee_must_precede": [
+                "verify_and_apply_tree_transition_without_anchors"
               ]
             }
           ]
@@ -1605,6 +1665,73 @@
         "consensus/src/proof.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_receipt_root_payload_admission",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ParallelProofVerifier::verify_block_with_backend",
+              "callee_must_precede": [
+                "verify_block_artifact"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_receipt_root_artifact_admission",
+          "required_callers": [
+            "ReceiptRootVerifier::verify_block_artifact"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ReceiptRootVerifier::verify_block_artifact",
+              "callee_must_precede": [
+                "verify_native_tx_leaf_artifact_records",
+                "evaluate_receipt_root_statement_binding",
+                "verify_experimental_native_receipt_root_artifact",
+                "verify_experimental_native_receipt_root_artifact_from_records",
+                "evaluate_receipt_root_verified_metadata"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_receipt_root_statement_binding",
+          "required_callers": [
+            "ReceiptRootVerifier::verify_block_artifact"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ReceiptRootVerifier::verify_block_artifact",
+              "callee_must_precede": [
+                "verify_experimental_native_receipt_root_artifact",
+                "verify_experimental_native_receipt_root_artifact_from_records",
+                "evaluate_receipt_root_verified_metadata"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_receipt_root_verified_metadata",
+          "required_callers": [
+            "ReceiptRootVerifier::verify_block_artifact"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ReceiptRootAdmission.lean",
@@ -3553,7 +3680,8 @@
                 "validate_loaded_canonical_state",
                 "validate_loaded_bridge_replay_state",
                 "load_staged_sizes",
-                "load_staged_proofs"
+                "load_staged_proofs",
+                "RwLock::new"
               ],
               "must_dominate_successors": true
             }
@@ -3631,7 +3759,8 @@
                 "load_consumed_bridge_messages",
                 "validate_loaded_bridge_replay_state",
                 "load_staged_sizes",
-                "load_staged_proofs"
+                "load_staged_proofs",
+                "RwLock::new"
               ],
               "must_dominate_successors": true
             }
@@ -3707,7 +3836,8 @@
               "caller": "NativeNode::open",
               "callee_must_precede": [
                 "load_staged_sizes",
-                "load_staged_proofs"
+                "load_staged_proofs",
+                "RwLock::new"
               ],
               "must_dominate_successors": true
             }

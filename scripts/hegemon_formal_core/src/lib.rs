@@ -1070,7 +1070,7 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
                 constraint.caller
             );
             for successor in &constraint.callee_must_precede {
-                validate_rust_symbol(
+                validate_rust_call_selector(
                     &node.id,
                     "implementation binding order successor",
                     successor,
@@ -1089,23 +1089,38 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
 
 fn validate_rust_symbol(claim_id: &str, label: &str, symbol: &str) -> Result<()> {
     ensure!(!symbol.trim().is_empty(), "{} {} missing", claim_id, label);
-    let mut chars = symbol.chars();
-    let Some(first) = chars.next() else {
-        return Err(anyhow!("{} {} missing", claim_id, label));
-    };
     ensure!(
-        first == '_' || first.is_ascii_alphabetic(),
-        "{} {} {} must start with '_' or ascii letter",
-        claim_id,
-        label,
-        symbol
-    );
-    ensure!(
-        chars.all(|c| c == '_' || c.is_ascii_alphanumeric()),
+        is_plain_rust_identifier(symbol),
         "{} {} {} must be a plain Rust identifier",
         claim_id,
         label,
         symbol
+    );
+    Ok(())
+}
+
+fn is_plain_rust_identifier(symbol: &str) -> bool {
+    let mut chars = symbol.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn validate_rust_call_selector(claim_id: &str, label: &str, selector: &str) -> Result<()> {
+    ensure!(
+        !selector.trim().is_empty(),
+        "{} {} missing",
+        claim_id,
+        label
+    );
+    ensure!(
+        parse_rust_call_selector(selector).is_some(),
+        "{} {} {} must be a bare Rust identifier or conservative path-qualified call selector",
+        claim_id,
+        label,
+        selector
     );
     Ok(())
 }
@@ -1258,7 +1273,9 @@ fn validate_rust_implementation_order(
             ));
         }
         for successor in &constraint.callee_must_precede {
-            let successor_calls = rust_call_sites(body, successor);
+            let successor_selector =
+                parse_rust_call_selector(successor).expect("successor selector validated");
+            let successor_calls = rust_call_sites_for_selector(body, &successor_selector);
             if successor_calls.is_empty() {
                 return Err(anyhow!(
                     "{} implementation binding order caller {} in {} does not call required successor {}",
@@ -1793,7 +1810,97 @@ struct RustCallSite {
     close_paren: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RustCallSelector {
+    segments: Vec<String>,
+    separators: Vec<RustCallSelectorSeparator>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustCallSelectorSeparator {
+    Path,
+    Member,
+}
+
+impl RustCallSelector {
+    fn bare(ident: &str) -> Self {
+        Self {
+            segments: vec![ident.to_owned()],
+            separators: Vec::new(),
+        }
+    }
+
+    fn is_bare(&self) -> bool {
+        self.separators.is_empty()
+    }
+
+    fn last_segment(&self) -> &str {
+        self.segments
+            .last()
+            .expect("call selector must contain at least one segment")
+    }
+}
+
+fn parse_rust_call_selector(selector: &str) -> Option<RustCallSelector> {
+    if selector.trim() != selector || selector.is_empty() {
+        return None;
+    }
+    let bytes = selector.as_bytes();
+    let mut index = 0usize;
+    let mut segments = Vec::new();
+    let mut separators = Vec::new();
+    loop {
+        let segment_start = index;
+        let first = *bytes.get(index)?;
+        if !(first == b'_' || first.is_ascii_alphabetic()) {
+            return None;
+        }
+        index += 1;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| is_rust_identifier_byte(*byte))
+        {
+            index += 1;
+        }
+        let segment = &selector[segment_start..index];
+        if !is_plain_rust_identifier(segment) {
+            return None;
+        }
+        segments.push(segment.to_owned());
+        if index == bytes.len() {
+            break;
+        }
+        if selector[index..].starts_with("::") {
+            separators.push(RustCallSelectorSeparator::Path);
+            index += 2;
+        } else if bytes.get(index) == Some(&b'.') {
+            separators.push(RustCallSelectorSeparator::Member);
+            index += 1;
+        } else {
+            return None;
+        }
+        if index == bytes.len() {
+            return None;
+        }
+    }
+    Some(RustCallSelector {
+        segments,
+        separators,
+    })
+}
+
 fn rust_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
+    rust_call_sites_for_selector(source, &RustCallSelector::bare(ident))
+}
+
+fn rust_call_sites_for_selector(source: &str, selector: &RustCallSelector) -> Vec<RustCallSite> {
+    if selector.is_bare() {
+        return rust_bare_call_sites(source, selector.last_segment());
+    }
+    rust_qualified_call_sites(source, selector)
+}
+
+fn rust_bare_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
     let mut calls = Vec::new();
     let mut cursor = 0usize;
     while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
@@ -1809,6 +1916,69 @@ fn rust_call_sites(source: &str, ident: &str) -> Vec<RustCallSite> {
         cursor = index + ident.len();
     }
     calls
+}
+
+fn rust_qualified_call_sites(source: &str, selector: &RustCallSelector) -> Vec<RustCallSite> {
+    let mut calls = Vec::new();
+    let ident = selector.last_segment();
+    let mut cursor = 0usize;
+    while let Some(index) = find_rust_identifier_from(source, ident, cursor) {
+        let after_ident = skip_ascii_whitespace(source, index + ident.len());
+        if source.as_bytes().get(after_ident) == Some(&b'(') {
+            if let Some(start) = rust_qualified_call_selector_start(source, selector, index) {
+                if let Ok(close_paren) = match_rust_paren(source, after_ident) {
+                    calls.push(RustCallSite { start, close_paren });
+                }
+            }
+        }
+        cursor = index + ident.len();
+    }
+    calls
+}
+
+fn rust_qualified_call_selector_start(
+    source: &str,
+    selector: &RustCallSelector,
+    last_ident_start: usize,
+) -> Option<usize> {
+    let mut cursor = last_ident_start;
+    for segment_index in (1..selector.segments.len()).rev() {
+        cursor = skip_ascii_whitespace_back(source, cursor);
+        match selector.separators[segment_index - 1] {
+            RustCallSelectorSeparator::Path => {
+                if cursor < 2 || &source[cursor - 2..cursor] != "::" {
+                    return None;
+                }
+                cursor -= 2;
+            }
+            RustCallSelectorSeparator::Member => {
+                if source.as_bytes().get(cursor.checked_sub(1)?) != Some(&b'.') {
+                    return None;
+                }
+                cursor -= 1;
+            }
+        }
+        cursor = skip_ascii_whitespace_back(source, cursor);
+        let segment = &selector.segments[segment_index - 1];
+        if cursor < segment.len() || &source[cursor - segment.len()..cursor] != segment {
+            return None;
+        }
+        let segment_start = cursor - segment.len();
+        let before = segment_start
+            .checked_sub(1)
+            .and_then(|prev| source.as_bytes().get(prev).copied());
+        if before.is_some_and(is_rust_identifier_byte) {
+            return None;
+        }
+        cursor = segment_start;
+    }
+    let before = cursor
+        .checked_sub(1)
+        .and_then(|prev| source.as_bytes().get(prev).copied());
+    if before.is_some_and(|byte| is_rust_identifier_byte(byte) || byte == b':' || byte == b'.') {
+        return None;
+    }
+    Some(cursor)
 }
 
 fn find_rust_identifier_from(source: &str, ident: &str, from: usize) -> Option<usize> {
@@ -1858,6 +2028,19 @@ fn skip_ascii_whitespace(source: &str, from: usize) -> usize {
         .is_some_and(u8::is_ascii_whitespace)
     {
         index += 1;
+    }
+    index
+}
+
+fn skip_ascii_whitespace_back(source: &str, from: usize) -> usize {
+    let mut index = from;
+    while index > 0
+        && source
+            .as_bytes()
+            .get(index - 1)
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        index -= 1;
     }
     index
 }
@@ -3391,6 +3574,178 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_constraints, 1);
         assert_eq!(report.implementation_order_edges, 2);
+    }
+
+    #[test]
+    fn blueprint_accepts_path_qualified_order_successor() {
+        let root = test_root("path-qualified-order-successor");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Arc;\n\
+             impl Arc { fn new() {} }\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); Arc::new(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["Arc::new"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("path-qualified ordered successor");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_path_qualified_successor_spoofed_by_bare_or_other_type() {
+        let root = test_root("path-qualified-successor-spoofed-by-bare-or-other-type");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct RwLock;\n\
+             impl RwLock { fn new() {} }\n\
+             fn verified_helper() {}\n\
+             fn new() {}\n\
+             fn import_mined_block() { verified_helper(); new(); RwLock::new(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["Arc::new"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call required successor Arc::new"));
+    }
+
+    #[test]
+    fn blueprint_rejects_path_qualified_successor_spoofed_by_longer_path() {
+        let root = test_root("path-qualified-successor-spoofed-by-longer-path");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "mod std { pub mod sync { pub struct Arc; impl Arc { pub fn new() {} } } }\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); std::sync::Arc::new(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["Arc::new"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call required successor Arc::new"));
+    }
+
+    #[test]
+    fn blueprint_rejects_receiver_qualified_successor_spoofed_by_other_receiver() {
+        let root = test_root("receiver-qualified-successor-spoofed-by-other-receiver");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Importer;\n\
+             struct Other;\n\
+             impl Other { fn persist_block(&self) {} }\n\
+             fn verified_helper() {}\n\
+             fn persist_block() {}\n\
+             impl Importer {\n\
+                 fn import_mined_block(&self, other: Other) {\n\
+                     verified_helper();\n\
+                     persist_block();\n\
+                     other.persist_block();\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["Importer::import_mined_block"],
+                "Importer::import_mined_block",
+                &["self.persist_block"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call required successor self.persist_block"));
+    }
+
+    #[test]
+    fn blueprint_accepts_bare_order_successor_legacy_method_call_matching() {
+        let root = test_root("bare-order-successor-legacy-method-call-matching");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Importer;\n\
+             fn verified_helper() {}\n\
+             impl Importer {\n\
+                 fn import_mined_block(&self) { verified_helper(); self.persist_block(); }\n\
+                 fn persist_block(&self) {}\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["Importer::import_mined_block"],
+                "Importer::import_mined_block",
+                &["persist_block"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("bare ordered successor keeps legacy matching");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 1);
     }
 
     #[test]
