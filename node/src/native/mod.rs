@@ -1798,10 +1798,7 @@ impl NativeNode {
         let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
-        let header_history = self.header_hashes_to_hash(best.hash).unwrap_or_else(|err| {
-            warn!(error = %err, "failed to build header MMR history for native work");
-            Vec::new()
-        });
+        let header_history = self.header_hashes_to_hash(best.hash)?;
         let header_mmr_root = header_mmr_root_from_hashes(&header_history);
         let header_mmr_len = header_history.len() as u64;
         let pre_header = native_pow_header_from_parts(
@@ -11547,6 +11544,27 @@ mod tests {
             0,
         );
         assert_eq!(work.pre_hash, expected_pre_header.pre_hash());
+    }
+
+    #[test]
+    fn prepare_work_rejects_missing_header_mmr_history() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let best = node.best_meta();
+        node.block_tree
+            .remove(best.hash)
+            .expect("remove best block record");
+        node.block_tree.flush().expect("flush block tree");
+
+        let err = node
+            .prepare_work()
+            .expect_err("missing header-MMR history must reject work template");
+
+        assert!(err.to_string().contains("missing native block"));
+        assert_eq!(node.best_meta().height, best.height);
+        assert_eq!(node.best_meta().hash, best.hash);
     }
 
     #[test]
