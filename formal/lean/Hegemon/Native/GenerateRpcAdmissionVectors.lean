@@ -31,6 +31,7 @@ def methodJson : RpcMethod -> String
   | RpcMethod.daSubmitProofs => "\"da_submitProofs\""
   | RpcMethod.hegemonStartMining => "\"hegemon_startMining\""
   | RpcMethod.hegemonStopMining => "\"hegemon_stopMining\""
+  | RpcMethod.hegemonSubmitAction => "\"hegemon_submitAction\""
 
 def methodRejectionJson : Option RpcMethodReject -> String
   | none => "null"
@@ -207,7 +208,9 @@ def vectorJson : String :=
     ++ methodGateCaseJson "start-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
       RpcMethod.hegemonStartMining ++ ",\n"
     ++ methodGateCaseJson "stop-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonStopMining ++ "\n"
+      RpcMethod.hegemonStopMining ++ ",\n"
+    ++ methodGateCaseJson "submit-action-unsafe-under-safe-policy" RpcPolicy.safeOnly
+      RpcMethod.hegemonSubmitAction ++ "\n"
     ++ "  ],\n"
     ++ "  \"method_list_cases\": [\n"
     ++ methodListCaseJson "safe-list-hides-unsafe-methods" RpcPolicy.safeOnly ++ ",\n"

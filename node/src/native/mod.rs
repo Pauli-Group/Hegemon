@@ -9227,7 +9227,11 @@ fn pagination_from_params(params: Value) -> Result<NativePagination> {
 fn is_unsafe_rpc_method(method: &str) -> bool {
     matches!(
         method,
-        "hegemon_startMining" | "hegemon_stopMining" | "da_submitCiphertexts" | "da_submitProofs"
+        "hegemon_startMining"
+            | "hegemon_stopMining"
+            | "hegemon_submitAction"
+            | "da_submitCiphertexts"
+            | "da_submitProofs"
     )
 }
 
@@ -11905,6 +11909,11 @@ mod tests {
         )
         .expect_err("safe RPC should reject DA staging");
         assert!(err.to_string().contains("unsafe RPC method"));
+        let err = dispatch_rpc_method(&safe_node, "hegemon_submitAction", json!({}))
+            .expect_err("safe RPC should reject action staging");
+        assert!(err.to_string().contains("unsafe RPC method"));
+        assert_eq!(safe_node.state.read().pending_actions.len(), 0);
+        assert_eq!(safe_node.action_tree.len(), 0);
 
         assert_eq!(
             rpc_method_policy("auto", true).expect("external auto"),
@@ -11929,6 +11938,9 @@ mod tests {
         let methods = native_rpc_methods(RpcMethodPolicy::Safe);
         assert!(!methods.contains(&"da_submitCiphertexts"));
         assert!(!methods.contains(&"hegemon_startMining"));
+        assert!(!methods.contains(&"hegemon_submitAction"));
+        let unsafe_methods = native_rpc_methods(RpcMethodPolicy::Unsafe);
+        assert!(unsafe_methods.contains(&"hegemon_submitAction"));
     }
 
     #[test]
@@ -14923,6 +14935,7 @@ mod tests {
             "da_submitProofs",
             "hegemon_startMining",
             "hegemon_stopMining",
+            "hegemon_submitAction",
         ];
         for method in unsafe_methods {
             assert_eq!(
@@ -15108,6 +15121,7 @@ mod tests {
             "da_submitProofs" => json!({ "proofs": [] }),
             "hegemon_startMining" => json!({ "threads": 1 }),
             "hegemon_stopMining" => Value::Array(Vec::new()),
+            "hegemon_submitAction" => json!({}),
             _ => Value::Array(Vec::new()),
         }
     }

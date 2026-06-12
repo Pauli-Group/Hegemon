@@ -77,6 +77,7 @@ inductive RpcMethod where
   | daSubmitProofs
   | hegemonStartMining
   | hegemonStopMining
+  | hegemonSubmitAction
 deriving DecidableEq, Repr
 
 inductive RpcMethodReject where
@@ -89,6 +90,7 @@ def rpcMethodIsUnsafe : RpcMethod -> Bool
   | RpcMethod.daSubmitProofs => true
   | RpcMethod.hegemonStartMining => true
   | RpcMethod.hegemonStopMining => true
+  | RpcMethod.hegemonSubmitAction => true
 
 def evaluateRpcMethodGate
     (policy : RpcPolicy)

@@ -690,6 +690,52 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "pow_retarget_anchor_steps",
+          "required_callers": [
+            "evaluate_pow_bits_schedule",
+            "PowConsensus::expected_pow_bits"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::expected_pow_bits",
+              "callee_must_precede": [
+                "self.ancestor_hash"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "evaluate_pow_bits_schedule",
+          "required_callers": [
+            "PowConsensus::expected_pow_bits"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "expected_pow_bits",
+          "required_callers": [
+            "PowConsensus::apply_block",
+            "PowConsensus::expected_bits_for_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::apply_block",
+              "callee_must_precede": [
+                "evaluate_pow_admission",
+                "self.verifier.verify_block",
+                "self.nodes.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
+      ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
@@ -1659,6 +1705,25 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "recursive_block_semantic_inputs_from_block",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "ParallelProofVerifier::verify_block_with_backend",
+              "callee_must_precede": [
+                "verify_recursive_block_artifact_against_verified_records",
+                "verify_and_apply_tree_transition_without_anchors"
+              ]
+            }
+          ]
+        }
+      ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
@@ -2522,6 +2587,7 @@
               "callee_must_precede": [
                 "node.start_mining",
                 "node.stop_mining",
+                "node.submit_action",
                 "node.submit_ciphertexts",
                 "node.submit_proofs"
               ],
