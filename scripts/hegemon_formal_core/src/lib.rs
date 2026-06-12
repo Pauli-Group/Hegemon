@@ -1333,6 +1333,7 @@ enum ResultObligation {
     MustCheckResultLoopSkipFailClosed,
     MustFilterOkResult,
     MustReturnTupleResultComponent,
+    MustResetWorkTemplateOnErr,
     MustGuardFalseFailClosed,
 }
 
@@ -1352,6 +1353,7 @@ fn parse_result_obligation(
         Some("must_return_tuple_result_component") => {
             Ok(ResultObligation::MustReturnTupleResultComponent)
         }
+        Some("must_reset_work_template_on_err") => Ok(ResultObligation::MustResetWorkTemplateOnErr),
         Some("must_guard_false_fail_closed") => Ok(ResultObligation::MustGuardFalseFailClosed),
         Some(other) => Err(anyhow!(
             "{} implementation binding for {} has unknown result_obligation {}",
@@ -1372,6 +1374,7 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
         }
         ResultObligation::MustFilterOkResult => " with filter Ok-result gating",
         ResultObligation::MustReturnTupleResultComponent => " with returned tuple result component",
+        ResultObligation::MustResetWorkTemplateOnErr => " with empty work-template fallback",
         ResultObligation::MustGuardFalseFailClosed => " with fail-closed false guard handling",
     }
 }
@@ -2081,6 +2084,9 @@ fn call_satisfies_result_obligation(
         ResultObligation::MustReturnTupleResultComponent => {
             call_tuple_result_component_is_tail_returned(source, call)
         }
+        ResultObligation::MustResetWorkTemplateOnErr => {
+            call_result_resets_work_template_on_err(source, call)
+        }
         ResultObligation::MustGuardFalseFailClosed => {
             call_bool_false_guard_is_fail_closed(source, call)
         }
@@ -2474,6 +2480,175 @@ fn direct_tuple_result_binding_name(source: &str, call: &RustCallSite) -> Option
         return None;
     }
     Some(second.to_owned())
+}
+
+fn call_result_resets_work_template_on_err(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if prefix != "let supply_digest = match" {
+        return false;
+    }
+    let branch_start = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(branch_start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    match_body_has_work_template_supply_fallback(source, branch_start + 1, branch_end)
+}
+
+fn match_body_has_work_template_supply_fallback(
+    source: &str,
+    body_start: usize,
+    body_end: usize,
+) -> bool {
+    let mut cursor = body_start;
+    let mut saw_ok = false;
+    let mut saw_err = false;
+    while cursor < body_end {
+        cursor = skip_match_arm_separator(source, cursor, body_end);
+        if cursor >= body_end {
+            break;
+        }
+        let Some(arrow) = find_top_level_fat_arrow(source, cursor, body_end) else {
+            return false;
+        };
+        let pattern = source[cursor..arrow].trim();
+        let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
+        let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
+        if match_pattern_binds_ok(pattern, "supply_digest") {
+            if saw_ok
+                || !match_arm_body_is_identifier(
+                    source,
+                    arm_body_start,
+                    arm_body_end,
+                    "supply_digest",
+                )
+            {
+                return false;
+            }
+            saw_ok = true;
+        } else if match_pattern_is_plain_err(pattern) {
+            if saw_err || !match_arm_body_resets_work_template(source, arm_body_start, arm_body_end)
+            {
+                return false;
+            }
+            saw_err = true;
+        } else {
+            return false;
+        }
+        cursor = arm_body_end.saturating_add(1);
+    }
+    saw_ok && saw_err
+}
+
+fn match_pattern_binds_ok(pattern: &str, binding: &str) -> bool {
+    if pattern.contains(" if ") {
+        return false;
+    }
+    let pattern = pattern.trim();
+    let Some(inner) = pattern
+        .strip_prefix("Ok(")
+        .and_then(|raw| raw.strip_suffix(')'))
+    else {
+        return false;
+    };
+    inner.trim() == binding
+}
+
+fn match_arm_body_is_identifier(source: &str, start: usize, end: usize, ident: &str) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if start >= end {
+        return false;
+    }
+    if source.as_bytes().get(start) == Some(&b'{') {
+        let Ok(block_end) = match_rust_brace(source, start) else {
+            return false;
+        };
+        return block_end <= end
+            && top_level_block_tail_expression(source, start + 1, block_end) == Some(ident);
+    }
+    source[start..end].trim() == ident
+}
+
+fn match_arm_body_resets_work_template(source: &str, start: usize, end: usize) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if source.as_bytes().get(start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(block_end) = match_rust_brace(source, start) else {
+        return false;
+    };
+    if block_end > end {
+        return false;
+    }
+    let body_start = start + 1;
+    rust_block_has_top_level_statement(source, body_start, block_end, "actions = Vec::new()")
+        && rust_block_has_top_level_statement(
+            source,
+            body_start,
+            block_end,
+            "state_root = best.state_root",
+        )
+        && rust_block_has_top_level_statement(
+            source,
+            body_start,
+            block_end,
+            "nullifier_root = best.nullifier_root",
+        )
+        && rust_block_has_top_level_statement(
+            source,
+            body_start,
+            block_end,
+            "extrinsics_root = actions_extrinsics_root(&[])",
+        )
+        && rust_block_has_top_level_statement(source, body_start, block_end, "tx_count = 0")
+        && top_level_block_tail_expression(source, body_start, block_end)
+            == Some("best.supply_digest")
+}
+
+fn top_level_block_tail_expression<'a>(
+    source: &'a str,
+    body_start: usize,
+    block_end: usize,
+) -> Option<&'a str> {
+    let tail_start = top_level_statement_start_in_span(source, body_start, block_end);
+    let tail = source[tail_start..block_end].trim();
+    (!tail.is_empty()).then_some(tail)
+}
+
+fn rust_block_has_top_level_statement(
+    source: &str,
+    start: usize,
+    end: usize,
+    expected: &str,
+) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    let mut statement_start = start;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while cursor < end && cursor < bytes.len() {
+        match bytes[cursor] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                if source[statement_start..cursor].trim() == expected {
+                    return true;
+                }
+                statement_start = cursor + 1;
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    false
 }
 
 fn call_result_match_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -4843,6 +5018,180 @@ mod tests {
         assert!(err
             .to_string()
             .contains("does not call verified_helper with returned tuple result component"));
+    }
+
+    #[test]
+    fn blueprint_accepts_work_template_supply_fallback() {
+        let root = test_root("work-template-supply-fallback");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn advance_native_supply_digest() {}\n\
+             fn prepare_work() {\n\
+                 let supply_digest = match advance_native_supply_digest() {\n\
+                     Ok(supply_digest) => supply_digest,\n\
+                     Err(err) => {\n\
+                         warn(err);\n\
+                         actions = Vec::new();\n\
+                         state_root = best.state_root;\n\
+                         nullifier_root = best.nullifier_root;\n\
+                         extrinsics_root = actions_extrinsics_root(&[]);\n\
+                         tx_count = 0;\n\
+                         best.supply_digest\n\
+                     }\n\
+                 };\n\
+                 native_pow_header_from_parts(supply_digest);\n\
+             }\n\
+             fn native_pow_header_from_parts<T>(_value: T) {}\n\
+             fn warn<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "advance_native_supply_digest",
+                &["prepare_work"],
+                "must_reset_work_template_on_err",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("work-template supply fallback implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_work_template_supply_fallback_without_action_reset() {
+        let root = test_root("work-template-supply-fallback-without-action-reset");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn advance_native_supply_digest() {}\n\
+             fn prepare_work() {\n\
+                 let supply_digest = match advance_native_supply_digest() {\n\
+                     Ok(supply_digest) => supply_digest,\n\
+                     Err(_) => {\n\
+                         state_root = best.state_root;\n\
+                         nullifier_root = best.nullifier_root;\n\
+                         extrinsics_root = actions_extrinsics_root(&[]);\n\
+                         tx_count = 0;\n\
+                         best.supply_digest\n\
+                     }\n\
+                 };\n\
+                 native_pow_header_from_parts(supply_digest);\n\
+             }\n\
+             fn native_pow_header_from_parts<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "advance_native_supply_digest",
+                &["prepare_work"],
+                "must_reset_work_template_on_err",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains(
+            "does not call advance_native_supply_digest with empty work-template fallback"
+        ));
+    }
+
+    #[test]
+    fn blueprint_rejects_work_template_supply_fallback_with_wrong_tail_digest() {
+        let root = test_root("work-template-supply-fallback-with-wrong-tail-digest");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn advance_native_supply_digest() {}\n\
+             fn prepare_work() {\n\
+                 let supply_digest = match advance_native_supply_digest() {\n\
+                     Ok(supply_digest) => supply_digest,\n\
+                     Err(_) => {\n\
+                         actions = Vec::new();\n\
+                         state_root = best.state_root;\n\
+                         nullifier_root = best.nullifier_root;\n\
+                         extrinsics_root = actions_extrinsics_root(&[]);\n\
+                         tx_count = 0;\n\
+                         supply_digest\n\
+                     }\n\
+                 };\n\
+                 native_pow_header_from_parts(supply_digest);\n\
+             }\n\
+             fn native_pow_header_from_parts<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "advance_native_supply_digest",
+                &["prepare_work"],
+                "must_reset_work_template_on_err",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains(
+            "does not call advance_native_supply_digest with empty work-template fallback"
+        ));
+    }
+
+    #[test]
+    fn blueprint_rejects_work_template_supply_fallback_with_extra_match_arm() {
+        let root = test_root("work-template-supply-fallback-with-extra-match-arm");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn advance_native_supply_digest() {}\n\
+             fn prepare_work() {\n\
+                 let supply_digest = match advance_native_supply_digest() {\n\
+                     Ok(supply_digest) => supply_digest,\n\
+                     Err(_) => {\n\
+                         actions = Vec::new();\n\
+                         state_root = best.state_root;\n\
+                         nullifier_root = best.nullifier_root;\n\
+                         extrinsics_root = actions_extrinsics_root(&[]);\n\
+                         tx_count = 0;\n\
+                         best.supply_digest\n\
+                     },\n\
+                     _ => best.supply_digest,\n\
+                 };\n\
+                 native_pow_header_from_parts(supply_digest);\n\
+             }\n\
+             fn native_pow_header_from_parts<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "advance_native_supply_digest",
+                &["prepare_work"],
+                "must_reset_work_template_on_err",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err.to_string().contains(
+            "does not call advance_native_supply_digest with empty work-template fallback"
+        ));
     }
 
     #[test]

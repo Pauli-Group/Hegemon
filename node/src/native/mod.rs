@@ -11527,6 +11527,53 @@ mod tests {
     }
 
     #[test]
+    fn prepare_work_drops_actions_after_supply_digest_overflow() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+
+        let subsidy = consensus::reward::block_subsidy(1);
+        let mut parent = node.best_meta();
+        parent.supply_digest = u128::MAX - u128::from(subsidy) + 1;
+        {
+            let mut state = node.state.write();
+            state.best = parent.clone();
+        }
+        stage_test_coinbase(&node, subsidy, [55u8; 48]);
+
+        let work = node.prepare_work().expect("prepare native work");
+        assert_eq!(work.tx_count, 0);
+        assert_eq!(work.state_root, parent.state_root);
+        assert_eq!(work.nullifier_root, parent.nullifier_root);
+        assert_eq!(work.extrinsics_root, actions_extrinsics_root(&[]));
+        assert_eq!(work.message_count, 0);
+        assert_eq!(work.message_root, empty_bridge_message_root());
+
+        let expected_kernel_root =
+            consensus::types::kernel_root_from_shielded_root(&parent.state_root);
+        let expected_pre_header = native_pow_header_from_parts(
+            work.height,
+            work.timestamp_ms,
+            parent.hash,
+            test_pow_bits,
+            [0u8; 32],
+            work.cumulative_work,
+            &parent.state_root,
+            &expected_kernel_root,
+            &parent.nullifier_root,
+            &actions_extrinsics_root(&[]),
+            &empty_bridge_message_root(),
+            0,
+            &work.header_mmr_root,
+            work.header_mmr_len,
+            parent.supply_digest,
+            0,
+        );
+        assert_eq!(work.pre_hash, expected_pre_header.pre_hash());
+    }
+
+    #[test]
     fn mined_invalid_pow_does_not_mutate_pending_state() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;

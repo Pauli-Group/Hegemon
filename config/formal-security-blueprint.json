@@ -1851,7 +1851,7 @@
       "claim_id": "consensus.supply-digest-accounting",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean supply-accounting transition, supply digest increases and decreases are checked against the 128-bit bound, underflow and overflow return rejection, no-coinbase native blocks leave supply unchanged, and native coinbase blocks advance supply by the checked subsidy-plus-fee amount.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.increaseSupplyDigest_ok`, `Hegemon.Consensus.increaseSupplyDigest_rejects_overflow`, `Hegemon.Consensus.decreaseSupplyDigest_ok`, `Hegemon.Consensus.decreaseSupplyDigest_rejects_underflow`, `Hegemon.Consensus.nativeSupplyDelta_without_coinbase`, `Hegemon.Consensus.nativeSupplyDelta_with_coinbase`, `Hegemon.Consensus.advanceNativeSupplyDigest_checked`, and `Hegemon.Consensus.advanceNativeSupplyDigest_rejects_supply_overflow` prove the executable accounting kernel. `gen_supply_vectors` emits Lean-derived consensus and native examples, and the formal-core gate checks them against `CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and native `advance_native_supply_digest`. The native node now rejects supply overflow instead of using saturating addition on import, replay, and mined-block metadata.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.increaseSupplyDigest_ok`, `Hegemon.Consensus.increaseSupplyDigest_rejects_overflow`, `Hegemon.Consensus.decreaseSupplyDigest_ok`, `Hegemon.Consensus.decreaseSupplyDigest_rejects_underflow`, `Hegemon.Consensus.nativeSupplyDelta_without_coinbase`, `Hegemon.Consensus.nativeSupplyDelta_with_coinbase`, `Hegemon.Consensus.advanceNativeSupplyDigest_checked`, and `Hegemon.Consensus.advanceNativeSupplyDigest_rejects_supply_overflow` prove the executable accounting kernel. `gen_supply_vectors` emits Lean-derived consensus and native examples, and the formal-core gate checks them against `CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and native `advance_native_supply_digest`. The native node now rejects supply overflow instead of using saturating addition on import, replay, and mined-block metadata; mining-template construction must fall back to an empty parent-root template when checked supply advancement rejects pending actions.",
       "depends_on": [
         "consensus.block-subsidy-schedule",
         "formal.pow-fork-choice",
@@ -1880,8 +1880,43 @@
           "path": "node/src/native/mod.rs",
           "callee": "advance_native_supply_digest",
           "required_callers": [
-            "prepare_work",
+            "prepare_work"
+          ],
+          "result_obligation": "must_reset_work_template_on_err",
+          "call_order_constraints": [
+            {
+              "caller": "prepare_work",
+              "callee_must_precede": [
+                "kernel_root_from_shielded_root",
+                "bridge_messages_from_actions",
+                "native_pow_header_from_parts"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "advance_native_supply_digest",
+          "required_callers": [
             "import_mined_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "native_block_replay_supply_parts",
+                "evaluate_native_block_replay_refinement_for_actions",
+                "validate_block_actions_locked",
+                "verify_native_block_artifacts_locked",
+                "verify_native_pow_meta",
+                "commit_mined_block_atomically",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         },
         {
@@ -1923,6 +1958,16 @@
           "id": "lean-generated-native-supply-conformance",
           "description": "Changing native no-coinbase, coinbase fee, or checked supply overflow behavior away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-native-supply-template-fallback-gate",
+          "description": "Disconnecting checked native supply advancement from mining-template fallback, or constructing a header from invalid pending-action roots after supply rejection, must fail the blueprint gate.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "native-prepare-work-invalid-supply-fallback",
+          "description": "Native work preparation must drop pending actions and bind the parent supply digest when pending-action supply advancement would overflow.",
+          "gate": "cargo test -p hegemon-node prepare_work_drops_actions_after_supply_digest_overflow --lib --no-default-features -- --nocapture"
         }
       ],
       "scope_boundary": "This node proves and vector-checks executable supply arithmetic and native coinbase supply-digest behavior. It does not prove PoW admission arithmetic, full block proof-system soundness, monetary policy economics beyond the current subsidy helper, or complete wallet reward construction correctness."
