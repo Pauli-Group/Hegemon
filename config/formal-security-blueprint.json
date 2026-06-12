@@ -477,7 +477,7 @@
       "claim_id": "consensus.pow-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean PoW admission transition, a block candidate is rejected when checked u64 next-height, pow_bits, timestamp, compact target, hash threshold, claimed cumulative Work48, or Work48 overflow violate the specified arithmetic policy; otherwise the expected cumulative work is accepted.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_shifted_zero_target`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.checkedNextU64_rejects_max`, `Hegemon.Consensus.checkedNextU64_accepts_predecessor`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_height_overflow`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification. Focused Rust regressions cover checked height overflow in both `evaluate_pow_admission` and `verify_pow_header`, plus generic consensus Work48 cumulative-work overflow.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.compactTarget_rejects_zero_mantissa`, `Hegemon.Consensus.compactTarget_rejects_shifted_zero_target`, `Hegemon.Consensus.compactTarget_rejects_large_exponent`, `Hegemon.Consensus.checkedNextU64_rejects_max`, `Hegemon.Consensus.checkedNextU64_accepts_predecessor`, `Hegemon.Consensus.timestamp_rejects_parent_equal`, `Hegemon.Consensus.timestamp_rejects_median_equal`, `Hegemon.Consensus.timestamp_rejects_future_skew`, `Hegemon.Consensus.checkedWorkAdd_ok`, `Hegemon.Consensus.checkedWorkAdd_rejects_overflow`, `Hegemon.Consensus.powAdmission_rejects_height`, `Hegemon.Consensus.powAdmission_rejects_height_overflow`, `Hegemon.Consensus.powAdmission_rejects_pow_bits`, `Hegemon.Consensus.powAdmission_rejects_insufficient_work`, and `Hegemon.Consensus.powAdmission_accepts_valid` prove core facts about the executable PoW admission table. `gen_pow_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_admission` helper used by `PowConsensus` plus the `consensus-light-client` compact-target, hash-threshold, and Work48 cumulative-work helpers used by native import and bridge verification. Focused Rust regressions cover checked height overflow in both `evaluate_pow_admission` and `verify_pow_header`, plus generic consensus Work48 cumulative-work overflow. The blueprint now requires `PowConsensus::apply_block` to propagate `evaluate_pow_admission` before proof verification or node insertion.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -489,6 +489,26 @@
         "consensus-light-client/Cargo.toml",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "evaluate_pow_admission",
+          "required_callers": [
+            "PowConsensus::apply_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::apply_block",
+              "callee_must_precede": [
+                "self.verifier.verify_block",
+                "self.nodes.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/PowRules.lean",
@@ -530,6 +550,11 @@
           "id": "pow-cumulative-work-overflow-regression",
           "description": "Generic consensus admission must reject cumulative work that exceeds the fixed 48-byte Work domain rather than storing an unbounded BigUint.",
           "gate": "cargo test -p consensus pow_admission_rejects_cumulative_work_overflow -- --nocapture"
+        },
+        {
+          "id": "formal-core-pow-admission-apply-block-gate",
+          "description": "Generic PoW block application must propagate PoW admission before proof verification or node insertion.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
       "scope_boundary": "This node proves and vector-checks arithmetic admission over already-computed PoW hashes. It does not prove SHA-256 implementation equivalence, retarget economics, network orphan policy, or long-range finality. Header preimage serialization is covered separately by consensus.header-preimage-binding."
@@ -748,7 +773,7 @@
       "claim_id": "consensus.pow-miner-identity",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean PoW miner-identity transition, a header can be accepted only if it does not carry a BFT signature bitmap, its validator-set commitment resolves to a registered miner key, its signature payload has exactly the ML-DSA-65 signature byte length, signature byte parsing succeeds, and signature verification succeeds.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.powMinerIdentity_accepts_valid`, `Hegemon.Consensus.powMinerIdentity_rejects_signature_bitmap`, `Hegemon.Consensus.powMinerIdentity_rejects_unregistered`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_length`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_bytes`, and `Hegemon.Consensus.powMinerIdentity_rejects_failed_signature_verification` prove core facts about the executable PoW miner-identity admission table. `gen_miner_identity_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_miner_identity` helper used by `PowConsensus::verify_pow_miner_signature` after real ML-DSA parsing and verification.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.powMinerIdentity_accepts_valid`, `Hegemon.Consensus.powMinerIdentity_rejects_signature_bitmap`, `Hegemon.Consensus.powMinerIdentity_rejects_unregistered`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_length`, `Hegemon.Consensus.powMinerIdentity_rejects_bad_signature_bytes`, and `Hegemon.Consensus.powMinerIdentity_rejects_failed_signature_verification` prove core facts about the executable PoW miner-identity admission table. `gen_miner_identity_vectors` emits Lean-derived examples, and the formal-core gate checks them against the production `evaluate_pow_miner_identity` helper used by `PowConsensus::verify_pow_miner_signature` after real ML-DSA parsing and verification. The blueprint now requires that wrapper to propagate the evaluator result and requires `PowConsensus::apply_block` to propagate miner-signature verification before commitment checks, PoW admission, proof verification, or node insertion.",
       "depends_on": [
         "consensus.pow-admission",
         "consensus.header-preimage-binding",
@@ -762,6 +787,36 @@
         "consensus/tests/pow_rules.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "evaluate_pow_miner_identity",
+          "required_callers": [
+            "PowConsensus::verify_pow_miner_signature"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "verify_pow_miner_signature",
+          "required_callers": [
+            "PowConsensus::apply_block"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::apply_block",
+              "callee_must_precede": [
+                "verify_commitments",
+                "evaluate_pow_admission",
+                "self.verifier.verify_block",
+                "self.nodes.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/MinerIdentity.lean",
@@ -793,6 +848,11 @@
           "id": "pow-miner-identity-regressions",
           "description": "Existing PoW rule tests must continue rejecting unregistered miners, malformed miner signatures, and forbidden BFT signature bitmaps.",
           "gate": "cargo test -p consensus --test pow_rules -- --nocapture"
+        },
+        {
+          "id": "formal-core-pow-miner-identity-apply-block-gate",
+          "description": "Generic PoW block application must propagate miner identity verification before commitment checks, PoW admission, proof verification, or node insertion.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
       "scope_boundary": "This node proves and vector-checks miner identity and signature admission ordering only. It does not prove ML-DSA unforgeability, ML-DSA implementation equivalence, validator-set governance, miner key custody, retarget economics, network orphan policy, or long-range finality. Header signing-hash byte grammar is covered separately by consensus.header-preimage-binding."
@@ -1851,7 +1911,7 @@
       "claim_id": "consensus.supply-digest-accounting",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean supply-accounting transition, supply digest increases and decreases are checked against the 128-bit bound, underflow and overflow return rejection, no-coinbase native blocks leave supply unchanged, and native coinbase blocks advance supply by the checked subsidy-plus-fee amount.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.increaseSupplyDigest_ok`, `Hegemon.Consensus.increaseSupplyDigest_rejects_overflow`, `Hegemon.Consensus.decreaseSupplyDigest_ok`, `Hegemon.Consensus.decreaseSupplyDigest_rejects_underflow`, `Hegemon.Consensus.nativeSupplyDelta_without_coinbase`, `Hegemon.Consensus.nativeSupplyDelta_with_coinbase`, `Hegemon.Consensus.advanceNativeSupplyDigest_checked`, and `Hegemon.Consensus.advanceNativeSupplyDigest_rejects_supply_overflow` prove the executable accounting kernel. `gen_supply_vectors` emits Lean-derived consensus and native examples, and the formal-core gate checks them against `CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and native `advance_native_supply_digest`. The native node now rejects supply overflow instead of using saturating addition on import, replay, and mined-block metadata; mining-template construction must fall back to an empty parent-root template when checked supply advancement rejects pending actions.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.increaseSupplyDigest_ok`, `Hegemon.Consensus.increaseSupplyDigest_rejects_overflow`, `Hegemon.Consensus.decreaseSupplyDigest_ok`, `Hegemon.Consensus.decreaseSupplyDigest_rejects_underflow`, `Hegemon.Consensus.nativeSupplyDelta_without_coinbase`, `Hegemon.Consensus.nativeSupplyDelta_with_coinbase`, `Hegemon.Consensus.advanceNativeSupplyDigest_checked`, and `Hegemon.Consensus.advanceNativeSupplyDigest_rejects_supply_overflow` prove the executable accounting kernel. `gen_supply_vectors` emits Lean-derived consensus and native examples, and the formal-core gate checks them against `CoinbaseData::net_native_delta`, `consensus::reward::update_supply_digest`, and native `advance_native_supply_digest`. The native node now rejects supply overflow instead of using saturating addition on import, replay, and mined-block metadata; mining-template construction must fall back to an empty parent-root template when checked supply advancement rejects pending actions. Native block replay must also match `expected_native_supply_from_parts` as `Some(expected_supply)` or return `SupplyDeltaInvalid` before block commitment admission.",
       "depends_on": [
         "consensus.block-subsidy-schedule",
         "formal.pow-fork-choice",
@@ -1924,6 +1984,16 @@
           "callee": "expected_native_supply_from_parts",
           "required_callers": [
             "evaluate_native_block_replay_refinement_with_trace"
+          ],
+          "result_obligation": "must_match_some_or_return_supply_delta_invalid",
+          "call_order_constraints": [
+            {
+              "caller": "evaluate_native_block_replay_refinement_with_trace",
+              "callee_must_precede": [
+                "evaluate_native_block_commitment_admission"
+              ],
+              "must_dominate_successors": true
+            }
           ]
         }
       ],
@@ -1962,6 +2032,11 @@
         {
           "id": "formal-core-native-supply-template-fallback-gate",
           "description": "Disconnecting checked native supply advancement from mining-template fallback, or constructing a header from invalid pending-action roots after supply rejection, must fail the blueprint gate.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-native-replay-supply-delta-invalid-gate",
+          "description": "Native block replay must fail closed with SupplyDeltaInvalid when checked expected-supply reconstruction overflows, before block commitment admission can accept the replay.",
           "gate": "bash scripts/check_formal_core.sh"
         },
         {
@@ -2029,7 +2104,7 @@
       "claim_id": "consensus.supply-chain-invariant",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean claimed supply-chain replay transition, if an accepted chain prefix returns a final supply digest, then replaying the same ordered supply deltas from genesis returns exactly that final digest; mismatched claimed supply, burn underflow, and supply overflow reject.",
-      "informal_argument": "The Lean theorem `Hegemon.Consensus.SupplyInvariant.validated_chain_matches_expected_deltas` proves that accepted claimed supply-chain replay matches the expected delta replay. Companion theorems `valid_step_claims_expected_supply`, `claimed_supply_mismatch_rejects`, and `supply_delta_failure_rejects_step` prove one-step claimed supply binding and rejection behavior. `gen_supply_invariant_vectors` emits Lean-derived valid, counterfeit-claim, underflow, and overflow chain cases, and the formal-core gate checks them against `consensus::reward::validate_supply_chain`. PoW validation now calls the shared expected supply transition helper before comparing header supply digests.",
+      "informal_argument": "The Lean theorem `Hegemon.Consensus.SupplyInvariant.validated_chain_matches_expected_deltas` proves that accepted claimed supply-chain replay matches the expected delta replay. Companion theorems `valid_step_claims_expected_supply`, `claimed_supply_mismatch_rejects`, and `supply_delta_failure_rejects_step` prove one-step claimed supply binding and rejection behavior. `gen_supply_invariant_vectors` emits Lean-derived valid, counterfeit-claim, underflow, and overflow chain cases, and the formal-core gate checks them against `consensus::reward::validate_supply_chain`. PoW validation now calls the shared expected supply transition helper through a local `pow.rs` wrapper; the blueprint requires the `let Some(expected_supply) = ... else { return InvalidCoinbase }` shape, the immediate comparison to `block.header.supply_digest`, and dominance before PoW admission, proof verification, or node insertion.",
       "depends_on": [
         "consensus.supply-digest-accounting",
         "consensus.pow-admission",
@@ -2044,6 +2119,27 @@
         "consensus/src/pow.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "consensus/src/pow.rs",
+          "callee": "expected_pow_supply_after_transition",
+          "required_callers": [
+            "PowConsensus::apply_block"
+          ],
+          "result_obligation": "must_match_some_and_compare_supply_claim",
+          "call_order_constraints": [
+            {
+              "caller": "PowConsensus::apply_block",
+              "callee_must_precede": [
+                "evaluate_pow_admission",
+                "self.verifier.verify_block",
+                "self.nodes.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
@@ -2074,6 +2170,11 @@
         {
           "id": "formal-core-supply-chain-gate",
           "description": "The release formal-core wrapper must generate supply-chain invariant vectors and run the production conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-pow-supply-claim-binding-gate",
+          "description": "Generic PoW block application must fail closed on expected-supply reconstruction failure and compare the checked expected supply to the header supply digest before PoW admission, proof verification, or node insertion.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
@@ -5260,7 +5361,7 @@
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean block commitment-admission transition, native block admission accepts only when the derived tx count, state root, kernel root, nullifier root, action root, bridge message root, bridge message count, header-MMR root, header-MMR length, and supply digest all agree with the claimed block header fields; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockCommitmentAdmission.accepts_iff_commitment_preconditions` proves the complete executable admission predicate, with companion theorems for every field mismatch and state-root-before-supply-digest precedence. `gen_block_commitment_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_block_commitment_admission` helper now called by native mined-block, announced-block, and replay admission. The mined-block direct precheck is required to fail closed on every commitment-admission error before supply advancement, replay refinement, PoW verification, artifact validation, or atomic commit. Native regressions also construct internally consistent PoW headers with counterfeit body commitments and verify import/replay rejection.",
       "depends_on": [
         "native.block-action-hash-admission",
         "native.block-action-validation",
@@ -5295,6 +5396,7 @@
           "required_callers": [
             "import_mined_block"
           ],
+          "result_obligation": "must_check_result_fail_closed",
           "call_order_constraints": [
             {
               "caller": "import_mined_block",
@@ -5352,6 +5454,11 @@
           "id": "native-replay-message-commitment-regression",
           "description": "Native branch replay must reject persisted block records whose bridge message commitment no longer matches decoded actions.",
           "gate": "cargo test -p hegemon-node replay_rejects_counterfeit_message_commitment --lib --no-default-features"
+        },
+        {
+          "id": "formal-core-mined-block-commitment-fail-closed-gate",
+          "description": "Local mined-block import must fail closed on every block commitment-admission error before supply advancement, replay refinement, PoW verification, artifact validation, or atomic commit.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
       "scope_boundary": "This node proves and vector-checks the native block derived commitment-admission table only. It does not prove commitment-tree hash security, BLAKE3 bridge message-root security or implementation equivalence, header-MMR hash binding, PoW threshold validity, full action payload validation, tx proof soundness, supply economics, or complete native-node equivalence."

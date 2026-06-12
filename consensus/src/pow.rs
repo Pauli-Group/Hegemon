@@ -13,8 +13,8 @@ use crate::reward::{
     expected_supply_after_transition, retarget_target,
 };
 use crate::types::{
-    CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
-    kernel_root_from_shielded_root,
+    CoinbaseData, CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId,
+    ValidatorSetCommitment, kernel_root_from_shielded_root,
 };
 use crate::version_policy::VersionSchedule;
 use crypto::hashes::{blake3_384, sha256};
@@ -140,6 +140,13 @@ impl PowMinerIdentityRejection {
             Self::PowMinerSignatureVerificationFailed => "pow_miner_signature_verification_failed",
         }
     }
+}
+
+fn expected_pow_supply_after_transition(
+    parent_supply: SupplyDigest,
+    coinbase: &CoinbaseData,
+) -> Option<SupplyDigest> {
+    expected_supply_after_transition(parent_supply, coinbase)
 }
 
 fn evaluate_pow_miner_identity(
@@ -421,7 +428,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
             });
         }
         let Some(expected_supply) =
-            expected_supply_after_transition(parent_node.supply_digest, coinbase)
+            expected_pow_supply_after_transition(parent_node.supply_digest, coinbase)
         else {
             return Err(ConsensusError::InvalidCoinbase("supply digest underflow"));
         };

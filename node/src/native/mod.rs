@@ -1877,21 +1877,19 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let preview_message_root = bridge_message_root(&preview_bridge_messages);
         let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
-        let commitment_admission =
-            evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
-                tx_count_matches: preview_tx_count == work.tx_count,
-                state_root_matches: preview_state_root == work.state_root,
-                kernel_root_matches: preview_kernel_root == work.kernel_root,
-                nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
-                extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
-                message_root_matches: preview_message_root == work.message_root,
-                message_count_matches: preview_message_count == work.message_count,
-                header_mmr_root_matches: work.header_mmr_root
-                    == header_mmr_root_from_hashes(&expected_header_history),
-                header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
-                supply_digest_matches: true,
-            });
-        match commitment_admission {
+        match evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+            tx_count_matches: preview_tx_count == work.tx_count,
+            state_root_matches: preview_state_root == work.state_root,
+            kernel_root_matches: preview_kernel_root == work.kernel_root,
+            nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
+            extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
+            message_root_matches: preview_message_root == work.message_root,
+            message_count_matches: preview_message_count == work.message_count,
+            header_mmr_root_matches: work.header_mmr_root
+                == header_mmr_root_from_hashes(&expected_header_history),
+            header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
+            supply_digest_matches: true,
+        }) {
             Ok(()) => {}
             Err(
                 rejection @ (NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch
