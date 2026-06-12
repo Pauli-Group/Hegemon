@@ -396,6 +396,69 @@
       "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. Blueprint bindings and regressions additionally require consensus and SuperNeo receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
     },
     {
+      "id": "formal.wallet-note-ciphertext-wire",
+      "claim_id": "formal.wallet-note-ciphertext-wire",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean wallet note-ciphertext wire grammar, crypto-format note ciphertexts and chain-format fixed containers are accepted only when their byte fields are exactly consumed, the ML-KEM ciphertext length is fixed to 1568 bytes, chain container padding is zero, chain KEM length uses canonical SCALE compact encoding, and representative truncation, overrun, padding, noncanonical, and trailing-byte cases reject.",
+      "informal_argument": "The Lean theorems `Hegemon.Wallet.NoteCiphertextWire.crypto_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.crypto_truncated_after_kem_rejects`, `Hegemon.Wallet.NoteCiphertextWire.crypto_trailing_byte_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.chain_memo_overrun_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_rejects`, and `Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects` pin representative accept/reject facts over the executable parser grammar. `gen_note_ciphertext_wire_vectors` emits those cases and the production wallet test checks them against `synthetic_crypto::note_encryption::NoteCiphertext::from_bytes` and `wallet::NoteCiphertext::from_chain_bytes`. Focused Rust regressions also check the no-panic truncated crypto parser and wallet chain parser canonicality rules.",
+      "depends_on": [
+        "release.pq-binary",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
+        "crypto/src/note_encryption.rs",
+        "wallet/src/notes.rs",
+        "wallet/tests/note_ciphertext_wire_vectors.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
+        "crypto/src/note_encryption.rs",
+        "wallet/src/notes.rs",
+        "wallet/tests/note_ciphertext_wire_vectors.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for wallet note-ciphertext parser grammar. Privacy, note correctness, KEM/AEAD security, and hash security remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-note-ciphertext-wire-theorem",
+          "description": "Removing or weakening note-ciphertext wire theorems or proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-note-ciphertext-wire-conformance",
+          "description": "Changing production crypto or chain note-ciphertext parsing away from the Lean executable grammar must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated-json> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "crypto-note-ciphertext-parser-truncation",
+          "description": "The synthetic-crypto parser must reject truncated KEM/payload prefixes without panicking and reject trailing bytes.",
+          "gate": "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture"
+        },
+        {
+          "id": "wallet-chain-note-ciphertext-canonicality",
+          "description": "The wallet chain parser must reject memo overruns, nonzero fixed-container padding, noncanonical compact KEM lengths, and trailing bytes.",
+          "gate": "cargo test -p wallet from_chain_bytes --lib -- --nocapture"
+        },
+        {
+          "id": "formal-core-note-ciphertext-wire-gate",
+          "description": "The release formal-core wrapper must generate note-ciphertext wire vectors and run the Rust conformance test.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks representative parser grammar for crypto note ciphertext bytes and wallet chain note ciphertext containers. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, wallet key custody, note plaintext or note commitment correctness, nullifier derivation, BLAKE3 ciphertext-hash security or implementation equivalence, DA availability, or complete wallet/native-node equivalence."
+    },
+    {
       "id": "shielded.nullifier-state",
       "claim_id": "shielded.nullifier-state",
       "kind": "target_claim",
@@ -3267,6 +3330,140 @@
       "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, pending-action reload completeness, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
+      "id": "native.miner-identity",
+      "claim_id": "native.miner-identity",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native miner-identity transition, a non-genesis native block can be accepted or projected from storage only when its ML-DSA public-key length and parsing are valid, its 48-byte miner commitment matches that public key, its ML-DSA signature length and parsing are valid, and signature verification succeeds over the native signature message; genesis is exempt.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MinerIdentity.accepts_iff_native_miner_identity_preconditions` proves the executable native miner-identity table, with concrete theorem facts for valid non-genesis admission, genesis-without-identity admission, public-key length and parse failures, miner-commitment mismatch, signature length and parse failures, signature-verification failure, and rejection precedence. `gen_native_miner_identity_vectors` emits Lean-derived examples checked against the production `evaluate_native_miner_identity_admission` helper. The blueprint also requires newly mined native blocks to call `sign_native_block_meta` before PoW metadata verification, atomic commit, state publication, or broadcast; requires storage/projection callers to route through `verify_native_block_meta_projection` before trusting startup canonical metadata, serving canonical sync rows, or exporting bridge witness light-client material; requires `verify_native_pow_meta` to propagate `verify_native_miner_identity` before light-client PoW verification; and requires the signing and verification paths to share `native_miner_signature_message`, whose Rust regressions bind nonce and work hash.",
+      "depends_on": [
+        "consensus.header-preimage-binding",
+        "release.pq-binary",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MinerIdentity.lean",
+        "formal/lean/Hegemon/Native/GenerateMinerIdentityVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MinerIdentity.lean",
+        "formal/lean/Hegemon/Native/GenerateMinerIdentityVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_miner_identity_admission",
+          "required_callers": [
+            "verify_native_miner_identity"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_native_miner_identity",
+          "required_callers": [
+            "verify_native_pow_meta"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_native_pow_meta",
+              "callee_must_precede": [
+                "verify_pow_header"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_native_block_meta_projection",
+          "required_callers": [
+            "validate_announced_block",
+            "validate_loaded_block_indexes",
+            "load_canonical_sync_block_at_height",
+            "export_bridge_witness"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "export_bridge_witness",
+              "callee_must_precede": [
+                "pow_header_from_meta"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "sign_native_block_meta",
+          "required_callers": [
+            "import_mined_block"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "import_mined_block",
+              "callee_must_precede": [
+                "verify_native_pow_meta",
+                "commit_mined_block_atomically",
+                "publish_mined_state",
+                "broadcast_block_announce"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_miner_signature_message",
+          "required_callers": [
+            "sign_native_block_meta",
+            "native_miner_identity_admission_input"
+          ]
+        }
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for native self-contained ML-DSA miner side-auth admission. Miner registry governance and ML-DSA security remain outside this node."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-native-miner-identity-theorem",
+          "description": "Removing or weakening native miner-identity theorems or proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-native-miner-identity-conformance",
+          "description": "Changing production native miner-identity admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_NATIVE_MINER_IDENTITY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_native_miner_identity_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-mined-block-signer-binding",
+          "description": "Removing native mined-block signing before PoW verification, commit, state publication, or broadcast must fail the blueprint gate.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
+        },
+        {
+          "id": "native-miner-identity-pow-binding",
+          "description": "Removing native miner-identity verification before native PoW metadata verification must fail the blueprint gate.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
+        },
+        {
+          "id": "native-metadata-projection-rejects-unsigned-storage",
+          "description": "Startup, sync serving, and bridge witness export must reject unsigned non-genesis native metadata decoded from storage.",
+          "gate": "cargo test -p hegemon-node native_metadata_projection_ --lib --no-default-features -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks native self-contained miner identity admission and binds the production signing/verification/projection call order. It does not prove ML-DSA unforgeability or implementation equivalence, miner registration or stake governance, OS RNG quality for local identity generation, migration of legacy unsigned non-genesis dev-chain metadata, sled durability, or complete native-node equivalence."
+    },
+    {
       "id": "native.mined-work-admission",
       "claim_id": "native.mined-work-admission",
       "kind": "target_claim",
@@ -3753,7 +3950,7 @@
       "claim_id": "native.pending-action-reload",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native pending-action reload predicate, a persisted pending action is accepted into the reloaded local mempool only when its key is well formed, its embedded tx_hash equals the 32-byte sled key, the production pending_action_hash recomputation equals the embedded tx_hash, and no equal action hash has already been loaded; otherwise startup reload rejects with fixed malformed-key, key/hash-mismatch, recomputed-hash-mismatch, then duplicate precedence.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable key/hash acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions`. Blueprint bindings and focused regressions additionally require semantically re-admitting those loaded entries before persisted local mempool entries can feed mining selection.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable key/hash acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions`. Blueprint bindings and focused regressions additionally require persisted local mempool entries to be semantically unique after removing arrival time from their hash preimage, and require semantically re-admitting those loaded entries before they can feed mining selection.",
       "depends_on": [
         "native.codec-admission",
         "native.block-action-hash-admission",
@@ -3791,6 +3988,22 @@
             "load_pending_actions"
           ],
           "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "load_pending_actions",
+              "callee_must_precede": [
+                "actions.insert"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "pending_action_semantic_hash",
+          "required_callers": [
+            "load_pending_actions"
+          ],
           "call_order_constraints": [
             {
               "caller": "load_pending_actions",
@@ -3903,6 +4116,11 @@
           "gate": "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-pending-action-semantic-duplicate-regression",
+          "description": "Persisted pending-action reload must reject entries whose semantic action hash is duplicated after arrival time is removed from the preimage.",
+          "gate": "cargo test -p hegemon-node load_pending_actions_rejects_semantic_duplicate_received_time --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "native-pending-action-startup-semantic-regressions",
           "description": "Focused native tests must reject semantically invalid persisted pending actions after canonical state, bridge replay, staged ciphertext, and staged proof reload but before NativeState publication.",
           "gate": "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture"
@@ -3913,7 +4131,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to reject persisted arrival-time-only semantic duplicates and semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash or pending_action_semantic_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.staged-ciphertext-reload",
@@ -4764,10 +4982,11 @@
       "claim_id": "native.announced-block-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean announced-block admission transition, native announced-block pre-PoW import accepts only when parent height has a checked u64 next height equal to the announced height, the parent hash matches, the timestamp strictly advances, the timestamp is within the saturating future-skew bound, and the claimed block hash equals the work hash; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before PoW metadata verification and body commitment replay. The same blueprint node now also requires `validate_announced_block` to propagate `verify_native_pow_meta` rather than treating PoW metadata checks as advisory.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.AnnouncedBlockAdmission.accepts_iff_announced_block_preconditions` proves the complete executable admission predicate, with concrete theorem facts for valid admission, height mismatch, u64 height overflow rejection, parent mismatch, non-advancing timestamp, future skew, hash/work-hash mismatch, parent-mismatch-before-timestamp precedence, and saturated future-limit acceptance. `gen_announced_block_admission_vectors` emits Lean-derived examples checked against the production `evaluate_native_announced_block_admission` helper called by `validate_announced_block` before metadata projection and body commitment replay. The same blueprint node now also requires `validate_announced_block` to propagate `verify_native_block_meta_projection`, which includes miner-identity and PoW metadata verification for non-genesis blocks, rather than treating those checks as advisory.",
       "depends_on": [
         "consensus.pow-admission",
         "consensus.header-preimage-binding",
+        "native.miner-identity",
         "release.dependency-waivers"
       ],
       "implementation_paths": [
@@ -4789,7 +5008,7 @@
             {
               "caller": "validate_announced_block",
               "callee_must_precede": [
-                "verify_native_pow_meta"
+                "verify_native_block_meta_projection"
               ],
               "must_dominate_successors": true
             }
@@ -4797,7 +5016,7 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "verify_native_pow_meta",
+          "callee": "verify_native_block_meta_projection",
           "required_callers": [
             "validate_announced_block"
           ],
@@ -4864,11 +5083,11 @@
         },
         {
           "id": "announced-pow-meta-propagation-binding",
-          "description": "Native announced-block validation must propagate final PoW metadata verification errors before import-side replay, persistence, or reorg work can observe the block as validated.",
+          "description": "Native announced-block validation must propagate final metadata projection errors, including miner identity and PoW metadata verification, before import-side replay, persistence, or reorg work can observe the block as validated.",
           "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. Blueprint bindings additionally require propagation of native metadata projection, whose miner-identity and PoW checks are modeled by separate claims. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
     },
     {
       "id": "native.block-index-reload",
@@ -5318,7 +5537,7 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "bincode_deserialize_exact",
+          "callee": "bincode_deserialize_native_block_meta_exact",
           "required_callers": [
             "load_best_or_genesis",
             "load_block_meta_by_hash"
@@ -5921,7 +6140,7 @@
       "claim_id": "native.block-action-validation",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean block-action validation transition, a native decoded block action stream is accepted only when action hash/count admission accepts, every action passes route/scope admission, route-specific payload validation succeeds before replay/state checks, inbound bridge replay keys are not already consumed or duplicated earlier in the block, shielded transfer keys are nondecreasing, and every shielded transfer passes state admission; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions` proves the executable acceptance predicate over the composed validation table. Companion theorems pin valid mixed blocks, non-transfer interleaving, action hash mismatch, duplicate hashes, scope-before-payload, bridge payload-before-replay, prior and cross-action bridge replay duplicates, transfer payload-before-order, descending transfer order, transfer order-before-state, and transfer-state rejection behavior. `gen_block_action_validation_vectors` emits Lean-derived examples checked against production helper functions introduced in `node/src/native/mod.rs`, and `validate_block_actions_locked` now routes decoded block validation through that helper before preserving the existing user-facing rejection errors.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions` proves the executable acceptance predicate over the composed validation table. Companion theorems pin valid mixed blocks, non-transfer interleaving, action hash mismatch, duplicate hashes, scope-before-payload, bridge payload-before-replay, prior and cross-action bridge replay duplicates, transfer payload-before-order, descending transfer order, transfer order-before-state, and transfer-state rejection behavior. `gen_block_action_validation_vectors` emits Lean-derived examples checked against production helper functions introduced in `node/src/native/mod.rs`, and `validate_block_actions_locked` now routes decoded block validation through that helper before preserving the existing user-facing rejection errors. A production-only binding additionally requires `validate_block_actions_locked` to reject duplicate `pending_action_semantic_hash` values before transfer/replay state construction, so arrival-time-only action replays cannot bypass duplicate `tx_hash` admission.",
       "depends_on": [
         "native.codec-admission",
         "native.block-action-hash-admission",
@@ -5968,6 +6187,24 @@
             "validate_block_actions_locked"
           ],
           "result_obligation": "must_check_result_fail_closed"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "block_action_semantic_hashes_unique",
+          "required_callers": [
+            "validate_block_actions_locked"
+          ],
+          "result_obligation": "must_guard_false_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "validate_block_actions_locked",
+              "callee_must_precede": [
+                "NullifierState::new",
+                "evaluate_native_block_action_validation_step"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
         },
         {
           "path": "node/src/native/mod.rs",
@@ -6040,12 +6277,17 @@
           "gate": "cargo test -p hegemon-node block_actions_reject --lib --no-default-features -- --nocapture && cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-block-action-semantic-duplicate-regression",
+          "description": "Decoded block-action validation must reject semantically duplicate actions whose embedded tx_hash differs only because arrival time differs.",
+          "gate": "cargo test -p hegemon-node imported_block_actions_reject_semantic_duplicate_with_different_received_time --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-block-action-validation-gate",
           "description": "The release formal-core wrapper must generate block-action validation vectors and run the Rust conformance test over production helpers.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. A separate production binding and regression require arrival-time-insensitive semantic duplicate rejection before transfer/replay state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash or pending_action_semantic_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "native.block-commitment-admission",

@@ -269,59 +269,28 @@ impl NoteCiphertext {
 
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        if bytes.len() < 1 + 2 + 4 + 4 + 4 + 4 {
-            return Err(CryptoError::InvalidLength {
-                expected: 1 + 2 + 4 + 4 + 4 + 4,
-                actual: bytes.len(),
-            });
-        }
+        let mut offset = 0;
+        let version = read_u8(bytes, &mut offset)?;
+        let crypto_suite = read_u16(bytes, &mut offset)?;
+        let diversifier_index = read_u32(bytes, &mut offset)?;
 
-        let version = bytes[0];
-        let crypto_suite = u16::from_le_bytes(bytes[1..3].try_into().unwrap());
-        let diversifier_index = u32::from_le_bytes(bytes[3..7].try_into().unwrap());
-
-        let mut offset = 7;
-
-        let kem_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
+        let kem_len = read_u32(bytes, &mut offset)? as usize;
         if kem_len != ML_KEM_CIPHERTEXT_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_CIPHERTEXT_LEN,
                 actual: kem_len,
             });
         }
-        if bytes.len() < offset + kem_len {
-            return Err(CryptoError::InvalidLength {
-                expected: offset + kem_len,
-                actual: bytes.len(),
-            });
-        }
-        let kem_ciphertext = bytes[offset..offset + kem_len].to_vec();
-        offset += kem_len;
+        let kem_ciphertext = take_bytes(bytes, &mut offset, kem_len)?.to_vec();
 
-        let note_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        if bytes.len() < offset + note_len {
-            return Err(CryptoError::InvalidLength {
-                expected: offset + note_len,
-                actual: bytes.len(),
-            });
-        }
-        let note_payload = bytes[offset..offset + note_len].to_vec();
-        offset += note_len;
+        let note_len = read_u32(bytes, &mut offset)? as usize;
+        let note_payload = take_bytes(bytes, &mut offset, note_len)?.to_vec();
 
-        let memo_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
-        if bytes.len() < offset + memo_len {
+        let memo_len = read_u32(bytes, &mut offset)? as usize;
+        let memo_payload = take_bytes(bytes, &mut offset, memo_len)?.to_vec();
+        if bytes.len() != offset {
             return Err(CryptoError::InvalidLength {
-                expected: offset + memo_len,
-                actual: bytes.len(),
-            });
-        }
-        let memo_payload = bytes[offset..offset + memo_len].to_vec();
-        if bytes.len() != offset + memo_len {
-            return Err(CryptoError::InvalidLength {
-                expected: offset + memo_len,
+                expected: offset,
                 actual: bytes.len(),
             });
         }
@@ -335,6 +304,40 @@ impl NoteCiphertext {
             memo_payload,
         })
     }
+}
+
+fn take_bytes<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    len: usize,
+) -> Result<&'a [u8], CryptoError> {
+    let end = offset.checked_add(len).ok_or(CryptoError::InvalidLength {
+        expected: usize::MAX,
+        actual: bytes.len(),
+    })?;
+    if bytes.len() < end {
+        return Err(CryptoError::InvalidLength {
+            expected: end,
+            actual: bytes.len(),
+        });
+    }
+    let out = &bytes[*offset..end];
+    *offset = end;
+    Ok(out)
+}
+
+fn read_u8(bytes: &[u8], offset: &mut usize) -> Result<u8, CryptoError> {
+    Ok(take_bytes(bytes, offset, 1)?[0])
+}
+
+fn read_u16(bytes: &[u8], offset: &mut usize) -> Result<u16, CryptoError> {
+    let raw = take_bytes(bytes, offset, 2)?;
+    Ok(u16::from_le_bytes([raw[0], raw[1]]))
+}
+
+fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, CryptoError> {
+    let raw = take_bytes(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
 }
 
 fn encrypt_payload(
@@ -536,5 +539,24 @@ mod tests {
                 actual: ML_KEM_CIPHERTEXT_LEN - 1,
             }
         );
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_truncated_prefixes_without_panic() {
+        let keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-truncated");
+        let pk_enc = keypair.public_key();
+        let note = NotePlaintext::new(99, 2, [7u8; 32], [8u8; 32], b"memo".to_vec());
+        let bytes = NoteCiphertext::encrypt(&pk_enc, [9u8; 32], 1, 3, 0, &note, &[10u8; 32])
+            .unwrap()
+            .to_bytes();
+
+        for len in 0..bytes.len() {
+            let result = std::panic::catch_unwind(|| NoteCiphertext::from_bytes(&bytes[..len]));
+            assert!(result.is_ok(), "from_bytes panicked on prefix length {len}");
+            assert!(
+                result.unwrap().is_err(),
+                "truncated prefix length {len} unexpectedly decoded"
+            );
+        }
     }
 }

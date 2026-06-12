@@ -48,6 +48,7 @@ import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.MineableActionAdmission
+import Hegemon.Native.MinerIdentity
 import Hegemon.Native.MinedWorkAdmission
 import Hegemon.Native.NativeBackendReleasePosture
 import Hegemon.Native.NativeBackendReviewPolicy
@@ -74,3 +75,4 @@ import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.StatementHash
+import Hegemon.Wallet.NoteCiphertextWire

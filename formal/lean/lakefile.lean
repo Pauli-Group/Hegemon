@@ -172,6 +172,9 @@ lean_exe gen_coinbase_action_payload_admission_vectors where
 lean_exe gen_mineable_action_admission_vectors where
   root := `Hegemon.Native.GenerateMineableActionAdmissionVectors
 
+lean_exe gen_native_miner_identity_vectors where
+  root := `Hegemon.Native.GenerateMinerIdentityVectors
+
 lean_exe gen_mined_work_admission_vectors where
   root := `Hegemon.Native.GenerateMinedWorkAdmissionVectors
 
@@ -204,6 +207,9 @@ lean_exe gen_network_secure_channel_vectors where
 
 lean_exe gen_pq_noise_vectors where
   root := `Hegemon.Network.GeneratePqNoiseVectors
+
+lean_exe gen_note_ciphertext_wire_vectors where
+  root := `Hegemon.Wallet.GenerateNoteCiphertextWireVectors
 
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors

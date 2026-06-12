@@ -28,6 +28,10 @@ use consensus_light_client::{
     HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
     HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
+use crypto::ml_dsa::{
+    MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN,
+};
+use crypto::traits::{Signature, SigningKey, VerifyKey};
 use network::{
     service::DirectedProtocolMessage, wire, GossipRouter, NatTraversalConfig, P2PService, PeerId,
     PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
@@ -88,6 +92,7 @@ const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BL
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
+const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
 const MAX_NATIVE_RPC_ACTION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_NATIVE_DA_CIPHERTEXT_UPLOADS: usize = 1024;
 const MAX_NATIVE_DA_PROOF_UPLOADS: usize = 256;
@@ -264,6 +269,78 @@ struct NativeBlockMeta {
     tx_count: u32,
     #[serde(default)]
     action_bytes: Vec<Vec<u8>>,
+    #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
+    miner_commitment: [u8; 48],
+    #[serde(default)]
+    miner_public_key: Vec<u8>,
+    #[serde(default)]
+    miner_signature: Vec<u8>,
+}
+
+fn native_empty_digest48_default() -> [u8; 48] {
+    NATIVE_EMPTY_DIGEST48
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyNativeBlockMetaV1 {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    hash: [u8; 32],
+    parent_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    state_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    kernel_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    nullifier_root: [u8; 48],
+    extrinsics_root: [u8; 32],
+    #[serde(with = "serde_array48")]
+    message_root: [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: [u8; 32],
+    work_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    cumulative_work: [u8; 48],
+    supply_digest: u128,
+    tx_count: u32,
+    #[serde(default)]
+    action_bytes: Vec<Vec<u8>>,
+}
+
+impl From<LegacyNativeBlockMetaV1> for NativeBlockMeta {
+    fn from(meta: LegacyNativeBlockMetaV1) -> Self {
+        Self {
+            chain_id: meta.chain_id,
+            rules_hash: meta.rules_hash,
+            height: meta.height,
+            hash: meta.hash,
+            parent_hash: meta.parent_hash,
+            state_root: meta.state_root,
+            kernel_root: meta.kernel_root,
+            nullifier_root: meta.nullifier_root,
+            extrinsics_root: meta.extrinsics_root,
+            message_root: meta.message_root,
+            message_count: meta.message_count,
+            header_mmr_root: meta.header_mmr_root,
+            header_mmr_len: meta.header_mmr_len,
+            timestamp_ms: meta.timestamp_ms,
+            pow_bits: meta.pow_bits,
+            nonce: meta.nonce,
+            work_hash: meta.work_hash,
+            cumulative_work: meta.cumulative_work,
+            supply_digest: meta.supply_digest,
+            tx_count: meta.tx_count,
+            action_bytes: meta.action_bytes,
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -479,6 +556,17 @@ struct NativeMinedWorkAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMinerIdentityAdmissionInput {
+    height: u64,
+    public_key_len: usize,
+    signature_len: usize,
+    public_key_bytes_parse: bool,
+    miner_commitment_matches: bool,
+    signature_bytes_parse: bool,
+    signature_verifies: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeWorkTemplateAdmissionInput {
     best_height: u64,
     cumulative_work_advances: bool,
@@ -676,6 +764,31 @@ impl NativeMinedWorkAdmissionRejection {
         match self {
             Self::ParentHashMismatch => "parent_hash_mismatch",
             Self::HeightNotNext => "height_not_next",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeMinerIdentityAdmissionRejection {
+    InvalidMinerPublicKeyLength,
+    InvalidMinerSignatureLength,
+    InvalidMinerPublicKeyBytes,
+    MinerCommitmentMismatch,
+    InvalidMinerSignatureBytes,
+    NativeMinerSignatureVerificationFailed,
+}
+
+impl NativeMinerIdentityAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::InvalidMinerPublicKeyLength => "invalid_miner_public_key_length",
+            Self::InvalidMinerSignatureLength => "invalid_miner_signature_length",
+            Self::InvalidMinerPublicKeyBytes => "invalid_miner_public_key_bytes",
+            Self::MinerCommitmentMismatch => "miner_commitment_mismatch",
+            Self::InvalidMinerSignatureBytes => "invalid_miner_signature_bytes",
+            Self::NativeMinerSignatureVerificationFailed => {
+                "native_miner_signature_verification_failed"
+            }
         }
     }
 }
@@ -1634,6 +1747,23 @@ struct NativeState {
     staged_proofs: BTreeMap<String, Vec<u8>>,
 }
 
+#[derive(Clone)]
+struct NativeMinerIdentity {
+    secret_key: MlDsaSecretKey,
+    public_key: MlDsaPublicKey,
+}
+
+impl NativeMinerIdentity {
+    fn from_seed(seed: &[u8]) -> Self {
+        let secret_key = MlDsaSecretKey::generate_deterministic(seed);
+        let public_key = secret_key.verify_key();
+        Self {
+            secret_key,
+            public_key,
+        }
+    }
+}
+
 pub struct NativeNode {
     config: NativeConfig,
     db: sled::Db,
@@ -1658,6 +1788,7 @@ pub struct NativeNode {
     last_announce_height: AtomicU64,
     mining_task: Mutex<Option<JoinHandle<()>>>,
     sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
+    miner_identity: NativeMinerIdentity,
 }
 
 impl NativeNode {
@@ -1704,6 +1835,7 @@ impl NativeNode {
             staged_ciphertexts,
             staged_proofs,
         )?;
+        let miner_identity = load_native_miner_identity(&config)?;
 
         let node = Arc::new(Self {
             config,
@@ -1729,6 +1861,7 @@ impl NativeNode {
             last_announce_height: AtomicU64::new(0),
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
+            miner_identity,
         });
         Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
@@ -1938,7 +2071,7 @@ impl NativeNode {
                 header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
             },
         )?;
-        let meta = NativeBlockMeta {
+        let mut meta = NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height: work.height,
@@ -1960,7 +2093,11 @@ impl NativeNode {
             supply_digest,
             tx_count: work.tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
         };
+        sign_native_block_meta(&mut meta, &self.miner_identity);
         verify_native_pow_meta(&state.best, &meta)?;
 
         let pending_action_effects = if actions.is_empty() {
@@ -2136,6 +2273,24 @@ impl NativeNode {
     }
 
     fn load_canonical_sync_block_at_height(&self, height: u64) -> Result<NativeBlockMeta> {
+        let meta = self.load_canonical_block_at_height_unverified(height)?;
+        if meta.height == 0 {
+            verify_native_block_meta_projection(None, &meta)
+                .context("validate genesis native sync block metadata")?;
+            return Ok(meta);
+        }
+        let parent = self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
+        verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
+            format!(
+                "validate canonical native sync block metadata at height {} ({})",
+                meta.height,
+                hex32(&meta.hash)
+            )
+        })?;
+        Ok(meta)
+    }
+
+    fn load_canonical_block_at_height_unverified(&self, height: u64) -> Result<NativeBlockMeta> {
         let hash = self
             .hash_by_height(height)?
             .ok_or_else(|| anyhow!("missing canonical height index for native block {height}"))?;
@@ -3102,6 +3257,9 @@ impl NativeNode {
             if state.pending_actions.contains_key(&pending.tx_hash) {
                 return Err(anyhow!("duplicate pending action"));
             }
+            if pending_action_semantic_duplicate_exists(&state.pending_actions, &pending) {
+                return Err(anyhow!("duplicate semantic pending action"));
+            }
             validate_pending_action_against_mempool_state(&state, &pending)?;
             self.action_tree
                 .insert(pending.tx_hash.as_slice(), pending.encode())?;
@@ -3983,6 +4141,13 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         .cloned()
         .expect("bridge witness admission ensures message index is in bounds");
     let parent = parent.expect("bridge witness admission ensures parent exists");
+    verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
+        format!(
+            "validate bridge witness native block metadata at height {} ({})",
+            meta.height,
+            hex32(&meta.hash)
+        )
+    })?;
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
     let output = bridge_checkpoint_output_with_tip(
@@ -4348,7 +4513,7 @@ fn load_best_or_genesis(
     pow_bits: u32,
 ) -> Result<NativeBlockMeta> {
     if let Some(bytes) = meta_tree.get(META_BEST_KEY)? {
-        return bincode_deserialize_exact(&bytes, "native best metadata");
+        return bincode_deserialize_native_block_meta_exact(&bytes, "native best metadata");
     }
 
     let genesis = genesis_meta(pow_bits)?;
@@ -4397,6 +4562,9 @@ fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
         supply_digest: 0,
         tx_count: 0,
         action_bytes: Vec::new(),
+        miner_commitment: [0u8; 48],
+        miner_public_key: Vec::new(),
+        miner_signature: Vec::new(),
     })
 }
 
@@ -4427,7 +4595,7 @@ fn load_block_meta_by_hash(
     match block_tree.get(hash)? {
         Some(bytes) => {
             let meta =
-                bincode_deserialize_exact::<NativeBlockMeta>(&bytes, "native block metadata")?;
+                bincode_deserialize_native_block_meta_exact(&bytes, "native block metadata")?;
             if meta.hash != *hash {
                 return Err(anyhow!(
                     "stored native block hash mismatch: key={} embedded={}",
@@ -4926,6 +5094,21 @@ fn validate_loaded_block_indexes(
         meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
         meta_tree.flush()?;
     }
+    for index in 0..chain.len() {
+        let parent = if index == 0 {
+            None
+        } else {
+            chain.get(index - 1)
+        };
+        let meta = &chain[index];
+        verify_native_block_meta_projection(parent, meta).with_context(|| {
+            format!(
+                "validate stored canonical native block metadata at height {} ({})",
+                meta.height,
+                hex32(&meta.hash)
+            )
+        })?;
+    }
 
     Ok(())
 }
@@ -5128,6 +5311,7 @@ fn load_staged_proofs_with_limits(
 
 fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingAction>> {
     let mut actions = BTreeMap::new();
+    let mut semantic_hashes = BTreeSet::new();
     for item in tree.iter() {
         let (key, value) = item?;
         if key.len() != 32 {
@@ -5146,7 +5330,19 @@ fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingA
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&key);
         let action: PendingAction = decode_scale_exact(&value, "pending action")?;
+        if action.encode().as_slice() != value.as_ref() {
+            return Err(anyhow!(
+                "pending action {} has noncanonical SCALE encoding",
+                hex32(&hash)
+            ));
+        }
         validate_loaded_pending_action_hash(hash, &action, !actions.contains_key(&hash))?;
+        if !semantic_hashes.insert(pending_action_semantic_hash(&action)) {
+            return Err(anyhow!(
+                "duplicate semantic stored pending action {}",
+                hex32(&hash)
+            ));
+        }
         actions.insert(hash, action);
     }
     Ok(actions)
@@ -6450,6 +6646,24 @@ fn pending_action_hash(action: &PendingAction) -> [u8; 32] {
     hash32_with_parts(&[b"hegemon-native-action-v1", &encoded])
 }
 
+fn pending_action_semantic_hash(action: &PendingAction) -> [u8; 32] {
+    let mut canonical = action.clone();
+    canonical.tx_hash = [0u8; 32];
+    canonical.received_ms = 0;
+    let encoded = canonical.encode();
+    hash32_with_parts(&[b"hegemon-native-action-semantic-v1", &encoded])
+}
+
+fn pending_action_semantic_duplicate_exists(
+    actions: &BTreeMap<[u8; 32], PendingAction>,
+    candidate: &PendingAction,
+) -> bool {
+    let candidate_hash = pending_action_semantic_hash(candidate);
+    actions
+        .values()
+        .any(|action| pending_action_semantic_hash(action) == candidate_hash)
+}
+
 fn pending_action_mempool_bytes(action: &PendingAction) -> usize {
     action.encoded_size()
 }
@@ -7330,10 +7544,13 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
     .map_err(native_action_hash_admission_error)?;
     let mut actions = Vec::with_capacity(meta.action_bytes.len());
     for bytes in &meta.action_bytes {
-        actions.push(decode_scale_exact::<PendingAction>(
-            bytes,
-            "native block action",
-        )?);
+        let action = decode_scale_exact::<PendingAction>(bytes, "native block action")?;
+        if action.encode().as_slice() != bytes.as_slice() {
+            return Err(anyhow!(
+                "native block action has noncanonical SCALE encoding"
+            ));
+        }
+        actions.push(action);
     }
     evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
         action_count_matches: true,
@@ -7959,6 +8176,13 @@ fn block_action_hashes_unique(actions: &[PendingAction]) -> bool {
     actions.iter().all(|action| seen.insert(action.tx_hash))
 }
 
+fn block_action_semantic_hashes_unique(actions: &[PendingAction]) -> bool {
+    let mut seen = BTreeSet::new();
+    actions
+        .iter()
+        .all(|action| seen.insert(pending_action_semantic_hash(action)))
+}
+
 fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction]) -> Result<()> {
     let mut validation_state = evaluate_native_block_action_validation_start(
         true,
@@ -7984,6 +8208,9 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         }
         _ => native_block_action_validation_error(rejection),
     })?;
+    if !block_action_semantic_hashes_unique(actions) {
+        return Err(anyhow!("duplicate semantic action in block"));
+    }
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     for action in actions {
         let scope_input = native_action_scope_admission_input(action);
@@ -9066,6 +9293,29 @@ fn evaluate_native_mined_work_admission(
     }
 }
 
+fn evaluate_native_miner_identity_admission(
+    input: NativeMinerIdentityAdmissionInput,
+) -> Result<(), NativeMinerIdentityAdmissionRejection> {
+    if input.height == 0 {
+        return Ok(());
+    }
+    if input.public_key_len != ML_DSA_PUBLIC_KEY_LEN {
+        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerPublicKeyLength)
+    } else if !input.public_key_bytes_parse {
+        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerPublicKeyBytes)
+    } else if !input.miner_commitment_matches {
+        Err(NativeMinerIdentityAdmissionRejection::MinerCommitmentMismatch)
+    } else if input.signature_len != ML_DSA_SIGNATURE_LEN {
+        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerSignatureLength)
+    } else if !input.signature_bytes_parse {
+        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerSignatureBytes)
+    } else if !input.signature_verifies {
+        Err(NativeMinerIdentityAdmissionRejection::NativeMinerSignatureVerificationFailed)
+    } else {
+        Ok(())
+    }
+}
+
 fn native_work_template_next_height(best_height: u64) -> Option<u64> {
     best_height.checked_add(1)
 }
@@ -9208,7 +9458,7 @@ fn validate_announced_block(parent: &NativeBlockMeta, meta: &NativeBlockMeta) ->
         current_time_ms(),
     ))
     .map_err(native_announced_block_admission_error)?;
-    verify_native_pow_meta(parent, meta)
+    verify_native_block_meta_projection(Some(parent), meta)
 }
 
 fn native_pow_header_from_parts(
@@ -9298,7 +9548,73 @@ fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV1 {
     }
 }
 
+fn native_miner_commitment(public_key_bytes: &[u8]) -> [u8; 48] {
+    crypto::hashes::blake3_384(public_key_bytes)
+}
+
+fn native_miner_signature_message(meta: &NativeBlockMeta) -> Vec<u8> {
+    let header_bytes = pow_header_from_meta(meta).canonical_bytes();
+    let mut bytes = Vec::with_capacity(
+        b"hegemon.native.miner-signature-v1".len()
+            + header_bytes.len()
+            + meta.nonce.len()
+            + meta.work_hash.len(),
+    );
+    bytes.extend_from_slice(b"hegemon.native.miner-signature-v1");
+    bytes.extend_from_slice(&header_bytes);
+    bytes.extend_from_slice(&meta.nonce);
+    bytes.extend_from_slice(&meta.work_hash);
+    bytes
+}
+
+fn sign_native_block_meta(meta: &mut NativeBlockMeta, identity: &NativeMinerIdentity) {
+    let signature_message = native_miner_signature_message(meta);
+    let signature = identity.secret_key.sign(&signature_message);
+    let public_key = identity.public_key.to_bytes();
+    meta.miner_commitment = native_miner_commitment(&public_key);
+    meta.miner_public_key = public_key;
+    meta.miner_signature = signature.as_bytes().to_vec();
+}
+
+fn native_miner_identity_admission_input(
+    meta: &NativeBlockMeta,
+) -> NativeMinerIdentityAdmissionInput {
+    let public_key = MlDsaPublicKey::from_bytes(&meta.miner_public_key);
+    let signature = MlDsaSignature::from_bytes(&meta.miner_signature);
+    let public_key_bytes_parse = public_key.is_ok();
+    let signature_bytes_parse = signature.is_ok();
+    let miner_commitment_matches =
+        native_miner_commitment(&meta.miner_public_key) == meta.miner_commitment;
+    let signature_verifies = match (public_key, signature) {
+        (Ok(public_key), Ok(signature)) => public_key
+            .verify(&native_miner_signature_message(meta), &signature)
+            .is_ok(),
+        _ => false,
+    };
+    NativeMinerIdentityAdmissionInput {
+        height: meta.height,
+        public_key_len: meta.miner_public_key.len(),
+        signature_len: meta.miner_signature.len(),
+        public_key_bytes_parse,
+        miner_commitment_matches,
+        signature_bytes_parse,
+        signature_verifies,
+    }
+}
+
+fn verify_native_miner_identity(meta: &NativeBlockMeta) -> Result<()> {
+    evaluate_native_miner_identity_admission(native_miner_identity_admission_input(meta)).map_err(
+        |rejection| {
+            anyhow!(
+                "native miner identity admission failed: {}",
+                rejection.label()
+            )
+        },
+    )
+}
+
 fn verify_native_pow_meta(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> Result<()> {
+    verify_native_miner_identity(meta)?;
     if meta.hash != meta.work_hash {
         return Err(anyhow!("native block hash must equal work hash"));
     }
@@ -9309,6 +9625,32 @@ fn verify_native_pow_meta(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> R
         return Err(anyhow!("native block work hash mismatch"));
     }
     Ok(())
+}
+
+fn verify_native_block_meta_projection(
+    parent: Option<&NativeBlockMeta>,
+    meta: &NativeBlockMeta,
+) -> Result<()> {
+    if meta.height == 0 {
+        verify_native_miner_identity(meta)?;
+        return Ok(());
+    }
+    let parent = parent.ok_or_else(|| {
+        anyhow!(
+            "missing native block parent for metadata projection at height {} ({})",
+            meta.height,
+            hex32(&meta.hash)
+        )
+    })?;
+    if meta.parent_hash != parent.hash {
+        return Err(anyhow!(
+            "native block metadata parent mismatch at height {}: expected {}, got {}",
+            meta.height,
+            hex32(&parent.hash),
+            hex32(&meta.parent_hash)
+        ));
+    }
+    verify_native_pow_meta(parent, meta)
 }
 
 fn empty_extrinsics_root(pending_count: u32) -> [u8; 32] {
@@ -9363,6 +9705,20 @@ fn load_native_identity_seed(config: &NativeConfig) -> Result<[u8; 32]> {
         .map(PathBuf::from)
         .unwrap_or_else(|| config.base_path.join(PQ_IDENTITY_SEED_FILE));
     load_or_create_identity_seed(&path)
+}
+
+fn load_native_miner_identity(config: &NativeConfig) -> Result<NativeMinerIdentity> {
+    let seed = if let Ok(raw) = std::env::var("HEGEMON_MINER_IDENTITY_SEED") {
+        parse_identity_seed_hex(&raw)
+            .ok_or_else(|| anyhow!("HEGEMON_MINER_IDENTITY_SEED must be 32-byte hex"))?
+    } else {
+        let path = std::env::var("HEGEMON_MINER_IDENTITY_SEED_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| config.base_path.join(MINER_IDENTITY_SEED_FILE));
+        load_or_create_identity_seed(&path)?
+    };
+    Ok(NativeMinerIdentity::from_seed(&seed))
 }
 
 fn load_or_create_identity_seed(path: &Path) -> Result<[u8; 32]> {
@@ -9632,6 +9988,24 @@ fn bincode_deserialize_exact<T: DeserializeOwned>(bytes: &[u8], label: &str) -> 
         ));
     }
     Ok(value)
+}
+
+fn bincode_deserialize_native_block_meta_exact(
+    bytes: &[u8],
+    label: &str,
+) -> Result<NativeBlockMeta> {
+    match bincode_deserialize_exact::<NativeBlockMeta>(bytes, label) {
+        Ok(meta) => Ok(meta),
+        Err(current_error) => match bincode_deserialize_exact::<LegacyNativeBlockMetaV1>(
+            bytes,
+            &format!("legacy {label}"),
+        ) {
+            Ok(meta) => Ok(meta.into()),
+            Err(legacy_error) => Err(anyhow!(
+                "{label} did not decode as current or legacy native metadata: current={current_error}; legacy={legacy_error}"
+            )),
+        },
+    }
 }
 
 fn encoded_len_limit(decoded_len_limit: usize) -> usize {
@@ -10188,6 +10562,28 @@ mod tests {
     struct LeanMinedWorkAdmissionVectorFile {
         schema_version: u32,
         mined_work_admission_cases: Vec<LeanMinedWorkAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeMinerIdentityVectorFile {
+        schema_version: u32,
+        native_miner_identity_cases: Vec<LeanNativeMinerIdentityCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeMinerIdentityCase {
+        name: String,
+        height: u64,
+        public_key_len: usize,
+        signature_len: usize,
+        public_key_bytes_parse: bool,
+        miner_commitment_matches: bool,
+        signature_bytes_parse: bool,
+        signature_verifies: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -12058,6 +12454,155 @@ mod tests {
     }
 
     #[test]
+    fn native_mined_block_carries_valid_miner_identity() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+
+        let imported = mine_empty_native_block(&node);
+
+        assert_eq!(imported.miner_public_key.len(), ML_DSA_PUBLIC_KEY_LEN);
+        assert_eq!(imported.miner_signature.len(), ML_DSA_SIGNATURE_LEN);
+        assert_eq!(
+            imported.miner_commitment,
+            native_miner_commitment(&imported.miner_public_key)
+        );
+        verify_native_miner_identity(&imported).expect("mined block signature verifies");
+    }
+
+    #[test]
+    fn native_miner_identity_rejects_unsigned_non_genesis() {
+        let pow_bits = 0x207f_ffff;
+        let parent = genesis_meta(pow_bits).expect("genesis");
+        let mut block = mined_empty_child(&parent, 1, pow_bits, 0);
+        block.miner_public_key.clear();
+        block.miner_signature.clear();
+        block.miner_commitment = [0u8; 48];
+
+        let err = validate_announced_block(&parent, &block)
+            .expect_err("unsigned non-genesis announced block must reject");
+        assert!(
+            err.to_string().contains("invalid_miner_public_key_length"),
+            "{err:?}"
+        );
+        assert!(verify_native_miner_identity(&parent).is_ok());
+    }
+
+    #[test]
+    fn native_miner_identity_binds_commitment_nonce_and_work_hash() {
+        let pow_bits = 0x207f_ffff;
+        let parent = genesis_meta(pow_bits).expect("genesis");
+        let block = mined_empty_child(&parent, 1, pow_bits, 0);
+
+        let mut bad_commitment = block.clone();
+        bad_commitment.miner_commitment[0] ^= 1;
+        let err = validate_announced_block(&parent, &bad_commitment)
+            .expect_err("miner commitment mismatch must reject");
+        assert!(err.to_string().contains("miner_commitment_mismatch"));
+
+        let mut bad_nonce = block.clone();
+        bad_nonce.nonce[0] ^= 1;
+        let err = validate_announced_block(&parent, &bad_nonce)
+            .expect_err("nonce tamper must invalidate miner signature before PoW");
+        assert!(err
+            .to_string()
+            .contains("native_miner_signature_verification_failed"));
+
+        let mut bad_work_hash = block.clone();
+        bad_work_hash.work_hash[0] ^= 1;
+        bad_work_hash.hash = bad_work_hash.work_hash;
+        let err = validate_announced_block(&parent, &bad_work_hash)
+            .expect_err("work-hash tamper must invalidate miner signature before PoW");
+        assert!(err
+            .to_string()
+            .contains("native_miner_signature_verification_failed"));
+    }
+
+    #[test]
+    fn native_miner_identity_rejects_wrong_public_key() {
+        let pow_bits = 0x207f_ffff;
+        let parent = genesis_meta(pow_bits).expect("genesis");
+        let mut block = mined_empty_child(&parent, 1, pow_bits, 0);
+        let other = NativeMinerIdentity::from_seed(b"other native miner identity");
+        block.miner_public_key = other.public_key.to_bytes();
+        block.miner_commitment = native_miner_commitment(&block.miner_public_key);
+
+        let err = validate_announced_block(&parent, &block)
+            .expect_err("wrong public key must fail signature verification");
+        assert!(err
+            .to_string()
+            .contains("native_miner_signature_verification_failed"));
+    }
+
+    #[test]
+    fn legacy_native_block_metadata_decodes_without_miner_identity() {
+        let current = mined_empty_child(
+            &genesis_meta(0x207f_ffff).expect("genesis"),
+            1,
+            0x207f_ffff,
+            0,
+        );
+        let legacy = legacy_meta_from_current(&current);
+        let encoded = bincode::serialize(&legacy).expect("serialize legacy native metadata");
+        let decoded =
+            bincode_deserialize_native_block_meta_exact(&encoded, "legacy native metadata")
+                .expect("decode legacy native metadata");
+
+        assert_eq!(decoded.height, current.height);
+        assert_eq!(decoded.hash, current.hash);
+        assert!(decoded.miner_public_key.is_empty());
+        assert!(decoded.miner_signature.is_empty());
+        assert_eq!(decoded.miner_commitment, [0u8; 48]);
+    }
+
+    #[test]
+    fn native_metadata_projection_rejects_legacy_unsigned_startup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        {
+            let node =
+                NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+            let imported = mine_empty_native_block(&node);
+            assert_eq!(imported.height, 1);
+            let legacy = legacy_meta_from_current(&imported);
+            let encoded = bincode::serialize(&legacy).expect("serialize legacy metadata");
+            node.block_tree
+                .insert(imported.hash.as_slice(), encoded.clone())
+                .expect("replace block row with legacy metadata");
+            node.meta_tree
+                .insert(META_BEST_KEY, encoded)
+                .expect("replace best row with legacy metadata");
+            node.block_tree.flush().expect("flush block tree");
+            node.meta_tree.flush().expect("flush meta tree");
+        }
+
+        let err = match NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)) {
+            Ok(_) => panic!("legacy unsigned non-genesis metadata must fail startup"),
+            Err(err) => err,
+        };
+        let err = format!("{err:?}");
+        assert!(err.contains("invalid_miner_public_key_length"), "{err}");
+    }
+
+    #[test]
+    fn native_metadata_projection_rejects_unsigned_sync_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let imported = mine_empty_native_block(&node);
+        let unsigned = unsigned_native_meta(imported.clone());
+        persist_block_record(&node.block_tree, &unsigned).expect("replace signed block row");
+
+        let err = node
+            .block_range(imported.height, imported.height)
+            .expect_err("unsigned canonical metadata must not be served over sync");
+        let err = format!("{err:?}");
+        assert!(err.contains("invalid_miner_public_key_length"), "{err}");
+    }
+
+    #[test]
     fn announced_block_rejects_future_timestamp_skew() {
         let pow_bits = 0x207f_ffff;
         let parent = genesis_meta(pow_bits).expect("genesis");
@@ -12261,6 +12806,7 @@ mod tests {
         block.hash = seal.work_hash;
         block.work_hash = seal.work_hash;
         block.nonce = seal.nonce;
+        sign_test_block_meta(&mut block);
 
         let err = node
             .import_announced_block(block)
@@ -13617,6 +14163,57 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native mined-work admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_native_miner_identity_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_MINER_IDENTITY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NATIVE_MINER_IDENTITY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean native miner identity vectors");
+        let vectors: LeanNativeMinerIdentityVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean native miner identity vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            vectors.native_miner_identity_cases.len() >= 10,
+            "Lean native miner identity cases cover too few policy branches"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.native_miner_identity_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_native_miner_identity_case(case);
+        }
+    }
+
+    fn verify_lean_native_miner_identity_case(case: &LeanNativeMinerIdentityCase) {
+        let input = NativeMinerIdentityAdmissionInput {
+            height: case.height,
+            public_key_len: case.public_key_len,
+            signature_len: case.signature_len,
+            public_key_bytes_parse: case.public_key_bytes_parse,
+            miner_commitment_matches: case.miner_commitment_matches,
+            signature_bytes_parse: case.signature_bytes_parse,
+            signature_verifies: case.signature_verifies,
+        };
+        let actual_rejection = evaluate_native_miner_identity_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native miner identity validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native miner identity rejection drifted from Lean spec",
             case.name
         );
     }
@@ -16188,6 +16785,35 @@ mod tests {
     }
 
     #[test]
+    fn semantic_action_hash_ignores_received_time_for_duplicate_policy() {
+        let first = test_outbound_bridge_action(b"same outbound body");
+        let mut second = first.clone();
+        second.received_ms = first.received_ms.saturating_add(42);
+        second.tx_hash = pending_action_hash(&second);
+
+        assert_ne!(first.tx_hash, second.tx_hash);
+        assert_eq!(
+            pending_action_semantic_hash(&first),
+            pending_action_semantic_hash(&second)
+        );
+    }
+
+    #[test]
+    fn imported_block_actions_reject_semantic_duplicate_with_different_received_time() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let first = test_outbound_bridge_action(b"same semantic outbound body");
+        let mut second = first.clone();
+        second.received_ms = first.received_ms.saturating_add(1);
+        second.tx_hash = pending_action_hash(&second);
+        assert_ne!(first.tx_hash, second.tx_hash);
+
+        let err = validate_block_actions_locked(&state, &[first, second])
+            .expect_err("semantic duplicate must fail even when tx_hash differs");
+        assert!(err.to_string().contains("duplicate semantic action"));
+    }
+
+    #[test]
     fn decode_block_actions_rejects_action_count_mismatch() {
         let pow_bits = 0x207f_ffff;
         let mut block = genesis_meta(pow_bits).expect("genesis");
@@ -16314,6 +16940,36 @@ mod tests {
         assert!(err
             .to_string()
             .contains("stored pending action hash mismatch"));
+    }
+
+    #[test]
+    fn load_pending_actions_rejects_semantic_duplicate_received_time() {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary sled db");
+        let tree = db
+            .open_tree("pending_actions")
+            .expect("pending action tree");
+        let first = test_outbound_bridge_action(b"persisted duplicate semantic body");
+        let mut second = first.clone();
+        second.received_ms = first.received_ms.saturating_add(1);
+        second.tx_hash = pending_action_hash(&second);
+        assert_ne!(first.tx_hash, second.tx_hash);
+        assert_eq!(
+            pending_action_semantic_hash(&first),
+            pending_action_semantic_hash(&second)
+        );
+        tree.insert(first.tx_hash.as_slice(), first.encode())
+            .expect("insert first pending action");
+        tree.insert(second.tx_hash.as_slice(), second.encode())
+            .expect("insert second pending action");
+
+        let err = load_pending_actions(&tree)
+            .expect_err("semantic duplicate persisted pending action must reject");
+        assert!(err
+            .to_string()
+            .contains("duplicate semantic stored pending action"));
     }
 
     #[test]
@@ -18212,7 +18868,7 @@ mod tests {
             pow_bits,
         };
         let seal = mine_native_round(work, 0).expect("malformed announced bridge seal");
-        let meta = NativeBlockMeta {
+        let meta = signed_test_block_meta(NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
@@ -18234,7 +18890,10 @@ mod tests {
             supply_digest: parent.supply_digest,
             tx_count,
             action_bytes: vec![malformed.encode()],
-        };
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        });
 
         let err = node
             .import_announced_block(meta)
@@ -18492,6 +19151,20 @@ mod tests {
     }
 
     #[test]
+    fn native_metadata_projection_rejects_unsigned_bridge_witness() {
+        let (_tmp, node, imported) =
+            node_with_exportable_bridge_block(b"unsigned bridge witness metadata");
+        let unsigned = unsigned_native_meta(imported.clone());
+        persist_block_record(&node.block_tree, &unsigned)
+            .expect("replace bridge block with unsigned metadata");
+
+        let err = export_bridge_witness(&node, json!([hex32(&imported.hash), 0]))
+            .expect_err("unsigned canonical metadata must not be projected into bridge witness");
+        let err = format!("{err:?}");
+        assert!(err.contains("invalid_miner_public_key_length"), "{err}");
+    }
+
+    #[test]
     fn bridge_witness_rejects_message_index_out_of_bounds() {
         let (_tmp, node, imported) =
             node_with_exportable_bridge_block(b"message index out of bounds");
@@ -18607,7 +19280,7 @@ mod tests {
             pow_bits,
         };
         let seal = mine_native_round(work, 0).expect("malformed bridge child seal");
-        let malformed_meta = NativeBlockMeta {
+        let malformed_meta = signed_test_block_meta(NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
@@ -18629,7 +19302,10 @@ mod tests {
             supply_digest: older_bridge.supply_digest,
             tx_count,
             action_bytes: vec![malformed.encode()],
-        };
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        });
         let malformed_hash = malformed_meta.hash;
         persist_block_record(&node.block_tree, &malformed_meta)
             .expect("persist malformed canonical block");
@@ -18746,6 +19422,52 @@ mod tests {
         }
     }
 
+    fn test_miner_identity() -> NativeMinerIdentity {
+        NativeMinerIdentity::from_seed(b"hegemon native miner identity test seed")
+    }
+
+    fn sign_test_block_meta(meta: &mut NativeBlockMeta) {
+        sign_native_block_meta(meta, &test_miner_identity());
+    }
+
+    fn signed_test_block_meta(mut meta: NativeBlockMeta) -> NativeBlockMeta {
+        sign_test_block_meta(&mut meta);
+        meta
+    }
+
+    fn unsigned_native_meta(mut meta: NativeBlockMeta) -> NativeBlockMeta {
+        meta.miner_commitment = [0u8; 48];
+        meta.miner_public_key.clear();
+        meta.miner_signature.clear();
+        meta
+    }
+
+    fn legacy_meta_from_current(meta: &NativeBlockMeta) -> LegacyNativeBlockMetaV1 {
+        LegacyNativeBlockMetaV1 {
+            chain_id: meta.chain_id,
+            rules_hash: meta.rules_hash,
+            height: meta.height,
+            hash: meta.hash,
+            parent_hash: meta.parent_hash,
+            state_root: meta.state_root,
+            kernel_root: meta.kernel_root,
+            nullifier_root: meta.nullifier_root,
+            extrinsics_root: meta.extrinsics_root,
+            message_root: meta.message_root,
+            message_count: meta.message_count,
+            header_mmr_root: meta.header_mmr_root,
+            header_mmr_len: meta.header_mmr_len,
+            timestamp_ms: meta.timestamp_ms,
+            pow_bits: meta.pow_bits,
+            nonce: meta.nonce,
+            work_hash: meta.work_hash,
+            cumulative_work: meta.cumulative_work,
+            supply_digest: meta.supply_digest,
+            tx_count: meta.tx_count,
+            action_bytes: meta.action_bytes.clone(),
+        }
+    }
+
     fn mined_empty_child(
         parent: &NativeBlockMeta,
         height: u64,
@@ -18829,7 +19551,7 @@ mod tests {
             pow_bits,
         };
         let seal = mine_native_round(work, round).expect("side seal");
-        NativeBlockMeta {
+        signed_test_block_meta(NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
@@ -18851,7 +19573,10 @@ mod tests {
             supply_digest: parent.supply_digest,
             tx_count: 0,
             action_bytes: Vec::new(),
-        }
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        })
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -18939,7 +19664,7 @@ mod tests {
             pow_bits,
         };
         let seal = mine_native_round(work, round).expect("mutated seal");
-        NativeBlockMeta {
+        signed_test_block_meta(NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
@@ -18961,7 +19686,10 @@ mod tests {
             supply_digest,
             tx_count: 0,
             action_bytes: Vec::new(),
-        }
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        })
     }
 
     fn mined_child_with_actions(
@@ -19034,7 +19762,7 @@ mod tests {
             pow_bits,
         };
         let seal = mine_native_round(work, round).expect("action child seal");
-        NativeBlockMeta {
+        signed_test_block_meta(NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
             height,
@@ -19056,7 +19784,10 @@ mod tests {
             supply_digest,
             tx_count,
             action_bytes: actions.iter().map(Encode::encode).collect(),
-        }
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        })
     }
 
     fn test_config(

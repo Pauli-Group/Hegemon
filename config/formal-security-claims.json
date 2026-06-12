@@ -289,6 +289,47 @@
       "residual_risks": []
     },
     {
+      "id": "formal.wallet-note-ciphertext-wire",
+      "component": "wallet note ciphertext wire grammar",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean wallet note-ciphertext wire kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; generated Lean vectors are checked against the production parsers.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Wallet.NoteCiphertextWire.chain_memo_overrun_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts",
+        "Hegemon.Wallet.NoteCiphertextWire.crypto_trailing_byte_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.crypto_truncated_after_kem_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.crypto_valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model covers byte-level parser grammar for the two production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes and wallet::NoteCiphertext::from_chain_bytes.",
+        "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, and trailing chain bytes.",
+        "The theorem covers exact consumption, fixed ML-KEM ciphertext length, fixed container padding, and canonical compact length admission. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, note plaintext correctness, note commitment/nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
+        "crypto/src/note_encryption.rs",
+        "wallet/src/notes.rs",
+        "wallet/tests/note_ciphertext_wire_vectors.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated-json> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture",
+        "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture",
+        "cargo test -p wallet from_chain_bytes --lib -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "shielded.nullifier-state",
       "component": "shielded nullifier anti-double-spend state",
       "claim_class": "lean_theorem",
@@ -720,6 +761,58 @@
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
+    },
+    {
+      "id": "native.miner-identity",
+      "component": "native PoW miner identity and side-auth admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native miner-identity kernel proves the executable admission table for genesis exemption, ML-DSA public-key length and parsing, miner commitment binding, ML-DSA signature length and parsing, and signature verification before native non-genesis blocks are accepted or projected from storage; generated Lean vectors are checked against the production native helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.MinerIdentity.accepts_iff_native_miner_identity_preconditions",
+        "Hegemon.Native.MinerIdentity.commitment_mismatch_rejects",
+        "Hegemon.Native.MinerIdentity.commitment_precedes_signature_failure",
+        "Hegemon.Native.MinerIdentity.genesis_accepts_without_identity",
+        "Hegemon.Native.MinerIdentity.invalid_public_key_bytes_rejects",
+        "Hegemon.Native.MinerIdentity.invalid_signature_bytes_rejects",
+        "Hegemon.Native.MinerIdentity.missing_public_key_rejects",
+        "Hegemon.Native.MinerIdentity.missing_signature_rejects",
+        "Hegemon.Native.MinerIdentity.public_key_precedes_signature_failure",
+        "Hegemon.Native.MinerIdentity.signature_verification_failure_rejects",
+        "Hegemon.Native.MinerIdentity.valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model treats ML-DSA public-key parsing, signature parsing, and signature verification as boolean results from the production cryptography implementation.",
+        "Generated Lean conformance vectors cover genesis exemption, accepted non-genesis identity, missing public key, invalid public-key bytes, miner-commitment mismatch, missing signature, invalid signature bytes, failed signature verification, and rejection precedence.",
+        "Production metadata projection for startup canonical rows, canonical sync serving, bridge witness export, and announced-block import is routed through verify_native_block_meta_projection so persisted unsigned non-genesis rows cannot be trusted or exported after decode.",
+        "Native miner identity is currently self-contained side authentication: the block carries the public key, a 48-byte commitment to that key, and a signature over the native signature message. This claim does not prove miner registration or stake governance.",
+        "The theorem covers executable admission ordering, not ML-DSA unforgeability, ML-DSA implementation equivalence, key compromise, OS RNG quality for generated local seeds, or complete native-node equivalence. Rust regressions additionally check that the native signature message binds nonce and work hash."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MinerIdentity.lean",
+        "formal/lean/Hegemon/Native/GenerateMinerIdentityVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NATIVE_MINER_IDENTITY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_native_miner_identity_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_miner_identity_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_metadata_projection_ --lib --no-default-features -- --nocapture",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-miner-registry-missing",
+          "description": "Native miner identity is self-contained side authentication and is not yet backed by an on-chain or chainspec miner registry; registration governance remains a separate protocol-design task.",
+          "status": "open",
+          "tracking": "DESIGN.md"
+        }
+      ]
     },
     {
       "id": "consensus.version-policy",
@@ -2137,7 +2230,7 @@
       "id": "native.pending-action-reload",
       "component": "native pending action startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions, and blueprint bindings plus regressions require semantic mempool re-admission against loaded canonical state, bridge replay, staged sidecars, and resource budgets before reloaded entries can feed mining selection.",
+      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions, and blueprint bindings plus regressions require semantic mempool re-admission plus arrival-time-insensitive semantic duplicate rejection against loaded canonical state, bridge replay, staged sidecars, and resource budgets before reloaded entries can feed mining selection.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
@@ -2155,7 +2248,7 @@
       "assumptions": [
         "The Lean model represents the per-entry startup reload decision table over production-derived booleans: 32-byte sled-key shape, embedded tx_hash equality with the key, recomputed pending_action_hash equality with the embedded tx_hash, and loaded-action hash uniqueness.",
         "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before key/hash mismatch, key/hash mismatch before recomputed-hash mismatch, and recomputed-hash mismatch before duplicate reporting.",
-        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
@@ -2168,6 +2261,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_PENDING_ACTION_RELOAD_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_pending_action_reload_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node load_pending_actions_rejects_semantic_duplicate_received_time --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -2617,7 +2711,7 @@
       "assumptions": [
         "The Lean model proves the deterministic pre-PoW header admission table and checked u64 next-height behavior; it does not prove PoW hash-threshold arithmetic or light-client header verification, which are covered separately by consensus.pow-admission and consensus header/light-client gates.",
         "Generated Lean conformance vectors cover valid admission, height mismatch, height overflow at u64::MAX, parent-hash mismatch, non-advancing timestamps, future-skew rejection, hash/work-hash mismatch, rejection precedence, and saturated future-limit acceptance.",
-        "The theorem covers native announced-block pre-PoW admission only. Blueprint bindings additionally require `validate_announced_block` to propagate `verify_native_pow_meta` and require import to propagate validation before body replay, persistence, or reorg work. This does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice liveness, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
+        "The theorem covers native announced-block pre-PoW admission only. Blueprint bindings additionally require `validate_announced_block` to propagate `verify_native_block_meta_projection`, which includes miner-identity and PoW metadata verification for non-genesis blocks, and require import to propagate validation before body replay, persistence, or reorg work. This does not prove body commitment replay, action payload validation, header preimage hashing, fork-choice liveness, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AnnouncedBlockAdmission.lean",
@@ -3095,7 +3189,7 @@
       "id": "native.block-action-validation",
       "component": "native decoded block action validation composition",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-action validation kernel proves the composed native decoded-action import table: action count/hash admission, route/scope admission, route-specific payload success, bridge replay duplicate detection, shielded transfer ordering, and transfer state admission run in fixed order before block replay/accounting can treat decoded actions as valid; generated Lean vectors are checked against the production validate_block_actions_locked path.",
+      "summary": "The Lean block-action validation kernel proves the composed native decoded-action import table: action count/hash admission, route/scope admission, route-specific payload success, bridge replay duplicate detection, shielded transfer ordering, and transfer state admission run in fixed order before block replay/accounting can treat decoded actions as valid; generated Lean vectors are checked against the production validate_block_actions_locked path, and runtime bindings/regressions additionally reject arrival-time-only semantic action duplicates.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regressions",
       "production_eligible": true,
@@ -3117,7 +3211,7 @@
       "assumptions": [
         "The Lean model composes already-modeled decoded-action predicates over production-derived facts: action hash/count agreement, action scope routing, route-specific payload validity, transfer order keys, transfer state admission, and observed inbound bridge replay keys.",
         "Generated Lean conformance vectors cover a valid mixed block, non-transfer actions between transfers, action hash mismatch, duplicate action hashes, scope-before-payload precedence, bridge payload-before-replay precedence, prior and cross-action bridge replay duplicates, transfer payload-before-order precedence, descending transfer order rejection, transfer order-before-state precedence, and transfer state rejection.",
-        "The theorem covers executable decoded block-action validation composition only. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash security, tx-leaf proof soundness, recursive proof soundness, storage durability, or complete native-node equivalence."
+        "The theorem covers executable decoded block-action validation composition only. Runtime bindings and focused regressions additionally require `validate_block_actions_locked` to reject decoded action streams whose semantic hash is duplicated only through arrival-time drift before transfer or replay-state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash security, tx-leaf proof soundness, recursive proof soundness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockActionValidation.lean",
@@ -3130,6 +3224,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_action_validation_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_actions_reject --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node imported_block_actions_reject_semantic_duplicate_with_different_received_time --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],

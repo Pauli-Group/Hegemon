@@ -217,7 +217,7 @@ impl PeerStore {
         records.sort_by(|a, b| {
             let a_time = a.last_connected.unwrap_or(a.last_updated);
             let b_time = b.last_connected.unwrap_or(b.last_updated);
-            a_time.cmp(&b_time)
+            b_time.cmp(&a_time)
         });
 
         records.truncate(self.config.max_entries);
@@ -331,5 +331,97 @@ mod tests {
         assert_eq!(recent[2], addrs[3]);
         assert_eq!(recent[3], addrs[2]);
         assert_eq!(recent[4], addrs[0]);
+    }
+
+    #[test]
+    fn enforce_max_entries_retains_newest_connected_peers() {
+        let path = temp_path("peer_store_capacity_connected");
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: 3,
+        });
+
+        let base_time = SystemTime::now();
+        let addrs: Vec<SocketAddr> = (0..6)
+            .map(|i| format!("127.0.0.1:91{:02}", i).parse().unwrap())
+            .collect();
+
+        for (i, addr) in addrs.iter().enumerate() {
+            let timestamp = base_time + Duration::from_secs(i as u64);
+            store.entries.insert(
+                *addr,
+                PeerRecord {
+                    addr: *addr,
+                    last_updated: timestamp,
+                    last_connected: Some(timestamp),
+                },
+            );
+        }
+
+        assert!(store.enforce_max_entries());
+        assert_eq!(store.entries.len(), 3);
+        assert!(store.entries.contains_key(&addrs[5]));
+        assert!(store.entries.contains_key(&addrs[4]));
+        assert!(store.entries.contains_key(&addrs[3]));
+        assert!(!store.entries.contains_key(&addrs[2]));
+        assert!(!store.entries.contains_key(&addrs[1]));
+        assert!(!store.entries.contains_key(&addrs[0]));
+    }
+
+    #[test]
+    fn enforce_max_entries_uses_recent_connected_or_learned_time() {
+        let path = temp_path("peer_store_capacity_mixed");
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+
+        let base_time = SystemTime::now();
+        let old_connection_with_new_update: SocketAddr = "127.0.0.1:9200".parse().unwrap();
+        let newest_learned: SocketAddr = "127.0.0.1:9201".parse().unwrap();
+        let newest_connected: SocketAddr = "127.0.0.1:9202".parse().unwrap();
+        let older_learned: SocketAddr = "127.0.0.1:9203".parse().unwrap();
+
+        store.entries.insert(
+            old_connection_with_new_update,
+            PeerRecord {
+                addr: old_connection_with_new_update,
+                last_updated: base_time + Duration::from_secs(100),
+                last_connected: Some(base_time + Duration::from_secs(1)),
+            },
+        );
+        store.entries.insert(
+            newest_learned,
+            PeerRecord {
+                addr: newest_learned,
+                last_updated: base_time + Duration::from_secs(50),
+                last_connected: None,
+            },
+        );
+        store.entries.insert(
+            newest_connected,
+            PeerRecord {
+                addr: newest_connected,
+                last_updated: base_time + Duration::from_secs(2),
+                last_connected: Some(base_time + Duration::from_secs(40)),
+            },
+        );
+        store.entries.insert(
+            older_learned,
+            PeerRecord {
+                addr: older_learned,
+                last_updated: base_time + Duration::from_secs(10),
+                last_connected: None,
+            },
+        );
+
+        assert!(store.enforce_max_entries());
+        assert_eq!(store.entries.len(), 2);
+        assert!(store.entries.contains_key(&newest_learned));
+        assert!(store.entries.contains_key(&newest_connected));
+        assert!(!store.entries.contains_key(&old_connection_with_new_update));
+        assert!(!store.entries.contains_key(&older_learned));
     }
 }

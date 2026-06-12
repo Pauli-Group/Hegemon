@@ -269,14 +269,20 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        if offset + note_len + 4 > CHAIN_CIPHERTEXT_SIZE {
+        let note_end = offset
+            .checked_add(note_len)
+            .ok_or_else(|| WalletError::Serialization("note payload length overflow".into()))?;
+        let memo_len_end = note_end
+            .checked_add(4)
+            .ok_or_else(|| WalletError::Serialization("memo length offset overflow".into()))?;
+        if memo_len_end > CHAIN_CIPHERTEXT_SIZE {
             return Err(WalletError::Serialization(format!(
                 "Note payload too large: {} bytes at offset {}",
                 note_len, offset
             )));
         }
-        let note_payload = ciphertext_bytes[offset..offset + note_len].to_vec();
-        offset += note_len;
+        let note_payload = ciphertext_bytes[offset..note_end].to_vec();
+        offset = note_end;
 
         // Memo payload length and data
         let memo_len = u32::from_le_bytes(
@@ -286,11 +292,23 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        let memo_payload = if memo_len > 0 && offset + memo_len <= CHAIN_CIPHERTEXT_SIZE {
-            ciphertext_bytes[offset..offset + memo_len].to_vec()
-        } else {
-            Vec::new()
-        };
+        let memo_end = offset
+            .checked_add(memo_len)
+            .ok_or_else(|| WalletError::Serialization("memo payload length overflow".into()))?;
+        if memo_end > CHAIN_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Memo payload too large: {} bytes at offset {}",
+                memo_len, offset
+            )));
+        }
+        let memo_payload = ciphertext_bytes[offset..memo_end].to_vec();
+        offset = memo_end;
+
+        if ciphertext_bytes[offset..].iter().any(|&byte| byte != 0) {
+            return Err(WalletError::Serialization(
+                "Encrypted note container has nonzero trailing padding".into(),
+            ));
+        }
 
         let (kem_len, kem_len_bytes) = decode_compact_len(&bytes[CHAIN_CIPHERTEXT_SIZE..])?;
         let expected_kem_len = expected_kem_ciphertext_len(crypto_suite)?;
@@ -467,7 +485,13 @@ fn decode_compact_len(data: &[u8]) -> Result<(usize, usize), WalletError> {
                 ));
             }
             let raw = u16::from_le_bytes([data[0], data[1]]);
-            Ok(((raw >> 2) as usize, 2))
+            let value = (raw >> 2) as usize;
+            if value < 0x40 {
+                return Err(WalletError::Serialization(
+                    "non-canonical compact length".into(),
+                ));
+            }
+            Ok((value, 2))
         }
         2 => {
             if data.len() < 4 {
@@ -476,7 +500,13 @@ fn decode_compact_len(data: &[u8]) -> Result<(usize, usize), WalletError> {
                 ));
             }
             let raw = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            Ok(((raw >> 2) as usize, 4))
+            let value = (raw >> 2) as usize;
+            if value < 0x4000 {
+                return Err(WalletError::Serialization(
+                    "non-canonical compact length".into(),
+                ));
+            }
+            Ok((value, 4))
         }
         _ => {
             let bytes_needed = (data[0] >> 2) as usize + 4;
@@ -493,6 +523,11 @@ fn decode_compact_len(data: &[u8]) -> Result<(usize, usize), WalletError> {
             let mut buf = [0u8; 8];
             buf[..bytes_needed].copy_from_slice(&data[1..1 + bytes_needed]);
             let value = u64::from_le_bytes(buf) as usize;
+            if value < 0x4000_0000 || data[bytes_needed] == 0 {
+                return Err(WalletError::Serialization(
+                    "non-canonical compact length".into(),
+                ));
+            }
             Ok((value, 1 + bytes_needed))
         }
     }
@@ -523,6 +558,34 @@ mod tests {
     use crate::keys::RootSecret;
 
     use super::*;
+
+    fn sample_ciphertext(seed: u64, memo: &[u8]) -> NoteCiphertext {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(100, 0, MemoPlaintext::new(memo.to_vec()), &mut rng);
+        NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap()
+    }
+
+    fn payload_offsets(chain_bytes: &[u8]) -> (usize, usize, usize, usize) {
+        let note_len = u32::from_le_bytes(chain_bytes[7..11].try_into().unwrap()) as usize;
+        let note_start = 11;
+        let memo_len_offset = note_start + note_len;
+        let memo_len = u32::from_le_bytes(
+            chain_bytes[memo_len_offset..memo_len_offset + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let memo_start = memo_len_offset + 4;
+        (
+            note_start,
+            memo_len_offset,
+            memo_start,
+            memo_start + memo_len,
+        )
+    }
 
     #[test]
     fn encrypt_decrypt_round_trip() {
@@ -572,6 +635,20 @@ mod tests {
     }
 
     #[test]
+    fn chain_serialization_round_trip() {
+        let ciphertext = sample_ciphertext(457, b"chain memo");
+        let bytes = ciphertext.to_chain_bytes().unwrap();
+        let recovered = NoteCiphertext::from_chain_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.version, ciphertext.version);
+        assert_eq!(recovered.crypto_suite, ciphertext.crypto_suite);
+        assert_eq!(recovered.diversifier_index, ciphertext.diversifier_index);
+        assert_eq!(recovered.kem_ciphertext, ciphertext.kem_ciphertext);
+        assert_eq!(recovered.note_payload, ciphertext.note_payload);
+        assert_eq!(recovered.memo_payload, ciphertext.memo_payload);
+    }
+
+    #[test]
     fn to_chain_bytes_rejects_oversize_memo() {
         let mut rng = StdRng::seed_from_u64(789);
         let root = RootSecret::from_rng(&mut rng);
@@ -588,5 +665,69 @@ mod tests {
     fn empty_ciphertext_uses_current_version() {
         let empty = NoteCiphertext::empty();
         assert_eq!(empty.version, NOTE_ENCRYPTION_VERSION);
+    }
+
+    #[test]
+    fn from_chain_bytes_rejects_memo_overrun() {
+        let ciphertext = sample_ciphertext(790, b"memo");
+        let mut bytes = ciphertext.to_chain_bytes().unwrap();
+        let (_, memo_len_offset, memo_start, _) = payload_offsets(&bytes);
+        let overrun_len = CHAIN_CIPHERTEXT_SIZE - memo_start + 1;
+        bytes[memo_len_offset..memo_len_offset + 4]
+            .copy_from_slice(&(overrun_len as u32).to_le_bytes());
+
+        assert!(NoteCiphertext::from_chain_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn from_chain_bytes_rejects_nonzero_container_padding() {
+        let ciphertext = sample_ciphertext(791, b"memo");
+        let mut bytes = ciphertext.to_chain_bytes().unwrap();
+        let (_, _, _, payload_end) = payload_offsets(&bytes);
+        assert!(payload_end < CHAIN_CIPHERTEXT_SIZE);
+        bytes[payload_end] = 0xaa;
+
+        assert!(NoteCiphertext::from_chain_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn from_chain_bytes_rejects_trailing_bytes_after_kem() {
+        let ciphertext = sample_ciphertext(792, b"memo");
+        let mut bytes = ciphertext.to_chain_bytes().unwrap();
+        bytes.push(0x99);
+
+        assert!(NoteCiphertext::from_chain_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn from_chain_bytes_rejects_noncanonical_compact_kem_length() {
+        let ciphertext = sample_ciphertext(793, b"memo");
+        let bytes = ciphertext.to_chain_bytes().unwrap();
+        let mut noncanonical = Vec::with_capacity(bytes.len() + 2);
+        noncanonical.extend_from_slice(&bytes[..CHAIN_CIPHERTEXT_SIZE]);
+        let raw = ((synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN as u32) << 2) | 0x02;
+        noncanonical.extend_from_slice(&raw.to_le_bytes());
+        noncanonical.extend_from_slice(&bytes[CHAIN_CIPHERTEXT_SIZE + 2..]);
+
+        assert!(NoteCiphertext::from_chain_bytes(&noncanonical).is_err());
+    }
+
+    #[test]
+    fn from_chain_bytes_rejects_truncated_prefixes_without_panic() {
+        let ciphertext = sample_ciphertext(794, b"memo");
+        let bytes = ciphertext.to_chain_bytes().unwrap();
+
+        for len in 0..bytes.len() {
+            let result =
+                std::panic::catch_unwind(|| NoteCiphertext::from_chain_bytes(&bytes[..len]));
+            assert!(
+                result.is_ok(),
+                "from_chain_bytes panicked on prefix length {len}"
+            );
+            assert!(
+                result.unwrap().is_err(),
+                "truncated prefix length {len} unexpectedly decoded"
+            );
+        }
     }
 }
