@@ -246,6 +246,260 @@ theorem native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_valu
         relationFacts.left,
       relationFacts.right.right⟩
 
+theorem native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    Hegemon.Transaction.SpendAuthorization.InputSpendFacts
+        merkleRoot
+        publicNullifier
+        witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ TxLeafActionBindingFacts input := by
+  have boundFacts :=
+    canonical_surface_authorized_active_input_bound_to_statement
+      surface
+      (sound surface).spendAuthorized
+      slot
+      active
+  exact
+    ⟨boundFacts.left,
+      boundFacts.right.left,
+      boundFacts.right.right.left,
+      boundFacts.right.right.right.left,
+      boundFacts.right.right.right.right,
+      tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
+theorem native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    Hegemon.Transaction.SpendAuthorization.InputSlotAuthorizationFacts
+        merkleRoot
+        activeFlag
+        publicNullifier
+        witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ TxLeafActionBindingFacts input := by
+  have boundFacts :=
+    canonical_surface_authorized_input_slot_bound_to_statement
+      surface
+      (sound surface).spendAuthorized
+      slot
+  exact
+    ⟨boundFacts.left,
+      boundFacts.right.left,
+      boundFacts.right.right.left,
+      boundFacts.right.right.right.left,
+      boundFacts.right.right.right.right,
+      tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
+theorem native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      Hegemon.Transaction.PublicInputs.OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    Hegemon.Transaction.PublicInputs.OutputSlotFacts
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ Hegemon.Transaction.PublicInputs.OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ Hegemon.Transaction.PublicInputs.OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ TxLeafActionBindingFacts input := by
+  have boundFacts :=
+    canonical_surface_output_slot_bound_to_statement
+      surface
+      slot
+  exact
+    ⟨boundFacts.left,
+      boundFacts.right.left,
+      boundFacts.right.right,
+      tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
 end TxLeafCanonicalSurface
 end Native
 end Hegemon

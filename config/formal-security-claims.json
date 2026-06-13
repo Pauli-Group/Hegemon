@@ -2966,7 +2966,7 @@
       "id": "formal.native-tx-leaf-canonical-surface",
       "component": "native tx-leaf canonical verifier surface composition",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary: if the production-bound tx-leaf/action equality gate accepts, the canonical statement surface is present, and the explicit deployed verifier soundness assumption holds, then the accepted transaction relation follows and every asset delta is authorized by the modeled balance/stablecoin policy. The theorem also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
+      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary: if the production-bound tx-leaf/action equality gate accepts, the canonical statement surface is present, and the explicit deployed verifier soundness assumption holds, then the accepted transaction relation follows, every asset delta is authorized by the modeled balance/stablecoin policy, active and inactive input-slot authorization facts are bound to the statement and proof-binding vectors, and output commitment/ciphertext slots are bound to those same vectors. The theorem also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_cross_boundary_composition_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -2975,12 +2975,15 @@
         "Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_binding_facts",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta",
-        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_value"
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_value",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement"
       ],
       "assumptions": [
         "The theorem composes the already vector-checked native tx-leaf/action equality gate with the canonical verifier boundary, but the accepted transaction relation still depends on `DeployedTxVerifierSoundnessAssumption`.",
         "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
-        "The theorem narrows the native-to-transaction proof boundary; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
+        "The theorem narrows the native-to-transaction proof boundary and binds modeled spend/output slots to the exact canonical statement vectors; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",

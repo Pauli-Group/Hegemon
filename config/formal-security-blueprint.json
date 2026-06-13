@@ -5353,8 +5353,8 @@
       "id": "formal.native-tx-leaf-canonical-surface",
       "claim_id": "formal.native-tx-leaf-canonical-surface",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native tx-leaf canonical-surface composition, an accepted native tx-leaf/action binding gate plus a canonical deployed transaction statement surface and explicit deployed verifier soundness assumption imply the accepted transaction relation, field-level tx-leaf/action binding facts, and authorized per-asset delta values for the modeled balance witness.",
-      "informal_argument": "`Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_binding_facts` extracts nullifier, commitment, ciphertext-hash, active-count, version, fee, stablecoin payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and ciphertext payload-hash equality facts from the accepted native tx-leaf/action gate. `native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation` composes those facts with `CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation`; the asset-delta companion theorems then reuse `AssetIsolation.accepted_transaction_relation_authorized_asset_delta` and `accepted_transaction_relation_authorized_asset_delta_value`.",
+      "formal_statement": "For the executable Lean native tx-leaf canonical-surface composition, an accepted native tx-leaf/action binding gate plus a canonical deployed transaction statement surface and explicit deployed verifier soundness assumption imply the accepted transaction relation, field-level tx-leaf/action binding facts, authorized per-asset delta values for the modeled balance witness, active and inactive input-slot authorization facts bound to statement/proof-binding vectors, and output commitment/ciphertext-slot facts bound to those same vectors.",
+      "informal_argument": "`Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_binding_facts` extracts nullifier, commitment, ciphertext-hash, active-count, version, fee, stablecoin payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and ciphertext payload-hash equality facts from the accepted native tx-leaf/action gate. `native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation` composes those facts with `CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation`; the asset-delta companion theorems then reuse `AssetIsolation.accepted_transaction_relation_authorized_asset_delta` and `accepted_transaction_relation_authorized_asset_delta_value`. The input/output-slot companion theorems reuse the canonical verifier boundary's statement-vector binding theorems so the native artifact boundary now reaches active input spend facts, total input-slot facts, and output commitment/ciphertext facts under the same explicit deployed-verifier assumption.",
       "depends_on": [
         "native.block-artifact-binding-admission",
         "formal.native-tx-leaf-artifact-wire",
@@ -5388,7 +5388,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as a research-only cross-boundary composition. It narrows the native tx-leaf/action to accepted-transaction relation boundary, but it remains conditional on deployed verifier soundness and does not certify the backend proof system."
+        "notes": "Accepted as a research-only cross-boundary composition. It narrows the native tx-leaf/action to accepted-transaction relation boundary and now exposes input/output slot facts bound to the canonical statement vectors, but it remains conditional on deployed verifier soundness and does not certify the backend proof system."
       },
       "falsification_cases": [
         {
