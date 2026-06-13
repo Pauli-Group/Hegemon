@@ -4944,7 +4944,7 @@
       "claim_id": "native.pending-action-reload",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native pending-action reload predicate, a persisted pending action is accepted into the reloaded local mempool only when its key is well formed, its embedded tx_hash equals the 32-byte sled key, the production pending_action_hash recomputation equals the embedded tx_hash, and no equal action hash has already been loaded; otherwise startup reload rejects with fixed malformed-key, key/hash-mismatch, recomputed-hash-mismatch, then duplicate precedence.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable key/hash acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions`. Blueprint bindings and focused regressions additionally require persisted local mempool entries to be semantically unique after removing arrival time from their hash preimage, and require semantically re-admitting those loaded entries before they can feed mining selection.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions` proves the executable key/hash acceptance predicate, while `Hegemon.Native.PendingActionReload.malformed_action_key_rejects`, `Hegemon.Native.PendingActionReload.key_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_rejects`, `Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects`, and the companion precedence theorems pin the reject order. `gen_pending_action_reload_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_native_pending_action_reload`, the helper used by `load_pending_actions`. Blueprint bindings and focused regressions additionally require persisted local mempool entries to be semantically unique after removing arrival time from their hash preimage, require semantically re-admitting those loaded entries before they can feed mining selection, and require canonical reorg pending resurrection to re-admit existing pending actions before orphaned old-chain actions can be persisted.",
       "depends_on": [
         "native.codec-admission",
         "native.block-action-hash-admission",
@@ -5077,6 +5077,46 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "revalidate_reorg_pending_actions",
+          "required_callers": [
+            "reorganize_chain_to_best_locked"
+          ],
+          "call_order_constraints": [
+            {
+              "caller": "reorganize_chain_to_best_locked",
+              "callee_must_precede": [
+                "commit_reorg_state_atomically",
+                "publish_reorganized_state"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "stage_reorg_pending_action",
+          "required_callers": [
+            "revalidate_reorg_pending_actions"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_pending_action_against_mempool_state",
+          "required_callers": [
+            "stage_reorg_pending_action"
+          ],
+          "result_obligation": "must_check_result_fail_closed"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_mempool_byte_budget",
+          "required_callers": [
+            "stage_reorg_pending_action"
+          ],
+          "result_obligation": "must_check_result_fail_closed"
         }
       ],
       "evidence_paths": [
@@ -5091,7 +5131,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup key/hash reload. Semantic startup re-admission is covered by Rust implementation bindings and focused regressions; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup key/hash reload. Semantic startup re-admission and canonical reorg pending resurrection are covered by Rust implementation bindings and focused regressions; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean."
       },
       "falsification_cases": [
         {
@@ -5120,12 +5160,17 @@
           "gate": "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-reorg-pending-semantic-regression",
+          "description": "Canonical reorg pending resurrection must semantically re-admit existing pending actions before orphaned old-chain actions so duplicate orphaned nullifiers are quarantined before reorg persistence.",
+          "gate": "cargo test -p hegemon-node reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-pending-action-reload-gate",
           "description": "The release formal-core wrapper must generate pending-action reload vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to reject persisted arrival-time-only semantic duplicates and semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash or pending_action_semantic_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to reject persisted arrival-time-only semantic duplicates and semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication; they also require canonical reorg pending resurrection to revalidate the final pending set before atomic reorg persistence or in-memory publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash or pending_action_semantic_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
     },
     {
       "id": "native.staged-ciphertext-reload",

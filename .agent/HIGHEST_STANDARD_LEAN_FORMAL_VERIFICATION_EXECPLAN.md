@@ -117,6 +117,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 19:56Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1306 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 21:16Z) Added `Hegemon.Transaction.NoteCommitmentInputs`, proving the concrete note-commitment input transcript shape, domain tag, 18-limb length, `pk_recipient || rho || r || pk_auth` absorb order, and canonical asset-id boundary. Added generated Lean-to-Rust vectors, shared production `note_commitment_inputs` helper reuse across core/P3/SmallWood/disclosure paths, and admission rejection for the balance-slot padding field alias. `bash scripts/check_formal_core.sh` passed with 96 claims, 1333 named Lean theorem declarations, 87 production-eligible claims, 394 falsification cases, and 186 implementation bindings. Current tracked completion is 72.94%.
 - [x] (2026-06-13 22:34Z) Added `Hegemon.Transaction.NullifierInputs`, proving the concrete nullifier input transcript shape, domain tag 2, one-block six-limb length, `prf_key || position || rho` absorb order, and rho big-endian field-limb encoding. Added generated Lean-to-Rust vectors, shared production `nullifier_inputs` helper reuse across core/P3/SmallWood paths, and blueprint implementation bindings for those callers. `bash scripts/check_formal_core.sh` passed with 97 claims, 1338 named Lean theorem declarations, 88 production-eligible claims, 398 falsification cases, and 189 implementation bindings. Current tracked completion is 73.08%.
+- [x] (2026-06-13 23:05Z) Added native canonical reorg pending revalidation as a production-binding/refinement slice, not a new Lean theorem slice. Canonical reorg now semantically re-admits existing pending actions first, then orphaned old-chain actions, through the same mempool/nullifier/bridge/resource gates used at startup before reorg pending persistence or publication. The focused duplicate-nullifier reorg regression and `bash scripts/check_formal_core.sh` passed with 97 claims, 1338 named Lean theorem declarations, 88 production-eligible claims, 399 falsification cases, 193 implementation bindings, 151 result obligations, 123 dominance constraints / 326 dominance edges, and 134 order constraints / 355 order edges. Current tracked completion is 73.21%.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -618,6 +619,14 @@ The latest full formal-core pass after the note-commitment input-equivalence sli
     production_eligible_claims=87
     falsification_cases=394
     implementation_bindings=186
+
+The latest full formal-core pass after the native reorg pending revalidation production-binding slice reported:
+
+    claims=97
+    named_lean_theorems=1338
+    production_eligible_claims=88
+    falsification_cases=399
+    implementation_bindings=193
 
 ## Interfaces and Dependencies
 

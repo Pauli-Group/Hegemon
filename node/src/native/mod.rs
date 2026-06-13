@@ -3155,19 +3155,11 @@ impl NativeNode {
         for hash in &new_action_hashes {
             pending.remove(hash);
         }
-        for action in orphaned_actions(&old_chain, &new_action_hashes)? {
-            if is_candidate_artifact_action(&action) {
-                pending.entry(action.tx_hash).or_insert(action);
-                continue;
-            }
-            if action
-                .nullifiers
-                .iter()
-                .all(|nullifier| !new_state.nullifiers.contains(nullifier))
-            {
-                pending.entry(action.tx_hash).or_insert(action);
-            }
-        }
+        pending = revalidate_reorg_pending_actions(
+            &new_state,
+            pending,
+            orphaned_actions(&old_chain, &new_action_hashes)?,
+        );
 
         let pending_entries = pending
             .values()
@@ -10339,6 +10331,74 @@ fn orphaned_actions(
     Ok(actions)
 }
 
+fn revalidate_reorg_pending_actions(
+    canonical_state: &NativeState,
+    existing_pending: BTreeMap<[u8; 32], PendingAction>,
+    orphaned_actions: Vec<PendingAction>,
+) -> BTreeMap<[u8; 32], PendingAction> {
+    let mut staged_state = NativeState {
+        best: canonical_state.best.clone(),
+        pending_actions: BTreeMap::new(),
+        commitment_tree: canonical_state.commitment_tree.clone(),
+        nullifiers: canonical_state.nullifiers.clone(),
+        consumed_bridge_messages: canonical_state.consumed_bridge_messages.clone(),
+        staged_ciphertexts: canonical_state.staged_ciphertexts.clone(),
+        staged_proofs: canonical_state.staged_proofs.clone(),
+    };
+
+    for (hash, action) in existing_pending {
+        stage_reorg_pending_action(&mut staged_state, hash, action, "existing");
+    }
+    for action in orphaned_actions {
+        let hash = action.tx_hash;
+        if staged_state.pending_actions.contains_key(&hash) {
+            continue;
+        }
+        stage_reorg_pending_action(&mut staged_state, hash, action, "orphaned");
+    }
+
+    staged_state.pending_actions
+}
+
+fn stage_reorg_pending_action(
+    staged_state: &mut NativeState,
+    hash: [u8; 32],
+    action: PendingAction,
+    source: &'static str,
+) {
+    if staged_state.pending_actions.len() >= MAX_NATIVE_MEMPOOL_ACTIONS {
+        debug!(
+            tx_hash = %hex32(&hash),
+            source,
+            "dropping reorg pending action over mempool action cap"
+        );
+        return;
+    }
+    if let Err(err) = validate_pending_action_against_mempool_state(staged_state, &action) {
+        debug!(
+            tx_hash = %hex32(&hash),
+            source,
+            error = %err,
+            "dropping semantically invalid pending action during reorg"
+        );
+        return;
+    }
+    if let Err(err) = validate_mempool_byte_budget(
+        &staged_state.pending_actions,
+        &action,
+        MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+    ) {
+        debug!(
+            tx_hash = %hex32(&hash),
+            source,
+            error = %err,
+            "dropping over-budget pending action during reorg"
+        );
+        return;
+    }
+    staged_state.pending_actions.insert(hash, action);
+}
+
 fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Result<()> {
     evaluate_native_coinbase_accounting_admission(native_coinbase_accounting_admission_input(
         actions, height,
@@ -14161,6 +14221,35 @@ mod tests {
             .get(old_action_hash.as_slice())
             .expect("read orphaned action after reopen")
             .is_some());
+    }
+
+    #[test]
+    fn reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier() {
+        let test_pow_bits = 0x207f_ffff;
+        let canonical_state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
+        let anchor = canonical_state.commitment_tree.root();
+        let nullifier = [73u8; 48];
+        let orphaned = test_inline_transfer_action(anchor, nullifier, [74u8; 48], 0);
+        let existing = test_inline_transfer_action(anchor, nullifier, [75u8; 48], 0);
+        assert_ne!(existing.tx_hash, orphaned.tx_hash);
+
+        let mut existing_pending = BTreeMap::new();
+        existing_pending.insert(existing.tx_hash, existing.clone());
+        let revalidated = revalidate_reorg_pending_actions(
+            &canonical_state,
+            existing_pending,
+            vec![orphaned.clone()],
+        );
+
+        assert!(
+            revalidated.contains_key(&existing.tx_hash),
+            "existing pending action should keep priority"
+        );
+        assert!(
+            !revalidated.contains_key(&orphaned.tx_hash),
+            "orphaned duplicate nullifier must be quarantined before reorg persistence"
+        );
+        assert_eq!(revalidated.len(), 1);
     }
 
     #[test]

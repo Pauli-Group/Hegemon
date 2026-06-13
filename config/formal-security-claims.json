@@ -2855,7 +2855,7 @@
       "id": "native.pending-action-reload",
       "component": "native pending action startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions, and blueprint bindings plus regressions require semantic mempool re-admission plus arrival-time-insensitive semantic duplicate rejection against loaded canonical state, bridge replay, staged sidecars, and resource budgets before reloaded entries can feed mining selection.",
+      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions. Blueprint bindings plus regressions require startup semantic mempool re-admission and canonical reorg pending resurrection to re-run arrival-time-insensitive semantic duplicate rejection against loaded or rebuilt canonical state, bridge replay, staged sidecars, and resource budgets before pending actions can feed mining selection or reorg persistence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
@@ -2873,7 +2873,7 @@
       "assumptions": [
         "The Lean model represents the per-entry startup reload decision table over production-derived booleans: 32-byte sled-key shape, embedded tx_hash equality with the key, recomputed pending_action_hash equality with the embedded tx_hash, and loaded-action hash uniqueness.",
         "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before key/hash mismatch, key/hash mismatch before recomputed-hash mismatch, and recomputed-hash mismatch before duplicate reporting.",
-        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication, require canonical reorg pending resurrection to re-admit existing pending actions before orphaned old-chain actions, and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
@@ -2888,6 +2888,7 @@
         "cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node load_pending_actions_rejects_semantic_duplicate_received_time --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node pending_action_startup_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

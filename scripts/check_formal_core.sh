@@ -262,6 +262,7 @@ HEGEMON_LEAN_ACTION_HASH_ADMISSION_VECTORS="$LEAN_ACTION_HASH_ADMISSION_VECTORS"
   cargo test -p hegemon-node lean_generated_action_hash_admission_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node block_actions_reject --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node load_pending_actions_ --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node load_staged_sizes_ --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node load_staged_proofs_ --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node canonical_state_reload_ --lib --no-default-features -- --nocapture
