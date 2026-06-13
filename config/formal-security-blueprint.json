@@ -5350,6 +5350,61 @@
       "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
+      "id": "formal.native-tx-leaf-canonical-surface",
+      "claim_id": "formal.native-tx-leaf-canonical-surface",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native tx-leaf canonical-surface composition, an accepted native tx-leaf/action binding gate plus a canonical deployed transaction statement surface and explicit deployed verifier soundness assumption imply the accepted transaction relation, field-level tx-leaf/action binding facts, and authorized per-asset delta values for the modeled balance witness.",
+      "informal_argument": "`Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_binding_facts` extracts nullifier, commitment, ciphertext-hash, active-count, version, fee, stablecoin payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and ciphertext payload-hash equality facts from the accepted native tx-leaf/action gate. `native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation` composes those facts with `CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation`; the asset-delta companion theorems then reuse `AssetIsolation.accepted_transaction_relation_authorized_asset_delta` and `accepted_transaction_relation_authorized_asset_delta_value`.",
+      "depends_on": [
+        "native.block-artifact-binding-admission",
+        "formal.native-tx-leaf-artifact-wire",
+        "formal.transaction-canonical-verifier-boundary",
+        "formal.transaction-asset-isolation-boundary",
+        "formal.transaction-statement-hash-binding"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "node/src/native/mod.rs",
+        "consensus/src/proof.rs",
+        "formal/lean/README.md",
+        "DESIGN.md",
+        "METHODS.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a research-only cross-boundary composition. It narrows the native tx-leaf/action to accepted-transaction relation boundary, but it remains conditional on deployed verifier soundness and does not certify the backend proof system."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-native-tx-leaf-canonical-surface-theorem",
+          "description": "Removing or weakening the native tx-leaf canonical-surface composition theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-native-tx-leaf-canonical-surface-gate",
+          "description": "The release formal-core wrapper must include the native tx-leaf canonical-surface module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node composes existing theorem-backed gates. It does not add a new runtime check, prove SCALE decoder correctness, prove tx-leaf parser completeness, prove deployed STARK/AIR or SmallWood soundness, prove recursive proof soundness, discharge hash collision-resistance assumptions, validate stablecoin policy/oracle/attestation, authorize bridge mint exceptions, or prove complete native-node refinement."
+    },
+    {
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",

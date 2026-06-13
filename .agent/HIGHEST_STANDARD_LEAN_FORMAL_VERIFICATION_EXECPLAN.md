@@ -67,6 +67,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 19:25Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1231 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 19:50Z) Strengthened `Hegemon.Native.BridgeMintSafety` with accepted inbound bridge amount/replay composition theorems: an accepted inbound payload with an authorized decoded amount and fresh replay import carries payload authorization, payload-hash and amount equality, zero direct native mint delta, one-shot replay import, duplicate replay rejection, ledger replay supply equality, and final replay-key uniqueness. Current tracked completion is 66.98%.
 - [x] (2026-06-13 20:05Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1233 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 20:35Z) Added `Hegemon.Native.TxLeafCanonicalSurface`, composing accepted native tx-leaf/action binding with the canonical deployed verifier surface and explicit deployed verifier soundness assumption to derive the accepted transaction relation, field-level tx-leaf binding facts, and authorized per-asset delta values. Current tracked completion is 67.19%.
+- [x] (2026-06-13 20:50Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1238 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -153,6 +155,8 @@ The accepted ledger/tree replay slice strengthens `formal/lean/Hegemon/Native/Ac
 The accepted transaction-chain asset-isolation slice strengthens `formal/lean/Hegemon/Transaction/AssetIsolation.lean`. It defines accepted asset transitions over the accepted transaction relation, proves each transition delta equals the authorized delta value, proves aggregate chain deltas equal aggregate authorized deltas, and proves that a nonzero non-native aggregate delta requires at least one selected stablecoin exception. This raises the tracked baseline to 66.90%. It still does not prove deployed proof-system soundness, production stablecoin policy/oracle/attestation admission, bridge mint authorization, raw action decoding, reorg/startup replay binding, or complete native-node refinement.
 
 The bridge authorized-amount/fresh-replay composition slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It adds `accepted_inbound_payload_authorized_amount_fresh_replay_safe`, proving that accepted inbound bridge payload admission plus decoded amount authorization and fresh replay import jointly expose payload authorization, payload-hash binding, decoded/external amount equality, zero direct native mint delta, replay-key membership, imported count one, preserved replay-key uniqueness, and immediate duplicate rejection. It also adds `accepted_inbound_payload_authorized_amount_ledger_replay_safe`, which packages those bridge facts with accepted ledger replay supply equality and final consumed bridge replay-key uniqueness. This raises the tracked baseline to 66.98%. It still does not prove live bridge mint payload grammar, SCALE decoder correctness, external-chain/PQ receipt soundness, bridge payload-hash cryptographic security, raw-byte native import/reorg/startup/sync refinement, or complete native-node equivalence.
+
+The native tx-leaf canonical-surface composition slice adds `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. It proves that accepted native tx-leaf/action equality admission exposes field-level binding facts for nullifiers, commitments, ciphertext hashes, active counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend, and ciphertext payload hash. It then composes those facts with the canonical deployed verifier surface and explicit `DeployedTxVerifierSoundnessAssumption` to derive the accepted transaction relation and authorized per-asset delta values. This raises the tracked baseline to 67.19%. It still does not prove deployed AIR/STARK/SmallWood soundness, SCALE decoder correctness, tx-leaf parser completeness, hash security, stablecoin policy admission, bridge mint authorization, recursive proof soundness, or complete native-node refinement.
 
 ## Context and Orientation
 
@@ -388,6 +392,14 @@ The latest full formal-core pass after the bridge authorized-amount/fresh-replay
     named_lean_theorems=1233
     production_eligible_claims=84
     falsification_cases=377
+    implementation_bindings=180
+
+The latest full formal-core pass after the native tx-leaf canonical-surface slice reported:
+
+    claims=93
+    named_lean_theorems=1238
+    production_eligible_claims=84
+    falsification_cases=379
     implementation_bindings=180
 
 ## Interfaces and Dependencies

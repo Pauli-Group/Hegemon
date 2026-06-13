@@ -73,6 +73,7 @@ import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferStateAdmission
+import Hegemon.Native.TxLeafCanonicalSurface
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
