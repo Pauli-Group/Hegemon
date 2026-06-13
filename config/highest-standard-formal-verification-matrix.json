@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "branch": "codex/superneo-formal-verification",
+  "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
+  "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
+  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
+  "overall_completion_percent": 44.35,
+  "last_full_formal_core": {
+    "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
+    "status": "passed",
+    "claims": 86,
+    "named_lean_theorems": 1069,
+    "production_eligible_claims": 84,
+    "falsification_cases": 365,
+    "implementation_bindings": 177
+  },
+  "properties": [
+    {
+      "id": "ledger.no-counterfeiting-supply-integrity",
+      "weight": 9,
+      "completion_percent": 65,
+      "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
+        "consensus/src/reward.rs Lean vector conformance",
+        "node/src/native/mod.rs native supply vector conformance",
+        "formal-core supply and supply-chain gates"
+      ],
+      "missing_work": [
+        "Promote current supply-chain lemmas into one named accepted-native-chain no-counterfeiting theorem.",
+        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the theorem-backed replay transition.",
+        "State cryptographic and proof-system assumptions explicitly as theorem parameters."
+      ],
+      "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
+    },
+    {
+      "id": "ledger.no-double-spend-nullifier-uniqueness",
+      "weight": 7,
+      "completion_percent": 55,
+      "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Shielded/Nullifier.lean",
+        "formal/lean/Hegemon/Native/ActionStateEffect.lean",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "native action-state/action-stream vector gates",
+        "pending-action reload and transfer-state admission gates"
+      ],
+      "missing_work": [
+        "Add a top-level accepted-chain nullifier uniqueness theorem.",
+        "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the same nullifier transition relation.",
+        "Add hostile reorg/startup duplicate-nullifier regressions if any import path lacks them."
+      ],
+      "performance_constraint": "Use existing nullifier set membership checks; avoid extra scans beyond replay planning already required."
+    },
+    {
+      "id": "ledger.spend-authorization-no-theft",
+      "weight": 7,
+      "completion_percent": 25,
+      "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
+      "current_evidence": [
+        "transaction proof-wrapper admission vectors",
+        "public-input binding vectors",
+        "statement-hash and proof-statement binding vectors"
+      ],
+      "missing_work": [
+        "Mechanize the transaction relation that connects witnesses to public inputs.",
+        "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
+        "Tie proof-system soundness assumptions to accepted spend authorization."
+      ],
+      "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes."
+    },
+    {
+      "id": "ledger.commitment-tree-integrity",
+      "weight": 6,
+      "completion_percent": 50,
+      "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "native action-plan/action-state/action-stream gates",
+        "canonical-state reload gate"
+      ],
+      "missing_work": [
+        "Unify Merkle membership, tree transition, native replay planning, and startup reload into one chain-level tree invariant.",
+        "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
+      ],
+      "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."
+    },
+    {
+      "id": "ledger.per-asset-transaction-conservation",
+      "weight": 7,
+      "completion_percent": 45,
+      "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "transaction balance vector conformance",
+        "public input shape and binding gates",
+        "native block artifact binding admission"
+      ],
+      "missing_work": [
+        "Lift transaction-balance facts into an accepted-transaction conservation theorem over the production statement.",
+        "Prove or assume AIR soundness for the balance constraints.",
+        "Separate native asset, stablecoin, and bridge asset conservation rules."
+      ],
+      "performance_constraint": "Formal proof only or cheap public-input checks; do not add per-proof duplicate arithmetic beyond existing verifier inputs."
+    },
+    {
+      "id": "ledger.asset-isolation-authorized-mint",
+      "weight": 5,
+      "completion_percent": 35,
+      "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
+      "current_evidence": [
+        "stablecoin fields in transaction public-input binding",
+        "native bridge payload admission",
+        "native transfer payload/state admission"
+      ],
+      "missing_work": [
+        "State asset isolation as a chain-level theorem.",
+        "Formalize stablecoin issuance and bridge mint authorization exceptions as separate predicates.",
+        "Bind exception predicates to production admission paths."
+      ],
+      "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
+    },
+    {
+      "id": "proof.statement-binding",
+      "weight": 6,
+      "completion_percent": 70,
+      "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon/Transaction/StatementHash.lean",
+        "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
+      ],
+      "missing_work": [
+        "Promote helper-level conformance to an accepted-proof-artifact theorem.",
+        "Complete bindings for any remaining production proof artifact entry point.",
+        "State hash collision resistance and transcript assumptions explicitly."
+      ],
+      "performance_constraint": "Keep shared helper reuse; no extra hashing beyond already-required statement construction."
+    },
+    {
+      "id": "proof.proof-system-soundness-boundary",
+      "weight": 10,
+      "completion_percent": 20,
+      "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
+      "current_evidence": [
+        "native backend review-policy and release-posture gates",
+        "native tx-leaf and receipt-root artifact parser/schedule gates",
+        "recursive-block admission gates",
+        "docs/crypto native backend assumption notes"
+      ],
+      "missing_work": [
+        "Mechanize the transaction AIR relation or an auditable abstraction of it.",
+        "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
+        "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
+        "Prove artifact acceptance implies the abstract ledger relation."
+      ],
+      "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
+    },
+    {
+      "id": "privacy.zero-knowledge-unlinkability",
+      "weight": 8,
+      "completion_percent": 15,
+      "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
+      "current_evidence": [
+        "privacy-oriented design in DESIGN.md and METHODS.md",
+        "note ciphertext wire grammar vectors",
+        "public/private field separation in transaction statement docs"
+      ],
+      "missing_work": [
+        "Define a formal observer view and allowed leakage model.",
+        "State ZK/privacy assumptions for the proof system and note encryption.",
+        "Add unlinkability tests for wallet metadata, ciphertext format, proof wrappers, and sidecars.",
+        "Prove or parameterize simulator-based zero-knowledge."
+      ],
+      "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
+    },
+    {
+      "id": "privacy.ciphertext-correctness-confidentiality",
+      "weight": 5,
+      "completion_percent": 35,
+      "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "wallet note ciphertext wire vector gate",
+        "DA sidecar ciphertext hash and staged-ciphertext reload gates"
+      ],
+      "missing_work": [
+        "Formalize note plaintext-to-commitment binding at the wallet/chain boundary.",
+        "Parameterize ML-KEM and symmetric encryption confidentiality assumptions.",
+        "Add recipient/wrong-key/malleated-ciphertext regression coverage if absent."
+      ],
+      "performance_constraint": "No extra chain verification of private plaintext; keep correctness checks in wallet tests and public hash bindings."
+    },
+    {
+      "id": "codec.canonical-encoding-non-malleability",
+      "weight": 5,
+      "completion_percent": 60,
+      "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
+      "current_evidence": [
+        "native codec admission Lean gate",
+        "proof-wrapper admission gate",
+        "tx-proof-manifest nested wrapper regression",
+        "native tx-leaf/receipt-root exact decode gates"
+      ],
+      "missing_work": [
+        "Complete byte-level grammar coverage for every consensus object.",
+        "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
+        "Add a top-level parser non-malleability theorem family."
+      ],
+      "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work."
+    },
+    {
+      "id": "node.replay-reorg-startup-refinement",
+      "weight": 6,
+      "completion_percent": 55,
+      "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
+      "current_evidence": [
+        "native block replay refinement gate",
+        "canonical-state/block-index/bridge-replay reload gates",
+        "atomic commit manifest and storage durability gates",
+        "implementation bindings in config/formal-security-blueprint.json"
+      ],
+      "missing_work": [
+        "Create one Lean native ledger transition relation and prove replay/refinement lemmas over it.",
+        "Bind every production import and startup publication path to that transition.",
+        "Add reorg/restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
+      ],
+      "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
+    },
+    {
+      "id": "consensus.admission-safety",
+      "weight": 4,
+      "completion_percent": 60,
+      "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
+      "current_evidence": [
+        "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
+        "implementation order and dominance constraints in blueprint"
+      ],
+      "missing_work": [
+        "Unify admission components into one accepted-block theorem.",
+        "Make order/dominance constraints theorem-indexed rather than only blueprint-indexed.",
+        "Add explicit fork-choice safety theorem boundary."
+      ],
+      "performance_constraint": "Order checks are compile/CI evidence; runtime order should stay as current cheap prechecks before heavy work."
+    },
+    {
+      "id": "availability.da-sidecar-binding",
+      "weight": 4,
+      "completion_percent": 45,
+      "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
+      "current_evidence": [
+        "DA-root byte binding gate",
+        "sidecar upload admission gate",
+        "staged ciphertext/proof reload gates",
+        "mineable-action admission gate"
+      ],
+      "missing_work": [
+        "Lift sidecar gates into a chain-level recoverability theorem.",
+        "Bind DA-root construction and sidecar materialization across mining, announced import, sync, and replay.",
+        "Specify hot/cold DA retention assumptions outside consensus."
+      ],
+      "performance_constraint": "Keep sidecar checks bounded by existing size caps and staged hashes."
+    },
+    {
+      "id": "bridge.mint-replay-safety",
+      "weight": 4,
+      "completion_percent": 35,
+      "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
+      "current_evidence": [
+        "bridge message-root/replay gates",
+        "long-range proof-shape gates",
+        "bridge payload admission gates",
+        "RISC Zero release verifier fail-closed gate"
+      ],
+      "missing_work": [
+        "Define bridge mint authorization theorem independent of the current disabled RISC Zero verifier.",
+        "Mechanize or parameterize external-chain proof soundness.",
+        "Prove replay-key uniqueness and supply/mint coupling for bridge assets."
+      ],
+      "performance_constraint": "Keep release verifier fail-closed until a PQ-clean verifier exists; avoid classical verifier runtime costs."
+    },
+    {
+      "id": "network.pq-channel-safety",
+      "weight": 3,
+      "completion_percent": 55,
+      "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Network/SecureChannel.lean",
+        "formal/lean/Hegemon/Network/PqNoise.lean",
+        "network and pq-noise vector gates",
+        "prior ML-KEM seed and AES-GCM direction separation fixes"
+      ],
+      "missing_work": [
+        "Add a full channel-state theorem for nonce monotonicity and direction separation.",
+        "Bind all active frame send/receive paths to the theorem-backed key schedule.",
+        "State ML-KEM/ML-DSA/HKDF/AES-GCM assumptions explicitly."
+      ],
+      "performance_constraint": "No extra round trips; checks should remain key-schedule/frame-admission local."
+    },
+    {
+      "id": "resource.dos-bounds",
+      "weight": 2,
+      "completion_percent": 45,
+      "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
+      "current_evidence": [
+        "resource-budget admission gate",
+        "RPC admission gate",
+        "sidecar upload admission gate",
+        "native tx-leaf/receipt-root caps",
+        "PQ/frame size regressions"
+      ],
+      "missing_work": [
+        "Unify resource bounds into a global pre-heavy-work theorem.",
+        "Add explicit cost classes for every public input family.",
+        "Benchmark any new runtime check on hegemon-dev or local release builds."
+      ],
+      "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work."
+    },
+    {
+      "id": "release.dependency-posture",
+      "weight": 2,
+      "completion_percent": 70,
+      "top_level_theorem_target": "Release artifacts are accepted only when source, dependency, binary, and native-backend posture policies are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
+      "current_evidence": [
+        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+        "native backend review-policy and release-posture gates",
+        "formal-core dependency and release posture checks"
+      ],
+      "missing_work": [
+        "Move remaining advisory/waiver drift into mandatory CI if not already enforced for all release workflows.",
+        "Add binary scanner completeness review and accepted external-review artifact requirements.",
+        "Tie release branch protection to formal-core results."
+      ],
+      "performance_constraint": "Release-time only; no production runtime overhead."
+    }
+  ]
+}
