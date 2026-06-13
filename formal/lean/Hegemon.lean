@@ -53,6 +53,7 @@ import Hegemon.Native.CanonicalReorgChainAdmission
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
+import Hegemon.Native.CommitmentTreeRefinement
 import Hegemon.Native.MineableActionAdmission
 import Hegemon.Native.MinerIdentity
 import Hegemon.Native.MinedWorkAdmission

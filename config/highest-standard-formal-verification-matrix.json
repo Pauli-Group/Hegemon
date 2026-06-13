@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 63.76,
+  "overall_completion_percent": 63.94,
   "last_full_formal_core": {
-    "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
+    "commit": "working tree on 888967f5a2eed311e0d5a2856442fd0ea7db2430",
     "status": "passed",
-    "claims": 86,
-    "named_lean_theorems": 1069,
+    "claims": 92,
+    "named_lean_theorems": 1138,
     "production_eligible_claims": 84,
-    "falsification_cases": 365,
+    "falsification_cases": 377,
     "implementation_bindings": 177
   },
   "last_coordinator_audit": {
@@ -29,31 +29,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added `Hegemon.Transaction.CanonicalVerifierBoundary` as the canonical deployed transaction verifier boundary. The slice defines `CanonicalTxStatementSurface` for accepted wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, field agreement, balance-slot asset agreement, and stablecoin field agreement. It replaces the old downstream need to reason about separate balance and spend assumptions with one explicit `DeployedTxVerifierSoundnessAssumption` over that canonical surface, then reuses the accepted-transaction relation to recover native-delta and active-input spend facts.",
-    "lean_module": "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+    "summary": "Added `Hegemon.Native.CommitmentTreeRefinement` as a non-production implementation-equivalence refinement across existing native action-stream, action-plan application, and consensus tree-transition models. The slice proves that accepted action-stream replay determines a canonical planned commitment-start schedule, that the corresponding action-plan application accepts with the same next leaf cursor, and that accepted tree-transition execution exposes the applied commitment-tree root.",
+    "lean_module": "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
     "top_level_theorems": [
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_binding_valid",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_length",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts"
+      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_from_commitment_starts_from",
+      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from",
+      "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_from_accepts",
+      "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_accepts",
+      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_canonical_plan_accepts",
+      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_tree_transition_refines_applied_root"
     ],
     "validation": {
       "formal_core": "passed",
-      "claims": 91,
-      "named_lean_theorems": 1132,
+      "claims": 92,
+      "named_lean_theorems": 1138,
       "production_eligible_claims": 84,
-      "falsification_cases": 375,
+      "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The deployed verifier soundness theorem is still an explicit assumption; this slice sharpens the assumption surface but does not discharge STARK/AIR, SmallWood, witness-extraction, or Rust verifier implementation soundness.",
-      "The canonical surface binds public-input, statement-hash, and proof-binding grammars at the Lean model boundary only; bincode/postcard implementation correctness, BLAKE2/BLAKE3 collision resistance, Poseidon/nullifier/note commitment security, and complete Rust/native-node refinement remain open.",
-      "The theorem improves spend/conservation/statement-boundary accounting but does not change the no-counterfeiting supply-integrity percentage until chain-level proof-system assumptions are discharged and production-bound."
+      "This is a Lean refinement between existing abstract kernels; it does not add a new Rust conformance vector or production implementation binding.",
+      "The theorem does not prove Merkle hash security, note commitment correctness, transaction proof soundness, or production Rust commitment-tree implementation equivalence.",
+      "Full commitment-tree integrity still needs one chain-level theorem covering Merkle membership, native replay, canonical reorg, startup repair, storage durability assumptions, and accepted state publication."
     ]
   },
   "properties": [
@@ -121,16 +118,17 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 60,
+      "completion_percent": 63,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
         "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean action-stream/action-plan/tree-transition refinement",
         "native action-plan/action-state/action-stream gates",
         "canonical-state reload gate"
       ],
       "missing_work": [
-        "Unify Merkle membership, tree transition, native replay planning, and startup reload into one chain-level tree invariant.",
+        "Lift the action-stream/action-plan/tree-transition refinement with Merkle membership, native replay, and startup reload into one chain-level tree invariant.",
         "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
       ],
       "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."

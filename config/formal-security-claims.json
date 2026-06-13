@@ -4167,6 +4167,49 @@
       ]
     },
     {
+      "id": "formal.native-commitment-tree-refinement",
+      "component": "native commitment-tree refinement boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, and that an accepted consensus tree transition publishes the applied commitment-tree root.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_nonproduction_refinement",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_from_commitment_starts_from",
+        "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from",
+        "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_from_accepts",
+        "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_accepts",
+        "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_canonical_plan_accepts",
+        "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_tree_transition_refines_applied_root"
+      ],
+      "assumptions": [
+        "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
+        "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; this new slice does not add a separate Rust conformance vector or implementation binding.",
+        "This slice does not prove commitment-tree hash security, Merkle tree implementation equivalence, note commitment correctness, transaction proof soundness, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "chain-level-commitment-tree-refinement-missing",
+          "description": "The new theorem connects native action-stream planned starts, action-plan replay, and accepted tree-transition publication, but full chain-level Merkle membership, cryptographic hash, reorg/startup replay, and Rust/native-node refinement remain open.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "crypto.native-backend-candidate",
       "component": "native lattice backend",
       "claim_class": "lean_theorem",

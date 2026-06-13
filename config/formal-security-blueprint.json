@@ -8165,6 +8165,56 @@
       "scope_boundary": "This node proves and vector-checks the fail-closed release decision table only. It explicitly does not permit inbound RISC Zero receipt acceptance on the release node and does not prove future PQ bridge receipt soundness."
     },
     {
+      "id": "formal.native-commitment-tree-refinement",
+      "claim_id": "formal.native-commitment-tree-refinement",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean native action stream, acceptance determines the same planned commitment-start sequence and next leaf cursor accepted by the canonical action-plan application model, and an accepted consensus tree transition exposes the applied commitment-tree root.",
+      "informal_argument": "`Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from` proves that accepted action-stream replay determines a commitment-start schedule. `commitment_starts_plan_application_accepts` and `accepted_stream_canonical_plan_accepts` prove that replaying those counts and starts through the action-plan admission model accepts with the same next leaf cursor. `accepted_stream_tree_transition_refines_applied_root` then composes that plan fact with `Hegemon.Consensus.TreeTransition.accepted_transition_returns_applied_root` so an accepted tree transition publishes the applied root.",
+      "depends_on": [
+        "native.action-stream-effect-planning",
+        "native.action-plan-application-admission",
+        "consensus.block-tree-transition",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
+        "formal/lean/Hegemon.lean",
+        "config/highest-standard-formal-verification-matrix.json",
+        ".agent/HIGHEST_STANDARD_LEAN_FORMAL_VERIFICATION_EXECPLAN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a non-production implementation-equivalence refinement across existing Lean action-stream, action-plan, and tree-transition kernels. It does not add a new Rust conformance vector or claim complete commitment-tree integrity."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-native-commitment-tree-refinement-theorem",
+          "description": "Removing or weakening the native commitment-tree refinement theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-native-commitment-tree-refinement-gate",
+          "description": "The release formal-core wrapper must include the native commitment-tree refinement module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves a Lean refinement boundary between existing action-stream planning, action-plan application, and consensus tree-transition models. It does not prove Merkle hash security, note commitment correctness, transaction proof soundness, production Rust tree implementation equivalence, reorg/startup replay equivalence, storage durability, or complete native-node refinement."
+    },
+    {
       "id": "crypto.native-backend-candidate",
       "claim_id": "crypto.native-backend-candidate",
       "kind": "residual_risk",
