@@ -493,6 +493,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean",
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
         "formal/lean/Hegemon/Transaction/GenerateProofStatementBindingVectors.lean",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
         "formal/lean/Hegemon/Transaction/StatementHash.lean",

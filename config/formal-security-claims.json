@@ -419,7 +419,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, indexed output-slot statement/binding facts, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, and the accepted transaction relation under one deployed verifier soundness assumption instead of separate balance and spend assumptions.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, indexed output-slot statement/binding facts, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, and the accepted transaction relation under one deployed verifier soundness assumption; the native tx-leaf theorem composes those boundary facts with accepted tx-leaf/action equality admission.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -442,15 +442,23 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_input_slot_facts_at",
-        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at"
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at",
+        "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_implies_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_expose_spend_and_balance",
+        "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_exposes_spend_and_balance",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
+        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, vector binding, value-balance binding, and stablecoin payload binding into one future AIR/refinement target.",
+        "`Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` composes those packaged proof-system boundary facts with accepted native tx-leaf/action equality admission, but still inherits the explicit deployed verifier soundness assumption.",
         "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",

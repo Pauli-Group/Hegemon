@@ -92,6 +92,7 @@ import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.ProofStatementBinding
+import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash

@@ -75,6 +75,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 21:50Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1245 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 22:05Z) Added `Hegemon.Privacy.NativeObserverSurface`, composing accepted native tx-leaf output-slot binding with the valid observer-chain surface so statement-bound output commitments/ciphertext hashes reach observer ciphertext summary format/count facts and same-chain-wire leakage equality under the explicit deployed-verifier soundness assumption. Current tracked completion is 67.92%.
 - [x] (2026-06-13 22:25Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1248 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 22:45Z) Added `Hegemon.Transaction.ProofSystemBoundary` and `Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts`, packaging the explicit deployed-verifier assumption, canonical transcript/precondition bindings, deployed relation facts, accepted transaction relation, exposed spend/balance facts, and native tx-leaf/action equality facts into one future AIR/refinement target. Current tracked completion is 68.18%.
+- [x] (2026-06-13 23:05Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1252 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -169,6 +171,8 @@ The projected ledger-state executor slice strengthens `formal/lean/Hegemon/Nativ
 The native tx-leaf input/output slot binding slice strengthens `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. It adds native wrappers around the canonical verifier boundary's active-input, total input-slot, and output-slot statement-binding theorems, proving that accepted native tx-leaf/action binding plus the canonical deployed verifier surface carries active input spend facts, inactive/active input-slot facts, and output commitment/ciphertext facts bound to the exact statement and proof-binding vectors. This raises the tracked baseline to 67.71%. It still does not prove deployed AIR/STARK/SmallWood soundness, witness extraction, raw SCALE decoding, tx-leaf parser completeness, hash security, stablecoin/bridge exception authorization, or complete native-node refinement.
 
 The native observer output-slot surface slice adds `formal/lean/Hegemon/Privacy/NativeObserverSurface.lean`. It proves that valid observer-chain surfaces carry chain-format ciphertext summaries and an active-output count matching the public shape, composes those facts with accepted native tx-leaf output-slot binding, and proves same-chain-wire worlds preserve allowed leakage while retaining the statement/proof-binding output-slot facts. This raises the tracked baseline to 67.92%. It still does not prove simulator zero-knowledge, ML-KEM/AEAD confidentiality, wallet metadata privacy, timing privacy, proof-system privacy, deployed AIR/STARK/SmallWood soundness, ciphertext hash security, or complete native-node refinement.
+
+The proof-system boundary facts slice adds `formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean` and strengthens `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. It packages the canonical deployed verifier surface, deployed relation facts, accepted transaction relation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, vector binding, value-balance binding, stablecoin payload binding, and exposed spend/balance facts into `CanonicalDeployedVerifierBoundaryFacts`; the native tx-leaf theorem composes that package with accepted tx-leaf/action equality admission. This raises the tracked baseline to 68.18%. It still does not discharge `DeployedTxVerifierSoundnessAssumption`, deployed AIR/STARK/SmallWood soundness, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, or complete native-node refinement.
 
 ## Context and Orientation
 
@@ -426,6 +430,14 @@ The latest full formal-core pass after the native tx-leaf input/output slot bind
 
     claims=93
     named_lean_theorems=1245
+    production_eligible_claims=84
+    falsification_cases=379
+    implementation_bindings=180
+
+The latest full formal-core pass after the proof-system boundary facts slice reported:
+
+    claims=93
+    named_lean_theorems=1252
     production_eligible_claims=84
     falsification_cases=379
     implementation_bindings=180

@@ -514,8 +514,8 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "claim_id": "formal.transaction-canonical-verifier-boundary",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean canonical transaction verifier boundary, one canonical statement surface containing accepted wrapper admission, public/serialized input binding, statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, indexed output-slot statement/binding facts, value-balance agreement, stablecoin payload agreement, active spend binding to the exact anchor/nullifier statement surface, field agreement, and balance-slot asset agreement is sufficient to derive the existing accepted transaction relation under one explicit deployed verifier soundness assumption.",
-      "informal_argument": "`Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption` collapses the older independent balance and spend assumptions into `DeployedTxVerifierSoundnessAssumption` over `CanonicalTxStatementSurface`. `accepted_wrapper_and_canonical_statement_implies_transaction_relation` then reuses the accepted-transaction theorem, while companion theorems expose public binding validity, statement-preimage length, wrapper preconditions, public shape validity, shape/statement/binding vector agreement for nullifiers, commitments, and ciphertext hashes, output-flag/commitment/ciphertext-hash slot facts bound across public shape, statement preimage, and proof binding message, value-balance agreement, stablecoin policy/oracle/attestation/issuance payload agreement, active and total input-slot facts bound to the exact statement and binding nullifier vectors, native-delta conservation, and indexed input/output-slot facts from the same canonical surface.",
+      "formal_statement": "For the executable Lean canonical transaction verifier boundary, one canonical statement surface containing accepted wrapper admission, public/serialized input binding, statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, indexed output-slot statement/binding facts, value-balance agreement, stablecoin payload agreement, active spend binding to the exact anchor/nullifier statement surface, field agreement, and balance-slot asset agreement is sufficient to derive deployed relation facts and the existing accepted transaction relation under one explicit deployed verifier soundness assumption; accepted native tx-leaf/action equality admission composes with that packaged boundary.",
+      "informal_argument": "`Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption` collapses the older independent balance and spend assumptions into `DeployedTxVerifierSoundnessAssumption` over `CanonicalTxStatementSurface`. `accepted_wrapper_and_canonical_statement_implies_transaction_relation` then reuses the accepted-transaction theorem, while companion theorems expose public binding validity, statement-preimage length, wrapper preconditions, public shape validity, shape/statement/binding vector agreement for nullifiers, commitments, and ciphertext hashes, output-flag/commitment/ciphertext-hash slot facts bound across public shape, statement preimage, and proof binding message, value-balance agreement, stablecoin policy/oracle/attestation/issuance payload agreement, active and total input-slot facts bound to the exact statement and binding nullifier vectors, native-delta conservation, and indexed input/output-slot facts from the same canonical surface. `Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_implies_boundary_facts` packages those surface facts with `DeployedTxRelationFacts` and `AcceptedTransactionRelation` into one target for future AIR/refinement work; `Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_exposes_spend_and_balance` exposes the exact balance-slot, valid-balance, and spend-authorization facts carried by that target. `Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` then composes the packaged boundary with accepted native tx-leaf/action equality admission.",
       "depends_on": [
         "formal.transaction-balance",
         "formal.transaction-proof-wrapper-admission",
@@ -525,14 +525,18 @@
         "formal.transaction-accepted-soundness-boundary"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
@@ -548,7 +552,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as a non-production canonical verifier-boundary refinement. It sharpens the accepted-transaction soundness assumption surface but does not certify deployed STARK, SmallWood, or native verifier soundness."
+        "notes": "Accepted as a non-production canonical verifier-boundary refinement. It packages the deployed relation, accepted-transaction, transcript, and native tx-leaf boundary facts for future AIR/refinement proof work, but does not certify deployed STARK, SmallWood, or native verifier soundness."
       },
       "falsification_cases": [
         {
@@ -562,7 +566,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves an assumption-sharpening canonical statement boundary only, including modeled vector agreement and indexed output-slot facts across public shape, statement preimage, and proof binding message. It does not prove deployed STARK/AIR or SmallWood soundness, verifier implementation correctness, witness extraction, hash collision resistance, bincode/postcard implementation correctness, stablecoin policy/oracle validity, bridge mint authorization, note encryption correctness, recipient ownership, proof privacy, or complete Rust/native-node refinement."
+      "scope_boundary": "This node proves an assumption-sharpening canonical statement boundary only, including modeled vector agreement, indexed output-slot facts across public shape, statement preimage, and proof binding message, packaged deployed relation facts, and native tx-leaf/action admission composition. It does not prove deployed STARK/AIR or SmallWood soundness, verifier implementation correctness, witness extraction, hash collision resistance, bincode/postcard implementation correctness, stablecoin policy/oracle validity, bridge mint authorization, note encryption correctness, recipient ownership, proof privacy, or complete Rust/native-node refinement."
     },
     {
       "id": "formal.transaction-asset-isolation-boundary",

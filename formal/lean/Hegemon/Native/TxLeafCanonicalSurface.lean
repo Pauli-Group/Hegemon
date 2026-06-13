@@ -1,6 +1,7 @@
 import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.CanonicalVerifierBoundary
+import Hegemon.Transaction.ProofSystemBoundary
 
 namespace Hegemon
 namespace Native
@@ -12,6 +13,7 @@ open Hegemon.Transaction.AcceptedTransactionSoundness
 open Hegemon.Transaction.AssetIsolation
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
+open Hegemon.Transaction.ProofSystemBoundary
 open Hegemon.Transaction.PublicInputs
 
 def TxLeafActionBindingFacts
@@ -126,6 +128,73 @@ theorem native_tx_leaf_binding_and_canonical_surface_implies_transaction_relatio
       ∧ TxLeafActionBindingFacts input := by
   exact
     ⟨accepted_wrapper_and_canonical_statement_implies_transaction_relation
+        surface
+        sound,
+      tx_leaf_action_accepts_implies_preconditions bindingAccepted,
+      tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
+theorem native_tx_leaf_deployed_verifier_boundary_facts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+      ∧ txLeafActionBindingPreconditions input = true
+      ∧ TxLeafActionBindingFacts input := by
+  exact
+    ⟨deployed_soundness_canonical_surface_implies_boundary_facts
         surface
         sound,
       tx_leaf_action_accepts_implies_preconditions bindingAccepted,
