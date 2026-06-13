@@ -495,6 +495,100 @@ theorem canonical_surface_authorized_active_input_bound_to_statement
     exact slot
   exact ⟨facts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
 
+theorem canonical_surface_authorized_input_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (authorized :
+      transactionSpendAuthorized shape merkleRoot spendWitnesses = true)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+  have facts :=
+    transactionSpendAuthorized_input_slot_facts_at
+      authorized
+      slot
+  have statementRoot : statementFields.merkleRootSeed = merkleRoot := by
+    rw [surface.statementMerkleRoot, ← surface.relationMerkleRoot]
+  have bindingRoot : bindingFields.anchorSeed = merkleRoot := by
+    rw [surface.bindingAnchor, ← surface.relationMerkleRoot]
+  have slotStatement :
+      ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← surface.shapeInputFlags, ← surface.shapeNullifiers]
+    exact slot
+  have slotBinding :
+      ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← surface.shapeInputFlags, surface.bindingNullifiers,
+      ← surface.shapeNullifiers]
+    exact slot
+  exact ⟨facts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
+
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -769,6 +863,70 @@ theorem canonical_statement_implies_active_input_facts_at
       sound)
     slot
     active
+
+theorem canonical_statement_implies_input_slot_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness :=
+  accepted_transaction_relation_input_slot_facts_at
+    (accepted_wrapper_and_canonical_statement_implies_transaction_relation
+      surface
+      sound)
+    slot
 
 end CanonicalVerifierBoundary
 end Transaction

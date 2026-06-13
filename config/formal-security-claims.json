@@ -304,7 +304,7 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "component": "transaction spend authorization boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean spend-authorization kernel defines the active-input relation connecting public nullifiers to private spend witnesses: note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption.",
+      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumption",
       "production_eligible": false,
@@ -321,8 +321,11 @@
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_inactive_public_nullifier_zero",
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_tail_authorized",
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_input_slot_facts_at",
+        "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_input_slot_facts_at",
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts",
+        "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_input_slot_facts_at",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_secret_rejects",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_nullifier_rejects",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_membership_root_rejects"
@@ -331,6 +334,7 @@
         "The executable Lean model uses abstract digest arithmetic for note commitments, spend-authority keys, nullifiers, and Merkle nodes. It proves relation plumbing, not hash security or implementation equivalence.",
         "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
+        "`authorizeInputSlots_input_slot_facts_at` covers every indexed input slot: inactive slots must have zero public nullifiers and active slots must expose the full spend facts.",
         "This claim does not prove the deployed STARK/AIR or SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
@@ -358,7 +362,7 @@
       "id": "formal.transaction-accepted-soundness-boundary",
       "component": "accepted transaction proof-system soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, and indexed active-input witness facts into one abstract relation under explicit balance and spend proof-system soundness assumptions.",
+      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, and total indexed input-slot facts into one abstract relation under explicit balance and spend proof-system soundness assumptions.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -371,13 +375,15 @@
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_input_slot_facts_at",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts",
-        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at"
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_input_slot_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `BalanceSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled `validBalance` relation for the exact balance witness and slots.",
         "The theorem depends on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled active-input spend-authorization relation for the exact public input shape and Merkle root.",
-        "The theorem packages the abstract accepted transaction relation and now exposes any active indexed input slot, not only the head input. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
+        "The theorem packages the abstract accepted transaction relation and now exposes every indexed input slot as either inactive with zero nullifier or active with full spend facts. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
@@ -420,11 +426,13 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_value_balance_bound",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_stablecoin_payload_bound",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_active_input_bound_to_statement",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_input_slot_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
         "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts",
-        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at"
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_input_slot_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",

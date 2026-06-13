@@ -48,6 +48,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 12:35Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1179 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 13:12Z) Strengthened `Hegemon.Transaction.CanonicalVerifierBoundary` so the canonical verifier surface binds value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and modeled active spend facts to the exact public-input, statement-hash, and proof-binding anchor/nullifier surface. Current tracked completion is 65.58%.
 - [x] (2026-06-13 13:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1182 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 13:52Z) Strengthened `Hegemon.Transaction.SpendAuthorization`, `Hegemon.Transaction.AcceptedTransactionSoundness`, and `Hegemon.Transaction.CanonicalVerifierBoundary` with total indexed input-slot facts: every authorized aligned input slot is either inactive with zero public nullifier or active with full note-commitment, spend-authority, nullifier, and Merkle-membership facts bound to the canonical statement and proof-binding nullifier vectors. Current tracked completion is 65.82%.
+- [x] (2026-06-13 14:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1189 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -116,6 +118,8 @@ The native ledger replay-state slice strengthens `formal/lean/Hegemon/Native/Act
 The PQ channel-state slice strengthens `formal/lean/Hegemon/Network/SecureChannel.lean` and `formal/lean/Hegemon/Network/PqNoise.lean`. It adds explicit modeled channel states and proves that successful protect/open operations use the role-correct directional key slot, consume the current send or receive nonce, increment only the corresponding counter, leave the opposite counter unchanged, and reject at that direction's counter overflow. This raises the tracked baseline to 65.31% by closing the previous missing full channel-state theorem gap. It still does not prove SHA-256/HKDF/AES-GCM/ML-KEM/ML-DSA security, OS RNG quality, handshake peer-authentication reductions, full active frame-path state refinement, network liveness, or complete native-node equivalence.
 
 The canonical verifier payload-binding slice strengthens `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It adds `canonical_statement_surface_value_balance_bound`, `canonical_statement_surface_stablecoin_payload_bound`, and `canonical_surface_authorized_active_input_bound_to_statement`, proving that value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and modeled active spend facts are bound to the exact public-input binding, statement-hash, and proof-binding anchor/nullifier surface. This raises the tracked baseline to 65.58% by narrowing the non-cryptographic statement-surface obligation for proof-system soundness and no-theft. It still depends on `DeployedTxVerifierSoundnessAssumption`; STARK/AIR, SmallWood, FRI, witness extraction, hash security, stablecoin policy validity, bridge mint authorization, and full native-node refinement remain open.
+
+The total input-slot authorization slice strengthens `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It proves that every authorized aligned input slot is either inactive with zero public nullifier or active with note-commitment reconstruction, spend-authority derivation, nullifier derivation, and Merkle membership; lifts that through the accepted transaction relation and canonical deployed-verifier boundary; and binds the facts to the exact statement and proof-binding nullifier vectors. This raises the tracked baseline to 65.82%. It still depends on proof-system soundness assumptions and does not prove STARK/AIR, SmallWood, FRI, witness extraction, hash security, wallet custody, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -277,6 +281,14 @@ The latest full formal-core pass after the canonical verifier payload-binding sl
 
     claims=92
     named_lean_theorems=1182
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the total input-slot authorization slice reported:
+
+    claims=92
+    named_lean_theorems=1189
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177

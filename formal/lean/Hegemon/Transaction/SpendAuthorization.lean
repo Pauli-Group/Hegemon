@@ -90,6 +90,15 @@ def InputSpendFacts
       witness.merkleSiblings
       merkleRoot = true
 
+def InputSlotAuthorizationFacts
+    (merkleRoot : Digest)
+    (activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness : InputSpendWitness) : Prop :=
+  (activeFlag = 1 -> InputSpendFacts merkleRoot publicNullifier witness)
+    ∧ (activeFlag = 0 -> publicNullifier = 0)
+    ∧ (activeFlag = 0 ∨ activeFlag = 1)
+
 theorem authorizedInputWitness_implies_facts
     {merkleRoot publicNullifier : Digest}
     {witness : InputSpendWitness}
@@ -344,6 +353,111 @@ theorem authorizeInputSlots_active_input_facts_at
                       active
                       (authorizeInputSlots_tail_authorized authorized)
 
+theorem authorizeInputSlots_input_slot_facts_at
+    {merkleRoot : Digest}
+    {flags : List Nat}
+    {nullifiers : List Digest}
+    {witnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (slot :
+      ActiveInputAt
+        flags
+        nullifiers
+        witnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (authorized :
+      authorizeInputSlots merkleRoot flags nullifiers witnesses = true) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness := by
+  induction flags generalizing nullifiers witnesses index activeFlag
+      publicNullifier witness with
+  | nil =>
+      cases nullifiers <;> cases witnesses <;> cases index <;>
+        simp [ActiveInputAt] at slot
+  | cons headFlag tailFlags ih =>
+      cases nullifiers with
+      | nil =>
+          cases witnesses <;> cases index <;> simp [ActiveInputAt] at slot
+      | cons headNullifier tailNullifiers =>
+          cases witnesses with
+          | nil =>
+              cases index <;> simp [ActiveInputAt] at slot
+          | cons headWitness tailWitnesses =>
+              cases index with
+              | zero =>
+                  simp [ActiveInputAt] at slot
+                  rcases slot with ⟨hflag, hnullifier, hwitness⟩
+                  subst activeFlag
+                  subst publicNullifier
+                  subst witness
+                  by_cases inactive : headFlag = 0
+                  · have zero :=
+                      authorizeInputSlots_head_inactive_public_nullifier_zero
+                        inactive
+                        authorized
+                    exact
+                      And.intro
+                        (fun active => by
+                          rw [inactive] at active
+                          cases active)
+                        (And.intro
+                          (fun _ => zero)
+                          (Or.inl inactive))
+                  · by_cases active : headFlag = 1
+                    · have facts :=
+                        authorizeInputSlots_head_active_facts
+                          active
+                          authorized
+                      exact
+                        And.intro
+                          (fun _ => facts)
+                          (And.intro
+                            (fun inactiveNow => by
+                              rw [active] at inactiveNow
+                              cases inactiveNow)
+                            (Or.inr active))
+                    · unfold authorizeInputSlots at authorized
+                      simp [inactive, active] at authorized
+              | succ tailIndex =>
+                  exact
+                    ih
+                      slot
+                      (authorizeInputSlots_tail_authorized authorized)
+
+theorem transactionSpendAuthorized_input_slot_facts_at
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {witnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (authorized : transactionSpendAuthorized shape merkleRoot witnesses = true)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        witnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness :=
+  authorizeInputSlots_input_slot_facts_at
+    slot
+    (transactionSpendAuthorized_implies_slots_authorized authorized)
+
 theorem accepted_wrapper_implies_spend_authorization
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -388,6 +502,40 @@ theorem accepted_wrapper_head_active_input_facts
   have slotsAuthorized := acceptedAuth.right.right
   rw [shapeFlags, shapeNullifiers, witnessShape] at slotsAuthorized
   exact authorizeInputSlots_head_active_facts active slotsAuthorized
+
+theorem accepted_wrapper_implies_input_slot_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {witnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        witnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (accepted : proofWrapperAccepts wrapper = true)
+    (soundSpend :
+      SpendAuthorizationSoundnessAssumption
+        wrapper
+        shape
+        merkleRoot
+        witnesses) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness := by
+  exact
+    transactionSpendAuthorized_input_slot_facts_at
+      (soundSpend accepted)
+      slot
 
 def sampleWitness : InputSpendWitness :=
   let base : InputSpendWitness :=
