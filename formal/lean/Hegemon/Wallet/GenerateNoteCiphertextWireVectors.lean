@@ -28,6 +28,7 @@ def noteCiphertextCaseJson
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"format\": \"" ++ format ++ "\",\n"
     ++ "      \"wire_hex\": \"" ++ hexBytes wire ++ "\",\n"
+    ++ "      \"expected_wire_len\": " ++ toString wire.length ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson summary.isSome ++ ",\n"
     ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ "\n"
     ++ "    }"

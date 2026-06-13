@@ -13,6 +13,7 @@ struct VectorCase {
     name: String,
     format: String,
     wire_hex: String,
+    expected_wire_len: usize,
     expected_valid: bool,
     expected_summary: Option<ExpectedSummary>,
 }
@@ -26,6 +27,8 @@ struct ExpectedSummary {
     note_payload_len: usize,
     memo_payload_len: usize,
 }
+
+const ML_KEM_COMPACT_LEN_BYTES: usize = 2;
 
 fn decode_hex(input: &str) -> Vec<u8> {
     let hex = input.strip_prefix("0x").unwrap_or(input);
@@ -59,6 +62,12 @@ fn lean_generated_note_ciphertext_wire_vectors_match_production() {
 
 fn verify_case(case: &VectorCase) {
     let bytes = decode_hex(&case.wire_hex);
+    assert_eq!(
+        bytes.len(),
+        case.expected_wire_len,
+        "wire length mismatch for {}",
+        case.name
+    );
     let actual = match case.format.as_str() {
         "crypto" => CryptoNoteCiphertext::from_bytes(&bytes)
             .map(|ct| ExpectedSummary {
@@ -89,6 +98,16 @@ fn verify_case(case: &VectorCase) {
         "validity mismatch for {}",
         case.name
     );
+    if case.format == "chain" && case.expected_valid {
+        assert_eq!(
+            case.expected_wire_len,
+            wallet::notes::CHAIN_CIPHERTEXT_SIZE
+                + ML_KEM_COMPACT_LEN_BYTES
+                + synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN,
+            "fixed chain wire length mismatch for {}",
+            case.name
+        );
+    }
     if case.expected_valid {
         assert_eq!(
             actual.ok().as_ref(),

@@ -140,6 +140,75 @@ def parseChainNoteCiphertext (input : List Byte) : Option NoteCiphertextSummary 
   else
     none
 
+def bytesBounded (input : List Byte) : Prop :=
+  ∀ byteValue, byteValue ∈ input -> byteValue < 256
+
+theorem bytesBounded_drop
+    {count : Nat}
+    {input : List Byte}
+    (bounded : bytesBounded input) :
+    bytesBounded (input.drop count) := by
+  intro byteValue member
+  exact bounded byteValue (List.mem_of_mem_drop member)
+
+theorem takeBytes_some_length
+    {count : Nat}
+    {input taken rest : List Byte}
+    (h : takeBytes count input = some (taken, rest)) :
+    input.length = count + rest.length := by
+  unfold takeBytes at h
+  split at h
+  · simp at h
+    rcases h with ⟨_, restEq⟩
+    rw [← restEq, List.length_drop]
+    omega
+  · cases h
+
+theorem takeBytes_some_rest_bounded
+    {count : Nat}
+    {input taken rest : List Byte}
+    (bounded : bytesBounded input)
+    (h : takeBytes count input = some (taken, rest)) :
+    bytesBounded rest := by
+  unfold takeBytes at h
+  split at h
+  · simp at h
+    rcases h with ⟨_, restEq⟩
+    rw [← restEq]
+    exact bytesBounded_drop bounded
+  · cases h
+
+theorem skipBytes_some_length
+    {count : Nat}
+    {input rest : List Byte}
+    (h : skipBytes count input = some rest) :
+    input.length = count + rest.length := by
+  unfold skipBytes at h
+  cases takeEq : takeBytes count input with
+  | none =>
+      simp [takeEq] at h
+  | some pair =>
+      rcases pair with ⟨taken, tail⟩
+      simp [takeEq] at h
+      cases h
+      exact takeBytes_some_length (taken := taken) takeEq
+
+theorem readNat_some_length
+    {width value : Nat}
+    {input rest : List Byte}
+    (h : readNat width input = some (value, rest)) :
+    input.length = width + rest.length := by
+  unfold readNat at h
+  cases takeEq : takeBytes width input with
+  | none =>
+      simp [takeEq] at h
+  | some pair =>
+      rcases pair with ⟨raw, tail⟩
+      simp [takeEq] at h
+      rcases h with ⟨_, restEq⟩
+      rw [← restEq]
+      exact takeBytes_some_length (taken := raw) takeEq
+
 def sampleNotePayload : List Byte :=
   patternedBytes 5 0x10
 
@@ -429,6 +498,109 @@ theorem parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
                         cases parsed
                         exact parsed_chain_container_has_gamma_suite_and_fixed_kem
                           parsedContainer
+                    | cons _ _ =>
+                        simp at parsed
+              · simp [kemMatches] at parsed
+
+theorem bounded_parse_compact_mlkem_consumes_two
+    {input rest : List Byte}
+    (bounded : bytesBounded input)
+    (parsed : parseCompactLen input = some (mlKemCiphertextLen, rest)) :
+    input.length = rest.length + 2 := by
+  unfold parseCompactLen at parsed
+  cases input with
+  | nil =>
+      simp at parsed
+  | cons first tail =>
+      have firstBound : first < 256 := bounded first (by simp)
+      simp at parsed
+      by_cases flag0 : first % 4 = 0
+      · have firstDivSmall : first / 4 < 64 := by
+          exact Nat.div_lt_of_lt_mul (by omega : first < 4 * 64)
+        have impossible : ¬ first / 4 = mlKemCiphertextLen := by
+          have lessConst : 64 < mlKemCiphertextLen := by
+            decide
+          have less : first / 4 < mlKemCiphertextLen :=
+            Nat.lt_trans firstDivSmall lessConst
+          exact Nat.ne_of_lt less
+        simp [flag0, impossible] at parsed
+      · simp [flag0] at parsed
+        by_cases flag1 : first % 4 = 1
+        · simp [flag1] at parsed
+          cases readEq : readNat 2 (first :: tail) with
+          | none =>
+              simp [readEq] at parsed
+          | some valueRest =>
+              rcases valueRest with ⟨value, tail2⟩
+              simp [readEq] at parsed
+              rcases parsed with ⟨_largeEnough, _valueEq, restEq⟩
+              rw [← restEq]
+              have lenEq := readNat_some_length readEq
+              omega
+        · simp [flag1] at parsed
+          by_cases flag2 : first % 4 = 2
+          · simp [flag2] at parsed
+            cases readEq : readNat 4 (first :: tail) with
+            | none =>
+                simp [readEq] at parsed
+            | some valueRest =>
+                rcases valueRest with ⟨value, tail4⟩
+                simp [readEq] at parsed
+                rcases parsed with ⟨largeEnough, valueEq, _restEq⟩
+                unfold mlKemCiphertextLen at valueEq
+                omega
+          · simp [flag2] at parsed
+            unfold mlKemCiphertextLen at parsed
+            omega
+
+theorem parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (bounded : bytesBounded input)
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    input.length =
+      chainCiphertextSize + chainCompactKemLen.length + mlKemCiphertextLen := by
+  unfold parseChainNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      have inputLen := takeBytes_some_length takeEq
+      have rest0Bounded := takeBytes_some_rest_bounded bounded takeEq
+      simp [takeEq] at parsed
+      cases containerEq : parseChainContainer container with
+      | none =>
+          simp [containerEq] at parsed
+      | some containerSummary =>
+          simp [containerEq] at parsed
+          cases compactEq : parseCompactLen rest0 with
+          | none =>
+              simp [compactEq] at parsed
+          | some kemRest =>
+              rcases kemRest with ⟨kemLen, rest1⟩
+              simp [compactEq] at parsed
+              by_cases kemMatches : kemLen = mlKemCiphertextLen
+              · subst kemLen
+                cases skipEq : skipBytes mlKemCiphertextLen rest1 with
+                | none =>
+                    simp [skipEq] at parsed
+                | some rest2 =>
+                    simp [skipEq] at parsed
+                    cases rest2 with
+                    | nil =>
+                        simp at parsed
+                        have compactLen :=
+                          bounded_parse_compact_mlkem_consumes_two
+                            rest0Bounded
+                            compactEq
+                        have skipLen := skipBytes_some_length skipEq
+                        simp at skipLen
+                        have compactBytes :
+                            chainCompactKemLen.length = 2 := by
+                          decide
+                        rw [compactBytes]
+                        omega
                     | cons _ _ =>
                         simp at parsed
               · simp [kemMatches] at parsed

@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 70.88,
+  "overall_completion_percent": 71.06,
   "last_full_formal_core": {
-    "commit": "working tree after proof-boundary input-slot package",
-    "status": "passed 2026-06-13 18:06Z",
+    "commit": "working tree after bounded chain ciphertext wire/vector package",
+    "status": "passed 2026-06-13 18:50Z",
     "claims": 95,
-    "named_lean_theorems": 1299,
+    "named_lean_theorems": 1302,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,30 +29,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened proof-system and native tx-leaf implementation equivalence: the canonical deployed-verifier boundary now packages input-flag/nullifier vector binding and exposes total input-slot authorization facts directly from packaged boundary facts; native tx-leaf artifact boundary facts now expose the same total input-slot statement/proof-binding facts.",
+    "summary": "Strengthened the wallet/observer ciphertext implementation-equivalence boundary: bounded accepted chain note-ciphertext wires now have the fixed production chain-container plus canonical compact ML-KEM length plus ML-KEM ciphertext length, active native tx-leaf observer rows carry that bounded fixed-wire shape alongside statement/proof-binding vector indices, and generated wallet conformance vectors carry expected wire lengths checked by production Rust tests.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_input_vectors_bound",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_input_slot_bound_to_statement",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_boundary_input_slot_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_input_slot_facts"
+      "Hegemon.Wallet.NoteCiphertextWire.bounded_parse_compact_mlkem_consumes_two",
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape"
     ],
     "validation": {
       "lean_formal": "targeted modules passed",
-      "formal_core": "passed 2026-06-13 18:06Z",
+      "formal_core": "passed 2026-06-13 18:50Z",
       "claims": 95,
-      "named_lean_theorems": 1299,
+      "named_lean_theorems": 1302,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorem package exposes modeled total input-slot facts from canonical/native boundary objects, but it does not discharge deployed verifier soundness, AIR/STARK/SmallWood soundness, witness extraction, or hash security.",
-      "Complete Rust/native-node equivalence and arbitrary-byte parser refinement remain explicit residual assumptions.",
+      "The fixed wire-length theorem is intentionally byte-bounded because the Lean Byte model is Nat; without byte-boundedness, unbounded Nat values can encode ML-KEM length through impossible production single-byte compact prefixes.",
+      "The theorem does not prove ciphertext-hash equality/security, note plaintext correctness, ML-KEM/AEAD confidentiality, simulator zero-knowledge, or complete wallet/native-node equivalence.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -273,7 +271,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 39,
+      "completion_percent": 40,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -286,6 +284,7 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output slots have an in-bounds public active-output rank for observer ciphertext bytes and parsed summaries",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output ranks select concrete public chain wire rows parsed to the same observer summaries",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now carries direct shape, statement, and proof-binding commitment/ciphertext-hash vector indices through the selected active observer row",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now carries byte-bounded fixed chain ciphertext wire length through the selected active observer row",
         "note ciphertext wire grammar vectors",
         "public/private field separation in transaction statement docs"
       ],
@@ -299,7 +298,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 52,
+      "completion_percent": 54,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -312,6 +311,8 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active output ranks are in bounds for observer ciphertext byte and summary lists",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves the selected observer ciphertext wire at an active output rank parses to the selected summary",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct active output ciphertext-hash vector indices for the public shape, canonical statement, and proof-binding message that correspond to that selected observer row",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires consume exactly the fixed chain container, canonical compact ML-KEM length bytes, and ML-KEM ciphertext bytes",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
         "wallet note ciphertext wire vector gate",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates"
       ],

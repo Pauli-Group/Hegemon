@@ -493,6 +493,134 @@ theorem native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire
       outputFacts,
       bindingFacts⟩
 
+theorem native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape)
+    (observerBytesBounded :
+      ∀ wire,
+        wire ∈ world.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    ∃ wire summary,
+      world.ciphertextBytes[
+          activeFlagCountBefore shape.outputFlags index]? = some wire
+        ∧ world.ciphertextSummaries[
+          activeFlagCountBefore shape.outputFlags index]? = some summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+          wire = some summary
+        ∧ summaryHasChainCiphertextFormat summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire
+        ∧ wire.length =
+          Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+            + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+            + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+        ∧ shape.outputFlags[index]? = some 1
+        ∧ shape.commitments[index]? = some publicCommitment
+        ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+        ∧ bound.outputFlags[index]? = some 1
+        ∧ statementFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ statementFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ bound.outputFlags[index]? = some 1
+        ∧ bindingFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ bindingFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ OutputSlotFacts
+          1
+          publicCommitment
+          publicCiphertextHash
+        ∧ TxLeafActionBindingFacts input := by
+  rcases
+      native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire
+        bindingAccepted
+        surface
+        slot
+        observerValid
+        shapeEq with
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingFlag,
+      bindingCommitment,
+      bindingCiphertext,
+      outputFacts,
+      bindingFacts⟩
+  have wireBounded :
+      Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire :=
+    observerBytesBounded wire (List.mem_of_getElem? wireAt)
+  have wireLength :
+      wire.length =
+        Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+          + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+          + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen :=
+    Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+      wireBounded
+      parsedSummary
+  exact
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      wireBounded,
+      wireLength,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingFlag,
+      bindingCommitment,
+      bindingCiphertext,
+      outputFacts,
+      bindingFacts⟩
+
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

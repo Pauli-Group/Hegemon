@@ -104,6 +104,9 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 17:43Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1295 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 17:54Z) Strengthened `Hegemon.Transaction.CanonicalVerifierBoundary`, `Hegemon.Transaction.ProofSystemBoundary`, and `Hegemon.Native.TxLeafCanonicalSurface` with packaged input-vector and total input-slot boundary facts: canonical deployed-verifier facts and native tx-leaf artifact facts now directly expose inactive/active input-slot authorization facts bound to statement/proof-binding nullifier vectors. Current tracked completion is 70.88%; targeted Lean modules passed.
 - [x] (2026-06-13 18:06Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1299 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 18:17Z) Strengthened `Hegemon.Wallet.NoteCiphertextWire` and `Hegemon.Privacy.NativeObserverSurface` with byte-bounded fixed chain ciphertext wire-shape facts: accepted bounded chain wires now consume exactly the fixed chain container, canonical compact ML-KEM length bytes, and ML-KEM ciphertext bytes, and active native tx-leaf observer rows carry that fixed-wire shape alongside statement/proof-binding vector indices. Current tracked completion is 71.06%; targeted Lean modules passed.
+- [x] (2026-06-13 18:33Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1302 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 18:50Z) Added expected wire-length fields to Lean-generated wallet note-ciphertext conformance vectors and Rust assertions, including the fixed valid chain wire length; re-ran `bash scripts/check_formal_core.sh`, which passed with 95 claims, 1302 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -225,6 +228,8 @@ The DA sidecar raw-replay slice strengthens `formal/lean/Hegemon/Native/DaSideca
 The indexed observer/statement vector slice strengthens `formal/lean/Hegemon/Transaction/PublicInputs.lean` and `formal/lean/Hegemon/Privacy/NativeObserverSurface.lean`. `output_slot_at_get_indices` turns recursive output-slot evidence into direct list-index facts for output flags, commitments, and ciphertext hashes. `native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire` composes accepted native tx-leaf output-slot binding with the valid observer-chain surface, proving the selected active observer wire row parses to a chain-format summary while carrying direct public-shape, canonical-statement, and proof-binding commitment/ciphertext-hash vector indices. This raises the tracked baseline to 70.65% without changing runtime behavior. It still does not prove public ciphertext-hash equality/security for selected wire bytes, fixed-size byte-bounded wire shape, note plaintext correctness, simulator zero-knowledge, ML-KEM/AEAD confidentiality, wallet metadata privacy, timing privacy, deployed verifier soundness, or complete wallet/native-node equivalence.
 
 The proof-boundary input-slot package slice strengthens `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`, `formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean`, and `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. `canonical_statement_surface_input_vectors_bound` records input-flag/nullifier agreement across public shape, bound public inputs, statement hash, and proof-binding message. `canonical_boundary_facts_input_slot_bound_to_statement` exposes total input-slot authorization facts directly from `CanonicalDeployedVerifierBoundaryFacts`, including inactive-zero and active-spend cases plus statement/proof-binding slot alignment. `native_tx_leaf_deployed_boundary_input_slot_facts` and `native_tx_leaf_canonical_artifact_boundary_input_slot_facts` lift the same package through accepted native tx-leaf/action equality admission and the packaged native artifact boundary. This raises the tracked baseline to 70.88% without changing runtime behavior. It still does not discharge deployed verifier/AIR soundness, SmallWood soundness, witness extraction, hash security, arbitrary-byte parser refinement, or complete native-node equivalence.
+
+The bounded chain ciphertext wire-shape slice strengthens `formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean` and `formal/lean/Hegemon/Privacy/NativeObserverSurface.lean`. `bounded_parse_compact_mlkem_consumes_two` proves that an accepted bounded compact ML-KEM length prefix consumes exactly the two production SCALE compact bytes; this bound is necessary because the Lean `Byte` model is `Nat`, so unbounded values could otherwise encode 1568 in impossible one-byte forms. `parsed_chain_ciphertext_has_fixed_wire_length_of_bounded` proves accepted bounded chain note-ciphertext wires have exactly the fixed chain container, compact ML-KEM length, and ML-KEM ciphertext length. `native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape` lifts that fact through accepted active native tx-leaf observer rows while preserving statement/proof-binding vector indices. The Lean-generated wallet vectors now also carry expected wire lengths, and the Rust conformance test checks those lengths plus the fixed valid chain wire length against production constants. This raises the tracked baseline to 71.06% without changing runtime behavior. It still does not prove ciphertext-hash equality/security for selected wire bytes, note plaintext correctness, simulator zero-knowledge, ML-KEM/AEAD confidentiality, wallet metadata privacy, timing privacy, deployed verifier soundness, or complete wallet/native-node equivalence.
 
 ## Context and Orientation
 
@@ -546,6 +551,14 @@ The latest full formal-core pass after the bridge/raw-ingress projected replay c
 
     claims=95
     named_lean_theorems=1280
+    production_eligible_claims=86
+    falsification_cases=385
+    implementation_bindings=180
+
+The latest full formal-core pass after the bounded chain ciphertext wire-shape and vector-length slice reported:
+
+    claims=95
+    named_lean_theorems=1302
     production_eligible_claims=86
     falsification_cases=385
     implementation_bindings=180
