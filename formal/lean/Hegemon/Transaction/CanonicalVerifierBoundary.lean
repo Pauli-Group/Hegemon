@@ -459,6 +459,36 @@ theorem canonical_statement_surface_vectors_bound
     surface.bindingCommitments,
     surface.bindingCiphertextHashes⟩
 
+theorem canonical_statement_surface_input_vectors_bound
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    shape.inputFlags = bound.inputFlags
+      ∧ shape.nullifiers = statementFields.nullifierSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds :=
+  ⟨surface.shapeInputFlags,
+    surface.shapeNullifiers,
+    surface.bindingNullifiers⟩
+
 theorem canonical_statement_surface_output_vectors_bound
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
