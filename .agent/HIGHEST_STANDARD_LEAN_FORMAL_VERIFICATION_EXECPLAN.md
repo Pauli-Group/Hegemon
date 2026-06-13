@@ -82,6 +82,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 23:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 94 claims, 1261 named Lean theorems, 85 production-eligible claims, 382 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-14 00:20Z) Added `Hegemon.Native.RawIngressSidecarReplayRecoverability`, composing accepted action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar replay binding, and projected replay startup equivalence into one raw-ingress-to-replay fact package. Current tracked completion is 68.75%.
 - [x] (2026-06-14 00:35Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1269 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 14:52Z) Strengthened `Hegemon.Native.TxLeafCanonicalSurface` with `native_tx_leaf_canonical_artifact_boundary_facts`, packaging accepted native tx-leaf/action equality admission, canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and receipt/public-input/proof/backend/ciphertext-payload binding into one implementation-equivalence theorem. Current tracked completion is 68.98%.
+- [x] (2026-06-13 14:58Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1270 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -178,6 +180,8 @@ The native tx-leaf input/output slot binding slice strengthens `formal/lean/Hege
 The native observer output-slot surface slice adds `formal/lean/Hegemon/Privacy/NativeObserverSurface.lean`. It proves that valid observer-chain surfaces carry chain-format ciphertext summaries and an active-output count matching the public shape, composes those facts with accepted native tx-leaf output-slot binding, and proves same-chain-wire worlds preserve allowed leakage while retaining the statement/proof-binding output-slot facts. This raises the tracked baseline to 67.92%. It still does not prove simulator zero-knowledge, ML-KEM/AEAD confidentiality, wallet metadata privacy, timing privacy, proof-system privacy, deployed AIR/STARK/SmallWood soundness, ciphertext hash security, or complete native-node refinement.
 
 The proof-system boundary facts slice adds `formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean` and strengthens `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. It packages the canonical deployed verifier surface, deployed relation facts, accepted transaction relation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, vector binding, value-balance binding, stablecoin payload binding, and exposed spend/balance facts into `CanonicalDeployedVerifierBoundaryFacts`; the native tx-leaf theorem composes that package with accepted tx-leaf/action equality admission. This raises the tracked baseline to 68.18%. It still does not discharge `DeployedTxVerifierSoundnessAssumption`, deployed AIR/STARK/SmallWood soundness, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, or complete native-node refinement.
+
+The native tx-leaf artifact-boundary packaging slice strengthens `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. `native_tx_leaf_canonical_artifact_boundary_facts` packages accepted native tx-leaf/action equality admission with the canonical deployed-verifier fact package, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and receipt/public-input/proof/backend/ciphertext-payload binding. This raises the tracked baseline to 68.98% without changing runtime behavior. It still depends on `DeployedTxVerifierSoundnessAssumption`; deployed AIR/STARK/SmallWood soundness, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, stablecoin/bridge authorization, and complete native-node refinement remain open.
 
 ## Context and Orientation
 
@@ -475,6 +479,14 @@ The latest full formal-core pass after the raw-ingress sidecar replay-recoverabi
 
     claims=95
     named_lean_theorems=1269
+    production_eligible_claims=86
+    falsification_cases=385
+    implementation_bindings=180
+
+The latest full formal-core pass after the native tx-leaf canonical artifact-boundary packaging slice reported:
+
+    claims=95
+    named_lean_theorems=1270
     production_eligible_claims=86
     falsification_cases=385
     implementation_bindings=180

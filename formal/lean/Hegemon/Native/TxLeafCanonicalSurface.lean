@@ -33,6 +33,86 @@ def TxLeafActionBindingFacts
     ∧ input.proofBackendMatches = true
     ∧ input.ciphertextPayloadHashesMatch = true
 
+structure NativeTxLeafCanonicalArtifactBoundaryFacts
+    (input : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (balanceWitness : Hegemon.Transaction.BalanceWitness)
+    (slots : List Hegemon.Transaction.BalanceSlot)
+    (assetId : Nat) : Prop where
+  canonicalBoundaryFacts :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  wrapperSurface : acceptedProofWrapperSurface wrapper
+  rootBinding :
+    statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+  feeBinding :
+    statementFields.fee = bound.fee
+      ∧ bindingFields.fee = bound.fee
+  balanceSlotAssetBinding :
+    shape.balanceSlotAssets = bound.balanceSlotAssets
+      ∧ bindingFields.balanceSlotAssets = bound.balanceSlotAssets
+      ∧ bound.balanceSlotAssets.length = Hegemon.Transaction.balanceSlotCount
+  stablecoinIdentityBinding :
+    shape.stablecoinEnabled = bound.stablecoinEnabled
+      ∧ shape.stablecoinAsset = bound.stablecoinAsset
+      ∧ shape.stablecoinIssuanceSign = bound.stablecoinIssuanceSign
+      ∧ statementFields.stablecoinEnabled = bound.stablecoinEnabled
+      ∧ statementFields.stablecoinAsset = bound.stablecoinAsset
+      ∧ statementFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
+      ∧ statementFields.stablecoinIssuanceSign =
+        bound.stablecoinIssuanceSign
+      ∧ statementFields.stablecoinIssuanceMagnitude =
+        bound.stablecoinIssuanceMagnitude
+      ∧ stablecoinEnabledFlagMatches
+        bound.stablecoinEnabled
+        bindingFields.stablecoinEnabled
+      ∧ bindingFields.stablecoinAsset = bound.stablecoinAsset
+      ∧ bindingFields.stablecoinPolicyVersion =
+        bound.stablecoinPolicyVersion
+  txLeafActionPreconditions :
+    txLeafActionBindingPreconditions input = true
+  txLeafActionBindingFacts : TxLeafActionBindingFacts input
+  spendAndBalance :
+    Hegemon.Transaction.balanceSlots balanceWitness = some slots
+      ∧ Hegemon.Transaction.validBalance balanceWitness = true
+      ∧ Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized
+        shape
+        merkleRoot
+        spendWitnesses = true
+  authorizedAssetDelta :
+    AuthorizedAssetDelta balanceWitness slots assetId
+  nativeStatementArtifactBinding :
+    input.receiptStatementHashMatches = true
+      ∧ input.publicInputsDigestMatches = true
+      ∧ input.proofDigestMatches = true
+      ∧ input.proofBackendMatches = true
+      ∧ input.ciphertextPayloadHashesMatch = true
+
 theorem tx_leaf_action_accepts_implies_preconditions
     {input : TxLeafActionBindingInput}
     (accepted : txLeafActionBindingAccepts input = true) :
@@ -199,6 +279,120 @@ theorem native_tx_leaf_deployed_verifier_boundary_facts
         sound,
       tx_leaf_action_accepts_implies_preconditions bindingAccepted,
       tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
+theorem native_tx_leaf_canonical_artifact_boundary_facts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId : Nat}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    NativeTxLeafCanonicalArtifactBoundaryFacts
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId := by
+  have boundaryAndNative :=
+    native_tx_leaf_deployed_verifier_boundary_facts
+      bindingAccepted
+      surface
+      sound
+  rcases boundaryAndNative with
+    ⟨canonicalFacts, txLeafPreconditions, txLeafFacts⟩
+  have spendAndBalance :=
+    canonical_boundary_facts_expose_spend_and_balance canonicalFacts
+  have assetDelta :
+      AuthorizedAssetDelta balanceWitness slots assetId :=
+    accepted_transaction_relation_authorized_asset_delta
+      canonicalFacts.acceptedTransactionRelation
+  have statementRoot : statementFields.merkleRootSeed = merkleRoot := by
+    rw [surface.statementMerkleRoot, ← surface.relationMerkleRoot]
+  have bindingRoot : bindingFields.anchorSeed = merkleRoot := by
+    rw [surface.bindingAnchor, ← surface.relationMerkleRoot]
+  rcases txLeafFacts with
+    ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    { canonicalBoundaryFacts := canonicalFacts
+      wrapperSurface :=
+        canonical_statement_surface_statement_surface surface
+      rootBinding := ⟨statementRoot, bindingRoot⟩
+      feeBinding :=
+        ⟨surface.statementFee, surface.bindingFee⟩
+      balanceSlotAssetBinding :=
+        ⟨surface.shapeBalanceSlotAssets, surface.bindingBalanceSlotAssets,
+          surface.statementBalanceSlotAssetsCount⟩
+      stablecoinIdentityBinding :=
+        ⟨surface.shapeStablecoinEnabled, surface.shapeStablecoinAsset,
+          surface.shapeStablecoinIssuanceSign,
+          surface.statementStablecoinEnabled, surface.statementStablecoinAsset,
+          surface.statementStablecoinPolicyVersion,
+          surface.statementStablecoinIssuanceSign,
+          surface.statementStablecoinIssuanceMagnitude,
+          surface.bindingStablecoinEnabled, surface.bindingStablecoinAsset,
+          surface.bindingStablecoinPolicyVersion⟩
+      txLeafActionPreconditions := txLeafPreconditions
+      txLeafActionBindingFacts :=
+        ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+          hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+          hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+          hProofBackend, hCiphertextPayloadHashes⟩
+      spendAndBalance := spendAndBalance
+      authorizedAssetDelta := assetDelta
+      nativeStatementArtifactBinding :=
+        ⟨hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+          hProofBackend, hCiphertextPayloadHashes⟩ }
 
 theorem native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta
     {input : TxLeafActionBindingInput}

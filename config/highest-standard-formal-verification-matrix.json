@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 68.75,
+  "overall_completion_percent": 68.98,
   "last_full_formal_core": {
-    "commit": "working tree after raw-ingress sidecar replay recoverability slice",
+    "commit": "working tree after native tx-leaf canonical artifact-boundary packaging slice",
     "status": "passed",
     "claims": 95,
-    "named_lean_theorems": 1269,
+    "named_lean_theorems": 1270,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,39 +29,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added a raw-ingress sidecar replay recoverability composition theorem surface: accepted action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar replay-binding, and projected replay startup equivalence now compose into one native ingress-to-replay fact package.",
+    "summary": "Strengthened the native tx-leaf canonical artifact boundary: accepted native tx-leaf/action equality admission, canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and receipt/public-input/proof/backend/ciphertext-payload binding now compose into one implementation-equivalence theorem.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
-      "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
-      "formal/lean/Hegemon/Native/PendingActionReload.lean",
-      "formal/lean/Hegemon/Native/StagedCiphertextReload.lean",
-      "formal/lean/Hegemon/Native/StagedProofReload.lean",
-      "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
-      "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
-      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean"
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+      "formal/lean/Hegemon/Transaction/AssetIsolation.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_action_request_projection_implies_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_pending_action_reload_implies_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_staged_ciphertext_reload_implies_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_staged_proof_reload_implies_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_transfer_state_implies_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_sidecar_transfer_state_implies_sidecar_materialized",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_sidecar_replay_exposes_preconditions",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_projected_replay_binds_sidecar_rows"
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 95,
-      "named_lean_theorems": 1269,
+      "named_lean_theorems": 1270,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorem composes accepted raw-ingress and sidecar predicates; it does not prove the full SCALE/JSON parser implementation for arbitrary bytes or complete native-node refinement.",
-      "DA availability, Reed-Solomon recoverability, hot/cold retention, BLAKE3/DA-root hash security, recursive proof soundness, native tx-leaf proof soundness, and sled durability remain explicit residual assumptions.",
+      "The theorem packages the native artifact equality boundary with the canonical deployed-verifier boundary; it does not discharge DeployedTxVerifierSoundnessAssumption.",
+      "Deployed AIR/STARK/SmallWood soundness, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, stablecoin/bridge exception authorization, and complete native-node refinement remain open.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -117,7 +106,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 54,
+      "completion_percent": 55,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -130,7 +119,8 @@
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean lifts indexed active and inactive/active total input-slot facts from the accepted transaction relation",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts indexed active-input facts",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds modeled active and total input-slot facts to the exact anchor/nullifier vectors committed by public-input binding, statement hash, and proof binding message",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action binding with the canonical verifier surface to derive active input spend facts and total input-slot authorization facts bound to statement/proof-binding vectors"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action binding with the canonical verifier surface to derive active input spend facts and total input-slot authorization facts bound to statement/proof-binding vectors",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages accepted native tx-leaf/action binding with canonical deployed-verifier facts, spend/balance exposure, and authorized asset delta in one implementation-equivalence theorem"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -212,7 +202,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 82,
+      "completion_percent": 83,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -226,7 +216,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the canonical verifier surface before deriving the accepted transaction relation",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the packaged proof-system boundary facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now binds native active input, total input-slot, and output commitment/ciphertext slots to the canonical statement and proof-binding vectors",
-        "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
+        "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary"
       ],
       "missing_work": [
         "Lift the canonical verifier-boundary theorem beyond modeled transaction fields to every consensus statement field.",
@@ -238,7 +229,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 62,
+      "completion_percent": 63,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -255,7 +246,8 @@
         "ProofSystemBoundary packages DeployedTxRelationFacts, AcceptedTransactionRelation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, vector binding, value-balance binding, stablecoin payload binding, and spend/balance facts into one future AIR/refinement target",
         "Native TxLeafCanonicalSurface composes production-bound tx-leaf/action equality admission with the canonical deployed verifier soundness boundary to derive the accepted transaction relation, authorized asset deltas, active input spend facts, total input-slot facts, and output slot facts bound to canonical statement vectors",
         "Native TxLeafCanonicalSurface now composes accepted native tx-leaf/action equality admission with the packaged deployed-verifier boundary facts theorem",
-        "docs/crypto native backend assumption notes"
+        "docs/crypto native backend assumption notes",
+        "Native TxLeafCanonicalSurface now packages accepted tx-leaf/action equality admission, canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and native statement-artifact binding into one theorem target for future AIR/refinement work"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction of it.",
