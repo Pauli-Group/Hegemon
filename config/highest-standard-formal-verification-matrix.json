@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 65.31,
+  "overall_completion_percent": 65.58,
   "last_full_formal_core": {
-    "commit": "working tree after PQ channel-state slice",
+    "commit": "working tree after canonical verifier payload-binding slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1179,
+    "named_lean_theorems": 1182,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,40 +29,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened PQ channel safety with explicit channel-state send/open transitions for both legacy secure-channel and PQ Noise. The new theorems prove initial counters are zero, successful protect/open consume the current per-direction counter under the role-correct directional key slot, increment only the corresponding counter, leave the opposite counter unchanged, and reject at send/receive counter overflow.",
+    "summary": "Strengthened the canonical deployed transaction verifier boundary so the canonical statement surface binds value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and active spend facts to the exact anchor/nullifier vectors committed by public-input binding, statement hash, and proof binding message.",
     "lean_modules": [
-      "formal/lean/Hegemon/Network/SecureChannel.lean",
-      "formal/lean/Hegemon/Network/PqNoise.lean"
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Network.SecureChannel.initial_state_counters_zero",
-      "Hegemon.Network.SecureChannel.protectFrame_accepts_below_max",
-      "Hegemon.Network.SecureChannel.openFrame_accepts_below_max",
-      "Hegemon.Network.SecureChannel.protectFrame_rejects_send_overflow",
-      "Hegemon.Network.SecureChannel.openFrame_rejects_recv_overflow",
-      "Hegemon.Network.SecureChannel.protectFrame_direction_and_counter",
-      "Hegemon.Network.SecureChannel.openFrame_direction_and_counter",
-      "Hegemon.Network.PqNoise.initial_state_counters_zero",
-      "Hegemon.Network.PqNoise.protectFrame_accepts_below_max",
-      "Hegemon.Network.PqNoise.openFrame_accepts_below_max",
-      "Hegemon.Network.PqNoise.protectFrame_rejects_send_overflow",
-      "Hegemon.Network.PqNoise.openFrame_rejects_recv_overflow",
-      "Hegemon.Network.PqNoise.protectFrame_direction_and_counter",
-      "Hegemon.Network.PqNoise.openFrame_direction_and_counter"
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_value_balance_bound",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_stablecoin_payload_bound",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_active_input_bound_to_statement"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1179,
+      "named_lean_theorems": 1182,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The channel-state theorem covers executable control logic and counter state, not SHA-256/HKDF/AES-GCM/ML-KEM/ML-DSA cryptographic security.",
-      "Generated vectors already bind nonce layout and role mappings to Rust helpers, but the new state theorem is pure Lean and does not add a new runtime transition vector family.",
-      "Full network liveness, OS RNG quality, handshake peer-authentication security reductions, and complete native-node equivalence remain open."
+      "The boundary still depends on `DeployedTxVerifierSoundnessAssumption`; it does not prove STARK/AIR, SmallWood, FRI, or witness-extraction soundness.",
+      "The theorem binds active spend facts to modeled public/statement/binding data, not raw transaction bytes or a complete Rust verifier refinement.",
+      "Stablecoin policy validity, oracle freshness, attestation validity, bridge mint authorization, hash security, and complete native-node equivalence remain separate open targets."
     ]
   },
   "properties": [
@@ -113,7 +101,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 49,
+      "completion_percent": 50,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -123,7 +111,8 @@
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean lifts indexed active-input facts from the accepted transaction relation",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts indexed active-input facts"
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts indexed active-input facts",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds modeled active spend facts to the exact anchor/nullifier vectors committed by public-input binding, statement hash, and proof binding message"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -221,7 +210,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 54,
+      "completion_percent": 56,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -232,6 +221,7 @@
         "AcceptedTransactionSoundness packages balance and spend assumptions into one accepted transaction relation",
         "CanonicalVerifierBoundary collapses balance and spend assumptions into one canonical deployed transaction verifier soundness assumption over the exact statement surface modeled in Lean",
         "CanonicalVerifierBoundary now binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof-binding message before deriving indexed active-input facts",
+        "CanonicalVerifierBoundary now binds value-balance, stablecoin policy/oracle/attestation/issuance payloads, and active spend facts to the same canonical statement surface",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [

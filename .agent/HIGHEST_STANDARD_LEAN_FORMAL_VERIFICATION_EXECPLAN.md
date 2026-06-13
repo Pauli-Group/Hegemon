@@ -46,6 +46,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 11:56Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1165 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 12:18Z) Strengthened legacy secure-channel and PQ Noise models with stateful protect/open transition theorems for direction-separated key slots and per-direction nonce-counter advancement. Current tracked completion is 65.31%.
 - [x] (2026-06-13 12:35Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1179 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 13:12Z) Strengthened `Hegemon.Transaction.CanonicalVerifierBoundary` so the canonical verifier surface binds value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and modeled active spend facts to the exact public-input, statement-hash, and proof-binding anchor/nullifier surface. Current tracked completion is 65.58%.
+- [x] (2026-06-13 13:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1182 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -112,6 +114,8 @@ The indexed no-theft and canonical verifier-boundary slice strengthens `formal/l
 The native ledger replay-state slice strengthens `formal/lean/Hegemon/Native/ActionStreamEffect.lean` and `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves that accepted action streams preserve `List.Nodup` for consumed bridge replay keys, then adds a carried `NativeLedgerReplayState` requiring each accepted block to match carried supply, commitment leaf cursor, spent nullifiers, and consumed bridge replay keys before replay. The packaged theorem `accepted_native_ledger_replay_chain_startup_equivalence` proves replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, and final bridge replay uniqueness, with concrete rejection examples for stale leaf cursors, duplicate bridge replay consumption, and stale bridge replay state. This raises the tracked baseline to 65.13%. It still operates over production-derived replay inputs; raw byte decoding, Merkle hash security, bridge proof/mint authorization, storage durability, and complete native-node equivalence remain open.
 
 The PQ channel-state slice strengthens `formal/lean/Hegemon/Network/SecureChannel.lean` and `formal/lean/Hegemon/Network/PqNoise.lean`. It adds explicit modeled channel states and proves that successful protect/open operations use the role-correct directional key slot, consume the current send or receive nonce, increment only the corresponding counter, leave the opposite counter unchanged, and reject at that direction's counter overflow. This raises the tracked baseline to 65.31% by closing the previous missing full channel-state theorem gap. It still does not prove SHA-256/HKDF/AES-GCM/ML-KEM/ML-DSA security, OS RNG quality, handshake peer-authentication reductions, full active frame-path state refinement, network liveness, or complete native-node equivalence.
+
+The canonical verifier payload-binding slice strengthens `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It adds `canonical_statement_surface_value_balance_bound`, `canonical_statement_surface_stablecoin_payload_bound`, and `canonical_surface_authorized_active_input_bound_to_statement`, proving that value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and modeled active spend facts are bound to the exact public-input binding, statement-hash, and proof-binding anchor/nullifier surface. This raises the tracked baseline to 65.58% by narrowing the non-cryptographic statement-surface obligation for proof-system soundness and no-theft. It still depends on `DeployedTxVerifierSoundnessAssumption`; STARK/AIR, SmallWood, FRI, witness extraction, hash security, stablecoin policy validity, bridge mint authorization, and full native-node refinement remain open.
 
 ## Context and Orientation
 
@@ -265,6 +269,14 @@ The latest full formal-core pass after the PQ channel-state slice reported:
 
     claims=92
     named_lean_theorems=1179
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the canonical verifier payload-binding slice reported:
+
+    claims=92
+    named_lean_theorems=1182
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177

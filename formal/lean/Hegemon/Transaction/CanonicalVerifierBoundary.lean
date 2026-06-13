@@ -64,6 +64,14 @@ structure CanonicalTxStatementSurface
     statementFields.stablecoinEnabled = bound.stablecoinEnabled
   statementStablecoinAsset :
     statementFields.stablecoinAsset = bound.stablecoinAsset
+  statementStablecoinPolicyHash :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  statementStablecoinOracleCommitment :
+    statementFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  statementStablecoinAttestationCommitment :
+    statementFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
   statementStablecoinPolicyVersion :
     statementFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
   statementStablecoinIssuanceSign :
@@ -75,6 +83,11 @@ structure CanonicalTxStatementSurface
     ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
   bindingAnchor : bindingFields.anchorSeed = bound.merkleRoot
   bindingFee : bindingFields.fee = bound.fee
+  bindingValueBalance :
+    PublicInputBinding.signedMagnitudeMatches
+      bindingFields.valueBalance
+      bound.valueBalanceSign
+      bound.valueBalanceMagnitude = true
   bindingBalanceSlotAssets :
     bindingFields.balanceSlotAssets = bound.balanceSlotAssets
   bindingStablecoinEnabled :
@@ -83,6 +96,19 @@ structure CanonicalTxStatementSurface
       bindingFields.stablecoinEnabled
   bindingStablecoinAsset :
     bindingFields.stablecoinAsset = bound.stablecoinAsset
+  bindingStablecoinPolicyHash :
+    bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  bindingStablecoinOracleCommitment :
+    bindingFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  bindingStablecoinAttestationCommitment :
+    bindingFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
+  bindingStablecoinIssuanceDelta :
+    PublicInputBinding.signedMagnitudeMatches
+      bindingFields.stablecoinIssuanceDelta
+      bound.stablecoinIssuanceSign
+      bound.stablecoinIssuanceMagnitude = true
   bindingStablecoinPolicyVersion :
     bindingFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
 
@@ -296,6 +322,178 @@ theorem canonical_statement_surface_vectors_bound
     surface.bindingNullifiers,
     surface.bindingCommitments,
     surface.bindingCiphertextHashes⟩
+
+theorem canonical_statement_surface_value_balance_bound
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    statementFields.valueBalanceSign = bound.valueBalanceSign
+      ∧ statementFields.valueBalanceMagnitude = bound.valueBalanceMagnitude
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.valueBalance
+        bound.valueBalanceSign
+        bound.valueBalanceMagnitude = true :=
+  ⟨surface.statementValueBalanceSign,
+    surface.statementValueBalanceMagnitude,
+    surface.bindingValueBalance⟩
+
+theorem canonical_statement_surface_stablecoin_payload_bound
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ statementFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ statementFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ bindingFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ bindingFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.stablecoinIssuanceDelta
+        bound.stablecoinIssuanceSign
+        bound.stablecoinIssuanceMagnitude = true :=
+  ⟨surface.statementStablecoinPolicyHash,
+    surface.statementStablecoinOracleCommitment,
+    surface.statementStablecoinAttestationCommitment,
+    surface.bindingStablecoinPolicyHash,
+    surface.bindingStablecoinOracleCommitment,
+    surface.bindingStablecoinAttestationCommitment,
+    surface.bindingStablecoinIssuanceDelta⟩
+
+theorem canonical_surface_authorized_active_input_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (authorized :
+      transactionSpendAuthorized shape merkleRoot spendWitnesses = true)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    InputSpendFacts merkleRoot publicNullifier witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+  have slotsAuthorized :=
+    transactionSpendAuthorized_implies_slots_authorized authorized
+  have facts :=
+    authorizeInputSlots_active_input_facts_at
+      slot
+      active
+      slotsAuthorized
+  have statementRoot : statementFields.merkleRootSeed = merkleRoot := by
+    rw [surface.statementMerkleRoot, ← surface.relationMerkleRoot]
+  have bindingRoot : bindingFields.anchorSeed = merkleRoot := by
+    rw [surface.bindingAnchor, ← surface.relationMerkleRoot]
+  have slotStatement :
+      ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← surface.shapeInputFlags, ← surface.shapeNullifiers]
+    exact slot
+  have slotBinding :
+      ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← surface.shapeInputFlags, surface.bindingNullifiers,
+      ← surface.shapeNullifiers]
+    exact slot
+  exact ⟨facts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
 
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
