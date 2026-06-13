@@ -14,7 +14,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 04:14Z) Confirmed the branch is clean at `19acdaab5b6bece8e0afcece57d8b4953ccfe36f`.
 - [x] (2026-06-13 04:15Z) Started four read-only audit agents covering ledger invariants, proof-system boundaries, privacy/DA/bridge properties, and node/network/release refinement.
 - [x] (2026-06-13 04:16Z) Added the first checked-in theorem matrix with weighted completion tracking. Initial highest-standard completion is 44.35%.
-- [ ] Integrate agent audit results into the theorem matrix and adjust percentages where the evidence warrants it.
+- [x] (2026-06-13 04:30Z) Integrated all four agent audit results into the theorem matrix. Current highest-standard completion is 59.46%.
 - [ ] Promote existing supply and nullifier fragments into named top-level accepted-chain theorem targets.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Run `bash scripts/check_formal_core.sh` after each theorem slice and deploy validated heads to `hegemon-dev` for mining/transaction smoke.
@@ -23,6 +23,15 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 
 - Observation: The current formal branch already has a broad formal-core gate, but its coverage is uneven when judged against highest-standard theorem/refinement criteria.
   Evidence: The last passing formal-core run at `19acdaab5b6bece8e0afcece57d8b4953ccfe36f` reported 86 theorem-backed claims and 1069 named Lean theorem declarations, while proof-system soundness and privacy remain mostly assumption-bound rather than fully mechanized.
+
+- Observation: The strongest current areas are nullifier uniqueness, balance/conservation guardrails, statement binding, canonical encoding, replay/admission ordering, PQ channel engineering checks, and release/dependency posture.
+  Evidence: Four read-only audit agents independently found no Lean `sorry`/`admit` holes in `formal/lean/Hegemon` and raised those matrix entries where the code has real theorem/vector/refinement evidence.
+
+- Observation: The highest-value claims are still not fully proved: spend authorization, proof-system soundness, privacy/unlinkability/confidentiality, production bridge mint safety, and complete Rust/native-node refinement remain the main blockers.
+  Evidence: Agents explicitly reported no end-to-end theorem that accepted spends imply authorized witnesses; no full deployed proof-system soundness theorem; no formal privacy game; and no complete raw-byte-to-state Rust refinement.
+
+- Observation: The generated claim and blueprint metadata still named `codex/formal-equivalence-010`, a deleted historical branch.
+  Evidence: `config/formal-security-claims.json` and `config/formal-security-blueprint.json` had `generated_for_branch` set to the old branch until this coordinator update.
 
 ## Decision Log
 
@@ -40,7 +49,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 
 ## Outcomes & Retrospective
 
-This plan has just been created. The immediate outcome is a concrete target and tracking system: 18 critical formal property families, weighted to 100 total points, with an initial overall completion of 44.35%. The next retrospective must compare agent audit findings against the initial estimates and record whether the first theorem slice raises the completion percentage.
+The immediate outcome is a concrete target and tracking system: 18 critical formal property families, weighted to 100 total points. The initial conservative completion was 44.35%; after four read-only audits, the branch-local tracked completion is 59.46%. This is not a claim of full formal verification. It means the coordinator now has an evidence-weighted baseline for what is already strong and what still blocks the highest standard.
 
 ## Context and Orientation
 

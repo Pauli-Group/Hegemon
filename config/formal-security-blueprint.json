@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_for_branch": "codex/formal-equivalence-010",
+  "generated_for_branch": "codex/superneo-formal-verification",
   "methodology": {
     "name": "hegemon-formal-blueprint-dag-v1",
     "summary": "LeanMarathon-inspired formal-security blueprint: every release claim is a reviewed graph node with implementation bindings, call-order constraints, evidence, dependencies, and cheap falsification cases.",
