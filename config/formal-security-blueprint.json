@@ -568,8 +568,8 @@
       "id": "formal.transaction-asset-isolation-boundary",
       "claim_id": "formal.transaction-asset-isolation-boundary",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean accepted-transaction boundary, every per-asset delta is authorized: native asset deltas match the modeled native balance, non-native unselected deltas are zero, and any nonzero non-native delta implies the selected stablecoin issuance/burn exception.",
-      "informal_argument": "`Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta` lifts the accepted-transaction relation into one asset-delta policy. Companion theorems prove that unselected non-native assets have zero delta and that any nonzero non-native delta must be the selected stablecoin exception. Wrapper-level theorems compose the same result with `AcceptedTransactionSoundnessAssumption`, keeping the deployed verifier soundness gap explicit.",
+      "formal_statement": "For the executable Lean accepted-transaction boundary, every per-asset delta is authorized: native asset deltas match the modeled native balance, non-native unselected deltas are zero, and any nonzero non-native delta implies the selected stablecoin issuance/burn exception. For any list of accepted transaction transitions, the aggregate chain asset delta equals the aggregate authorized delta, and a nonzero non-native aggregate delta requires at least one selected stablecoin exception in the chain.",
+      "informal_argument": "`Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta` lifts the accepted-transaction relation into one asset-delta policy. Companion theorems prove that unselected non-native assets have zero delta and that any nonzero non-native delta must be the selected stablecoin exception. `accepted_chain_asset_delta_authorized`, `accepted_chain_non_native_no_exception_delta_zero`, and `accepted_chain_non_native_nonzero_requires_exception` lift the same policy across accepted transaction lists, making the chain-level stablecoin exception predicate explicit while keeping deployed verifier soundness and production stablecoin/bridge authorization outside the theorem.",
       "depends_on": [
         "formal.transaction-balance",
         "formal.transaction-accepted-soundness-boundary",
@@ -598,7 +598,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as a non-production transaction-level asset-isolation boundary. It does not yet certify chain-level stablecoin or bridge mint authorization."
+        "notes": "Accepted as a non-production transaction and accepted-transaction-chain asset-isolation boundary. It does not yet certify production stablecoin policy/oracle/attestation admission or bridge mint authorization."
       },
       "falsification_cases": [
         {
@@ -612,7 +612,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves transaction-level asset isolation under the accepted transaction relation only. It does not prove deployed proof-system soundness, stablecoin policy/oracle/attestation validity, bridge mint authorization, external proof soundness, cryptographic hash security, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
+      "scope_boundary": "This node proves transaction-level and accepted-transaction-list asset isolation under the accepted transaction relation only. It does not prove deployed proof-system soundness, production stablecoin policy/oracle/attestation validity, bridge mint authorization, external proof soundness, cryptographic hash security, proof privacy, note encryption correctness, block/native-node execution equivalence, or complete Rust/native-node refinement."
     },
     {
       "id": "formal.transaction-statement-hash-binding",

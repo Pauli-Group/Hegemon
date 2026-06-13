@@ -24,6 +24,19 @@ def AuthorizedAssetDelta
   else
     slotDelta assetId slots = 0
 
+def authorizedAssetDeltaValue
+    (witness : BalanceWitness)
+    (assetId : Nat) : Int :=
+  if assetId = nativeAsset then
+    nativeExpected witness
+  else if witness.stablecoin.enabled = true then
+    if assetId = witness.stablecoin.assetId then
+      witness.stablecoin.issuanceDelta
+    else
+      0
+  else
+    0
+
 theorem accepted_transaction_relation_authorized_asset_delta
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -42,6 +55,55 @@ theorem accepted_transaction_relation_authorized_asset_delta
         slots) :
     AuthorizedAssetDelta balanceWitness slots assetId := by
   unfold AuthorizedAssetDelta
+  by_cases native : assetId = nativeAsset
+  · simp [native]
+    exact accepted_transaction_relation_native_delta relation
+  · simp [native]
+    by_cases stablecoinEnabled : balanceWitness.stablecoin.enabled = true
+    · simp [stablecoinEnabled]
+      by_cases selected : assetId = balanceWitness.stablecoin.assetId
+      · simp [selected]
+        exact
+          accepted_transaction_relation_stablecoin_selected_delta
+            relation
+            stablecoinEnabled
+      · simp [selected]
+        exact
+          accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero
+            relation
+            stablecoinEnabled
+            native
+            selected
+    · simp [stablecoinEnabled]
+      have stablecoinDisabled :
+          balanceWitness.stablecoin.enabled = false := by
+        cases h : balanceWitness.stablecoin.enabled <;>
+          simp [h] at stablecoinEnabled ⊢
+      exact
+        accepted_transaction_relation_no_stablecoin_non_native_delta_zero
+          relation
+          stablecoinDisabled
+          native
+
+theorem accepted_transaction_relation_authorized_asset_delta_value
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (relation :
+      AcceptedTransactionRelation
+        wrapper
+        shape
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    slotDelta assetId slots =
+      authorizedAssetDeltaValue balanceWitness assetId := by
+  unfold authorizedAssetDeltaValue
   by_cases native : assetId = nativeAsset
   · simp [native]
     exact accepted_transaction_relation_native_delta relation
@@ -205,6 +267,144 @@ theorem accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero
     (accepted_wrapper_implies_transaction_relation accepted sound)
     nonNative
     nonzero
+
+structure AcceptedAssetTransition where
+  wrapper : ProofWrapperInput
+  shape : PublicInputShape
+  merkleRoot : Digest
+  spendWitnesses : List InputSpendWitness
+  balanceWitness : BalanceWitness
+  slots : List BalanceSlot
+  relation :
+    AcceptedTransactionRelation
+      wrapper
+      shape
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+
+def acceptedTransitionDelta
+    (assetId : Nat)
+    (transition : AcceptedAssetTransition) : Int :=
+  slotDelta assetId transition.slots
+
+def acceptedTransitionAuthorizedDelta
+    (assetId : Nat)
+    (transition : AcceptedAssetTransition) : Int :=
+  authorizedAssetDeltaValue transition.balanceWitness assetId
+
+def acceptedChainAssetDelta
+    (assetId : Nat) :
+    List AcceptedAssetTransition -> Int
+  | [] => 0
+  | transition :: rest =>
+      acceptedTransitionDelta assetId transition
+        + acceptedChainAssetDelta assetId rest
+
+def acceptedChainAuthorizedAssetDelta
+    (assetId : Nat) :
+    List AcceptedAssetTransition -> Int
+  | [] => 0
+  | transition :: rest =>
+      acceptedTransitionAuthorizedDelta assetId transition
+        + acceptedChainAuthorizedAssetDelta assetId rest
+
+def transitionHasStablecoinException
+    (assetId : Nat)
+    (transition : AcceptedAssetTransition) : Prop :=
+  transition.balanceWitness.stablecoin.enabled = true
+    ∧ assetId = transition.balanceWitness.stablecoin.assetId
+
+theorem accepted_transition_delta_authorized
+    {assetId : Nat}
+    {transition : AcceptedAssetTransition} :
+    acceptedTransitionDelta assetId transition =
+      acceptedTransitionAuthorizedDelta assetId transition := by
+  exact
+    accepted_transaction_relation_authorized_asset_delta_value
+      transition.relation
+
+theorem accepted_chain_asset_delta_authorized
+    {assetId : Nat}
+    {transitions : List AcceptedAssetTransition} :
+    acceptedChainAssetDelta assetId transitions =
+      acceptedChainAuthorizedAssetDelta assetId transitions := by
+  induction transitions with
+  | nil =>
+      rfl
+  | cons transition rest ih =>
+      simp [
+        acceptedChainAssetDelta,
+        acceptedChainAuthorizedAssetDelta,
+        accepted_transition_delta_authorized,
+        ih
+      ]
+
+theorem accepted_chain_non_native_no_exception_delta_zero
+    {assetId : Nat}
+    {transitions : List AcceptedAssetTransition}
+    (nonNative : assetId ≠ nativeAsset)
+    (noException :
+      ∀ transition,
+        transition ∈ transitions ->
+          ¬ transitionHasStablecoinException assetId transition) :
+    acceptedChainAssetDelta assetId transitions = 0 := by
+  induction transitions with
+  | nil =>
+      rfl
+  | cons transition rest ih =>
+      have headNoException :
+          ¬ transitionHasStablecoinException assetId transition := by
+        exact noException transition (by simp)
+      have restNoException :
+          ∀ transition,
+            transition ∈ rest ->
+              ¬ transitionHasStablecoinException assetId transition := by
+        intro transitionInRest member
+        exact noException transitionInRest (by simp [member])
+      have headNotStablecoinException :
+          transition.balanceWitness.stablecoin.enabled = false
+            ∨ assetId ≠ transition.balanceWitness.stablecoin.assetId := by
+        by_cases enabled :
+            transition.balanceWitness.stablecoin.enabled = true
+        · right
+          intro selected
+          exact headNoException ⟨enabled, selected⟩
+        · left
+          cases h : transition.balanceWitness.stablecoin.enabled <;>
+            simp [h] at enabled ⊢
+      have headZero :
+          acceptedTransitionDelta assetId transition = 0 := by
+        exact
+          accepted_transaction_relation_unselected_non_native_delta_zero
+            transition.relation
+            nonNative
+            headNotStablecoinException
+      have restZero :
+          acceptedChainAssetDelta assetId rest = 0 :=
+        ih restNoException
+      simp [acceptedChainAssetDelta, headZero, restZero]
+
+theorem accepted_chain_non_native_nonzero_requires_exception
+    {assetId : Nat}
+    {transitions : List AcceptedAssetTransition}
+    (nonNative : assetId ≠ nativeAsset)
+    (nonzero : acceptedChainAssetDelta assetId transitions ≠ 0) :
+    ∃ transition,
+      transition ∈ transitions
+        ∧ transitionHasStablecoinException assetId transition := by
+  exact Classical.byContradiction fun noWitness =>
+    have noException :
+        ∀ transition,
+          transition ∈ transitions ->
+            ¬ transitionHasStablecoinException assetId transition := by
+      intro transition member exception
+      exact noWitness ⟨transition, member, exception⟩
+    nonzero
+      (accepted_chain_non_native_no_exception_delta_zero
+        nonNative
+        noException)
 
 end AssetIsolation
 end Transaction

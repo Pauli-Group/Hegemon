@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.8,
+  "overall_completion_percent": 66.9,
   "last_full_formal_core": {
-    "commit": "working tree after accepted ledger/tree replay slice",
+    "commit": "working tree after accepted transaction-chain asset-isolation slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1226,
+    "named_lean_theorems": 1231,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 180
@@ -29,31 +29,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened commitment-tree integrity: accepted ledger/tree replay chains now thread a commitment-root cursor through accepted tree transitions while projecting to an accepted ledger replay that preserves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness.",
+    "summary": "Strengthened asset isolation: accepted transaction-chain asset deltas now aggregate the per-transaction authorized deltas, and any nonzero non-native aggregate delta requires at least one selected stablecoin exception.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/AcceptedChain.lean",
-      "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
-      "formal/lean/Hegemon/Consensus/TreeTransition.lean"
+      "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+      "formal/lean/Hegemon/Transaction/Balance.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_root_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_ledger_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity"
+      "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta_value",
+      "Hegemon.Transaction.AssetIsolation.accepted_transition_delta_authorized",
+      "Hegemon.Transaction.AssetIsolation.accepted_chain_asset_delta_authorized",
+      "Hegemon.Transaction.AssetIsolation.accepted_chain_non_native_no_exception_delta_zero",
+      "Hegemon.Transaction.AssetIsolation.accepted_chain_non_native_nonzero_requires_exception"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1226,
+      "named_lean_theorems": 1231,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The root cursor theorem is over modeled accepted ledger/tree replay pairs and abstract roots; it does not prove Merkle hash security, note commitment correctness, or production tree mutation implementation equivalence.",
-      "The theorem projects to accepted ledger replay and canonical commitment plans, but raw byte decoding and complete native-node refinement remain open.",
-      "Startup/reorg repair equivalence still needs a complete proof that rebuilt canonical commitment trees match genesis replay under storage durability assumptions."
+      "The chain aggregate theorem is over accepted transaction relation objects; complete block/native-node execution, raw action decoding, reorg, startup replay, and proof-system soundness remain open.",
+      "Stablecoin policy/oracle/attestation authorization and live bridge mint exceptions are still separate production-binding targets.",
+      "The theorem does not prove cryptographic hash security, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
     ]
   },
   "properties": [
@@ -176,7 +177,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 66,
+      "completion_percent": 68,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -184,13 +185,14 @@
         "validBalance_per_asset_transaction_conservation theorem",
         "AcceptedProofArtifact conditional accepted-wrapper asset-isolation theorems",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted-relation theorem: nonzero non-native delta implies selected stablecoin exception",
+        "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted transaction-chain aggregate theorem: nonzero non-native chain delta requires a selected stablecoin exception",
         "native bridge payload admission",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, and a decoded amount-equality authorization boundary",
         "native transfer payload/state admission"
       ],
       "missing_work": [
-        "State asset isolation as a chain-level theorem.",
-        "Formalize stablecoin issuance and live bridge mint authorization exceptions as separate chain-level predicates.",
+        "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
+        "Formalize production stablecoin issuance and live bridge mint authorization exceptions as separate chain-level predicates.",
         "Bind exception predicates to production admission paths."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."

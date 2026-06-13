@@ -63,6 +63,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 17:55Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1222 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 18:15Z) Strengthened `Hegemon.Native.AcceptedChain` with an accepted ledger/tree replay relation: accepted chain replay now threads a commitment-root cursor through accepted tree transitions while projecting to an accepted ledger replay that preserves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. Current tracked completion is 66.80%.
 - [x] (2026-06-13 18:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1226 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 19:10Z) Strengthened `Hegemon.Transaction.AssetIsolation` with accepted transaction-chain aggregate theorems: aggregate chain asset deltas equal aggregate authorized deltas, and any nonzero non-native aggregate delta requires at least one selected stablecoin exception. Current tracked completion is 66.90%.
+- [x] (2026-06-13 19:25Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1231 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -145,6 +147,8 @@ The native replay-input projection slice adds `formal/lean/Hegemon/Native/BlockR
 The bridge mint amount-boundary slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It proves that accepted inbound bridge payloads have zero direct native mint delta under the current production surface, because accepted inbound bridge payloads are state-delta-free; it proves state-delta-bearing inbound bridge payloads reject; and it defines a first-class decoded bridge mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality before any future decoded amount can be treated as authorized. The blueprint now also requires native block validation to run bridge payload admission before deriving inbound bridge replay keys. This raises the tracked baseline to 66.68%. It still does not implement or prove a live PQ-clean bridge mint payload grammar, external-chain proof soundness, SCALE decoder correctness, bridge payload-hash cryptographic security or implementation equivalence, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, raw-byte import/reorg/startup/sync refinement, or complete native-node equivalence.
 
 The accepted ledger/tree replay slice strengthens `formal/lean/Hegemon/Native/AcceptedChain.lean`. It defines a modeled replay state carrying both the native ledger cursor and an abstract commitment-root cursor, proves that accepted ledger/tree replay projects to an accepted native ledger replay, proves the final commitment root equals replaying the accepted tree-transition chain, and packages those facts with supply replay, leaf-cursor replay, canonical commitment-plan preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. This raises the tracked baseline to 66.80%. It still does not prove Merkle hash security, note commitment correctness, raw action decoding, production tree mutation implementation equivalence, startup/reorg repair equivalence, storage durability, or complete native-node refinement.
+
+The accepted transaction-chain asset-isolation slice strengthens `formal/lean/Hegemon/Transaction/AssetIsolation.lean`. It defines accepted asset transitions over the accepted transaction relation, proves each transition delta equals the authorized delta value, proves aggregate chain deltas equal aggregate authorized deltas, and proves that a nonzero non-native aggregate delta requires at least one selected stablecoin exception. This raises the tracked baseline to 66.90%. It still does not prove deployed proof-system soundness, production stablecoin policy/oracle/attestation admission, bridge mint authorization, raw action decoding, reorg/startup replay binding, or complete native-node refinement.
 
 ## Context and Orientation
 
@@ -362,6 +366,14 @@ The latest full formal-core pass after the accepted ledger/tree replay slice rep
 
     claims=92
     named_lean_theorems=1226
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=180
+
+The latest full formal-core pass after the accepted transaction-chain asset-isolation slice reported:
+
+    claims=92
+    named_lean_theorems=1231
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=180
