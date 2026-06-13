@@ -241,6 +241,9 @@ lean_exe gen_transaction_vectors where
 lean_exe gen_note_commitment_input_vectors where
   root := `Hegemon.Transaction.GenerateNoteCommitmentInputVectors
 
+lean_exe gen_nullifier_input_vectors where
+  root := `Hegemon.Transaction.GenerateNullifierInputVectors
+
 lean_exe gen_merkle_vectors where
   root := `Hegemon.Transaction.GenerateMerkleVectors
 

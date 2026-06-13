@@ -329,6 +329,92 @@
       "scope_boundary": "This node proves and vector-checks transcript layout, field-limb encoding, and asset-id field canonicality only. It does not prove Poseidon2 cryptographic security, Poseidon2 implementation equivalence beyond the input transcript, note commitment hiding or binding reductions, nullifier derivation, ciphertext hash derivation, deployed STARK or SmallWood proof-system soundness, or complete Rust/native-node refinement."
     },
     {
+      "id": "formal.transaction-nullifier-inputs",
+      "claim_id": "formal.transaction-nullifier-inputs",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean nullifier input grammar, deployed note nullifiers absorb domain tag 2 over exactly six field limbs in one Poseidon2 absorb block: prf_key, note position, and four 8-byte big-endian rho limbs.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.NullifierInputs.nullifier_domain_tag_is_two`, `nullifier_inputs_have_six_limbs`, `nullifier_inputs_start_with_prf_and_position`, `nullifier_inputs_absorb_rho_after_position`, and `nullifier_inputs_one_absorb_block` pin the nullifier transcript shape. `gen_nullifier_input_vectors` emits patterned rho and boundary-position cases. The formal-core gate checks those vectors against the shared production `nullifier_inputs` helper, while focused regressions require P3 and SmallWood nullifier preimage builders to route through the same helper.",
+      "depends_on": [
+        "formal.transaction-note-commitment-inputs",
+        "formal.transaction-merkle-membership",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "circuits/transaction-core/src/hashing_pq.rs",
+          "callee": "nullifier_inputs",
+          "required_callers": [
+            "nullifier"
+          ]
+        },
+        {
+          "path": "circuits/transaction/src/p3_prover.rs",
+          "callee": "nullifier_inputs",
+          "required_callers": [
+            "build_cycle_specs"
+          ]
+        },
+        {
+          "path": "circuits/transaction/src/smallwood_frontend.rs",
+          "callee": "nullifier_inputs",
+          "required_callers": [
+            "poseidon_subtrace_rows"
+          ]
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for nullifier preimage ordering and field encoding, with production helper reuse across core, Plonky3, and SmallWood paths."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-nullifier-input-theorem",
+          "description": "Removing or weakening the nullifier input theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-nullifier-input-conformance",
+          "description": "Changing production nullifier input ordering, 8-byte big-endian rho encoding, input count, or domain tag away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_nullifier_input_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "shared-nullifier-preimage-regression",
+          "description": "P3 and SmallWood nullifier-input builders must continue matching the shared transaction-core nullifier_inputs helper.",
+          "gate": "cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture"
+        },
+        {
+          "id": "formal-core-nullifier-input-gate",
+          "description": "The release formal-core wrapper must generate nullifier vectors and run the production conformance and regression tests.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks transcript layout and field-limb encoding only. It does not prove Poseidon2 cryptographic security, Poseidon2 implementation equivalence beyond the input transcript, nullifier PRF pseudorandomness, deployed AIR or SmallWood proof-system soundness, or complete Rust/native-node refinement."
+    },
+    {
       "id": "formal.transaction-public-input-shape",
       "claim_id": "formal.transaction-public-input-shape",
       "kind": "target_claim",

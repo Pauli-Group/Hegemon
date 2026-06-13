@@ -185,6 +185,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/GenerateVectors.lean
   lake env lean Hegemon/Transaction/NoteCommitmentInputs.lean
   lake env lean Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean
+  lake env lean Hegemon/Transaction/NullifierInputs.lean
+  lake env lean Hegemon/Transaction/GenerateNullifierInputVectors.lean
   lake env lean Hegemon/Transaction/MerklePath.lean
   lake env lean Hegemon/Transaction/GenerateMerkleVectors.lean
   lake env lean Hegemon/Transaction/PublicInputs.lean

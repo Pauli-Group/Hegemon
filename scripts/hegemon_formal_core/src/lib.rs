@@ -491,6 +491,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
         "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
         "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean",
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean",
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
         "formal/lean/Hegemon/Transaction/GenerateMerkleVectors.lean",
         "formal/lean/Hegemon/Transaction/PublicInputs.lean",

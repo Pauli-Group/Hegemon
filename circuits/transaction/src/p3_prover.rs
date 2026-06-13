@@ -12,8 +12,8 @@ use crate::constants::{
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    bytes48_to_felts, merkle_node, note_commitment, note_commitment_inputs, nullifier, prf_key,
-    spend_auth_key, HashFelt,
+    bytes48_to_felts, merkle_node, note_commitment, note_commitment_inputs, nullifier,
+    nullifier_inputs as core_nullifier_inputs, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{
@@ -848,11 +848,7 @@ fn commitment_inputs(note: &NoteData) -> Vec<Val> {
 }
 
 fn nullifier_inputs(prf: Val, input: &InputNoteWitness) -> Vec<Val> {
-    let mut inputs = Vec::new();
-    inputs.push(prf);
-    inputs.push(Val::from_u64(input.position));
-    inputs.extend(bytes_to_vals(&input.note.rho));
-    inputs
+    core_nullifier_inputs(prf, &input.note.rho, input.position)
 }
 
 fn pad_inputs(inputs: &[InputNoteWitness]) -> (Vec<InputNoteWitness>, [bool; MAX_INPUTS]) {
@@ -1103,15 +1099,15 @@ fn build_cycle_specs(
             pos >>= 1;
         }
 
-        let nullifier_inputs = nullifier_inputs(prf, input);
+        let nullifier_preimage = nullifier_inputs(prf, input);
         for chunk_idx in 0..NULLIFIER_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = nullifier_inputs.len().saturating_sub(start).min(6);
+            let take = nullifier_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&nullifier_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&nullifier_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1233,6 +1229,17 @@ mod tests {
                 &note.r,
                 &note.pk_auth,
             )
+        );
+    }
+
+    #[test]
+    fn p3_nullifier_inputs_use_shared_core_preimage() {
+        let witness = sample_witness();
+        let input = &witness.inputs[0];
+        let prf = prf_key(&witness.sk_spend);
+        assert_eq!(
+            nullifier_inputs(prf, input),
+            core_nullifier_inputs(prf, &input.note.rho, input.position)
         );
     }
 

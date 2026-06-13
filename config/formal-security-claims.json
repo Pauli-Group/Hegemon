@@ -227,6 +227,51 @@
       ]
     },
     {
+      "id": "formal.transaction-nullifier-inputs",
+      "component": "transaction nullifier preimage",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean nullifier input kernel proves the deployed transcript layout for note nullifiers: domain tag 2, one Poseidon2 absorb block with exactly six field limbs, prf_key and note position first, then rho as four 8-byte big-endian limbs. Generated Lean vectors are checked against the shared production helper, and Rust regressions require P3 and SmallWood nullifier preimage builders to use that helper.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Transaction.NullifierInputs.nullifier_domain_tag_is_two",
+        "Hegemon.Transaction.NullifierInputs.nullifier_inputs_have_six_limbs",
+        "Hegemon.Transaction.NullifierInputs.nullifier_inputs_start_with_prf_and_position",
+        "Hegemon.Transaction.NullifierInputs.nullifier_inputs_absorb_rho_after_position",
+        "Hegemon.Transaction.NullifierInputs.nullifier_inputs_one_absorb_block"
+      ],
+      "assumptions": [
+        "The theorem and vectors prove nullifier preimage layout only, not Poseidon2 permutation security, collision resistance, or nullifier PRF pseudorandomness.",
+        "Generated Lean conformance vectors cover representative rho encodings, a nonzero PRF key, the maximum canonical Goldilocks PRF-key representative, and the maximum 32-bit note-position domain used by the current Merkle tree.",
+        "The production helper is shared by the core nullifier function and the P3 and SmallWood prover-facing preimage builders; deployed AIR/proof-system soundness remains a separate target."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_nullifier_input_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "nullifier-cryptographic-and-proof-system-soundness-open",
+          "description": "Poseidon2 cryptographic security, nullifier PRF pseudorandomness/collision resistance, full Poseidon2 implementation equivalence, and deployed AIR/proof-system soundness remain separate targets.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.transaction-public-input-shape",
       "component": "transaction verifier public-input shape",
       "claim_class": "lean_theorem",

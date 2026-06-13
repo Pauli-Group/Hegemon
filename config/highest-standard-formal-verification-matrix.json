@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 72.94,
+  "overall_completion_percent": 73.08,
   "last_full_formal_core": {
-    "commit": "working tree after note-commitment input package",
-    "status": "passed 2026-06-13 22:02Z",
-    "claims": 96,
-    "named_lean_theorems": 1333,
-    "production_eligible_claims": 87,
-    "falsification_cases": 394,
-    "implementation_bindings": 186
+    "commit": "working tree after nullifier input package",
+    "status": "passed 2026-06-13 22:34Z",
+    "claims": 97,
+    "named_lean_theorems": 1338,
+    "production_eligible_claims": 88,
+    "falsification_cases": 398,
+    "implementation_bindings": 189
   },
   "last_coordinator_audit": {
     "date": "2026-06-13",
@@ -29,41 +29,35 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added a transaction note-commitment input and asset-id field-admission slice: Lean now fixes note domain tag 1, the 18-limb absorbed transcript, the order value, asset_id, pk_recipient, rho, r, pk_auth, and the 8-byte big-endian field-limb grammar for 32-byte note fields. Generated Lean vectors check the shared production helper, and Rust regressions require Plonky3, SmallWood, and disclosure preimage builders to use it while note/public-input/disclosure boundaries reject field-aliasing asset ids.",
+    "summary": "Added a transaction nullifier input-equivalence slice: Lean now fixes nullifier domain tag 2, the one-block six-limb absorbed transcript, the order prf_key, position, rho, and the 8-byte big-endian field-limb grammar for rho. Generated Lean vectors check the shared production helper, and Rust regressions require Plonky3 and SmallWood nullifier preimage builders to use it.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
-      "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean"
+      "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
+      "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_domain_tag_is_one",
-      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_have_eighteen_limbs",
-      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_start_with_value_and_asset",
-      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_absorb_recipient_rho_randomness_auth",
-      "Hegemon.Transaction.NoteCommitmentInputs.padding_asset_id_is_not_canonical",
-      "Hegemon.Transaction.NoteCommitmentInputs.padding_field_alias_is_not_canonical",
-      "Hegemon.Transaction.NoteCommitmentInputs.field_modulus_is_not_canonical"
+      "Hegemon.Transaction.NullifierInputs.nullifier_domain_tag_is_two",
+      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_have_six_limbs",
+      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_start_with_prf_and_position",
+      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_absorb_rho_after_position",
+      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_one_absorb_block"
     ],
     "validation": {
-      "lean_formal": "targeted NoteCommitmentInputs and generator passed",
+      "lean_formal": "bash scripts/check_lean_formal.sh passed",
       "targeted_rust": [
-        "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_note_commitment_input_vectors_match_production -- --nocapture",
-        "cargo test -p transaction-circuit commitment_inputs_use_shared_core_preimage -- --nocapture",
-        "cargo test -p transaction-circuit field_alias_asset_id -- --nocapture",
-        "cargo test -p transaction-circuit note_validation_rejects_field_aliasing_asset_ids -- --nocapture",
-        "cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture",
-        "cargo test -p disclosure-circuit reject_padding_field_alias_asset_id -- --nocapture"
+        "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_nullifier_input_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture"
       ],
-      "formal_core": "passed 2026-06-13 22:02Z",
-      "claims": 96,
-      "named_lean_theorems": 1333,
-      "production_eligible_claims": 87,
-      "falsification_cases": 394,
-      "implementation_bindings": 186
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13 22:34Z",
+      "claims": 97,
+      "named_lean_theorems": 1338,
+      "production_eligible_claims": 88,
+      "falsification_cases": 398,
+      "implementation_bindings": 189
     },
     "known_limitations": [
-      "The slice proves the commitment transcript layout and public asset-id field-domain policy, not Poseidon2 cryptographic binding/hiding or full Poseidon2 implementation equivalence.",
-      "It does not discharge deployed AIR/proof-system soundness, nullifier derivation, ciphertext-hash security, wallet key custody, or complete native-node equivalence.",
-      "The production change is a cheap admission hardening and helper deduplication; no prover-cost-critical arithmetic was added."
+      "The slice proves the nullifier transcript layout, not Poseidon2 cryptographic security, PRF pseudorandomness, or full Poseidon2 implementation equivalence.",
+      "It does not discharge deployed AIR/STARK/SmallWood proof-system soundness, witness extraction, wallet key custody, or complete native-node equivalence.",
+      "The production change is helper deduplication and conformance gating only; it adds no prover-cost-critical arithmetic."
     ]
   },
   "properties": [
@@ -96,7 +90,7 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 89,
+      "completion_percent": 90,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
@@ -110,7 +104,9 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay state preserves final nullifier Nodup",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor preserves final nullifier Nodup through accepted replay equivalence",
-        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves accepted raw-projected replay preserves final spent-nullifier Nodup through the projected ledger-state theorem"
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves accepted raw-projected replay preserves final spent-nullifier Nodup through the projected ledger-state theorem",
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean proves the concrete deployed nullifier preimage order used before the anti-double-spend state consumes public nullifiers",
+        "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper"
       ],
       "missing_work": [
         "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the stronger carried ledger-state transition relation.",
@@ -121,14 +117,16 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 60,
+      "completion_percent": 61,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
         "statement-hash and proof-statement binding vectors",
         "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean proves the concrete deployed note-commitment input order used by spend-opening reconstruction",
+        "formal/lean/Hegemon/Transaction/NullifierInputs.lean proves the concrete deployed nullifier input order used by spend authorization facts",
         "transaction-circuit and disclosure-circuit regressions require Plonky3, SmallWood, and disclosure preimage builders to use the shared core note_commitment_inputs helper",
+        "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed input slot is either inactive with zero nullifier or active with full spend facts",
@@ -273,6 +271,7 @@
         "SpendAuthorization, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total input-slot facts so future AIR soundness can target inactive-zero and active-spend cases uniformly",
         "PublicInputs, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total output-slot facts so future AIR soundness can target active-output and inactive-padding cases uniformly",
         "NoteCommitmentInputs now pins the exact deployed note-commitment preimage vector and asset-id field-domain policy that future AIR/refinement work must target",
+        "NullifierInputs now pins the exact deployed nullifier preimage vector and one-absorb-block shape that future AIR/refinement work must target",
         "ProofSystemBoundary packages DeployedTxRelationFacts, AcceptedTransactionRelation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, core statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, spend/balance facts, and total input-slot projection into one future AIR/refinement target",
         "Native TxLeafCanonicalSurface composes production-bound tx-leaf/action equality admission with the canonical deployed verifier soundness boundary to derive the accepted transaction relation, authorized asset deltas, active input spend facts, total input-slot facts, and output slot facts bound to canonical statement vectors",
         "Native TxLeafCanonicalSurface now composes accepted native tx-leaf/action equality admission with the packaged deployed-verifier boundary facts theorem",

@@ -15,7 +15,10 @@ use transaction_core::{
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{bytes48_to_felts, merkle_node, note_commitment_inputs, Felt, HashFelt},
+    hashing_pq::{
+        bytes48_to_felts, merkle_node, note_commitment_inputs,
+        nullifier_inputs as core_nullifier_inputs, Felt, HashFelt,
+    },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
     proof::{
         admit_transaction_proof_wrapper as admit_shared_transaction_proof_wrapper,
@@ -3414,11 +3417,7 @@ fn commitment_inputs(note: &crate::note::NoteData) -> Vec<Felt> {
 }
 
 fn nullifier_inputs(prf: Felt, input: &InputNoteWitness) -> Vec<Felt> {
-    let mut inputs = Vec::new();
-    inputs.push(prf);
-    inputs.push(Felt::from_u64(input.position));
-    inputs.extend(bytes_to_felts(&input.note.rho));
-    inputs
+    core_nullifier_inputs(prf, &input.note.rho, input.position)
 }
 
 fn trace_merkle_node(
@@ -3636,6 +3635,17 @@ mod tests {
                 &note.r,
                 &note.pk_auth,
             )
+        );
+    }
+
+    #[test]
+    fn smallwood_nullifier_inputs_use_shared_core_preimage() {
+        let witness = sample_witness();
+        let input = &witness.inputs[0];
+        let prf = Felt::from_u64(123);
+        assert_eq!(
+            nullifier_inputs(prf, input),
+            core_nullifier_inputs(prf, &input.note.rho, input.position)
         );
     }
 

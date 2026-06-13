@@ -230,7 +230,7 @@ pub(crate) mod serde_bytes32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{note_commitment_inputs, Felt, HashFelt};
+    use crate::hashing_pq::{note_commitment_inputs, nullifier_inputs, Felt, HashFelt};
     use p3_field::{PrimeCharacteristicRing, PrimeField64};
     use std::collections::BTreeSet;
 
@@ -265,6 +265,14 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanNullifierInputVectorFile {
+        schema_version: u32,
+        nullifier_domain_tag: u64,
+        nullifier_input_cases: Vec<LeanNullifierInputCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanNoteCommitmentInputCase {
         name: String,
         value: u64,
@@ -283,6 +291,17 @@ mod tests {
         name: String,
         asset_id: u64,
         expected_canonical: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNullifierInputCase {
+        name: String,
+        prf_key: u64,
+        position: u64,
+        rho: Vec<u8>,
+        expected_inputs: Vec<u64>,
+        expected_input_count: usize,
     }
 
     #[test]
@@ -345,6 +364,34 @@ mod tests {
                 "{} production asset-id canonicality drifted from Lean spec",
                 case.name
             );
+        }
+    }
+
+    #[test]
+    fn lean_generated_nullifier_input_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean nullifier vectors");
+        let vectors: LeanNullifierInputVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean nullifier vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.nullifier_domain_tag,
+            crate::constants::NULLIFIER_DOMAIN_TAG
+        );
+        assert!(
+            !vectors.nullifier_input_cases.is_empty(),
+            "Lean nullifier input cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.nullifier_input_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_nullifier_input_case(case);
         }
     }
 
@@ -459,6 +506,26 @@ mod tests {
         assert_eq!(
             actual, case.expected_inputs,
             "{} production note-commitment input order/encoding drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_nullifier_input_case(case: &LeanNullifierInputCase) {
+        assert_eq!(case.rho.len(), 32, "{} rho len", case.name);
+        let actual = nullifier_inputs(Felt::from_u64(case.prf_key), &case.rho, case.position);
+        let actual = actual
+            .iter()
+            .map(|felt| felt.as_canonical_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual.len(),
+            case.expected_input_count,
+            "{} production nullifier input count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual, case.expected_inputs,
+            "{} production nullifier input order/encoding drifted from Lean spec",
             case.name
         );
     }

@@ -121,11 +121,16 @@ pub fn merkle_node_bytes(left: &Commitment, right: &Commitment) -> Option<Commit
 }
 
 pub fn nullifier(prf_key: Felt, rho: &[u8], position: u64) -> HashFelt {
+    let inputs = nullifier_inputs(prf_key, rho, position);
+    sponge_hash(NULLIFIER_DOMAIN_TAG, &inputs)
+}
+
+pub fn nullifier_inputs(prf_key: Felt, rho: &[u8], position: u64) -> Vec<Felt> {
     let mut inputs = Vec::new();
     inputs.push(prf_key);
     inputs.push(Felt::from_u64(position));
     inputs.extend(bytes_to_field_elements(rho));
-    sponge_hash(NULLIFIER_DOMAIN_TAG, &inputs)
+    inputs
 }
 
 pub fn prf_key(sk_spend: &[u8]) -> Felt {
