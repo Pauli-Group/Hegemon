@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 61.61,
+  "overall_completion_percent": 62.06,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,26 +29,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added `Hegemon.Privacy.Observer` as an explicit shielded-transaction observer/leakage model. The theorems prove that changing private witnesses or prover randomness does not change the observer view, and that equal public inputs, ciphertext wire observations, and placement imply equal allowed leakage. The slice is proof-only and non-production-eligible; simulator-based ZK, ciphertext confidentiality, wallet metadata, and timing/network privacy remain open assumptions/targets.",
-    "lean_module": "formal/lean/Hegemon/Privacy/Observer.lean",
+    "summary": "Added `Hegemon.Transaction.SpendAuthorization` as an explicit spend-authorization relation. The theorems prove that authorized active inputs reconstruct note commitments, derive spend-authority public keys from spend secrets, derive the public nullifier, and verify Merkle membership, and that accepted proof wrappers imply this relation under a named `SpendAuthorizationSoundnessAssumption`. The slice is proof-only and non-production-eligible until deployed AIR/SmallWood soundness is mechanized or parameterized at the verifier boundary.",
+    "lean_module": "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
     "top_level_theorems": [
-      "Hegemon.Privacy.Observer.observer_view_ignores_private_witness",
-      "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
-      "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
-      "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
-      "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq"
+      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_facts",
+      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_spend_authority",
+      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_nullifier",
+      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_membership",
+      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts",
+      "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
+      "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts"
     ],
     "validation": {
       "formal_core": "passed",
-      "claims": 87,
-      "named_lean_theorems": 1093,
+      "claims": 88,
+      "named_lean_theorems": 1108,
       "production_eligible_claims": 84,
-      "falsification_cases": 367,
+      "falsification_cases": 369,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The observer model is an extensional leakage boundary, not a simulator-based zero-knowledge proof.",
-      "Does not prove ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or complete Rust refinement."
+      "The accepted-wrapper lift is conditional on `SpendAuthorizationSoundnessAssumption`; deployed STARK/AIR and SmallWood soundness are not yet mechanized.",
+      "The digest/commitment/nullifier/key functions are executable abstract models; this does not prove hash implementation equivalence, PRF security, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
     ]
   },
   "properties": [
@@ -97,17 +99,17 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 35,
+      "completion_percent": 40,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
-        "statement-hash and proof-statement binding vectors"
+        "statement-hash and proof-statement binding vectors",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary"
       ],
       "missing_work": [
-        "Mechanize the transaction relation that connects witnesses to public inputs.",
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
-        "Tie proof-system soundness assumptions to accepted spend authorization."
+        "Replace or discharge the explicit SpendAuthorizationSoundnessAssumption at the deployed verifier boundary."
       ],
       "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes."
     },
@@ -192,13 +194,14 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 46,
+      "completion_percent": 47,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
         "native tx-leaf and receipt-root artifact parser/schedule gates",
         "recursive-block admission gates",
         "AcceptedProofArtifact names the proof-system balance-soundness assumption used to lift balance facts",
+        "SpendAuthorization names the proof-system authorization-soundness assumption used to lift no-theft facts",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [

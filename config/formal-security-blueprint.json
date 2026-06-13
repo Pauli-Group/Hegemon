@@ -415,6 +415,52 @@
       "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates, wrapper summary-vector agreement, and verifier results. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
     },
     {
+      "id": "formal.transaction-spend-authorization-boundary",
+      "claim_id": "formal.transaction-spend-authorization-boundary",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean transaction spend-authorization relation, each active public input slot is authorized only by a private witness that reconstructs the note commitment, derives the spend-authority public key from the spend secret, derives the public nullifier from the same secret/rho/position tuple, and verifies Merkle membership under the stated root. Accepted proof wrappers imply this relation only under an explicit spend-authorization proof-system soundness assumption.",
+      "informal_argument": "The Lean theorem `Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_facts` exposes commitment, spend-authority, nullifier, and Merkle-membership facts for every authorized input witness. `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts` lifts those facts to active public input slots, and `Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization` plus `accepted_wrapper_head_active_input_facts` tie accepted proof-wrapper verification to spend authorization through the named `SpendAuthorizationSoundnessAssumption`. Negative theorems reject wrong spend secrets, wrong public nullifiers, and wrong Merkle roots in the executable model.",
+      "depends_on": [
+        "formal.transaction-merkle-membership",
+        "formal.transaction-public-input-shape",
+        "formal.transaction-proof-wrapper-admission",
+        "formal.transaction-statement-hash-binding"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "DESIGN.md",
+        "METHODS.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a non-production spend-authorization relation and explicit soundness-boundary theorem. It does not prove that deployed STARK/AIR or SmallWood verification implies the relation."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-spend-authorization-boundary-theorem",
+          "description": "Removing or weakening the spend-authorization boundary theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-spend-authorization-boundary-gate",
+          "description": "The release formal-core wrapper must include the spend-authorization module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves the executable spend-authorization relation and its accepted-wrapper assumption boundary only. It uses abstract digest arithmetic and does not prove Poseidon2/BLAKE3 implementation equivalence, hash collision resistance, nullifier PRF security, note commitment hiding/binding, deployed STARK/AIR or SmallWood proof-system soundness, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
+    },
+    {
       "id": "formal.transaction-statement-hash-binding",
       "claim_id": "formal.transaction-statement-hash-binding",
       "kind": "target_claim",
