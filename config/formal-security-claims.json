@@ -2499,7 +2499,7 @@
       "id": "native.sync-admission",
       "component": "native sync semantic admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling.",
+      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2527,7 +2527,7 @@
       "assumptions": [
         "The Lean model represents decoded native sync semantic admission after bounded wire decoding, with peer identity, message framing, and block validity represented outside this predicate.",
         "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, and exact/over-limit inbound response counts.",
-        "The theorem covers executable native sync range and response-count admission only. It does not prove SCALE codec correctness, PQ Noise transport security, PoW/header validity, fork-choice convergence, peer honesty, network liveness, or complete native-node equivalence."
+        "The theorem covers executable native sync range and response-count admission only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
@@ -2541,6 +2541,7 @@
         "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

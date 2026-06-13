@@ -2989,16 +2989,24 @@ impl NativeNode {
         if meta.height == 0 {
             verify_native_block_meta_projection(None, &meta)
                 .context("validate genesis native sync block metadata")?;
-            return Ok(meta);
+        } else {
+            let parent =
+                self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
+            verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
+                format!(
+                    "validate canonical native sync block metadata at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            })?;
+            verify_canonical_sync_block_body(&meta).with_context(|| {
+                format!(
+                    "validate canonical native sync block body at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            })?;
         }
-        let parent = self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
-        verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
-            format!(
-                "validate canonical native sync block metadata at height {} ({})",
-                meta.height,
-                hex32(&meta.hash)
-            )
-        })?;
         Ok(meta)
     }
 
@@ -11193,6 +11201,11 @@ fn verify_decoded_action_root(
         supply_digest_matches: true,
     })
     .map_err(|rejection| native_block_commitment_admission_error(context, rejection))
+}
+
+fn verify_canonical_sync_block_body(meta: &NativeBlockMeta) -> Result<()> {
+    let actions = decode_block_actions(meta)?;
+    verify_decoded_action_root(&actions, meta, "canonical native sync block action root")
 }
 
 fn nullifier_root_from_set(nullifiers: &BTreeSet<[u8; 48]>) -> [u8; 48] {
@@ -20407,6 +20420,35 @@ mod tests {
         assert!(err
             .to_string()
             .contains("points to block metadata at height 2"));
+    }
+
+    #[test]
+    fn block_range_rejects_corrupt_canonical_action_body_inside_admitted_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let first = mine_empty_native_block(&node);
+        let second = mine_empty_native_block(&node);
+        assert_eq!(first.height, 1);
+        assert_eq!(second.height, 2);
+
+        let mut corrupted = first.clone();
+        corrupted.action_bytes.push(vec![0xaa]);
+        let encoded = bincode::serialize(&corrupted).expect("serialize corrupted block body");
+        node.block_tree
+            .insert(first.hash.as_slice(), encoded)
+            .expect("replace canonical block body");
+        node.block_tree.flush().expect("flush block tree");
+
+        let err = node
+            .block_range(0, 2)
+            .expect_err("corrupt canonical action body must reject sync range");
+        let err = format!("{err:?}");
+        assert!(
+            err.contains("validate canonical native sync block body"),
+            "{err}"
+        );
+        assert!(err.contains("block action payload count mismatch"), "{err}");
     }
 
     #[test]

@@ -357,6 +357,7 @@ HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS="$LEAN_STORAGE_DURABILITY_ADMI
   cargo test -p hegemon-node lean_generated_storage_durability_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_SYNC_ADMISSION_VECTORS="$LEAN_SYNC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" \
   cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \

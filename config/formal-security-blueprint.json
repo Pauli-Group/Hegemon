@@ -3739,8 +3739,8 @@
       "id": "native.sync-admission",
       "claim_id": "native.sync-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sync admission predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Blueprint implementation bindings additionally require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap`, `Hegemon.Native.SyncAdmission.missing_request_none_when_announced_not_ahead`, `Hegemon.Native.SyncAdmission.missing_request_none_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.missing_request_some_when_announced_ahead`, and `Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit` prove the executable native sync range and count-admission behavior. `gen_sync_admission_vectors` emits Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, and over-limit examples, and the formal-core gate checks them against production helpers used by `NativeNode::block_range`, `request_missing_blocks`, and inbound `NativeSyncMessage::Response` handling. Separate blueprint implementation bindings require `NativeNode::block_range` to call a propagated canonical block-row materializer after range admission and before response rows are pushed; focused regressions corrupt local canonical indexes to prove an admitted range errors instead of returning a truncated prefix or mismatched row.",
+      "formal_statement": "For the executable Lean native sync admission predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Blueprint implementation bindings additionally require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response, and require non-genesis sync rows to decode their native action bodies and verify the decoded action root before that materializer returns.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap`, `Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap`, `Hegemon.Native.SyncAdmission.missing_request_none_when_announced_not_ahead`, `Hegemon.Native.SyncAdmission.missing_request_none_when_max_blocks_zero`, `Hegemon.Native.SyncAdmission.missing_request_some_when_announced_ahead`, and `Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit` prove the executable native sync range and count-admission behavior. `gen_sync_admission_vectors` emits Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, and over-limit examples, and the formal-core gate checks them against production helpers used by `NativeNode::block_range`, `request_missing_blocks`, and inbound `NativeSyncMessage::Response` handling. Separate blueprint implementation bindings require `NativeNode::block_range` to call a propagated canonical block-row materializer after range admission and before response rows are pushed; that materializer must fail closed after decoding non-genesis action bytes and checking the decoded action root through the block-commitment admission helper. Focused regressions corrupt local canonical indexes and canonical action bodies to prove an admitted range errors instead of returning a truncated prefix, mismatched row, or forged body commitment.",
       "depends_on": [
         "native.codec-admission",
         "network.pq-noise-key-schedule",
@@ -3791,6 +3791,39 @@
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "verify_canonical_sync_block_body",
+          "required_callers": [
+            "NativeNode::load_canonical_sync_block_at_height"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_block_actions",
+          "required_callers": [
+            "verify_canonical_sync_block_body"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "verify_canonical_sync_block_body",
+              "callee_must_precede": [
+                "verify_decoded_action_root"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_decoded_action_root",
+          "required_callers": [
+            "verify_canonical_sync_block_body"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "native_sync_missing_request_range",
           "required_callers": [
             "request_missing_blocks"
@@ -3834,7 +3867,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection. Scope is semantic sync admission after decode, not full block validity or network liveness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection. Additional implementation bindings and regressions require non-genesis canonical sync rows to decode action bodies and verify decoded action roots before response publication. Scope is semantic sync admission and canonical row materialization after decode, not full block validity or network liveness."
       },
       "falsification_cases": [
         {
@@ -3858,12 +3891,17 @@
           "gate": "cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-sync-action-root-regression",
+          "description": "Focused native tests must reject admitted sync response ranges when canonical non-genesis block action bytes do not decode to the committed action root.",
+          "gate": "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-sync-admission-gate",
           "description": "The release formal-core wrapper must generate native sync admission vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native sync semantic admission after bounded message decode. It does not prove SCALE codec correctness, PQ Noise transport security, PoW/header validity, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native sync semantic admission after bounded message decode, and production-bindings require non-genesis canonical sync row materialization to decode action bodies and verify decoded action roots before response publication. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
     },
     {
       "id": "native.mineable-action-admission",

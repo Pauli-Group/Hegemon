@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 73.21,
+  "overall_completion_percent": 73.32,
   "last_full_formal_core": {
-    "commit": "working tree after reorg pending revalidation package",
-    "status": "passed 2026-06-13 23:05Z",
+    "commit": "working tree after sync canonical body materialization package",
+    "status": "passed 2026-06-13T23:22Z",
     "claims": 97,
     "named_lean_theorems": 1338,
     "production_eligible_claims": 88,
-    "falsification_cases": 399,
-    "implementation_bindings": 193
+    "falsification_cases": 400,
+    "implementation_bindings": 196
   },
   "last_coordinator_audit": {
     "date": "2026-06-13",
@@ -47,12 +47,12 @@
         "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_nullifier_input_vectors_match_production -- --nocapture",
         "cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13 23:05Z after the reorg pending production-binding slice",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13T23:22Z after the sync canonical body materialization production-binding slice",
       "claims": 97,
       "named_lean_theorems": 1338,
       "production_eligible_claims": 88,
-      "falsification_cases": 399,
-      "implementation_bindings": 193
+      "falsification_cases": 400,
+      "implementation_bindings": 196
     },
     "known_limitations": [
       "The slice proves the nullifier transcript layout, not Poseidon2 cryptographic security, PRF pseudorandomness, or full Poseidon2 implementation equivalence.",
@@ -62,35 +62,35 @@
   },
   "last_production_binding_slice": {
     "date": "2026-06-13",
-    "summary": "Added a native reorg pending revalidation package: canonical reorg now rebuilds the pending set by semantically admitting existing pending actions first, then orphaned old-chain actions, through the same mempool/nullifier/bridge/resource gates used at startup. Blueprint bindings require revalidate_reorg_pending_actions before reorg commit and state publication.",
+    "summary": "Added a native sync canonical body materialization package: non-genesis canonical rows served through sync now decode the committed native action bodies and verify the decoded action root before response publication. Blueprint bindings require load_canonical_sync_block_at_height to propagate verify_canonical_sync_block_body, decode_block_actions, and verify_decoded_action_root failures.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs revalidate_reorg_pending_actions",
-      "node/src/native/mod.rs stage_reorg_pending_action",
-      "node/src/native/mod.rs reorganize_chain_to_best_locked"
+      "node/src/native/mod.rs NativeNode::load_canonical_sync_block_at_height",
+      "node/src/native/mod.rs verify_canonical_sync_block_body",
+      "node/src/native/mod.rs verify_decoded_action_root"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.PendingActionReload.*",
-      "Hegemon.Native.TransferStateAdmission.*",
-      "Hegemon.Native.ActionStreamEffect.*",
-      "Hegemon.Shielded.Nullifier.*"
+      "Hegemon.Native.SyncAdmission.*",
+      "Hegemon.Native.BlockCommitmentAdmission.*",
+      "Hegemon.Native.BlockActionValidation.*",
+      "Hegemon.Native.ActionRootTranscript.*"
     ],
     "validation": {
-      "targeted_rust": "cargo test -p hegemon-node reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier --lib --no-default-features -- --nocapture",
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13 23:05Z",
+      "targeted_rust": "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13T23:22Z",
       "claims": 97,
       "named_lean_theorems": 1338,
       "production_eligible_claims": 88,
-      "falsification_cases": 399,
-      "implementation_bindings": 193,
-      "implementation_result_obligations": 151,
-      "implementation_dominance_constraints": 123,
-      "implementation_dominance_edges": 326,
-      "implementation_order_constraints": 134,
-      "implementation_order_edges": 355
+      "falsification_cases": 400,
+      "implementation_bindings": 196,
+      "implementation_result_obligations": 154,
+      "implementation_dominance_constraints": 124,
+      "implementation_dominance_edges": 327,
+      "implementation_order_constraints": 135,
+      "implementation_order_edges": 356
     },
     "known_limitations": [
-      "No new Lean theorem was added in this slice; it binds existing pending-action/nullifier theorem families to the canonical reorg pending resurrection path.",
-      "The focused regression covers duplicate nullifier priority and quarantine, not a full valid recursive-proof side-branch import fixture.",
+      "No new Lean theorem was added in this slice; it binds existing sync-admission and block-commitment theorem families to the canonical sync response path.",
+      "The focused regression covers corrupt canonical action-body materialization inside an otherwise admitted range, not full PoW/header validity beyond the existing metadata projection gate.",
       "Complete native-node equivalence, proof-system soundness, and cryptographic hash/security assumptions remain separate open work."
     ]
   },
@@ -390,14 +390,15 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 71,
+      "completion_percent": 72,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
         "proof-wrapper admission gate",
         "tx-proof-manifest nested wrapper regression",
         "native tx-leaf/receipt-root exact decode gates",
-        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean exposes accepted action-request and pending/staged sidecar reload parser-admission preconditions"
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean exposes accepted action-request and pending/staged sidecar reload parser-admission preconditions",
+        "node/src/native/mod.rs verifies non-genesis canonical sync rows by exact action decode plus decoded action-root admission before response publication"
       ],
       "missing_work": [
         "Complete byte-level grammar coverage for every consensus object.",
@@ -409,7 +410,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 95,
+      "completion_percent": 96,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -427,7 +428,8 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves the raw projected ledger-state executor is extensionally equal to accepted replay over raw replay inputs",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
-        "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state"
+        "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
+        "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
