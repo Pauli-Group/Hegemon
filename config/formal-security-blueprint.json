@@ -416,8 +416,8 @@
       "id": "formal.transaction-statement-hash-binding",
       "claim_id": "formal.transaction-statement-hash-binding",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean transaction statement-hash preimage grammar, transaction receipts and consensus tx-leaf binding must commit to the same byte layout: domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian scalar fields, raw stablecoin flag byte, and two's-complement signed i128 balances.",
-      "informal_argument": "The Lean theorems `Hegemon.Transaction.StatementHash.statementPreimage_accepts_valid`, `Hegemon.Transaction.StatementHash.statementPreimage_valid_length`, `Hegemon.Transaction.StatementHash.statementPreimage_accepts_padded_vectors`, `Hegemon.Transaction.StatementHash.statementPreimage_accepts_stablecoin`, and the companion rejection theorems prove representative executable facts for the statement-hash preimage grammar. `gen_statement_hash_vectors` emits Lean-derived exact preimage bytes for full-width, padded, and stablecoin cases plus rejection examples. The formal-core gate checks those vectors against the shared Rust `transaction_statement_preimage_from_parts` and `transaction_statement_hash_from_parts` helpers used by transaction receipts and consensus tx-leaf binding.",
+      "formal_statement": "For the executable Lean transaction statement-hash and proof-binding grammars, transaction receipts, consensus tx-leaf binding, and shielded proof binding hashes must commit to the same byte layouts: statement domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian scalar fields, raw stablecoin flag byte, two's-complement signed i128 balances, and binding-hash-v3 length-tagged public partitions plus chunk-domain-separated BLAKE2 preimages.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.StatementHash.statementPreimage_accepts_valid`, `Hegemon.Transaction.StatementHash.statementPreimage_valid_length`, `Hegemon.Transaction.StatementHash.statementPreimage_accepts_padded_vectors`, `Hegemon.Transaction.StatementHash.statementPreimage_accepts_stablecoin`, `Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_valid`, `Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_stablecoin`, `Hegemon.Transaction.ProofStatementBinding.bindingMessage_distinguishes_field_padding_collision_from_padding`, `Hegemon.Transaction.ProofStatementBinding.bindingHashPreimage_valid_chunk0_length`, `Hegemon.Transaction.ProofStatementBinding.bindingHashPreimage_valid_chunk1_length`, and the companion rejection/separation theorems prove representative executable facts for the statement-hash and proof-binding preimage grammars. `gen_statement_hash_vectors` emits Lean-derived exact preimage bytes for full-width, padded, and stablecoin cases plus rejection examples. `gen_proof_statement_binding_vectors` emits Lean-derived exact binding-hash-v3 message bytes, chunk-0/chunk-1 BLAKE2 preimage bytes, and a padding/sentinel collision case. The formal-core gate checks those vectors against the shared Rust `transaction_statement_preimage_from_parts` / `transaction_statement_hash_from_parts` helpers and the production `StarkVerifier::compute_binding_hash` transcript helper.",
       "depends_on": [
         "formal.transaction-public-input-shape",
         "formal.transaction-public-input-binding",
@@ -426,7 +426,10 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon/Transaction/GenerateProofStatementBindingVectors.lean",
         "circuits/transaction/src/proof.rs",
+        "protocol/shielded-pool/src/verifier.rs",
         "circuits/superneo-hegemon/src/lib.rs",
         "consensus/src/proof.rs",
         "consensus/src/backend_interface.rs",
@@ -455,7 +458,10 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon/Transaction/GenerateProofStatementBindingVectors.lean",
         "circuits/transaction/src/proof.rs",
+        "protocol/shielded-pool/src/verifier.rs",
         "circuits/superneo-hegemon/src/lib.rs",
         "consensus/src/proof.rs",
         "consensus/src/backend_interface.rs",
@@ -466,8 +472,8 @@
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
-        "reviewed_at": "2026-06-06",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for statement-hash byte preimage binding. BLAKE3 cryptographic security, note/ciphertext derivation, and proof-system soundness remain outside this claim."
+        "reviewed_at": "2026-06-12",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for statement-hash byte preimage binding and proof binding-hash-v3 transcript bytes. SuperNeo receipt paths are regression-checked against the shared statement-hash helper. BLAKE2/BLAKE3 cryptographic security, note/ciphertext derivation, and proof-system soundness remain outside this claim."
       },
       "falsification_cases": [
         {
@@ -478,11 +484,21 @@
         {
           "id": "lean-generated-statement-hash-conformance",
           "description": "Changing production statement-hash preimage byte order, padding, signed integer encoding, or digest input away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "lean-generated-consensus-statement-hash-conformance",
+          "description": "Changing consensus receipt or tx-leaf statement-hash binding away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture"
         },
         {
+          "id": "lean-generated-proof-binding-conformance",
+          "description": "Changing production binding-hash-v3 public partition lengths, scalar encodings, stablecoin encodings, padding-sentinel handling, chunk domain separation, or BLAKE2 preimage bytes away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p protocol-shielded-pool lean_generated_proof_statement_binding_vectors_match_production -- --nocapture"
+        },
+        {
           "id": "formal-core-statement-hash-gate",
-          "description": "The release formal-core wrapper must generate statement-hash vectors and run the production conformance test.",
+          "description": "The release formal-core wrapper must generate statement-hash and proof-binding vectors and run the production conformance tests.",
           "gate": "bash scripts/check_formal_core.sh"
         },
         {
@@ -494,9 +510,14 @@
           "id": "superneo-receipt-statement-hash-regression",
           "description": "Focused SuperNeo receipt tests must reject malformed transaction public-input vectors during canonical and native receipt construction without panicking.",
           "gate": "cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib"
+        },
+        {
+          "id": "superneo-receipt-shared-statement-hash-helper",
+          "description": "Focused SuperNeo receipt tests must compare canonical and native receipt statement hashes against the shared transaction statement-hash helper.",
+          "gate": "cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar and Rust digest call over that preimage only. Blueprint bindings and regressions additionally require consensus and SuperNeo receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. It does not prove BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
+      "scope_boundary": "This node proves and vector-checks the transaction statement-hash byte preimage grammar, the proof binding-hash-v3 transcript grammar, and Rust digest calls over those checked preimages only. Blueprint bindings and regressions additionally require consensus and SuperNeo receipt derivation to use the fallible statement-hash path for untrusted inline artifacts. Proof binding-hash-v3 does not include transaction balance_tag, circuit_version, or crypto_suite; those are covered by the transaction statement-hash grammar. It does not prove BLAKE2/BLAKE3 collision resistance, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK or SmallWood proof-system soundness, or complete Rust refinement."
     },
     {
       "id": "formal.wallet-note-ciphertext-wire",

@@ -260,6 +260,38 @@ impl StarkVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofStatementBindingVectorFile {
+        schema_version: u32,
+        proof_statement_binding_cases: Vec<LeanProofStatementBindingCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofStatementBindingCase {
+        name: String,
+        anchor_seed: u8,
+        nullifier_seeds: Vec<u8>,
+        commitment_seeds: Vec<u8>,
+        ciphertext_hash_seeds: Vec<u8>,
+        fee: u64,
+        value_balance: i128,
+        balance_slot_assets: Vec<u64>,
+        stablecoin_enabled: bool,
+        stablecoin_asset: u64,
+        stablecoin_policy_hash_seed: u8,
+        stablecoin_oracle_commitment_seed: u8,
+        stablecoin_attestation_commitment_seed: u8,
+        stablecoin_issuance_delta: i128,
+        stablecoin_policy_version: u32,
+        expected_binding_message_hex: String,
+        expected_binding_hash_chunk0_preimage_hex: String,
+        expected_binding_hash_chunk1_preimage_hex: String,
+        expected_valid: bool,
+    }
 
     fn sample_inputs() -> ShieldedTransferInputs {
         ShieldedTransferInputs {
@@ -328,6 +360,160 @@ mod tests {
         let mut inputs = inputs.clone();
         inputs.stablecoin = None;
         StarkVerifier::compute_binding_hash(&inputs).data
+    }
+
+    #[test]
+    fn lean_generated_proof_statement_binding_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean proof statement binding vectors");
+        let vectors: LeanProofStatementBindingVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean proof statement vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.proof_statement_binding_cases.is_empty(),
+            "Lean proof statement binding cases must not be empty"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.proof_statement_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_statement_binding_case(case);
+        }
+    }
+
+    fn verify_lean_proof_statement_binding_case(case: &LeanProofStatementBindingCase) {
+        let actual = shielded_inputs_from_lean_case(case).map(|inputs| {
+            let binding_message = StarkVerifier::binding_hash_message(&inputs);
+            let chunk0_preimage = binding_hash_chunk_preimage(0, &binding_message);
+            let chunk1_preimage = binding_hash_chunk_preimage(1, &binding_message);
+            (inputs, binding_message, chunk0_preimage, chunk1_preimage)
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} proof statement binding validity drifted from Lean spec: {actual:?}",
+            case.name
+        );
+        if case.expected_valid {
+            let (inputs, binding_message, chunk0_preimage, chunk1_preimage) =
+                actual.expect("valid Lean proof statement binding case");
+            assert_eq!(
+                binding_message,
+                expected_hex_bytes(&case.expected_binding_message_hex),
+                "{} binding-hash-v3 message drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                chunk0_preimage,
+                expected_hex_bytes(&case.expected_binding_hash_chunk0_preimage_hex),
+                "{} binding-hash-v3 chunk-0 preimage drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                chunk1_preimage,
+                expected_hex_bytes(&case.expected_binding_hash_chunk1_preimage_hex),
+                "{} binding-hash-v3 chunk-1 preimage drifted from Lean spec",
+                case.name
+            );
+            let hash = StarkVerifier::compute_binding_hash(&inputs);
+            let expected_chunk0 = blake2_256(&chunk0_preimage);
+            let expected_chunk1 = blake2_256(&chunk1_preimage);
+            assert_eq!(&hash.data[..32], expected_chunk0.as_slice());
+            assert_eq!(&hash.data[32..], expected_chunk1.as_slice());
+        } else {
+            assert!(
+                expected_hex_bytes(&case.expected_binding_message_hex).is_empty(),
+                "{} invalid case must not carry binding message bytes",
+                case.name
+            );
+            assert!(
+                expected_hex_bytes(&case.expected_binding_hash_chunk0_preimage_hex).is_empty(),
+                "{} invalid case must not carry chunk-0 preimage bytes",
+                case.name
+            );
+            assert!(
+                expected_hex_bytes(&case.expected_binding_hash_chunk1_preimage_hex).is_empty(),
+                "{} invalid case must not carry chunk-1 preimage bytes",
+                case.name
+            );
+        }
+    }
+
+    fn shielded_inputs_from_lean_case(
+        case: &LeanProofStatementBindingCase,
+    ) -> Result<ShieldedTransferInputs, String> {
+        let balance_slot_asset_ids: [u64; transaction_core::constants::BALANCE_SLOTS] = case
+            .balance_slot_assets
+            .clone()
+            .try_into()
+            .map_err(|slots: Vec<u64>| {
+                format!(
+                    "balance slot count {} does not match {}",
+                    slots.len(),
+                    transaction_core::constants::BALANCE_SLOTS
+                )
+            })?;
+        let stablecoin = case.stablecoin_enabled.then(|| StablecoinPolicyBinding {
+            asset_id: case.stablecoin_asset,
+            policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
+            oracle_commitment: patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+            attestation_commitment: patterned_bytes48(case.stablecoin_attestation_commitment_seed),
+            issuance_delta: case.stablecoin_issuance_delta,
+            policy_version: case.stablecoin_policy_version,
+        });
+        Ok(ShieldedTransferInputs {
+            anchor: patterned_bytes48(case.anchor_seed),
+            nullifiers: case
+                .nullifier_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+            commitments: case
+                .commitment_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+            ciphertext_hashes: case
+                .ciphertext_hash_seeds
+                .iter()
+                .copied()
+                .map(patterned_bytes48)
+                .collect(),
+            balance_slot_asset_ids,
+            fee: case.fee,
+            value_balance: case.value_balance,
+            stablecoin,
+        })
+    }
+
+    fn patterned_bytes48(seed: u8) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = seed.wrapping_add((index as u8).wrapping_mul(17));
+        }
+        out
+    }
+
+    fn binding_hash_chunk_preimage(chunk: u8, message: &[u8]) -> Vec<u8> {
+        let mut preimage =
+            Vec::with_capacity(StarkVerifier::BINDING_HASH_DOMAIN.len() + 1 + message.len());
+        preimage.extend_from_slice(StarkVerifier::BINDING_HASH_DOMAIN);
+        preimage.push(chunk);
+        preimage.extend_from_slice(message);
+        preimage
+    }
+
+    fn expected_hex_bytes(value: &str) -> Vec<u8> {
+        let hex = value.strip_prefix("0x").unwrap_or(value);
+        hex::decode(hex).expect("Lean vector hex decodes")
     }
 }
 

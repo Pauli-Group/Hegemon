@@ -247,6 +247,9 @@ lean_exe gen_public_input_vectors where
 lean_exe gen_public_input_binding_vectors where
   root := `Hegemon.Transaction.GeneratePublicInputBindingVectors
 
+lean_exe gen_proof_statement_binding_vectors where
+  root := `Hegemon.Transaction.GenerateProofStatementBindingVectors
+
 lean_exe gen_proof_wrapper_admission_vectors where
   root := `Hegemon.Transaction.GenerateProofWrapperAdmissionVectors
 

@@ -1157,6 +1157,39 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanStatementHashVectorFile {
+        schema_version: u32,
+        statement_hash_cases: Vec<LeanStatementHashCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStatementHashCase {
+        name: String,
+        merkle_root_seed: u64,
+        nullifier_seeds: Vec<u64>,
+        commitment_seeds: Vec<u64>,
+        ciphertext_hash_seeds: Vec<u64>,
+        fee: u64,
+        value_balance_sign: u8,
+        value_balance_magnitude: u64,
+        balance_tag_seed: u64,
+        circuit_version: u64,
+        crypto_suite: u64,
+        stablecoin_enabled: u8,
+        stablecoin_asset: u64,
+        stablecoin_policy_hash_seed: u64,
+        stablecoin_oracle_commitment_seed: u64,
+        stablecoin_attestation_commitment_seed: u64,
+        stablecoin_issuance_sign: u8,
+        stablecoin_issuance_magnitude: u64,
+        stablecoin_policy_version: u64,
+        expected_preimage_hex: String,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProofWrapperAdmissionVectorFile {
         schema_version: u32,
         proof_wrapper_admission_cases: Vec<LeanProofWrapperAdmissionCase>,
@@ -1519,6 +1552,90 @@ mod tests {
         out
     }
 
+    fn patterned_bytes48(seed: u64) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = seed.wrapping_add((index as u64).wrapping_mul(17)) as u8;
+        }
+        out
+    }
+
+    fn decode_hex_bytes(value: &str) -> Vec<u8> {
+        let hex = value
+            .strip_prefix("0x")
+            .expect("Lean vectors use 0x-prefixed hex");
+        assert!(
+            hex.len().is_multiple_of(2),
+            "hex value must have an even number of digits"
+        );
+        (0..hex.len())
+            .step_by(2)
+            .map(|idx| {
+                u8::from_str_radix(&hex[idx..idx + 2], 16).expect("Lean vector hex bytes are valid")
+            })
+            .collect()
+    }
+
+    fn signed_magnitude(sign: u8, magnitude: u64) -> Result<i128, TransactionCircuitError> {
+        match sign {
+            0 => Ok(i128::from(magnitude)),
+            1 => Ok(-i128::from(magnitude)),
+            other => Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "invalid signed-magnitude sign flag {other}"
+            ))),
+        }
+    }
+
+    fn statement_preimage_from_lean_case(
+        case: &LeanStatementHashCase,
+    ) -> Result<Vec<u8>, TransactionCircuitError> {
+        let nullifiers = case
+            .nullifier_seeds
+            .iter()
+            .copied()
+            .map(patterned_bytes48)
+            .collect::<Vec<_>>();
+        let commitments = case
+            .commitment_seeds
+            .iter()
+            .copied()
+            .map(patterned_bytes48)
+            .collect::<Vec<_>>();
+        let ciphertext_hashes = case
+            .ciphertext_hash_seeds
+            .iter()
+            .copied()
+            .map(patterned_bytes48)
+            .collect::<Vec<_>>();
+        transaction_statement_preimage_from_parts(
+            &patterned_bytes48(case.merkle_root_seed),
+            &nullifiers,
+            &commitments,
+            &ciphertext_hashes,
+            case.fee,
+            signed_magnitude(case.value_balance_sign, case.value_balance_magnitude)?,
+            &patterned_bytes48(case.balance_tag_seed),
+            case.circuit_version.try_into().map_err(|_| {
+                TransactionCircuitError::ConstraintViolation("circuit version overflow")
+            })?,
+            case.crypto_suite.try_into().map_err(|_| {
+                TransactionCircuitError::ConstraintViolation("crypto suite overflow")
+            })?,
+            case.stablecoin_enabled,
+            case.stablecoin_asset,
+            &patterned_bytes48(case.stablecoin_policy_hash_seed),
+            &patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+            &patterned_bytes48(case.stablecoin_attestation_commitment_seed),
+            signed_magnitude(
+                case.stablecoin_issuance_sign,
+                case.stablecoin_issuance_magnitude,
+            )?,
+            case.stablecoin_policy_version.try_into().map_err(|_| {
+                TransactionCircuitError::ConstraintViolation("stablecoin policy version overflow")
+            })?,
+        )
+    }
+
     fn dummy_smallwood_proof(arithmetization: SmallwoodArithmetization) -> TransactionProof {
         let public_inputs = TransactionPublicInputs::default();
         let stark_proof = bincode::serialize(&SmallwoodCandidateProof {
@@ -1717,6 +1834,102 @@ mod tests {
             transaction_statement_hash(&proof),
             transaction_statement_hash(&changed)
         );
+    }
+
+    #[test]
+    fn lean_generated_statement_hash_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STATEMENT_HASH_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STATEMENT_HASH_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean statement hash vectors");
+        let vectors: LeanStatementHashVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean statement hash vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.statement_hash_cases.is_empty(),
+            "Lean statement hash cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.statement_hash_cases {
+            assert!(names.insert(case.name.clone()));
+            let actual = statement_preimage_from_lean_case(case);
+            assert_eq!(
+                actual.is_ok(),
+                case.expected_valid,
+                "{} statement hash preimage validity drifted from Lean spec: {actual:?}",
+                case.name
+            );
+            if case.expected_valid {
+                let actual_preimage = actual.expect("valid Lean case has Rust preimage");
+                let expected_preimage = decode_hex_bytes(&case.expected_preimage_hex);
+                assert_eq!(
+                    actual_preimage, expected_preimage,
+                    "{} statement hash preimage drifted from Lean spec",
+                    case.name
+                );
+                let from_parts = statement_preimage_from_lean_case(case)
+                    .and_then(|_| {
+                        transaction_statement_hash_from_parts(
+                            &patterned_bytes48(case.merkle_root_seed),
+                            &case
+                                .nullifier_seeds
+                                .iter()
+                                .copied()
+                                .map(patterned_bytes48)
+                                .collect::<Vec<_>>(),
+                            &case
+                                .commitment_seeds
+                                .iter()
+                                .copied()
+                                .map(patterned_bytes48)
+                                .collect::<Vec<_>>(),
+                            &case
+                                .ciphertext_hash_seeds
+                                .iter()
+                                .copied()
+                                .map(patterned_bytes48)
+                                .collect::<Vec<_>>(),
+                            case.fee,
+                            signed_magnitude(
+                                case.value_balance_sign,
+                                case.value_balance_magnitude,
+                            )?,
+                            &patterned_bytes48(case.balance_tag_seed),
+                            case.circuit_version.try_into().map_err(|_| {
+                                TransactionCircuitError::ConstraintViolation(
+                                    "circuit version overflow",
+                                )
+                            })?,
+                            case.crypto_suite.try_into().map_err(|_| {
+                                TransactionCircuitError::ConstraintViolation(
+                                    "crypto suite overflow",
+                                )
+                            })?,
+                            case.stablecoin_enabled,
+                            case.stablecoin_asset,
+                            &patterned_bytes48(case.stablecoin_policy_hash_seed),
+                            &patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+                            &patterned_bytes48(case.stablecoin_attestation_commitment_seed),
+                            signed_magnitude(
+                                case.stablecoin_issuance_sign,
+                                case.stablecoin_issuance_magnitude,
+                            )?,
+                            case.stablecoin_policy_version.try_into().map_err(|_| {
+                                TransactionCircuitError::ConstraintViolation(
+                                    "stablecoin policy version overflow",
+                                )
+                            })?,
+                        )
+                    })
+                    .expect("valid Lean case hashes");
+                assert_eq!(from_parts, blake3_384(&actual_preimage));
+            }
+        }
     }
 
     #[test]

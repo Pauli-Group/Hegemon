@@ -31,9 +31,9 @@ use transaction_circuit::proof::{
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash_checked,
-    transaction_statement_hash_from_public_inputs_checked, transaction_verifier_profile_digest,
-    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
-    SerializedStarkInputs, TransactionProof,
+    transaction_statement_hash_from_parts, transaction_statement_hash_from_public_inputs_checked,
+    transaction_verifier_profile_digest, verify as verify_transaction_proof,
+    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
 use transaction_circuit::SmallwoodArithmetization;
@@ -2184,12 +2184,6 @@ fn tx_statement_hash_from_tx_leaf_public(
     tx: &TxLeafPublicTx,
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48]> {
-    let mut message = Vec::new();
-    message.extend_from_slice(transaction_circuit::proof::TX_STATEMENT_HASH_DOMAIN);
-    message.extend_from_slice(&stark_inputs.merkle_root);
-    extend_padded_digests(&mut message, &tx.nullifiers, MAX_INPUTS)?;
-    extend_padded_digests(&mut message, &tx.commitments, MAX_OUTPUTS)?;
-    extend_padded_digests(&mut message, &tx.ciphertext_hashes, MAX_OUTPUTS)?;
     let value_balance = decode_signed_magnitude(
         stark_inputs.value_balance_sign,
         stark_inputs.value_balance_magnitude,
@@ -2200,19 +2194,25 @@ fn tx_statement_hash_from_tx_leaf_public(
         stark_inputs.stablecoin_issuance_magnitude,
         "stablecoin_issuance",
     )?;
-    message.extend_from_slice(&stark_inputs.fee.to_le_bytes());
-    message.extend_from_slice(&value_balance.to_le_bytes());
-    message.extend_from_slice(&tx.balance_tag);
-    message.extend_from_slice(&tx.version.circuit.to_le_bytes());
-    message.extend_from_slice(&tx.version.crypto.to_le_bytes());
-    message.push(stark_inputs.stablecoin_enabled);
-    message.extend_from_slice(&stark_inputs.stablecoin_asset_id.to_le_bytes());
-    message.extend_from_slice(&stark_inputs.stablecoin_policy_hash);
-    message.extend_from_slice(&stark_inputs.stablecoin_oracle_commitment);
-    message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
-    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
-    message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
-    Ok(blake3_384_bytes(&message))
+    transaction_statement_hash_from_parts(
+        &stark_inputs.merkle_root,
+        &tx.nullifiers,
+        &tx.commitments,
+        &tx.ciphertext_hashes,
+        stark_inputs.fee,
+        value_balance,
+        &tx.balance_tag,
+        tx.version.circuit,
+        tx.version.crypto,
+        stark_inputs.stablecoin_enabled,
+        stark_inputs.stablecoin_asset_id,
+        &stark_inputs.stablecoin_policy_hash,
+        &stark_inputs.stablecoin_oracle_commitment,
+        &stark_inputs.stablecoin_attestation_commitment,
+        stablecoin_issuance,
+        stark_inputs.stablecoin_policy_version,
+    )
+    .map_err(|err| anyhow::anyhow!("failed to derive tx-leaf statement hash: {err}"))
 }
 
 fn active_flag_count(flags: &[u8]) -> Result<usize> {
@@ -2256,22 +2256,6 @@ fn push_padded_digest_vec(out: &mut Vec<Goldilocks>, values: &[[u8; 48]], target
         let digest = values.get(idx).copied().unwrap_or([0u8; 48]);
         push_bytes48_limbs(out, &digest);
     }
-}
-
-fn extend_padded_digests(bytes: &mut Vec<u8>, values: &[[u8; 48]], target: usize) -> Result<()> {
-    ensure!(
-        values.len() <= target,
-        "digest vector length {} exceeds {}",
-        values.len(),
-        target
-    );
-    for value in values {
-        bytes.extend_from_slice(value);
-    }
-    for _ in values.len()..target {
-        bytes.extend_from_slice(&[0u8; 48]);
-    }
-    Ok(())
 }
 
 fn signed_magnitude_u64(value: i128, label: &str) -> Result<(u8, u64)> {
@@ -5547,6 +5531,61 @@ mod tests {
                 && message.contains("MAX_INPUTS"),
             "unexpected error: {message}"
         );
+    }
+
+    #[test]
+    fn superneo_receipts_use_shared_statement_hash_helper() {
+        let proof = sample_transaction_proof(17);
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let stark_public_inputs = proof
+            .stark_public_inputs
+            .clone()
+            .expect("sample tx proof must carry serialized STARK inputs");
+        let value_balance = decode_signed_magnitude(
+            stark_public_inputs.value_balance_sign,
+            stark_public_inputs.value_balance_magnitude,
+            "value_balance",
+        )
+        .unwrap();
+        let stablecoin_issuance = decode_signed_magnitude(
+            stark_public_inputs.stablecoin_issuance_sign,
+            stark_public_inputs.stablecoin_issuance_magnitude,
+            "stablecoin_issuance",
+        )
+        .unwrap();
+        let expected_statement_hash = transaction_statement_hash_from_parts(
+            &stark_public_inputs.merkle_root,
+            &tx.nullifiers,
+            &tx.commitments,
+            &tx.ciphertext_hashes,
+            stark_public_inputs.fee,
+            value_balance,
+            &tx.balance_tag,
+            tx.version.circuit,
+            tx.version.crypto,
+            stark_public_inputs.stablecoin_enabled,
+            stark_public_inputs.stablecoin_asset_id,
+            &stark_public_inputs.stablecoin_policy_hash,
+            &stark_public_inputs.stablecoin_oracle_commitment,
+            &stark_public_inputs.stablecoin_attestation_commitment,
+            stablecoin_issuance,
+            stark_public_inputs.stablecoin_policy_version,
+        )
+        .unwrap();
+
+        let canonical_receipt =
+            canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
+        assert_eq!(canonical_receipt.statement_hash, expected_statement_hash);
+
+        let native_receipt = native_tx_leaf_receipt_from_parts(
+            &tx,
+            &stark_public_inputs,
+            &proof.stark_proof,
+            proof.backend,
+            &native_backend_params(),
+        )
+        .unwrap();
+        assert_eq!(native_receipt.statement_hash, expected_statement_hash);
     }
 
     #[test]
