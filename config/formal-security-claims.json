@@ -87,7 +87,7 @@
       "id": "formal.transaction-balance",
       "component": "shielded transaction semantics",
       "claim_class": "lean_theorem",
-      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, and generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior.",
+      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, proves that valid non-stablecoin balances force every non-native asset delta to zero, and proves stablecoin-enabled balances confine the nonzero non-native delta to the explicitly selected stablecoin asset. Generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
@@ -96,12 +96,17 @@
         "Hegemon.Transaction.validBalance_has_slots",
         "Hegemon.Transaction.validBalance_native_delta",
         "Hegemon.Transaction.validBalance_rejects_slot_overflow",
-        "Hegemon.Transaction.validBalance_stablecoin_rules"
+        "Hegemon.Transaction.validBalance_stablecoin_rules",
+        "Hegemon.Transaction.allNonNativeZero_slotDelta_zero",
+        "Hegemon.Transaction.slotDelta_zeroSelected_preserves_other",
+        "Hegemon.Transaction.validBalance_no_stablecoin_non_native_delta_zero",
+        "Hegemon.Transaction.validBalance_stablecoin_selected_delta",
+        "Hegemon.Transaction.validBalance_stablecoin_non_selected_non_native_delta_zero"
       ],
       "assumptions": [
         "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitment hashing, Merkle hash-function security, ciphertext hashes, or hash-derived nullifiers.",
-        "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, and slot overflow cases.",
-        "The theorem covers executable balance-slot and validation semantics, not full AIR/proof-system soundness or every witness/public-input field."
+        "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, stablecoin mismatch, native-asset stablecoin rejection, and slot overflow cases.",
+        "The theorem covers executable balance-slot and validation semantics, including the per-asset no-transmutation boundary exposed by those slots. It does not prove full AIR/proof-system soundness or every witness/public-input field."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/Balance.lean",

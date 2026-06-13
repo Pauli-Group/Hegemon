@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 60.28,
+  "overall_completion_percent": 60.57,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,25 +29,24 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added Hegemon.Native.AcceptedChain with parent-linked native replay-chain theorems for checked supply replay, carried spent-nullifier preconditions, and stream-derived `chainNullifiers blocks` uniqueness. The accepted-chain relation now threads `ActionStreamEffect.importedNullifierStateFrom`; uniqueness follows from `evaluateActionStreamEffect_preserves_imported_nullifier_nodup` rather than a separate explicit `Nodup` guard. The slice has no runtime cost; it composes existing Lean replay predicates and records the theorem names in the formal claim ledger and blueprint.",
-    "lean_module": "formal/lean/Hegemon/Native/AcceptedChain.lean",
+    "summary": "Strengthened Hegemon.Transaction.Balance with per-asset no-transmutation theorems: valid non-stablecoin balances force every non-native asset delta to zero, and valid stablecoin balances confine the nonzero non-native delta to the selected stablecoin asset with the authorized issuance amount. The slice has no runtime cost; it strengthens the executable balance kernel already checked against TransactionWitness.",
+    "lean_module": "formal/lean/Hegemon/Transaction/Balance.lean",
     "top_level_theorems": [
-      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_no_counterfeiting",
-      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifier_preconditions",
-      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifiers_unique",
-      "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_nullifier_nodup"
+      "Hegemon.Transaction.validBalance_no_stablecoin_non_native_delta_zero",
+      "Hegemon.Transaction.validBalance_stablecoin_selected_delta",
+      "Hegemon.Transaction.validBalance_stablecoin_non_selected_non_native_delta_zero"
     ],
     "validation": {
       "formal_core": "passed",
       "claims": 86,
-      "named_lean_theorems": 1076,
+      "named_lean_theorems": 1081,
       "production_eligible_claims": 84,
       "falsification_cases": 365,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "Still depends on production bindings from decoded native state into BlockReplayInput.",
-      "Does not prove SCALE/raw-byte decode correctness, storage crash consistency, proof-system soundness, nullifier derivation security, or full native-node equivalence."
+      "Still depends on public-input/proof-wrapper binding and proof-system soundness to lift valid balance facts to every accepted proof artifact.",
+      "Does not prove note commitment hashing, Merkle hash-function security, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
     ]
   },
   "properties": [
@@ -128,11 +127,14 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 70,
+      "completion_percent": 72,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
         "transaction balance vector conformance",
+        "validBalance_no_stablecoin_non_native_delta_zero theorem",
+        "validBalance_stablecoin_selected_delta theorem",
+        "validBalance_stablecoin_non_selected_non_native_delta_zero theorem",
         "public input shape and binding gates",
         "native block artifact binding admission"
       ],
@@ -146,10 +148,11 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 55,
+      "completion_percent": 58,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
+        "transaction balance no-asset-transmutation theorems",
         "native bridge payload admission",
         "native transfer payload/state admission"
       ],

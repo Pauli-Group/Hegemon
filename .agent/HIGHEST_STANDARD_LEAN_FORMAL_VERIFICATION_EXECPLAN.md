@@ -21,6 +21,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 05:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1075 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 05:50Z) Removed the accepted-chain explicit `Nodup` guard by threading `ActionStreamEffect.importedNullifierStateFrom` and proving accepted stream imports preserve accumulated nullifier `List.Nodup`. Current tracked completion is 60.28%.
 - [x] (2026-06-13 05:55Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1076 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 06:08Z) Strengthened `Hegemon.Transaction.Balance` with per-asset no-transmutation theorems for non-stablecoin and stablecoin-enabled valid balances. Current tracked completion is 60.57%.
+- [x] (2026-06-13 06:14Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1081 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -60,6 +62,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 The immediate outcome is a concrete target and tracking system: 18 critical formal property families, weighted to 100 total points. The initial conservative completion was 44.35%; after four read-only audits, the branch-local tracked completion is 59.46%. This is not a claim of full formal verification. It means the coordinator now has an evidence-weighted baseline for what is already strong and what still blocks the highest standard.
 
 The first theorem slice adds `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves `accepted_native_replay_chain_no_counterfeiting`, `accepted_native_replay_chain_nullifier_preconditions`, and `accepted_native_replay_chain_nullifiers_unique` over parent-linked native replay chains with carried spent-nullifier state, plus concrete rejection theorems for counterfeit second-block supply, stale spent state, and duplicate cross-block nullifier replay. The follow-up stream slice proves `evaluateActionStreamEffect_preserves_imported_nullifier_nodup` and refactors the accepted-chain relation to thread the same imported nullifier state as `ActionStreamEffect`, so chain uniqueness is derived from stream acceptance rather than an explicit duplicate guard. This raises the tracked baseline to 60.28% while leaving full raw-byte/native-node refinement, storage crash semantics, proof-system soundness, and cryptographic assumptions open.
+
+The next theorem slice strengthens `formal/lean/Hegemon/Transaction/Balance.lean`. It proves that valid non-stablecoin balances have zero delta for every non-native asset, that valid stablecoin balances give the selected stablecoin asset exactly the authorized issuance delta, and that every other non-native asset remains zero. This raises the tracked baseline to 60.57% while leaving proof-system soundness and public-input/proof-artifact lifting open.
 
 ## Context and Orientation
 

@@ -183,5 +183,101 @@ theorem validBalance_stablecoin_rules
   simp at valid
   exact valid.2
 
+theorem allNonNativeZero_slotDelta_zero
+    {slots : List BalanceSlot} {assetId : Nat}
+    (nonNative : assetId ≠ nativeAsset)
+    (allZero : allNonNativeZero slots = true) :
+    slotDelta assetId slots = 0 := by
+  induction slots with
+  | nil => rfl
+  | cons slot rest ih =>
+      unfold allNonNativeZero at allZero
+      unfold slotDelta
+      by_cases hNative : slot.assetId = nativeAsset
+      · simp [hNative] at allZero
+        by_cases hAsset : assetId = slot.assetId
+        · rw [hAsset, hNative] at nonNative
+          exact False.elim (nonNative rfl)
+        · simp [hAsset]
+          exact ih allZero
+      · simp [hNative] at allZero
+        have slotZero : slot.delta = 0 := intEq_true_eq allZero.1
+        have restZero : allNonNativeZero rest = true := allZero.2
+        by_cases hAsset : assetId = slot.assetId
+        · simp [hAsset, slotZero]
+        · simp [hAsset]
+          exact ih restZero
+
+theorem slotDelta_zeroSelected_preserves_other
+    {slots : List BalanceSlot} {assetId selectedAsset : Nat}
+    (other : assetId ≠ selectedAsset) :
+    slotDelta assetId
+      (slots.map fun slot =>
+        if slot.assetId = selectedAsset then
+          { slot with delta := 0 }
+        else
+          slot) =
+      slotDelta assetId slots := by
+  induction slots with
+  | nil => rfl
+  | cons slot rest ih =>
+      unfold slotDelta
+      by_cases selected : slot.assetId = selectedAsset
+      · by_cases target : assetId = slot.assetId
+        · rw [target, selected] at other
+          exact False.elim (other rfl)
+        · simp [selected, other, ih]
+      · by_cases target : assetId = slot.assetId
+        · simp [selected, target]
+        · simp [selected, target, ih]
+
+theorem validBalance_no_stablecoin_non_native_delta_zero
+    {witness : BalanceWitness} {slots : List BalanceSlot} {assetId : Nat}
+    (slotsEq : balanceSlots witness = some slots)
+    (valid : validBalance witness = true)
+    (stablecoinDisabled : witness.stablecoin.enabled = false)
+    (nonNative : assetId ≠ nativeAsset) :
+    slotDelta assetId slots = 0 := by
+  have rules := validBalance_stablecoin_rules slotsEq valid
+  unfold stablecoinRules at rules
+  simp [stablecoinDisabled] at rules
+  exact allNonNativeZero_slotDelta_zero nonNative rules.right
+
+theorem validBalance_stablecoin_selected_delta
+    {witness : BalanceWitness} {slots : List BalanceSlot}
+    (slotsEq : balanceSlots witness = some slots)
+    (valid : validBalance witness = true)
+    (stablecoinEnabled : witness.stablecoin.enabled = true) :
+    slotDelta witness.stablecoin.assetId slots =
+      witness.stablecoin.issuanceDelta := by
+  have rules := validBalance_stablecoin_rules slotsEq valid
+  unfold stablecoinRules at rules
+  simp [stablecoinEnabled] at rules
+  exact intEq_true_eq rules.left.right
+
+theorem validBalance_stablecoin_non_selected_non_native_delta_zero
+    {witness : BalanceWitness} {slots : List BalanceSlot} {assetId : Nat}
+    (slotsEq : balanceSlots witness = some slots)
+    (valid : validBalance witness = true)
+    (stablecoinEnabled : witness.stablecoin.enabled = true)
+    (nonNative : assetId ≠ nativeAsset)
+    (notStablecoin : assetId ≠ witness.stablecoin.assetId) :
+    slotDelta assetId slots = 0 := by
+  have rules := validBalance_stablecoin_rules slotsEq valid
+  unfold stablecoinRules at rules
+  simp [stablecoinEnabled] at rules
+  have mappedZero :=
+    allNonNativeZero_slotDelta_zero
+      (slots := slots.map fun slot =>
+        if slot.assetId = witness.stablecoin.assetId then
+          { slot with delta := 0 }
+        else
+          slot)
+      (assetId := assetId)
+      nonNative
+      rules.right
+  rw [slotDelta_zeroSelected_preserves_other notStablecoin] at mappedZero
+  exact mappedZero
+
 end Transaction
 end Hegemon
