@@ -363,6 +363,7 @@ HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECT
 HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture
 cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture
+cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 HEGEMON_LEAN_MERKLE_VECTORS="$LEAN_MERKLE_VECTORS" \
@@ -375,10 +376,14 @@ HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS="$LEAN_PROOF_STATEMENT_BINDING_VECT
   cargo test -p protocol-shielded-pool lean_generated_proof_statement_binding_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS="$LEAN_PROOF_WRAPPER_ADMISSION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_proof_wrapper_admission_vectors_match_production -- --nocapture
+cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production -- --nocapture
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture
+cargo test -p consensus tx_validity_ --lib -- --nocapture
+env -u HEGEMON_AGG_LEGACY_V4 \
+  cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
 
 printf '\n[5/12] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then

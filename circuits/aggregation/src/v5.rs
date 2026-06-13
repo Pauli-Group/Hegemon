@@ -1,6 +1,5 @@
 use super::*;
 use block_circuit::CommitmentBlockProver;
-use crypto::hashes::blake3_384;
 use p3_batch_stark::BatchProof;
 use p3_circuit::{Op, WitnessId};
 use p3_lookup::logup::LogUpGadget;
@@ -9,6 +8,7 @@ use p3_recursion::pcs::{
 };
 use p3_recursion::{generate_batch_challenges, BatchStarkVerifierInputsBuilder, Recursive};
 use serde::{Deserialize, Serialize};
+use transaction_circuit::proof::transaction_statement_hash_checked;
 
 pub const AGGREGATION_PROOF_FORMAT_ID_V5: u8 = 5;
 pub const AGGREGATION_PUBLIC_VALUES_ENCODING_V2: u8 = 2;
@@ -303,33 +303,12 @@ fn merge_shape_id(
     crypto::hashes::blake2_256(&bytes)
 }
 
-fn statement_hash_from_tx_proof(proof: &TransactionProof) -> [u8; 48] {
-    let public = &proof.public_inputs;
-    let mut message = Vec::new();
-    message.extend_from_slice(b"tx-statement-v1");
-    message.extend_from_slice(&public.merkle_root);
-    for nf in &public.nullifiers {
-        message.extend_from_slice(nf);
-    }
-    for cm in &public.commitments {
-        message.extend_from_slice(cm);
-    }
-    for ct in &public.ciphertext_hashes {
-        message.extend_from_slice(ct);
-    }
-    message.extend_from_slice(&public.native_fee.to_le_bytes());
-    message.extend_from_slice(&public.value_balance.to_le_bytes());
-    message.extend_from_slice(&public.balance_tag);
-    message.extend_from_slice(&public.circuit_version.to_le_bytes());
-    message.extend_from_slice(&public.crypto_suite.to_le_bytes());
-    message.push(public.stablecoin.enabled as u8);
-    message.extend_from_slice(&public.stablecoin.asset_id.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_hash);
-    message.extend_from_slice(&public.stablecoin.oracle_commitment);
-    message.extend_from_slice(&public.stablecoin.attestation_commitment);
-    message.extend_from_slice(&public.stablecoin.issuance_delta.to_le_bytes());
-    message.extend_from_slice(&public.stablecoin.policy_version.to_le_bytes());
-    blake3_384(&message)
+fn statement_hash_from_tx_proof(proof: &TransactionProof) -> Result<[u8; 48], AggregationError> {
+    transaction_statement_hash_checked(proof).map_err(|err| {
+        AggregationError::InvalidAggregationPayload(format!(
+            "transaction statement hash derivation failed: {err}"
+        ))
+    })
 }
 
 fn commitment_from_statement_hashes(
@@ -899,7 +878,7 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
         );
         return Ok(());
     }
-    let statement_hash = statement_hash_from_tx_proof(&representative);
+    let statement_hash = statement_hash_from_tx_proof(&representative)?;
     let leaf = prove_leaf_aggregation(
         std::slice::from_ref(&representative),
         std::slice::from_ref(&statement_hash),
@@ -1673,7 +1652,7 @@ pub fn prove_aggregation(
     let statement_hashes = transaction_proofs
         .iter()
         .map(statement_hash_from_tx_proof)
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let derived_commitment = commitment_from_statement_hashes(&statement_hashes)?;
     if derived_commitment != tx_statements_commitment {
         return Err(AggregationError::InvalidAggregationPayload(
@@ -1714,4 +1693,48 @@ pub fn prove_aggregation(
         .into_iter()
         .next()
         .ok_or(AggregationError::EmptyBatch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transaction_circuit::proof::transaction_statement_hash_checked;
+    use transaction_circuit::{TransactionPublicInputs, TxProofBackend};
+
+    fn sample_transaction_proof() -> TransactionProof {
+        let public_inputs = TransactionPublicInputs::default();
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            backend: TxProofBackend::SmallwoodCandidate,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: None,
+        }
+    }
+
+    #[test]
+    fn aggregation_v5_statement_hash_uses_shared_transaction_helper() {
+        let proof = sample_transaction_proof();
+
+        assert_eq!(
+            statement_hash_from_tx_proof(&proof).expect("aggregation statement hash"),
+            transaction_statement_hash_checked(&proof).expect("shared statement hash")
+        );
+    }
+
+    #[test]
+    fn aggregation_v5_statement_hash_rejects_oversized_public_inputs_without_panic() {
+        let mut proof = sample_transaction_proof();
+        proof.public_inputs.nullifiers.push([7u8; 48]);
+
+        let err = statement_hash_from_tx_proof(&proof)
+            .expect_err("oversized public inputs must reject before aggregation");
+        let message = err.to_string();
+        assert!(
+            message.contains("transaction statement hash derivation failed"),
+            "unexpected error: {message}"
+        );
+    }
 }

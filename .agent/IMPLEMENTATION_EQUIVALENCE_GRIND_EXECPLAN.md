@@ -27,6 +27,7 @@ Hegemon's Lean claims should describe the same objects that the native node actu
 - [x] (2026-06-12) Implemented the transaction proof-statement binding slice: Lean theorem evidence, Lean-generated binding-message/chunk-preimage vectors, production `StarkVerifier::compute_binding_hash` conformance, and `transaction_statement_hash_from_parts` conformance in both transaction and consensus paths.
 - [x] (2026-06-12) Removed a SuperNeo receipt statement-hash drift risk by routing canonical/native receipt construction through the shared statement-hash helper and adding a formal-core regression for the shared helper path.
 - [x] (2026-06-12) Re-ran the full formal-core gate after the proof-statement binding slice: 86 theorem-backed claims, 1069 named Lean theorem declarations, 84 production-eligible claims, 86 blueprint nodes, 319 dependency edges, 365 falsification cases, 177 implementation bindings, 132 order constraints / 352 order edges, 147 result obligations, and 121 dominance constraints / 323 dominance edges.
+- [x] (2026-06-12) Folded sidecar audit findings into the branch: formal-core now runs the listed manifest/SuperNeo/consensus regressions, aggregation V5 and block commitment proving use the shared transaction statement-hash helper instead of local serializers, legacy aggregation V4 is release-gated off by default, and Lean statement vectors now check serialized public-input digest preimage bytes.
 
 ## Surprises & Discoveries
 
@@ -44,6 +45,10 @@ Hegemon's Lean claims should describe the same objects that the native node actu
   Evidence: The production verifier computes two BLAKE2 chunks over `StarkVerifier::BINDING_HASH_DOMAIN`, chunk index bytes, and `binding_hash_message(&inputs)`. The final Lean/Rust conformance vectors compare that exact message and both chunk preimages against `compute_binding_hash`.
 - Observation: SuperNeo receipt construction had a maintainability drift risk because it carried a local duplicate statement-hash grammar.
   Evidence: `circuits/superneo-hegemon/src/lib.rs` now calls `transaction_statement_hash_from_parts`, and `superneo_receipts_use_shared_statement_hash_helper` checks canonical and native receipt paths against the shared helper.
+- Observation: Aggregation V5 and the block commitment prover also carried local `tx-statement-v1` encoders.
+  Evidence: `circuits/aggregation/src/v5.rs` and `circuits/block/src/p3_commitment_prover.rs` now call `transaction_statement_hash_checked`, with regressions covering shared-helper equality and oversized-public-input rejection.
+- Observation: The serialized public-input digest had only equality/mismatch coverage, not byte-preimage conformance.
+  Evidence: `formal/lean/Hegemon/Transaction/StatementHash.lean` now models `tx-public-inputs-digest-v1` postcard bytes for normal and stablecoin cases, and `lean_generated_statement_hash_vectors_match_production` compares them against `transaction_public_inputs_digest_preimage_from_serialized`.
 
 ## Decision Log
 
@@ -70,6 +75,9 @@ Hegemon's Lean claims should describe the same objects that the native node actu
   Date/Author: 2026-06-12 / Codex.
 - Decision: Replace SuperNeo's local statement-hash layout with the shared production helper.
   Rationale: Implementation equivalence is stronger when there is one production grammar. The regression keeps future receipt paths from reintroducing a duplicate statement-hash encoder.
+  Date/Author: 2026-06-12 / Codex.
+- Decision: Do not extend proof evidence to retired aggregation V4; keep it fail-closed by default.
+  Rationale: V4 is not the fresh-testnet product path and still has a local binding transcript. The release-relevant invariant is that V4 payloads reject unless `HEGEMON_AGG_LEGACY_V4` is explicitly set, so formal-core now runs that default-disable regression.
   Date/Author: 2026-06-12 / Codex.
 
 ## Outcomes & Retrospective

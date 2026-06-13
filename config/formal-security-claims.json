@@ -292,7 +292,7 @@
       "id": "formal.transaction-statement-hash-binding",
       "component": "transaction statement-hash byte binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean statement-hash kernels prove executable facts for the exact transaction statement-hash preimage grammar and the proof binding-hash-v3 transcript grammar, and generated Lean vectors are checked byte-for-byte against the shared Rust helpers used by transaction receipts, consensus tx-leaf binding, SuperNeo canonical/native receipt construction, and shielded proof binding hashes.",
+      "summary": "The Lean statement-hash kernels prove executable facts for the exact transaction statement-hash preimage grammar and the proof binding-hash-v3 transcript grammar, and generated Lean vectors are checked byte-for-byte against the shared Rust helpers used by transaction receipts, consensus tx-leaf binding, serialized public-input digest preimages, SuperNeo canonical/native receipt construction, and shielded proof binding hashes.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -316,7 +316,7 @@
       ],
       "assumptions": [
         "The Lean model treats 48-byte commitments as abstract byte arrays generated from deterministic seeds; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
-        "Generated Lean conformance vectors cover the statement-hash domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian fee/version/stablecoin fields, two's-complement signed value-balance and stablecoin issuance encoding, and rejection for over-wide vectors or invalid signed-magnitude flags.",
+        "Generated Lean conformance vectors cover the statement-hash domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian fee/version/stablecoin fields, two's-complement signed value-balance and stablecoin issuance encoding, rejection for over-wide vectors or invalid signed-magnitude flags, and the `tx-public-inputs-digest-v1` postcard byte preimage for serialized verifier inputs.",
         "Generated proof-binding vectors cover the binding-hash-v3 transcript message for nullifier/commitment/ciphertext partition lengths, fee, signed value balance, balance-slot assets, stablecoin payloads, chunk-domain-separated BLAKE2 preimages, and the distinction between the u64::MAX padding sentinel and the Goldilocks field-padding collision value.",
         "The proof binding-hash-v3 transcript does not include transaction balance_tag, circuit_version, or crypto_suite; those fields are covered by the transaction statement-hash vectors and consensus tx-leaf binding checks.",
         "The theorem covers the byte preimage grammar and Rust hash invocations over checked preimages, not BLAKE2/BLAKE3 cryptographic security, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
@@ -339,6 +339,7 @@
         "HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production -- --nocapture",
         "HEGEMON_LEAN_STATEMENT_HASH_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture",
         "HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p protocol-shielded-pool lean_generated_proof_statement_binding_vectors_match_production -- --nocapture",
+        "cargo test -p consensus tx_validity_ --lib -- --nocapture",
         "cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture",
         "cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib",
         "bash scripts/check_formal_core.sh"

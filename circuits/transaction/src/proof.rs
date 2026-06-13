@@ -559,6 +559,14 @@ pub fn transaction_proof_digest_from_parts(
 pub fn transaction_public_inputs_digest_from_serialized(
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48], TransactionCircuitError> {
+    Ok(blake3_384(
+        &transaction_public_inputs_digest_preimage_from_serialized(stark_inputs)?,
+    ))
+}
+
+pub fn transaction_public_inputs_digest_preimage_from_serialized(
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<Vec<u8>, TransactionCircuitError> {
     let encoded = to_allocvec(stark_inputs).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to serialize STARK public inputs: {err}"
@@ -567,7 +575,7 @@ pub fn transaction_public_inputs_digest_from_serialized(
     let mut message = Vec::with_capacity(TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
     message.extend_from_slice(TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
     message.extend_from_slice(&encoded);
-    Ok(blake3_384(&message))
+    Ok(message)
 }
 
 pub fn transaction_public_inputs_digest(
@@ -1160,6 +1168,7 @@ mod tests {
     struct LeanStatementHashVectorFile {
         schema_version: u32,
         statement_hash_cases: Vec<LeanStatementHashCase>,
+        public_inputs_digest_cases: Vec<LeanPublicInputsDigestCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1184,6 +1193,29 @@ mod tests {
         stablecoin_issuance_sign: u8,
         stablecoin_issuance_magnitude: u64,
         stablecoin_policy_version: u64,
+        expected_preimage_hex: String,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPublicInputsDigestCase {
+        name: String,
+        input_flags: Vec<u8>,
+        output_flags: Vec<u8>,
+        fee: u64,
+        value_balance_sign: u8,
+        value_balance_magnitude: u64,
+        merkle_root_seed: u64,
+        balance_slot_asset_ids: Vec<u64>,
+        stablecoin_enabled: u8,
+        stablecoin_asset: u64,
+        stablecoin_policy_version: u64,
+        stablecoin_issuance_sign: u8,
+        stablecoin_issuance_magnitude: u64,
+        stablecoin_policy_hash_seed: u64,
+        stablecoin_oracle_commitment_seed: u64,
+        stablecoin_attestation_commitment_seed: u64,
         expected_preimage_hex: String,
         expected_valid: bool,
     }
@@ -1636,6 +1668,32 @@ mod tests {
         )
     }
 
+    fn serialized_public_inputs_from_lean_case(
+        case: &LeanPublicInputsDigestCase,
+    ) -> Result<SerializedStarkInputs, TransactionCircuitError> {
+        Ok(SerializedStarkInputs {
+            input_flags: case.input_flags.clone(),
+            output_flags: case.output_flags.clone(),
+            fee: case.fee,
+            value_balance_sign: case.value_balance_sign,
+            value_balance_magnitude: case.value_balance_magnitude,
+            merkle_root: patterned_bytes48(case.merkle_root_seed),
+            balance_slot_asset_ids: case.balance_slot_asset_ids.clone(),
+            stablecoin_enabled: case.stablecoin_enabled,
+            stablecoin_asset_id: case.stablecoin_asset,
+            stablecoin_policy_version: case.stablecoin_policy_version.try_into().map_err(|_| {
+                TransactionCircuitError::ConstraintViolation("stablecoin policy version overflow")
+            })?,
+            stablecoin_issuance_sign: case.stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude: case.stablecoin_issuance_magnitude,
+            stablecoin_policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
+            stablecoin_oracle_commitment: patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+            stablecoin_attestation_commitment: patterned_bytes48(
+                case.stablecoin_attestation_commitment_seed,
+            ),
+        })
+    }
+
     fn dummy_smallwood_proof(arithmetization: SmallwoodArithmetization) -> TransactionProof {
         let public_inputs = TransactionPublicInputs::default();
         let stark_proof = bincode::serialize(&SmallwoodCandidateProof {
@@ -1853,6 +1911,10 @@ mod tests {
             !vectors.statement_hash_cases.is_empty(),
             "Lean statement hash cases must not be empty"
         );
+        assert!(
+            !vectors.public_inputs_digest_cases.is_empty(),
+            "Lean public-input digest cases must not be empty"
+        );
 
         let mut names = BTreeSet::new();
         for case in &vectors.statement_hash_cases {
@@ -1928,6 +1990,37 @@ mod tests {
                     })
                     .expect("valid Lean case hashes");
                 assert_eq!(from_parts, blake3_384(&actual_preimage));
+            }
+        }
+
+        let mut public_input_names = BTreeSet::new();
+        for case in &vectors.public_inputs_digest_cases {
+            assert!(public_input_names.insert(case.name.clone()));
+            let stark_inputs = serialized_public_inputs_from_lean_case(case);
+            assert_eq!(
+                stark_inputs.is_ok(),
+                case.expected_valid,
+                "{} public-input digest case validity drifted from Lean spec: {stark_inputs:?}",
+                case.name
+            );
+            if case.expected_valid {
+                let stark_inputs = stark_inputs.expect("valid Lean case has serialized inputs");
+                let actual_preimage =
+                    transaction_public_inputs_digest_preimage_from_serialized(&stark_inputs)
+                        .expect("public-input digest preimage");
+                let expected_preimage = decode_hex_bytes(&case.expected_preimage_hex);
+                assert_eq!(
+                    actual_preimage, expected_preimage,
+                    "{} public-input digest preimage drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    transaction_public_inputs_digest_from_serialized(&stark_inputs)
+                        .expect("public-input digest"),
+                    blake3_384(&actual_preimage),
+                    "{} public-input digest hash drifted from checked preimage",
+                    case.name
+                );
             }
         }
     }

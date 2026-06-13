@@ -3096,6 +3096,8 @@ mod tests {
     struct LeanStatementHashVectorFile {
         schema_version: u32,
         statement_hash_cases: Vec<LeanStatementHashCase>,
+        #[allow(dead_code)]
+        public_inputs_digest_cases: Vec<serde_json::Value>,
     }
 
     #[derive(Debug, Deserialize)]

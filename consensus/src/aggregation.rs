@@ -1457,6 +1457,41 @@ mod tests {
     }
 
     #[test]
+    fn verify_aggregation_proof_rejects_legacy_v4_by_default() {
+        assert!(
+            !legacy_v4_enabled(),
+            "run this release-default regression with HEGEMON_AGG_LEGACY_V4 unset"
+        );
+
+        let commitment = [0u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            tree_arity: 8,
+            tree_levels: 1,
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_count: 1,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0u8],
+            packed_public_values: vec![0u64, 0u64],
+            outer_proof: Vec::new(),
+        };
+
+        let encoded = postcard::to_allocvec(&payload).expect("encode");
+        let err = verify_aggregation_proof(&encoded, 1, &commitment)
+            .expect_err("legacy V4 must be disabled by default");
+
+        assert!(matches!(err, ProofError::AggregationProofV5Decode(_)));
+        assert!(
+            err.to_string()
+                .contains("legacy V4 aggregation payloads are disabled")
+        );
+    }
+
+    #[test]
     fn derive_statement_commitment_uses_active_prefix_when_slots_are_padded() {
         let mut tx0 = TransactionPublicInputsP3::default();
         tx0.input_flags[0] = Val::ONE;

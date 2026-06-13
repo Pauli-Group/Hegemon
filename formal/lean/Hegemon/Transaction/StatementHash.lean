@@ -95,6 +95,70 @@ def statementPreimage (fields : StatementFields) : Option (List Byte) :=
           ++ u32le fields.stablecoinPolicyVersion
   | _, _, _, _, _ => none
 
+def publicInputsDigestDomain : List Byte := asciiBytes "tx-public-inputs-digest-v1"
+
+structure SerializedPublicInputsFields where
+  inputFlags : List Nat
+  outputFlags : List Nat
+  fee : Nat
+  valueBalanceSign : Nat
+  valueBalanceMagnitude : Nat
+  merkleRootSeed : Nat
+  balanceSlotAssetIds : List Nat
+  stablecoinEnabled : Nat
+  stablecoinAsset : Nat
+  stablecoinPolicyVersion : Nat
+  stablecoinIssuanceSign : Nat
+  stablecoinIssuanceMagnitude : Nat
+  stablecoinPolicyHashSeed : Nat
+  stablecoinOracleCommitmentSeed : Nat
+  stablecoinAttestationCommitmentSeed : Nat
+deriving DecidableEq, Repr
+
+def postcardVarintFuel : Nat -> Nat -> List Byte
+  | 0, value => [byte value]
+  | fuel + 1, value =>
+      if value < 128 then
+        [byte value]
+      else
+        byte (128 + (value % 128)) :: postcardVarintFuel fuel (value / 128)
+
+def postcardVarint (value : Nat) : List Byte :=
+  postcardVarintFuel 20 value
+
+def concatBytes : List (List Byte) -> List Byte
+  | [] => []
+  | bytes :: rest => bytes ++ concatBytes rest
+
+def postcardVecU8 (values : List Nat) : List Byte :=
+  postcardVarint values.length ++ values.map byte
+
+def postcardBytes (bytes : List Byte) : List Byte :=
+  postcardVarint bytes.length ++ bytes
+
+def postcardVecU64 (values : List Nat) : List Byte :=
+  postcardVarint values.length ++ concatBytes (values.map postcardVarint)
+
+def serializedPublicInputsPostcard (fields : SerializedPublicInputsFields) : List Byte :=
+  postcardVecU8 fields.inputFlags
+    ++ postcardVecU8 fields.outputFlags
+    ++ postcardVarint fields.fee
+    ++ [byte fields.valueBalanceSign]
+    ++ postcardVarint fields.valueBalanceMagnitude
+    ++ postcardBytes (digestBytes fields.merkleRootSeed)
+    ++ postcardVecU64 fields.balanceSlotAssetIds
+    ++ [byte fields.stablecoinEnabled]
+    ++ postcardVarint fields.stablecoinAsset
+    ++ postcardVarint fields.stablecoinPolicyVersion
+    ++ [byte fields.stablecoinIssuanceSign]
+    ++ postcardVarint fields.stablecoinIssuanceMagnitude
+    ++ postcardBytes (digestBytes fields.stablecoinPolicyHashSeed)
+    ++ postcardBytes (digestBytes fields.stablecoinOracleCommitmentSeed)
+    ++ postcardBytes (digestBytes fields.stablecoinAttestationCommitmentSeed)
+
+def publicInputsDigestPreimage (fields : SerializedPublicInputsFields) : List Byte :=
+  publicInputsDigestDomain ++ serializedPublicInputsPostcard fields
+
 def validFields : StatementFields :=
   { merkleRootSeed := 10
     nullifierSeeds := [20, 21]
@@ -131,6 +195,34 @@ def stablecoinFields : StatementFields :=
     stablecoinIssuanceSign := 1
     stablecoinIssuanceMagnitude := 13
     stablecoinPolicyVersion := 4 }
+
+def validSerializedPublicInputs : SerializedPublicInputsFields :=
+  { inputFlags := [1, 0]
+    outputFlags := [1, 0]
+    fee := 9
+    valueBalanceSign := 1
+    valueBalanceMagnitude := 5
+    merkleRootSeed := 70
+    balanceSlotAssetIds := [0, 1, 2, 3]
+    stablecoinEnabled := 0
+    stablecoinAsset := 0
+    stablecoinPolicyVersion := 0
+    stablecoinIssuanceSign := 0
+    stablecoinIssuanceMagnitude := 0
+    stablecoinPolicyHashSeed := 0
+    stablecoinOracleCommitmentSeed := 0
+    stablecoinAttestationCommitmentSeed := 0 }
+
+def stablecoinSerializedPublicInputs : SerializedPublicInputsFields :=
+  { validSerializedPublicInputs with
+    stablecoinEnabled := 1
+    stablecoinAsset := 7
+    stablecoinPolicyVersion := 4
+    stablecoinIssuanceSign := 1
+    stablecoinIssuanceMagnitude := 13
+    stablecoinPolicyHashSeed := 71
+    stablecoinOracleCommitmentSeed := 72
+    stablecoinAttestationCommitmentSeed := 73 }
 
 def expectedPreimageLength : Nat := 600
 

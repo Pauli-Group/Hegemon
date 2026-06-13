@@ -9,6 +9,35 @@ def boolJson (value : Bool) : String :=
 def natListJson (values : List Nat) : String :=
   "[" ++ String.intercalate ", " (values.map toString) ++ "]"
 
+def serializedPublicInputsDigestCaseJson
+    (name : String)
+    (fields : SerializedPublicInputsFields) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"input_flags\": " ++ natListJson fields.inputFlags ++ ",\n"
+    ++ "      \"output_flags\": " ++ natListJson fields.outputFlags ++ ",\n"
+    ++ "      \"fee\": " ++ toString fields.fee ++ ",\n"
+    ++ "      \"value_balance_sign\": " ++ toString fields.valueBalanceSign ++ ",\n"
+    ++ "      \"value_balance_magnitude\": " ++ toString fields.valueBalanceMagnitude ++ ",\n"
+    ++ "      \"merkle_root_seed\": " ++ toString fields.merkleRootSeed ++ ",\n"
+    ++ "      \"balance_slot_asset_ids\": " ++ natListJson fields.balanceSlotAssetIds ++ ",\n"
+    ++ "      \"stablecoin_enabled\": " ++ toString fields.stablecoinEnabled ++ ",\n"
+    ++ "      \"stablecoin_asset\": " ++ toString fields.stablecoinAsset ++ ",\n"
+    ++ "      \"stablecoin_policy_version\": " ++ toString fields.stablecoinPolicyVersion ++ ",\n"
+    ++ "      \"stablecoin_issuance_sign\": " ++ toString fields.stablecoinIssuanceSign ++ ",\n"
+    ++ "      \"stablecoin_issuance_magnitude\": "
+    ++ toString fields.stablecoinIssuanceMagnitude ++ ",\n"
+    ++ "      \"stablecoin_policy_hash_seed\": "
+    ++ toString fields.stablecoinPolicyHashSeed ++ ",\n"
+    ++ "      \"stablecoin_oracle_commitment_seed\": "
+    ++ toString fields.stablecoinOracleCommitmentSeed ++ ",\n"
+    ++ "      \"stablecoin_attestation_commitment_seed\": "
+    ++ toString fields.stablecoinAttestationCommitmentSeed ++ ",\n"
+    ++ "      \"expected_preimage_hex\": \""
+    ++ hexBytes (publicInputsDigestPreimage fields) ++ "\",\n"
+    ++ "      \"expected_valid\": true\n"
+    ++ "    }"
+
 def statementHashCaseJson (name : String) (fields : StatementFields) : String :=
   let preimage := statementPreimage fields
   "    {\n"
@@ -56,6 +85,12 @@ def vectorJson : String :=
         { validFields with valueBalanceSign := 2 } ++ ",\n"
     ++ statementHashCaseJson "bad-stablecoin-issuance-sign-rejected"
         { stablecoinFields with stablecoinIssuanceSign := 2 } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"public_inputs_digest_cases\": [\n"
+    ++ serializedPublicInputsDigestCaseJson "valid-public-inputs-digest"
+        validSerializedPublicInputs ++ ",\n"
+    ++ serializedPublicInputsDigestCaseJson "stablecoin-public-inputs-digest"
+        stablecoinSerializedPublicInputs ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 
