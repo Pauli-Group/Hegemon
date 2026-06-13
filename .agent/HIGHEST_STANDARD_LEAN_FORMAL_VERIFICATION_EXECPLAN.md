@@ -54,6 +54,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 14:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1194 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 15:05Z) Strengthened `Hegemon.Privacy.Observer` with a valid observer-chain surface tying parser-derived chain ciphertext summaries to the public active-output count, preserving active-output count under same public inputs and same allowed leakage, and lifting same-public/same-chain-wire valid worlds to equal allowed leakage. Current tracked completion is 66.20%.
 - [x] (2026-06-13 15:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1200 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 15:40Z) Strengthened `Hegemon.Transaction.PublicInputs`, `Hegemon.Transaction.AcceptedTransactionSoundness`, and `Hegemon.Transaction.CanonicalVerifierBoundary` with indexed output-slot facts: every valid output slot is active with a nonzero public commitment or inactive with zero commitment/ciphertext hash, and the canonical verifier surface binds those fields through statement and proof-binding vectors. Current tracked completion is 66.36%.
+- [x] (2026-06-13 16:00Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1210 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -128,6 +130,8 @@ The total input-slot authorization slice strengthens `formal/lean/Hegemon/Transa
 The bridge mint-safety slice adds `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It proves that accepted inbound bridge payloads imply proof-receipt presence, clean state-delta scope, replay-key/message binding, Hegemon destination binding, and payload-hash binding; that fresh replay import consumes a key once and immediate reimport rejects; that accepted block replay couples imported bridge replay-key uniqueness with expected and claimed supply; and that accepted ledger replay couples final consumed bridge replay-key uniqueness with replayed supply. This raises the tracked baseline to 65.99%. It still does not prove external-chain receipt soundness, exact decoded mint amount authorization, SCALE decoding correctness, bridge payload-hash cryptographic security, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence.
 
 The observer-chain surface slice strengthens `formal/lean/Hegemon/Privacy/Observer.lean`. It defines `validObserverChainSurface`, requiring a valid public-input shape, parser-derived chain ciphertext summaries, and ciphertext-byte count equal to the public active-output count. It proves that valid observer summaries keep the chain suite/KEM shape, valid surfaces have exactly one parsed ciphertext summary per active public output, same public inputs preserve active-output count, same allowed leakage preserves active-output count, and valid same-public/same-chain-wire worlds have equal allowed leakage. This raises the tracked baseline to 66.20%. It still does not prove simulator-based ZK, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, note plaintext-to-commitment correctness, BLAKE3 ciphertext-hash security, or complete wallet/native-node equivalence.
+
+The output-slot statement-binding slice strengthens `formal/lean/Hegemon/Transaction/PublicInputs.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It defines indexed output slots and proves that valid output slots expose active nonzero public commitments or inactive zero commitment/ciphertext-hash pairs; lifts those facts through the accepted transaction relation; and binds the same output flags, commitments, and ciphertext hashes across public shape, statement preimage, and proof binding message in the canonical verifier surface. This raises the tracked baseline to 66.36%. It still does not prove output note plaintext correctness, recipient authorization, ciphertext indistinguishability, BLAKE3/Poseidon2 security or implementation equivalence, deployed AIR/STARK/SmallWood soundness, witness extraction, or complete Rust/native-node refinement.
 
 ## Context and Orientation
 
@@ -313,6 +317,14 @@ The latest full formal-core pass after the observer-chain surface slice reported
 
     claims=92
     named_lean_theorems=1200
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the output-slot statement-binding slice reported:
+
+    claims=92
+    named_lean_theorems=1210
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177

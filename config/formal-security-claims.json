@@ -173,7 +173,7 @@
       "id": "formal.transaction-public-input-shape",
       "component": "transaction verifier public-input shape",
       "claim_class": "lean_theorem",
-      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
+      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, output-slot commitment/ciphertext-hash facts, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -188,11 +188,16 @@
         "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_inactive_input_nonzero",
         "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_inactive_output_nonzero_commitment",
         "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_padding_not_suffix",
-        "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_stablecoin_missing_asset"
+        "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_stablecoin_missing_asset",
+        "Hegemon.Transaction.PublicInputs.validOutputSlot_implies_output_slot_facts",
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_head_facts",
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_tail_valid",
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_output_slot_facts_at",
+        "Hegemon.Transaction.PublicInputs.validPublicInputShape_output_slot_facts_at"
       ],
       "assumptions": [
         "The Lean Digest model and generated vectors use abstract one-limb nonzero/zero digests; they do not prove Poseidon2, note commitment, nullifier, or ciphertext hash derivation security.",
-        "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership.",
+        "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership. The indexed output-slot theorems derive active-commitment and inactive commitment/ciphertext-hash facts from the same executable predicate.",
         "The theorem covers public-input shape admission, not statement-hash preimage binding, which is covered separately by formal.transaction-statement-hash-binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
       "evidence_paths": [
@@ -362,7 +367,7 @@
       "id": "formal.transaction-accepted-soundness-boundary",
       "component": "accepted transaction proof-system soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, and total indexed input-slot facts into one abstract relation under explicit balance and spend proof-system soundness assumptions.",
+      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, total indexed input-slot facts, and total indexed output-slot facts into one abstract relation under explicit balance and spend proof-system soundness assumptions.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -376,14 +381,16 @@
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_input_slot_facts_at",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_output_slot_facts_at",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at",
-        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_input_slot_facts_at"
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_input_slot_facts_at",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_output_slot_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `BalanceSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled `validBalance` relation for the exact balance witness and slots.",
         "The theorem depends on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled active-input spend-authorization relation for the exact public input shape and Merkle root.",
-        "The theorem packages the abstract accepted transaction relation and now exposes every indexed input slot as either inactive with zero nullifier or active with full spend facts. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
+        "The theorem packages the abstract accepted transaction relation and now exposes every indexed input slot as either inactive with zero nullifier or active with full spend facts, and every indexed output slot as either inactive with zero commitment/ciphertext hash or active with a nonzero public commitment. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier/ciphertext cryptographic security, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
@@ -412,7 +419,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, and the accepted transaction relation under one deployed verifier soundness assumption instead of separate balance and spend assumptions.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, indexed output-slot statement/binding facts, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, and the accepted transaction relation under one deployed verifier soundness assumption instead of separate balance and spend assumptions.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -423,20 +430,23 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_vectors_bound",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_output_vectors_bound",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_value_balance_bound",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_stablecoin_payload_bound",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_active_input_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_input_slot_bound_to_statement",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_output_slot_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
         "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at",
-        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_input_slot_facts_at"
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_input_slot_facts_at",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
-        "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
+        "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [

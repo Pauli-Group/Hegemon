@@ -38,6 +38,33 @@ def allOutputsValid : List Nat -> List Digest -> List Digest -> Bool
         && allOutputsValid flags commitments ciphertextHashes
   | _, _, _ => false
 
+def OutputSlotAt :
+    List Nat -> List Digest -> List Digest ->
+      Nat -> Nat -> Digest -> Digest -> Prop
+  | flag :: _, commitment :: _, ciphertextHash :: _, 0, activeFlag,
+      publicCommitment, publicCiphertextHash =>
+      activeFlag = flag
+        ∧ publicCommitment = commitment
+        ∧ publicCiphertextHash = ciphertextHash
+  | _ :: flags, _ :: commitments, _ :: ciphertextHashes, index + 1,
+      activeFlag, publicCommitment, publicCiphertextHash =>
+      OutputSlotAt
+        flags
+        commitments
+        ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+  | _, _, _, _, _, _, _ => False
+
+def OutputSlotFacts
+    (activeFlag : Nat)
+    (publicCommitment publicCiphertextHash : Digest) : Prop :=
+  (activeFlag = 1 -> publicCommitment ≠ 0)
+    ∧ (activeFlag = 0 -> publicCommitment = 0 ∧ publicCiphertextHash = 0)
+    ∧ (activeFlag = 0 ∨ activeFlag = 1)
+
 def nonZeroExists : List Digest -> Bool
   | [] => false
   | value :: rest => !isZeroDigest value || nonZeroExists rest
@@ -148,6 +175,147 @@ theorem validPublicInputShape_rejects_stablecoin_missing_asset :
 theorem validPublicInputShape_accepts_stablecoin_present :
     validPublicInputShape { validShape with stablecoinEnabled := 1, stablecoinAsset := 7 } = true := by
   decide
+
+theorem validOutputSlot_implies_output_slot_facts
+    {activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (valid :
+      validOutputSlot
+        activeFlag
+        publicCommitment
+        publicCiphertextHash = true) :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash := by
+  unfold validOutputSlot isBoolFlag isZeroDigest at valid
+  unfold OutputSlotFacts
+  by_cases inactive : activeFlag = 0
+  · simp [inactive] at valid ⊢
+    exact valid
+  · by_cases active : activeFlag = 1
+    · simp [active] at valid ⊢
+      intro zeroCommitment
+      exact valid zeroCommitment
+    · simp [inactive, active] at valid
+
+theorem allOutputsValid_head_facts
+    {flag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    (valid :
+      allOutputsValid
+        (flag :: flags)
+        (publicCommitment :: commitments)
+        (publicCiphertextHash :: ciphertextHashes) = true) :
+    OutputSlotFacts flag publicCommitment publicCiphertextHash := by
+  unfold allOutputsValid at valid
+  simp at valid
+  exact validOutputSlot_implies_output_slot_facts valid.left
+
+theorem allOutputsValid_tail_valid
+    {flag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    (valid :
+      allOutputsValid
+        (flag :: flags)
+        (publicCommitment :: commitments)
+        (publicCiphertextHash :: ciphertextHashes) = true) :
+    allOutputsValid flags commitments ciphertextHashes = true := by
+  unfold allOutputsValid at valid
+  simp at valid
+  exact valid.right
+
+theorem allOutputsValid_output_slot_facts_at
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (slot :
+      OutputSlotAt
+        flags
+        commitments
+        ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash)
+    (valid :
+      allOutputsValid flags commitments ciphertextHashes = true) :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash := by
+  induction flags generalizing commitments ciphertextHashes index activeFlag
+      publicCommitment publicCiphertextHash with
+  | nil =>
+      cases commitments <;> cases ciphertextHashes <;> cases index <;>
+        simp [OutputSlotAt] at slot
+  | cons headFlag tailFlags ih =>
+      cases commitments with
+      | nil =>
+          cases ciphertextHashes <;> cases index <;> simp [OutputSlotAt] at slot
+      | cons headCommitment tailCommitments =>
+          cases ciphertextHashes with
+          | nil =>
+              cases index <;> simp [OutputSlotAt] at slot
+          | cons headCiphertextHash tailCiphertextHashes =>
+              cases index with
+              | zero =>
+                  simp [OutputSlotAt] at slot
+                  rcases slot with
+                    ⟨hflag, hcommitment, hciphertextHash⟩
+                  subst activeFlag
+                  subst publicCommitment
+                  subst publicCiphertextHash
+                  exact allOutputsValid_head_facts valid
+              | succ tailIndex =>
+                  exact
+                    ih
+                      slot
+                      (allOutputsValid_tail_valid valid)
+
+theorem validPublicInputShape_output_slot_facts_at
+    {shape : PublicInputShape}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (valid : validPublicInputShape shape = true)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash := by
+  cases shape with
+  | mk inputFlags outputFlags nullifiers commitments ciphertextHashes
+      balanceSlotAssets valueBalanceSign stablecoinEnabled stablecoinAsset
+      stablecoinIssuanceSign =>
+  unfold validPublicInputShape at valid
+  have beforeStablecoinPresent := (Bool.and_eq_true_iff.mp valid).left
+  have beforeStablecoinIssuanceSign :=
+    (Bool.and_eq_true_iff.mp beforeStablecoinPresent).left
+  have beforeStablecoinEnabled :=
+    (Bool.and_eq_true_iff.mp beforeStablecoinIssuanceSign).left
+  have beforeValueBalanceSign :=
+    (Bool.and_eq_true_iff.mp beforeStablecoinEnabled).left
+  have beforeNonzeroExists :=
+    (Bool.and_eq_true_iff.mp beforeValueBalanceSign).left
+  have outputsValid :=
+    (Bool.and_eq_true_iff.mp beforeNonzeroExists).right
+  exact
+    allOutputsValid_output_slot_facts_at
+      slot
+      outputsValid
 
 end PublicInputs
 end Transaction

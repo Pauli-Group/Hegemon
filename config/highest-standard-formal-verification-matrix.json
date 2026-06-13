@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.2,
+  "overall_completion_percent": 66.36,
   "last_full_formal_core": {
-    "commit": "working tree after observer-chain surface slice",
+    "commit": "working tree after output-slot statement-binding slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1200,
+    "named_lean_theorems": 1210,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,33 +29,37 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the privacy observer boundary with a valid observer-chain surface: parser-derived chain ciphertext summaries must have the chain suite/KEM shape, their count equals the public active-output count, same public inputs preserve active-output count, same allowed leakage preserves active-output count, and valid same-public/same-wire worlds have equal ciphertext-summary counts and equal allowed leakage.",
+    "summary": "Strengthened the transaction public-input, accepted-transaction, and canonical verifier boundary with indexed output-slot facts: valid output slots expose active nonzero commitments or inactive zero commitment/ciphertext-hash pairs, accepted transactions lift those facts from the abstract relation, and the canonical verifier surface binds output flags, commitments, and ciphertext hashes across public shape, statement preimage, and proof binding message.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Transaction/PublicInputs.lean"
+      "formal/lean/Hegemon/Transaction/PublicInputs.lean",
+      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.Observer.valid_observer_chain_surface_summaries_have_chain_format",
-      "Hegemon.Privacy.Observer.valid_observer_chain_surface_ciphertext_count",
-      "Hegemon.Privacy.Observer.same_public_inputs_active_output_count",
-      "Hegemon.Privacy.Observer.same_allowed_leakage_preserves_active_output_count",
-      "Hegemon.Privacy.Observer.same_public_valid_observer_surfaces_ciphertext_count",
-      "Hegemon.Privacy.Observer.same_allowed_leakage_of_valid_observer_chain_surfaces"
+      "Hegemon.Transaction.PublicInputs.validOutputSlot_implies_output_slot_facts",
+      "Hegemon.Transaction.PublicInputs.allOutputsValid_head_facts",
+      "Hegemon.Transaction.PublicInputs.allOutputsValid_tail_valid",
+      "Hegemon.Transaction.PublicInputs.allOutputsValid_output_slot_facts_at",
+      "Hegemon.Transaction.PublicInputs.validPublicInputShape_output_slot_facts_at",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_output_slot_facts_at",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_output_slot_facts_at",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_output_vectors_bound",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_output_slot_bound_to_statement",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1200,
+      "named_lean_theorems": 1210,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The observer-chain surface proves a public leakage/count boundary over modeled parsed ciphertext bytes; it does not prove simulator-based zero-knowledge.",
-      "The theorem uses public active-output flags and parsed chain ciphertext bytes, but it does not prove ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, or network privacy.",
-      "Complete wallet/native-node equivalence, BLAKE3 ciphertext-hash security, and note plaintext-to-commitment correctness remain separate open targets."
+      "Output-slot facts are public statement facts; they do not prove output note plaintext correctness, recipient authorization, or plaintext-to-commitment binding.",
+      "The ciphertext-hash fact is zeroing for inactive outputs plus statement/binding vector agreement; it does not prove BLAKE3/Poseidon2 security or implementation equivalence.",
+      "The deployed AIR/STARK/SmallWood verifier soundness theorem, witness extraction, hash security, and complete Rust/native-node refinement remain open."
     ]
   },
   "properties": [
@@ -196,7 +200,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 78,
+      "completion_percent": 79,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -205,6 +209,7 @@
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean conditional accepted-proof artifact theorems",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted wrapper statement-surface facts into the accepted transaction relation",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds wrapper admission, public-input binding, statement preimage, proof-binding message, nullifier/commitment/ciphertext vectors, balance-slot assets, and stablecoin fields into one canonical verifier surface",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean proves indexed output flags, commitments, and ciphertext hashes are bound across public shape, statement preimage, and proof binding message",
         "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
       ],
       "missing_work": [
@@ -217,7 +222,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 57,
+      "completion_percent": 58,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -230,6 +235,7 @@
         "CanonicalVerifierBoundary now binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof-binding message before deriving indexed active-input facts",
         "CanonicalVerifierBoundary now binds value-balance, stablecoin policy/oracle/attestation/issuance payloads, and active spend facts to the same canonical statement surface",
         "SpendAuthorization, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total input-slot facts so future AIR soundness can target inactive-zero and active-spend cases uniformly",
+        "PublicInputs, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total output-slot facts so future AIR soundness can target active-output and inactive-padding cases uniformly",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [

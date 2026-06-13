@@ -323,6 +323,41 @@ theorem canonical_statement_surface_vectors_bound
     surface.bindingCommitments,
     surface.bindingCiphertextHashes⟩
 
+theorem canonical_statement_surface_output_vectors_bound
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    shape.outputFlags = bound.outputFlags
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds :=
+  ⟨surface.shapeOutputFlags,
+    surface.shapeCommitments,
+    surface.shapeCiphertextHashes,
+    surface.bindingCommitments,
+    surface.bindingCiphertextHashes⟩
+
 theorem canonical_statement_surface_value_balance_bound
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -588,6 +623,91 @@ theorem canonical_surface_authorized_input_slot_bound_to_statement
       ← surface.shapeNullifiers]
     exact slot
   exact ⟨facts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
+
+theorem canonical_surface_output_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+  have facts :=
+    validPublicInputShape_output_slot_facts_at
+      surface.publicShape
+      slot
+  have slotStatement :
+      OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← surface.shapeOutputFlags, ← surface.shapeCommitments,
+      ← surface.shapeCiphertextHashes]
+    exact slot
+  have slotBinding :
+      OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← surface.shapeOutputFlags, surface.bindingCommitments,
+      surface.bindingCiphertextHashes, ← surface.shapeCommitments,
+      ← surface.shapeCiphertextHashes]
+    exact slot
+  exact ⟨facts, slotStatement, slotBinding⟩
 
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
@@ -923,6 +1043,68 @@ theorem canonical_statement_implies_input_slot_facts_at
       publicNullifier
       witness :=
   accepted_transaction_relation_input_slot_facts_at
+    (accepted_wrapper_and_canonical_statement_implies_transaction_relation
+      surface
+      sound)
+    slot
+
+theorem canonical_statement_implies_output_slot_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash :=
+  accepted_transaction_relation_output_slot_facts_at
     (accepted_wrapper_and_canonical_statement_implies_transaction_relation
       surface
       sound)
