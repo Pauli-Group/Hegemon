@@ -396,6 +396,93 @@ theorem accepted_projected_replay_with_da_sidecar_facts
       spentNodup,
       bridgeNodup⟩
 
+theorem accepted_raw_projected_replay_with_da_sidecar_facts
+    {surface : DaSidecarReplaySurface}
+    {streamOutput : ActionStreamOutput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields : RecursiveSemanticFields}
+    {initial final : Hegemon.Native.AcceptedChain.NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (facts :
+      AcceptedDaSidecarReplayFacts
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedReplay :
+      rawProjectedLedgerStateAfter initial blocks = some final) :
+    surface.candidateBinding.daRootMatches = true
+      ∧ surface.candidateBinding.txStatementsCommitmentMatches = true
+      ∧ surface.candidateBinding.recursiveStateRootMatches = true
+      ∧ candidateArtifactCouplingPreconditions
+          surface.candidateCoupling = true
+      ∧ surface.candidateArtifact.txCount ≠ 0
+      ∧ surface.candidateArtifact.daChunkCount ≠ 0
+      ∧ Hegemon.Native.AcceptedChain.validateNativeLedgerReplayChain
+          initial
+          (rawReplayInputs blocks) =
+          some final
+      ∧ Hegemon.Native.AcceptedChain.expectedNativeSupplyAfter
+          initial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ Hegemon.Native.AcceptedChain.expectedNativeLeafCountAfter
+          initial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ Hegemon.Native.AcceptedChain.nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  have bindingFacts :=
+    accepted_candidate_artifact_binding_implies_root_matches
+      facts.candidateBindingAccepted
+  have candidateFacts :=
+    accepted_candidate_artifact_implies_nonzero_tx_and_da
+      facts.candidateArtifactAccepted
+  have couplingAccepts :
+      candidateArtifactCouplingAccepts surface.candidateCoupling = true := by
+    simp [
+      candidateArtifactCouplingAccepts,
+      facts.candidateCouplingAccepted
+    ]
+  have couplingPreconditions :=
+    (accepts_iff_coupling_preconditions
+      (input := surface.candidateCoupling)).mp
+      couplingAccepts
+  have replayFacts :=
+    accepted_raw_projected_ledger_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  rcases replayFacts with
+    ⟨accepted,
+      supply,
+      leaf,
+      commitmentPlan,
+      carried,
+      spentNodup,
+      bridgeNodup⟩
+  exact
+    ⟨bindingFacts.1,
+      bindingFacts.2.1,
+      bindingFacts.2.2,
+      couplingPreconditions,
+      candidateFacts.1,
+      candidateFacts.2,
+      accepted,
+      supply,
+      leaf,
+      commitmentPlan,
+      carried,
+      spentNodup,
+      bridgeNodup⟩
+
 end DaSidecarReplayBinding
 end Native
 end Hegemon

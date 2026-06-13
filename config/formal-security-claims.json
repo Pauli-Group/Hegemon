@@ -3349,7 +3349,7 @@
       "id": "native.da-sidecar-replay-binding",
       "component": "native DA sidecar replay binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean DA/sidecar replay-binding composition packages accepted candidate artifact admission, candidate DA-root/artifact binding, candidate coupling, proven-batch DA binding, recursive semantic DA field sourcing, sidecar upload admission, action stream acceptance, wire replay projection acceptance, and projected replay startup equivalence into one theorem surface.",
+      "summary": "The Lean DA/sidecar replay-binding composition packages accepted candidate artifact admission, candidate DA-root/artifact binding, candidate coupling, proven-batch DA binding, recursive semantic DA field sourcing, sidecar upload admission, action stream acceptance, wire replay projection acceptance, projected replay startup equivalence, and raw-decoded projected replay startup equivalence into theorem surfaces.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3362,12 +3362,14 @@
         "Hegemon.Native.DaSidecarReplayBinding.derived_semantic_fields_da_root_matches_source",
         "Hegemon.Native.DaSidecarReplayBinding.accepted_sidecar_upload_implies_preconditions",
         "Hegemon.Native.DaSidecarReplayBinding.accepted_da_sidecar_replay_facts_expose_binding_preconditions",
-        "Hegemon.Native.DaSidecarReplayBinding.accepted_projected_replay_with_da_sidecar_facts"
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_projected_replay_with_da_sidecar_facts",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_raw_projected_replay_with_da_sidecar_facts"
       ],
       "assumptions": [
         "This is a composition theorem over existing production-derived predicates. It relies on the separate DA-root, proven-batch, recursive semantic input, sidecar upload, candidate artifact, block-artifact binding, action-stream, wire-replay projection, and projected replay/refinement claims for their individual executable predicates and production conformance.",
         "The theorem exposes that accepted candidate bindings have matching DA root, transaction-statement commitment, and recursive state root predicates; accepted proven-batch bindings have matching DA root and nonzero DA chunks; recursive semantic fields source `daRoot` from the same source field; accepted sidecar upload gates satisfy request, capacity, metadata, and decoded-proof preconditions; and accepted wire replay projection has matching action/planned counts.",
         "The projected replay theorem composes those DA/sidecar facts with `accepted_projected_ledger_state_after_startup_equivalence`, preserving projected carried-state preconditions and final nullifier/bridge-replay uniqueness for accepted projected replay.",
+        "The raw projected replay theorem composes the same DA/sidecar facts with `accepted_raw_projected_ledger_state_after_startup_equivalence`, exposing accepted replay over raw replay inputs, replayed supply equality, replayed leaf-cursor equality, native commitment-plan preconditions, raw carried-state preconditions, and final nullifier/bridge-replay uniqueness.",
         "The theorem does not prove raw SCALE PendingAction byte projection, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [

@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 70.36,
+  "overall_completion_percent": 70.46,
   "last_full_formal_core": {
-    "commit": "working tree after tx-leaf statement/proof boundary slice",
-    "status": "passed 2026-06-13 16:53Z",
+    "commit": "working tree after DA sidecar raw replay slice",
+    "status": "passed 2026-06-13 17:08Z",
     "claims": 95,
-    "named_lean_theorems": 1292,
+    "named_lean_theorems": 1293,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,26 +29,25 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened native tx-leaf implementation equivalence: accepted native tx-leaf/action binding plus the canonical statement surface now assumption-free exposes statement preimage, proof binding-message, public-input binding, wrapper surface, and native receipt/public-input/proof/backend/ciphertext-payload equality facts; a packaged conditional theorem carries those facts with the deployed-verifier boundary.",
+    "summary": "Strengthened DA/sidecar replay implementation equivalence: accepted DA sidecar/artifact predicates now compose with raw decoded projected replay to expose accepted replay over raw replay inputs, replayed supply equality, replayed leaf-cursor equality, commitment-plan preconditions, raw carried-state preconditions, and final replay-set uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_statement_proof_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts"
+      "Hegemon.Native.DaSidecarReplayBinding.accepted_raw_projected_replay_with_da_sidecar_facts"
     ],
     "validation": {
       "lean_formal": "targeted modules passed",
-      "formal_core": "passed 2026-06-13 16:53Z",
+      "formal_core": "passed 2026-06-13 17:08Z",
       "claims": 95,
-      "named_lean_theorems": 1292,
+      "named_lean_theorems": 1293,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The assumption-free theorem proves statement/proof/native-artifact equality facts over decoded canonical-surface predicates; it does not prove arbitrary SCALE/postcard decoder correctness or tx-leaf parser completeness.",
-      "The accepted transaction relation, spend authorization, and asset authorization facts still depend on the explicit `DeployedTxVerifierSoundnessAssumption`; deployed STARK/AIR, SmallWood, recursive proof soundness, hash security, and complete native-node equivalence remain explicit residual assumptions.",
+      "The theorem composes already admitted predicates with a raw decoded replay surface; it does not prove arbitrary raw SCALE/JSON parser refinement or that every production byte object decodes into the modeled raw replay block list.",
+      "DA availability/retention, DA-root hash security/equivalence, recursive proof soundness, native tx-leaf proof soundness, sled durability, and complete native-node equivalence remain explicit residual assumptions.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -334,7 +333,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 93,
+      "completion_percent": 94,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -350,7 +349,8 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes raw ingress sidecar predicates with accepted projected replay startup equivalence",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now adds a raw decoded native replay block surface over projected replay, with accepted/stale raw examples and startup-equivalence inheritance",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves the raw projected ledger-state executor is extensionally equal to accepted replay over raw replay inputs",
-        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness"
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
@@ -378,14 +378,14 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 71,
+      "completion_percent": 72,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
         "sidecar upload admission gate",
         "staged ciphertext/proof reload gates",
         "mineable-action admission gate",
-        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, and projected replay startup facts",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, projected replay startup facts, and raw decoded projected replay startup facts",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts"
       ],
       "missing_work": [
