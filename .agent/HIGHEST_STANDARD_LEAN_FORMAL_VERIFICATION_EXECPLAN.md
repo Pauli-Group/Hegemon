@@ -80,6 +80,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 23:35Z) Added `Hegemon.Native.DaSidecarReplayBinding`, composing accepted candidate artifact admission, candidate DA-root binding, proven-batch DA binding, recursive semantic DA-root sourcing, sidecar upload preconditions, action stream acceptance, wire replay projection counts, and projected replay startup equivalence into one DA/sidecar/replay fact package. Current tracked completion is 68.48%.
 - [x] (2026-06-13 23:40Z) Ran formal-core metadata checks for the DA/sidecar replay-binding slice; claims passed with 94 claims, 1261 named Lean theorems, 85 production-eligible claims, and blueprint passed with 382 falsification cases and 180 implementation bindings.
 - [x] (2026-06-13 23:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 94 claims, 1261 named Lean theorems, 85 production-eligible claims, 382 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-14 00:20Z) Added `Hegemon.Native.RawIngressSidecarReplayRecoverability`, composing accepted action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar replay binding, and projected replay startup equivalence into one raw-ingress-to-replay fact package. Current tracked completion is 68.75%.
+- [x] (2026-06-14 00:35Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1269 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -459,6 +461,22 @@ The latest full formal-core pass after the DA/sidecar replay-binding slice repor
     named_lean_theorems=1261
     production_eligible_claims=85
     falsification_cases=382
+    implementation_bindings=180
+
+The latest metadata target after the raw-ingress sidecar replay-recoverability slice is:
+
+    claims=95
+    named_lean_theorems=1269
+    production_eligible_claims=86
+    falsification_cases=385
+    implementation_bindings=180
+
+The latest full formal-core pass after the raw-ingress sidecar replay-recoverability slice reported:
+
+    claims=95
+    named_lean_theorems=1269
+    production_eligible_claims=86
+    falsification_cases=385
     implementation_bindings=180
 
 ## Interfaces and Dependencies

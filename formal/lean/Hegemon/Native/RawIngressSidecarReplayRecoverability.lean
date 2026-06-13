@@ -1,0 +1,251 @@
+import Hegemon.Native.ActionRequestProjectionAdmission
+import Hegemon.Native.DaSidecarReplayBinding
+import Hegemon.Native.PendingActionReload
+import Hegemon.Native.StagedCiphertextReload
+import Hegemon.Native.StagedProofReload
+import Hegemon.Native.TransferStateAdmission
+
+namespace Hegemon
+namespace Native
+namespace RawIngressSidecarReplayRecoverability
+
+open Hegemon.Native.ActionRequestProjectionAdmission
+open Hegemon.Native.ActionWireReplayProjectionAdmission
+open Hegemon.Native.BlockReplayInputProjection
+open Hegemon.Native.DaSidecarReplayBinding
+open Hegemon.Native.PendingActionReload
+open Hegemon.Native.StagedCiphertextReload
+open Hegemon.Native.StagedProofReload
+open Hegemon.Native.TransferStateAdmission
+
+structure RawIngressSidecarReplaySurface where
+  actionRequest : ActionRequestProjectionInput
+  pendingReload : PendingActionReloadInput
+  stagedCiphertextReload : StagedCiphertextReloadInput
+  stagedProofReload : StagedProofReloadInput
+  transferState : TransferStateInput
+  daSidecarReplay : DaSidecarReplaySurface
+deriving DecidableEq, Repr
+
+structure AcceptedRawIngressSidecarReplay
+    (surface : RawIngressSidecarReplaySurface)
+    (streamOutput : ActionStreamEffect.ActionStreamOutput)
+    (wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields) : Prop where
+  actionRequestAccepted :
+    evaluateActionRequestProjectionRejection surface.actionRequest = none
+  pendingReloadAccepted :
+    evaluatePendingActionReloadRejection surface.pendingReload = none
+  stagedCiphertextReloadAccepted :
+    evaluateStagedCiphertextReloadRejection
+      surface.stagedCiphertextReload = none
+  stagedProofReloadAccepted :
+    evaluateStagedProofReloadRejection surface.stagedProofReload = none
+  transferStateAccepted :
+    evaluateTransferState surface.transferState = Except.ok ()
+  daSidecarReplayFacts :
+    AcceptedDaSidecarReplayFacts
+      surface.daSidecarReplay
+      streamOutput
+      wireOutput
+      semanticFields
+
+theorem accepted_action_request_projection_implies_preconditions
+    {input : ActionRequestProjectionInput}
+    (accepted : evaluateActionRequestProjectionRejection input = none) :
+    actionRequestProjectionPreconditions input = true := by
+  have acceptsTrue :
+      actionRequestProjectionAccepts input = true := by
+    simp [actionRequestProjectionAccepts, accepted]
+  exact
+    (accepts_iff_action_request_projection_preconditions
+      (input := input)).mp acceptsTrue
+
+theorem accepted_pending_action_reload_implies_preconditions
+    {input : PendingActionReloadInput}
+    (accepted : evaluatePendingActionReloadRejection input = none) :
+    pendingActionReloadPreconditions input = true := by
+  have acceptsTrue : pendingActionReloadAccepts input = true := by
+    simp [pendingActionReloadAccepts, accepted]
+  exact
+    (accepts_iff_pending_action_reload_preconditions
+      (input := input)).mp acceptsTrue
+
+theorem accepted_staged_ciphertext_reload_implies_preconditions
+    {input : StagedCiphertextReloadInput}
+    (accepted : evaluateStagedCiphertextReloadRejection input = none) :
+    stagedCiphertextReloadPreconditions input = true := by
+  have acceptsTrue : stagedCiphertextReloadAccepts input = true := by
+    simp [stagedCiphertextReloadAccepts, accepted]
+  exact
+    (accepts_iff_staged_ciphertext_reload_preconditions
+      (input := input)).mp acceptsTrue
+
+theorem accepted_staged_proof_reload_implies_preconditions
+    {input : StagedProofReloadInput}
+    (accepted : evaluateStagedProofReloadRejection input = none) :
+    stagedProofReloadPreconditions input = true := by
+  have acceptsTrue : stagedProofReloadAccepts input = true := by
+    simp [stagedProofReloadAccepts, accepted]
+  exact
+    (accepts_iff_staged_proof_reload_preconditions
+      (input := input)).mp acceptsTrue
+
+theorem accepted_transfer_state_implies_preconditions
+    {input : TransferStateInput}
+    (accepted : evaluateTransferState input = Except.ok ()) :
+    transferStatePreconditions input = true := by
+  have acceptsTrue : transferStateAccepts input = true := by
+    simp [transferStateAccepts, accepted]
+  have acceptsEq := accepts_iff_state_preconditions input
+  rw [acceptsEq] at acceptsTrue
+  exact acceptsTrue
+
+theorem accepted_sidecar_transfer_state_implies_sidecar_materialized
+    {input : TransferStateInput}
+    (accepted : evaluateTransferState input = Except.ok ())
+    (sidecar : input.sidecarRoute = true) :
+    input.anchorKnown = true
+      ∧ input.nullifierState = TransferNullifierState.valid
+      ∧ input.commitmentsNonzero = true
+      ∧ input.sidecarCiphertextsAvailable = true
+      ∧ input.sidecarCiphertextSizesPresent = true
+      ∧ input.sidecarCiphertextSizesMatch = true := by
+  cases input with
+  | mk anchorKnown nullifierState commitmentsNonzero sidecarRoute
+      sidecarCiphertextsAvailable sidecarCiphertextSizesPresent
+      sidecarCiphertextSizesMatch =>
+      cases anchorKnown <;> cases nullifierState <;>
+        cases commitmentsNonzero <;> cases sidecarRoute <;>
+        cases sidecarCiphertextsAvailable <;>
+        cases sidecarCiphertextSizesPresent <;>
+        cases sidecarCiphertextSizesMatch <;>
+        simp [evaluateTransferState] at accepted sidecar ⊢
+
+theorem accepted_raw_ingress_sidecar_replay_exposes_preconditions
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    (facts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields) :
+    actionRequestProjectionPreconditions surface.actionRequest = true
+      ∧ pendingActionReloadPreconditions surface.pendingReload = true
+      ∧ stagedCiphertextReloadPreconditions
+          surface.stagedCiphertextReload = true
+      ∧ stagedProofReloadPreconditions surface.stagedProofReload = true
+      ∧ transferStatePreconditions surface.transferState = true
+      ∧ surface.daSidecarReplay.candidateBinding.daRootMatches = true
+      ∧ surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+      ∧ surface.daSidecarReplay.provenBatchBinding.daChunkCount ≠ 0
+      ∧ actionWireReplayProjectionPreconditions
+          surface.daSidecarReplay.wireReplayProjection = true
+      ∧ surface.daSidecarReplay.wireReplayProjection.actionCount =
+          surface.daSidecarReplay.wireReplayProjection.plannedCount
+      ∧ surface.daSidecarReplay.wireReplayProjection.actionCount =
+          surface.daSidecarReplay.wireReplayProjection.actions.length := by
+  have requestPre :=
+    accepted_action_request_projection_implies_preconditions
+      facts.actionRequestAccepted
+  have pendingPre :=
+    accepted_pending_action_reload_implies_preconditions
+      facts.pendingReloadAccepted
+  have ciphertextPre :=
+    accepted_staged_ciphertext_reload_implies_preconditions
+      facts.stagedCiphertextReloadAccepted
+  have proofPre :=
+    accepted_staged_proof_reload_implies_preconditions
+      facts.stagedProofReloadAccepted
+  have transferPre :=
+    accepted_transfer_state_implies_preconditions
+      facts.transferStateAccepted
+  have daFacts :=
+    accepted_da_sidecar_replay_facts_expose_binding_preconditions
+      facts.daSidecarReplayFacts
+  exact
+    ⟨requestPre,
+      pendingPre,
+      ciphertextPre,
+      proofPre,
+      transferPre,
+      daFacts.1,
+      daFacts.2.2.2.1,
+      daFacts.2.2.2.2.1,
+      daFacts.2.2.2.2.2.2.2.2.2.1,
+      daFacts.2.2.2.2.2.2.2.2.2.2.1,
+      daFacts.2.2.2.2.2.2.2.2.2.2.2.1⟩
+
+theorem accepted_raw_ingress_projected_replay_binds_sidecar_rows
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {initial final : AcceptedChain.NativeLedgerReplayState}
+    {projections : List NativeBlockReplayProjection}
+    (facts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedReplay :
+      projectedLedgerStateAfter initial projections = some final) :
+    actionRequestProjectionPreconditions surface.actionRequest = true
+      ∧ pendingActionReloadPreconditions surface.pendingReload = true
+      ∧ stagedCiphertextReloadPreconditions
+          surface.stagedCiphertextReload = true
+      ∧ stagedProofReloadPreconditions surface.stagedProofReload = true
+      ∧ surface.transferState.sidecarCiphertextsAvailable = true
+      ∧ surface.transferState.sidecarCiphertextSizesPresent = true
+      ∧ surface.transferState.sidecarCiphertextSizesMatch = true
+      ∧ surface.daSidecarReplay.candidateBinding.daRootMatches = true
+      ∧ surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+      ∧ semanticFields.daRoot =
+          surface.daSidecarReplay.recursiveSemanticSource.daRoot
+      ∧ projectedCarriedStatePreconditions initial projections = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  have preconditions :=
+    accepted_raw_ingress_sidecar_replay_exposes_preconditions facts
+  have sidecarMaterialized :=
+    accepted_sidecar_transfer_state_implies_sidecar_materialized
+      facts.transferStateAccepted
+      sidecarRoute
+  have replayFacts :=
+    accepted_projected_replay_with_da_sidecar_facts
+      facts.daSidecarReplayFacts
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  exact
+    ⟨preconditions.1,
+      preconditions.2.1,
+      preconditions.2.2.1,
+      preconditions.2.2.2.1,
+      sidecarMaterialized.2.2.2.1,
+      sidecarMaterialized.2.2.2.2.1,
+      sidecarMaterialized.2.2.2.2.2,
+      replayFacts.1,
+      replayFacts.2.1,
+      replayFacts.2.2.1,
+      replayFacts.2.2.2.1,
+      replayFacts.2.2.2.2.1,
+      replayFacts.2.2.2.2.2⟩
+
+end RawIngressSidecarReplayRecoverability
+end Native
+end Hegemon

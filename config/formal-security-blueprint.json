@@ -7828,6 +7828,71 @@
       "scope_boundary": "This node proves a DA/sidecar/replay composition over existing admitted predicates. It does not prove raw SCALE PendingAction byte projection, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, network/chunk retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
     },
     {
+      "id": "native.raw-ingress-sidecar-replay-recoverability",
+      "claim_id": "native.raw-ingress-sidecar-replay-recoverability",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress sidecar replay recoverability surface, accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state admission, DA/sidecar replay binding, and projected replay together imply the raw ingress preconditions, sidecar-route ciphertext availability and size agreement, DA-root binding facts, projected carried-state preconditions, and final nullifier plus bridge-replay uniqueness.",
+      "informal_argument": "The Lean theorems `accepted_action_request_projection_implies_preconditions`, `accepted_pending_action_reload_implies_preconditions`, `accepted_staged_ciphertext_reload_implies_preconditions`, `accepted_staged_proof_reload_implies_preconditions`, and `accepted_transfer_state_implies_preconditions` expose the accepted ingress/reload predicates. `accepted_sidecar_transfer_state_implies_sidecar_materialized` proves that an accepted sidecar-route transfer has available sidecar ciphertext bytes, present sidecar sizes, and matching sidecar sizes. `accepted_raw_ingress_sidecar_replay_exposes_preconditions` packages those facts with `Hegemon.Native.DaSidecarReplayBinding.accepted_da_sidecar_replay_facts_expose_binding_preconditions`, and `accepted_raw_ingress_projected_replay_binds_sidecar_rows` composes the package with accepted projected replay to preserve carried-state preconditions and final nullifier/bridge-replay uniqueness.",
+      "depends_on": [
+        "native.action-request-projection-admission",
+        "native.pending-action-reload",
+        "native.staged-ciphertext-reload",
+        "native.staged-proof-reload",
+        "native.transfer-state-admission",
+        "native.da-sidecar-replay-binding",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/PendingActionReload.lean",
+        "formal/lean/Hegemon/Native/StagedCiphertextReload.lean",
+        "formal/lean/Hegemon/Native/StagedProofReload.lean",
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a Lean composition slice over already production-bound raw ingress, sidecar reload, transfer-state, DA binding, and projected replay predicates. Scope excludes full parser byte refinement, DA availability, hash security, proof soundness, and complete native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-sidecar-replay-theorem",
+          "description": "Removing or weakening the raw-ingress sidecar replay recoverability theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-sidecar-replay-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the new composition theorem or its evidence path is removed from the claim ledger or DAG.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "native-raw-ingress-sidecar-replay-regressions",
+          "description": "Existing native action projection, pending reload, staged sidecar reload, and sidecar transfer-state regressions must continue to reject malformed, missing, oversized, or hash/size-mismatched ingress before mining selection or replay mutation.",
+          "gate": "cargo test -p hegemon-node action_request_projection pending_action_reload staged_ciphertext_reload staged_proof_reload transfer_state --lib --no-default-features -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves a raw-ingress/sidecar/replay composition over accepted production-bound predicates. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, network/chunk retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",

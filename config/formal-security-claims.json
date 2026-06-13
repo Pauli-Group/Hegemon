@@ -3393,6 +3393,64 @@
       ]
     },
     {
+      "id": "native.raw-ingress-sidecar-replay-recoverability",
+      "component": "native raw ingress sidecar replay recoverability",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, and projected replay startup equivalence into one theorem surface.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_action_request_projection_implies_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_pending_action_reload_implies_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_staged_ciphertext_reload_implies_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_staged_proof_reload_implies_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_transfer_state_implies_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_sidecar_transfer_state_implies_sidecar_materialized",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_sidecar_replay_exposes_preconditions",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_projected_replay_binds_sidecar_rows"
+      ],
+      "assumptions": [
+        "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate action-request projection, pending-action reload, staged-ciphertext reload, staged-proof reload, transfer-state admission, DA/sidecar replay-binding, action-stream, wire-projection, and projected replay claims for executable predicate conformance.",
+        "The theorem exposes that accepted raw ingress predicates satisfy request projection, pending reload, staged sidecar reload, staged proof reload, and transfer-state preconditions. When the accepted transfer uses the sidecar route, it proves sidecar ciphertext bytes are available, sidecar sizes are present, and sidecar sizes match before composing with DA-root and projected replay facts.",
+        "The projected replay theorem composes those raw-ingress and sidecar-materialization facts with accepted DA/sidecar replay facts, preserving projected carried-state preconditions and final nullifier/bridge-replay uniqueness for accepted projected replay.",
+        "The theorem does not prove full SCALE parser correctness, BLAKE3 hash security or implementation equivalence, DA erasure-code recoverability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/PendingActionReload.lean",
+        "formal/lean/Hegemon/Native/StagedCiphertextReload.lean",
+        "formal/lean/Hegemon/Native/StagedProofReload.lean",
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-full-scale-equivalence-missing",
+          "description": "The theorem composes accepted production-bound raw-ingress predicates but does not prove the full SCALE/JSON/parser implementation from arbitrary bytes to every PendingAction field.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-sidecar-availability-retention-model-missing",
+          "description": "The theorem proves accepted sidecar-route materialization predicates and DA binding, but it does not prove network DA sampling, erasure-code recoverability, or hot/cold retention availability.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
