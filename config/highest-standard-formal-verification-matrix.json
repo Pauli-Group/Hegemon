@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.36,
+  "overall_completion_percent": 66.51,
   "last_full_formal_core": {
-    "commit": "working tree after output-slot statement-binding slice",
+    "commit": "working tree after native replay-input projection slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1210,
+    "named_lean_theorems": 1218,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
-    "implementation_bindings": 177
+    "implementation_bindings": 178
   },
   "last_coordinator_audit": {
     "date": "2026-06-13",
@@ -29,44 +29,42 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the transaction public-input, accepted-transaction, and canonical verifier boundary with indexed output-slot facts: valid output slots expose active nonzero commitments or inactive zero commitment/ciphertext-hash pairs, accepted transactions lift those facts from the abstract relation, and the canonical verifier surface binds output flags, commitments, and ciphertext hashes across public shape, statement preimage, and proof binding message.",
+    "summary": "Strengthened native block replay projection: production-style replay inputs now derive parent supply, leaf cursor, spent-nullifier state, and consumed bridge replay state from an explicit carried ledger state in Lean, accepted projected replay chains preserve carried-state preconditions before reusing the startup/replay equivalence theorem, and mined import, announced import, and canonical replay now call one Rust projection helper for the state-derived replay input fields.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/PublicInputs.lean",
-      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
+      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean",
+      "formal/lean/Hegemon/Native/BlockReplayRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.PublicInputs.validOutputSlot_implies_output_slot_facts",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_head_facts",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_tail_valid",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_output_slot_facts_at",
-      "Hegemon.Transaction.PublicInputs.validPublicInputShape_output_slot_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_output_slot_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_output_slot_facts_at",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_output_vectors_bound",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_output_slot_bound_to_statement",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at"
+      "Hegemon.Native.BlockReplayInputProjection.replayInputFromProjection_projects_carried_state",
+      "Hegemon.Native.BlockReplayInputProjection.projection_carries_state_of_replay_fields_eq",
+      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_block_claims_carried_state",
+      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_carried_states",
+      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_startup_equivalence",
+      "Hegemon.Native.BlockReplayInputProjection.valid_projected_native_ledger_replay_chain_accepts",
+      "Hegemon.Native.BlockReplayInputProjection.valid_projected_native_ledger_replay_chain_startup_equivalence",
+      "Hegemon.Native.BlockReplayInputProjection.stale_projected_carried_state_rejects"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1210,
+      "named_lean_theorems": 1218,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
-      "implementation_bindings": 177
+      "implementation_bindings": 178
     },
     "known_limitations": [
-      "Output-slot facts are public statement facts; they do not prove output note plaintext correctness, recipient authorization, or plaintext-to-commitment binding.",
-      "The ciphertext-hash fact is zeroing for inactive outputs plus statement/binding vector agreement; it does not prove BLAKE3/Poseidon2 security or implementation equivalence.",
-      "The deployed AIR/STARK/SmallWood verifier soundness theorem, witness extraction, hash security, and complete Rust/native-node refinement remain open."
+      "The projection theorem models production-derived decoded action summaries and carried native state; it does not prove raw SCALE decoding, sled durability, filesystem semantics, or full native-node equivalence.",
+      "The Rust helper centralizes state-derived replay input fields but does not add new runtime validation or a full refinement proof for every caller argument.",
+      "Proof-system soundness, hash security/implementation equivalence, PoW threshold validity, and complete startup/reorg publication equivalence remain open."
     ]
   },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -76,10 +74,12 @@
         "formal-core supply and supply-chain gates",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain no-counterfeiting theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger replay state supply equality theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger replay state supply equality theorem",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean projected replay inputs derive parent supply from carried ledger state",
+        "node/src/native/mod.rs native_block_replay_refinement_input_from_state helper is called by mined import, announced import, and canonical replay"
       ],
       "missing_work": [
-        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the stronger ledger-state transition from raw decoded block inputs.",
+        "Bind remaining sync, startup-repair, canonical publication, and raw decoded block input paths to the stronger ledger-state transition.",
         "State cryptographic and proof-system assumptions explicitly as theorem parameters."
       ],
       "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
@@ -309,7 +309,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 86,
+      "completion_percent": 87,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -317,11 +317,13 @@
         "atomic commit manifest and storage durability gates",
         "implementation bindings in config/formal-security-blueprint.json",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state chain lift for supply, leaf cursor, nullifiers, and bridge replay",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean accepted projected replay chains preserve carried-state preconditions",
+        "node/src/native/mod.rs native_block_replay_refinement_input_from_state centralizes state-derived replay input projection"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
-        "Bind every production import and startup publication path to that transition.",
+        "Bind remaining startup publication and repair paths to that transition.",
         "Add reorg/restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."

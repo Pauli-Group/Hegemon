@@ -2759,24 +2759,22 @@ impl NativeNode {
             &self.da_ciphertext_tree,
             &state,
             &actions,
-            NativeBlockReplayRefinementInput {
-                leaf_start: state.commitment_tree.leaf_count(),
-                parent_supply: state.best.supply_digest,
-                height: work.height,
+            native_block_replay_refinement_input_from_state(
+                &state,
+                work.height,
                 fee_total,
                 has_coinbase,
-                claimed_supply: supply_digest,
-                tx_count_matches: preview_tx_count == work.tx_count,
-                state_root_matches: preview_state_root == work.state_root,
-                kernel_root_matches: preview_kernel_root == work.kernel_root,
-                nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
-                extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
-                message_root_matches: preview_message_root == work.message_root,
-                message_count_matches: preview_message_count == work.message_count,
-                header_mmr_root_matches: work.header_mmr_root
-                    == header_mmr_root_from_hashes(&expected_header_history),
-                header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
-            },
+                supply_digest,
+                preview_tx_count == work.tx_count,
+                preview_state_root == work.state_root,
+                preview_kernel_root == work.kernel_root,
+                preview_nullifier_root == work.nullifier_root,
+                preview_extrinsics_root == work.extrinsics_root,
+                preview_message_root == work.message_root,
+                preview_message_count == work.message_count,
+                work.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
+                work.header_mmr_len == expected_header_history.len() as u64,
+            ),
         )?;
         let mut meta = NativeBlockMeta {
             chain_id: HEGEMON_CHAIN_ID_V1,
@@ -2873,24 +2871,22 @@ impl NativeNode {
             &self.da_ciphertext_tree,
             &parent_state,
             &actions,
-            NativeBlockReplayRefinementInput {
-                leaf_start: parent_state.commitment_tree.leaf_count(),
-                parent_supply: parent.supply_digest,
-                height: meta.height,
+            native_block_replay_refinement_input_from_state(
+                &parent_state,
+                meta.height,
                 fee_total,
                 has_coinbase,
-                claimed_supply: meta.supply_digest,
-                tx_count_matches: tx_count == meta.tx_count,
-                state_root_matches: state_root == meta.state_root,
-                kernel_root_matches: kernel_root == meta.kernel_root,
-                nullifier_root_matches: nullifier_root == meta.nullifier_root,
-                extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
-                message_root_matches: message_root == meta.message_root,
-                message_count_matches: message_count == meta.message_count,
-                header_mmr_root_matches: meta.header_mmr_root
-                    == header_mmr_root_from_hashes(&expected_header_history),
-                header_mmr_len_matches: meta.header_mmr_len == expected_header_history.len() as u64,
-            },
+                meta.supply_digest,
+                tx_count == meta.tx_count,
+                state_root == meta.state_root,
+                kernel_root == meta.kernel_root,
+                nullifier_root == meta.nullifier_root,
+                extrinsics_root == meta.extrinsics_root,
+                message_root == meta.message_root,
+                message_count == meta.message_count,
+                meta.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
+                meta.header_mmr_len == expected_header_history.len() as u64,
+            ),
         )?;
         validate_block_actions_locked(&parent_state, &actions)?;
         verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
@@ -3102,25 +3098,22 @@ impl NativeNode {
                 &self.da_ciphertext_tree,
                 &state,
                 &actions,
-                NativeBlockReplayRefinementInput {
-                    leaf_start: state.commitment_tree.leaf_count(),
-                    parent_supply: state.best.supply_digest,
-                    height: meta.height,
+                native_block_replay_refinement_input_from_state(
+                    &state,
+                    meta.height,
                     fee_total,
                     has_coinbase,
-                    claimed_supply: meta.supply_digest,
-                    tx_count_matches: tx_count == meta.tx_count,
-                    state_root_matches: state_root == meta.state_root,
-                    kernel_root_matches: kernel_root == meta.kernel_root,
-                    nullifier_root_matches: nullifier_root == meta.nullifier_root,
-                    extrinsics_root_matches: extrinsics_root == meta.extrinsics_root,
-                    message_root_matches: message_root == meta.message_root,
-                    message_count_matches: message_count == meta.message_count,
-                    header_mmr_root_matches: meta.header_mmr_root
-                        == header_mmr_root_from_hashes(&expected_header_history),
-                    header_mmr_len_matches: meta.header_mmr_len
-                        == expected_header_history.len() as u64,
-                },
+                    meta.supply_digest,
+                    tx_count == meta.tx_count,
+                    state_root == meta.state_root,
+                    kernel_root == meta.kernel_root,
+                    nullifier_root == meta.nullifier_root,
+                    extrinsics_root == meta.extrinsics_root,
+                    message_root == meta.message_root,
+                    message_count == meta.message_count,
+                    meta.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
+                    meta.header_mmr_len == expected_header_history.len() as u64,
+                ),
             )?;
             verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
             apply_actions_to_memory(&self.da_ciphertext_tree, &mut state, &actions)?;
@@ -9815,6 +9808,41 @@ fn evaluate_native_block_replay_refinement_for_actions(
         &mut bridge_replay_state,
     )
     .map_err(|rejection| native_block_replay_refinement_error(context, rejection))
+}
+
+fn native_block_replay_refinement_input_from_state(
+    state: &NativeState,
+    height: u64,
+    fee_total: u64,
+    has_coinbase: bool,
+    claimed_supply: u128,
+    tx_count_matches: bool,
+    state_root_matches: bool,
+    kernel_root_matches: bool,
+    nullifier_root_matches: bool,
+    extrinsics_root_matches: bool,
+    message_root_matches: bool,
+    message_count_matches: bool,
+    header_mmr_root_matches: bool,
+    header_mmr_len_matches: bool,
+) -> NativeBlockReplayRefinementInput {
+    NativeBlockReplayRefinementInput {
+        leaf_start: state.commitment_tree.leaf_count(),
+        parent_supply: state.best.supply_digest,
+        height,
+        fee_total,
+        has_coinbase,
+        claimed_supply,
+        tx_count_matches,
+        state_root_matches,
+        kernel_root_matches,
+        nullifier_root_matches,
+        extrinsics_root_matches,
+        message_root_matches,
+        message_count_matches,
+        header_mmr_root_matches,
+        header_mmr_len_matches,
+    }
 }
 
 fn block_action_hashes_match(actions: &[PendingAction]) -> bool {
