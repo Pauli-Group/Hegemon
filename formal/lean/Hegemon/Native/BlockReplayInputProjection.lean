@@ -26,6 +26,53 @@ structure NativeBlockReplayProjection where
   headerMmrLenMatches : Bool
 deriving DecidableEq, Repr
 
+structure RawDecodedNativeReplayBlock where
+  carriedSupply : Nat
+  carriedLeafCount : Nat
+  carriedSpentNullifiers : List Nat
+  carriedConsumedBridgeReplays : List Nat
+  decodedActions : List StreamAction
+  decodedHeight : Nat
+  decodedFeeTotal : Nat
+  decodedHasCoinbase : Bool
+  decodedClaimedSupply : Nat
+  decodedTxCountMatches : Bool
+  decodedStateRootMatches : Bool
+  decodedKernelRootMatches : Bool
+  decodedNullifierRootMatches : Bool
+  decodedExtrinsicsRootMatches : Bool
+  decodedMessageRootMatches : Bool
+  decodedMessageCountMatches : Bool
+  decodedHeaderMmrRootMatches : Bool
+  decodedHeaderMmrLenMatches : Bool
+deriving DecidableEq, Repr
+
+def projectionFromRawDecodedBlock
+    (block : RawDecodedNativeReplayBlock) : NativeBlockReplayProjection :=
+  {
+    carried :=
+      {
+        supply := block.carriedSupply,
+        leafCount := block.carriedLeafCount,
+        spentNullifiers := block.carriedSpentNullifiers,
+        consumedBridgeReplays := block.carriedConsumedBridgeReplays
+      },
+    actions := block.decodedActions,
+    height := block.decodedHeight,
+    feeTotal := block.decodedFeeTotal,
+    hasCoinbase := block.decodedHasCoinbase,
+    claimedSupply := block.decodedClaimedSupply,
+    txCountMatches := block.decodedTxCountMatches,
+    stateRootMatches := block.decodedStateRootMatches,
+    kernelRootMatches := block.decodedKernelRootMatches,
+    nullifierRootMatches := block.decodedNullifierRootMatches,
+    extrinsicsRootMatches := block.decodedExtrinsicsRootMatches,
+    messageRootMatches := block.decodedMessageRootMatches,
+    messageCountMatches := block.decodedMessageCountMatches,
+    headerMmrRootMatches := block.decodedHeaderMmrRootMatches,
+    headerMmrLenMatches := block.decodedHeaderMmrLenMatches
+  }
+
 def replayInputFromProjection
     (projection : NativeBlockReplayProjection) : BlockReplayInput :=
   {
@@ -54,6 +101,20 @@ def projectedReplayInputs :
   | [] => []
   | projection :: rest =>
       replayInputFromProjection projection :: projectedReplayInputs rest
+
+def rawNativeReplayProjections :
+    List RawDecodedNativeReplayBlock -> List NativeBlockReplayProjection
+  | [] => []
+  | block :: rest =>
+      projectionFromRawDecodedBlock block :: rawNativeReplayProjections rest
+
+def replayInputFromRawDecodedBlock
+    (block : RawDecodedNativeReplayBlock) : BlockReplayInput :=
+  replayInputFromProjection (projectionFromRawDecodedBlock block)
+
+def rawReplayInputs
+    (blocks : List RawDecodedNativeReplayBlock) : List BlockReplayInput :=
+  projectedReplayInputs (rawNativeReplayProjections blocks)
 
 def projectionCarriesState
     (state : NativeLedgerReplayState)
@@ -110,6 +171,17 @@ def projectedLedgerStateAfter :
       else
         none
 
+def rawProjectedCarriedStatePreconditions
+    (state : NativeLedgerReplayState)
+    (blocks : List RawDecodedNativeReplayBlock) : Bool :=
+  projectedCarriedStatePreconditions state (rawNativeReplayProjections blocks)
+
+def rawProjectedLedgerStateAfter
+    (state : NativeLedgerReplayState)
+    (blocks : List RawDecodedNativeReplayBlock) :
+      Option NativeLedgerReplayState :=
+  projectedLedgerStateAfter state (rawNativeReplayProjections blocks)
+
 theorem replayInputFromProjection_projects_carried_state
     (projection : NativeBlockReplayProjection) :
     (replayInputFromProjection projection).parentSupply =
@@ -123,6 +195,24 @@ theorem replayInputFromProjection_projects_carried_state
       ∧ (replayInputFromProjection projection).actions =
         projection.actions := by
   simp [replayInputFromProjection]
+
+theorem replayInputFromRawDecodedBlock_projects_decoded_fields
+    (block : RawDecodedNativeReplayBlock) :
+    (replayInputFromRawDecodedBlock block).parentSupply =
+        block.carriedSupply
+      ∧ (replayInputFromRawDecodedBlock block).leafStart =
+        block.carriedLeafCount
+      ∧ (replayInputFromRawDecodedBlock block).spentNullifiers =
+        block.carriedSpentNullifiers
+      ∧ (replayInputFromRawDecodedBlock block).consumedBridgeReplays =
+        block.carriedConsumedBridgeReplays
+      ∧ (replayInputFromRawDecodedBlock block).actions =
+        block.decodedActions := by
+  simp [
+    replayInputFromRawDecodedBlock,
+    replayInputFromProjection,
+    projectionFromRawDecodedBlock
+  ]
 
 theorem projection_carries_state_of_replay_fields_eq
     {state : NativeLedgerReplayState}
@@ -349,6 +439,106 @@ theorem accepted_projected_ledger_state_after_startup_equivalence
       replayEquivalence.right.right.right.right.left,
       replayEquivalence.right.right.right.right.right⟩
 
+theorem accepted_raw_projected_ledger_state_after_startup_equivalence
+    {initial final : NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup : initial.consumedBridgeReplays.Nodup)
+    (accepted : rawProjectedLedgerStateAfter initial blocks = some final) :
+    validateNativeLedgerReplayChain
+        initial
+        (rawReplayInputs blocks) =
+        some final
+      ∧ expectedNativeSupplyAfter
+          initial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  have acceptedProjected :
+      projectedLedgerStateAfter
+          initial
+          (rawNativeReplayProjections blocks) =
+        some final := by
+    simpa [rawProjectedLedgerStateAfter] using accepted
+  have equivalence :=
+    accepted_projected_ledger_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedProjected
+  simpa [
+    rawReplayInputs,
+    rawProjectedCarriedStatePreconditions
+  ] using equivalence
+
+def rawDecodedBlockFromProjection
+    (projection : NativeBlockReplayProjection) :
+      RawDecodedNativeReplayBlock :=
+  {
+    carriedSupply := projection.carried.supply,
+    carriedLeafCount := projection.carried.leafCount,
+    carriedSpentNullifiers := projection.carried.spentNullifiers,
+    carriedConsumedBridgeReplays := projection.carried.consumedBridgeReplays,
+    decodedActions := projection.actions,
+    decodedHeight := projection.height,
+    decodedFeeTotal := projection.feeTotal,
+    decodedHasCoinbase := projection.hasCoinbase,
+    decodedClaimedSupply := projection.claimedSupply,
+    decodedTxCountMatches := projection.txCountMatches,
+    decodedStateRootMatches := projection.stateRootMatches,
+    decodedKernelRootMatches := projection.kernelRootMatches,
+    decodedNullifierRootMatches := projection.nullifierRootMatches,
+    decodedExtrinsicsRootMatches := projection.extrinsicsRootMatches,
+    decodedMessageRootMatches := projection.messageRootMatches,
+    decodedMessageCountMatches := projection.messageCountMatches,
+    decodedHeaderMmrRootMatches := projection.headerMmrRootMatches,
+    decodedHeaderMmrLenMatches := projection.headerMmrLenMatches
+  }
+
+def rawDecodedBlocksFromProjections :
+    List NativeBlockReplayProjection -> List RawDecodedNativeReplayBlock
+  | [] => []
+  | projection :: rest =>
+      rawDecodedBlockFromProjection projection ::
+        rawDecodedBlocksFromProjections rest
+
+theorem raw_decoded_block_projection_round_trips
+    (projection : NativeBlockReplayProjection) :
+    projectionFromRawDecodedBlock
+        (rawDecodedBlockFromProjection projection) =
+      projection := by
+  cases projection with
+  | mk carried actions height feeTotal hasCoinbase claimedSupply
+      txCountMatches stateRootMatches kernelRootMatches
+      nullifierRootMatches extrinsicsRootMatches messageRootMatches
+      messageCountMatches headerMmrRootMatches headerMmrLenMatches =>
+      cases carried
+      rfl
+
+theorem raw_decoded_blocks_projection_round_trips
+    (projections : List NativeBlockReplayProjection) :
+    rawNativeReplayProjections
+        (rawDecodedBlocksFromProjections projections) =
+      projections := by
+  induction projections with
+  | nil =>
+      rfl
+  | cons projection rest ih =>
+      simp [
+        rawDecodedBlocksFromProjections,
+        rawNativeReplayProjections,
+        raw_decoded_block_projection_round_trips,
+        ih
+      ]
+
 def validNativeReplayProjectionChain : List NativeBlockReplayProjection :=
   [
     {
@@ -399,6 +589,10 @@ def validNativeReplayProjectionChain : List NativeBlockReplayProjection :=
       headerMmrLenMatches := validReplay.headerMmrLenMatches
     }
   ]
+
+def validRawDecodedNativeReplayChain :
+    List RawDecodedNativeReplayBlock :=
+  rawDecodedBlocksFromProjections validNativeReplayProjectionChain
 
 theorem valid_projected_native_ledger_replay_chain_accepts :
     validateNativeLedgerReplayChain
@@ -488,6 +682,58 @@ theorem valid_projected_ledger_state_after_startup_equivalence :
       accepted
   exact equivalence
 
+theorem valid_raw_projected_ledger_state_after_accepts :
+    rawProjectedLedgerStateAfter
+        (initialNativeLedgerState 100 10)
+        validRawDecodedNativeReplayChain =
+      some
+        {
+          supply := 100,
+          leafCount := 13,
+          spentNullifiers := [2, 1],
+          consumedBridgeReplays := [7]
+        } := by
+  rw [
+    rawProjectedLedgerStateAfter,
+    validRawDecodedNativeReplayChain,
+    raw_decoded_blocks_projection_round_trips
+  ]
+  exact valid_projected_ledger_state_after_accepts
+
+theorem valid_raw_projected_ledger_state_after_startup_equivalence :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        (rawReplayInputs validRawDecodedNativeReplayChain) =
+        some
+          {
+            supply := 100,
+            leafCount := 13,
+            spentNullifiers := [2, 1],
+            consumedBridgeReplays := [7]
+          }
+      ∧ expectedNativeSupplyAfter
+          100
+          (rawReplayInputs validRawDecodedNativeReplayChain) =
+          some 100
+      ∧ expectedNativeLeafCountAfter
+          10
+          (rawReplayInputs validRawDecodedNativeReplayChain) =
+          some 13
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          (initialNativeLedgerState 100 10)
+          (rawReplayInputs validRawDecodedNativeReplayChain) = true
+      ∧ rawProjectedCarriedStatePreconditions
+          (initialNativeLedgerState 100 10)
+          validRawDecodedNativeReplayChain = true
+      ∧ [2, 1].Nodup
+      ∧ [7].Nodup := by
+  have accepted := valid_raw_projected_ledger_state_after_accepts
+  exact
+    accepted_raw_projected_ledger_state_after_startup_equivalence
+      (by simp [initialNativeLedgerState])
+      (by simp [initialNativeLedgerState])
+      accepted
+
 def staleProjectedCarriedStateChain : List NativeBlockReplayProjection :=
   [
     {
@@ -515,12 +761,29 @@ def staleProjectedCarriedStateChain : List NativeBlockReplayProjection :=
     }
   ]
 
+def staleRawDecodedCarriedStateChain :
+    List RawDecodedNativeReplayBlock :=
+  rawDecodedBlocksFromProjections staleProjectedCarriedStateChain
+
 theorem stale_projected_carried_state_rejects :
     validateNativeLedgerReplayChain
         (initialNativeLedgerState 100 10)
         (projectedReplayInputs staleProjectedCarriedStateChain) =
       none := by
   rfl
+
+theorem stale_raw_projected_carried_state_rejects :
+    rawProjectedLedgerStateAfter
+        (initialNativeLedgerState 100 10)
+        staleRawDecodedCarriedStateChain =
+      none := by
+  rw [
+    rawProjectedLedgerStateAfter,
+    staleRawDecodedCarriedStateChain,
+    raw_decoded_blocks_projection_round_trips,
+    projectedLedgerStateAfter_eq_validate_projected_replay
+  ]
+  exact stale_projected_carried_state_rejects
 
 end BlockReplayInputProjection
 end Native
