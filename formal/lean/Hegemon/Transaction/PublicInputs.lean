@@ -65,6 +65,59 @@ def OutputSlotFacts
     ∧ (activeFlag = 0 -> publicCommitment = 0 ∧ publicCiphertextHash = 0)
     ∧ (activeFlag = 0 ∨ activeFlag = 1)
 
+theorem output_slot_at_get_indices
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (slot :
+      OutputSlotAt
+        flags
+        commitments
+        ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    flags[index]? = some activeFlag
+      ∧ commitments[index]? = some publicCommitment
+      ∧ ciphertextHashes[index]? = some publicCiphertextHash := by
+  induction flags generalizing commitments ciphertextHashes index activeFlag
+      publicCommitment publicCiphertextHash with
+  | nil =>
+      cases commitments <;> cases ciphertextHashes <;> cases index <;>
+        simp [OutputSlotAt] at slot
+  | cons flag rest ih =>
+      cases commitments with
+      | nil =>
+          cases ciphertextHashes <;> cases index <;>
+            simp [OutputSlotAt] at slot
+      | cons commitment commitmentsTail =>
+          cases ciphertextHashes with
+          | nil =>
+              cases index <;> simp [OutputSlotAt] at slot
+          | cons ciphertextHash ciphertextHashesTail =>
+              cases index with
+              | zero =>
+                  simp [OutputSlotAt] at slot
+                  rcases slot with
+                    ⟨activeEq, commitmentEq, ciphertextHashEq⟩
+                  subst activeFlag
+                  subst publicCommitment
+                  subst publicCiphertextHash
+                  simp
+              | succ indexTail =>
+                  have tailFacts :=
+                    ih
+                      (commitments := commitmentsTail)
+                      (ciphertextHashes := ciphertextHashesTail)
+                      (index := indexTail)
+                      (activeFlag := activeFlag)
+                      (publicCommitment := publicCommitment)
+                      (publicCiphertextHash := publicCiphertextHash)
+                      slot
+                  simpa using tailFacts
+
 def nonZeroExists : List Digest -> Bool
   | [] => false
   | value :: rest => !isZeroDigest value || nonZeroExists rest

@@ -353,12 +353,12 @@ theorem native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank
         ∧ OutputSlotAt
           bound.outputFlags
           bindingFields.commitmentSeeds
-          bindingFields.ciphertextHashSeeds
-          index
-          1
-          publicCommitment
-          publicCiphertextHash
-        ∧ TxLeafActionBindingFacts input := by
+      bindingFields.ciphertextHashSeeds
+      index
+      1
+      publicCommitment
+      publicCiphertextHash
+    ∧ TxLeafActionBindingFacts input := by
   have rankFacts :=
     native_tx_leaf_active_output_slot_has_observer_rank
       bindingAccepted
@@ -387,6 +387,111 @@ theorem native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank
       nativeFacts.right.left,
       nativeFacts.right.right.left,
       nativeFacts.right.right.right⟩
+
+theorem native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape) :
+    ∃ wire summary,
+      world.ciphertextBytes[
+          activeFlagCountBefore shape.outputFlags index]? = some wire
+        ∧ world.ciphertextSummaries[
+          activeFlagCountBefore shape.outputFlags index]? = some summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+          wire = some summary
+        ∧ summaryHasChainCiphertextFormat summary
+        ∧ shape.outputFlags[index]? = some 1
+        ∧ shape.commitments[index]? = some publicCommitment
+        ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+        ∧ bound.outputFlags[index]? = some 1
+        ∧ statementFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ statementFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ bound.outputFlags[index]? = some 1
+        ∧ bindingFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ bindingFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ OutputSlotFacts
+          1
+          publicCommitment
+          publicCiphertextHash
+        ∧ TxLeafActionBindingFacts input := by
+  rcases
+      native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank
+        bindingAccepted
+        surface
+        slot
+        observerValid
+        shapeEq with
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      outputFacts,
+      statementSlot,
+      bindingSlot,
+      bindingFacts⟩
+  have shapeIndices :=
+    output_slot_at_get_indices slot
+  have statementIndices :=
+    output_slot_at_get_indices statementSlot
+  have bindingIndices :=
+    output_slot_at_get_indices bindingSlot
+  exact
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      shapeIndices.left,
+      shapeIndices.right.left,
+      shapeIndices.right.right,
+      statementIndices.left,
+      statementIndices.right.left,
+      statementIndices.right.right,
+      bindingIndices.left,
+      bindingIndices.right.left,
+      bindingIndices.right.right,
+      outputFacts,
+      bindingFacts⟩
 
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
