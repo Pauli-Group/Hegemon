@@ -1,6 +1,7 @@
 import Hegemon.Native.ActionStreamEffect
 import Hegemon.Native.AcceptedChain
 import Hegemon.Native.BlockReplayRefinement
+import Hegemon.Native.BlockReplayInputProjection
 import Hegemon.Native.BridgeActionPayloadAdmission
 
 namespace Hegemon
@@ -10,6 +11,7 @@ namespace BridgeMintSafety
 open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.AcceptedChain
 open Hegemon.Native.BlockReplayRefinement
+open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.BridgeActionPayloadAdmission
 
 def InboundBridgePayloadAuthorizationFacts
@@ -297,6 +299,160 @@ theorem accepted_inbound_payload_authorized_amount_ledger_replay_safe
   exact
     ⟨ledgerFacts.left,
       ledgerFacts.right,
+      bridgeFacts.left,
+      bridgeFacts.right.left,
+      bridgeFacts.right.right.left,
+      bridgeFacts.right.right.right.left,
+      bridgeFacts.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.right⟩
+
+theorem accepted_inbound_payload_authorized_amount_projected_replay_safe
+    {input : BridgePayloadInput}
+    {surface : InboundBridgeMintAmountSurface}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerReplayState}
+    {projections : List NativeBlockReplayProjection}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized surface = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (initialNullifiersNodup :
+      initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedProjected :
+      projectedLedgerStateAfter initial projections = some final) :
+    validateNativeLedgerReplayChain
+        initial
+        (projectedReplayInputs projections) =
+        some final
+      ∧ expectedNativeSupplyAfter
+          initial.supply
+          (projectedReplayInputs projections) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.leafCount
+          (projectedReplayInputs projections) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (projectedReplayInputs projections) = true
+      ∧ projectedCarriedStatePreconditions initial projections = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup
+      ∧ InboundBridgePayloadAuthorizationFacts input
+      ∧ surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0
+      ∧ replay ∈ next
+      ∧ imported = 1
+      ∧ next.Nodup
+      ∧ importBridgeReplay next (some replay) =
+          Except.error ActionStreamReject.bridgeReplayDuplicate := by
+  have replayFacts :=
+    accepted_projected_ledger_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedProjected
+  have bridgeFacts :=
+    accepted_inbound_payload_authorized_amount_fresh_replay_safe
+      inbound
+      acceptedPayload
+      authorized
+      consumedNodup
+      fresh
+  exact
+    ⟨replayFacts.left,
+      replayFacts.right.left,
+      replayFacts.right.right.left,
+      replayFacts.right.right.right.left,
+      replayFacts.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.right,
+      bridgeFacts.left,
+      bridgeFacts.right.left,
+      bridgeFacts.right.right.left,
+      bridgeFacts.right.right.right.left,
+      bridgeFacts.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.right⟩
+
+theorem accepted_inbound_payload_authorized_amount_raw_projected_replay_safe
+    {input : BridgePayloadInput}
+    {surface : InboundBridgeMintAmountSurface}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized surface = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (initialNullifiersNodup :
+      initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerStateAfter initial blocks = some final) :
+    validateNativeLedgerReplayChain
+        initial
+        (rawReplayInputs blocks) =
+        some final
+      ∧ expectedNativeSupplyAfter
+          initial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup
+      ∧ InboundBridgePayloadAuthorizationFacts input
+      ∧ surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0
+      ∧ replay ∈ next
+      ∧ imported = 1
+      ∧ next.Nodup
+      ∧ importBridgeReplay next (some replay) =
+          Except.error ActionStreamReject.bridgeReplayDuplicate := by
+  have replayFacts :=
+    accepted_raw_projected_ledger_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  have bridgeFacts :=
+    accepted_inbound_payload_authorized_amount_fresh_replay_safe
+      inbound
+      acceptedPayload
+      authorized
+      consumedNodup
+      fresh
+  exact
+    ⟨replayFacts.left,
+      replayFacts.right.left,
+      replayFacts.right.right.left,
+      replayFacts.right.right.right.left,
+      replayFacts.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.right,
       bridgeFacts.left,
       bridgeFacts.right.left,
       bridgeFacts.right.right.left,

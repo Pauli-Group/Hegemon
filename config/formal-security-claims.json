@@ -3397,7 +3397,7 @@
       "id": "native.raw-ingress-sidecar-replay-recoverability",
       "component": "native raw ingress sidecar replay recoverability",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, and projected replay startup equivalence into one theorem surface.",
+      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, projected replay startup equivalence, and raw-decoded projected replay startup equivalence into one theorem surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
@@ -3409,12 +3409,13 @@
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_transfer_state_implies_preconditions",
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_sidecar_transfer_state_implies_sidecar_materialized",
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_sidecar_replay_exposes_preconditions",
-        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_projected_replay_binds_sidecar_rows"
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_projected_replay_binds_sidecar_rows",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows"
       ],
       "assumptions": [
         "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate action-request projection, pending-action reload, staged-ciphertext reload, staged-proof reload, transfer-state admission, DA/sidecar replay-binding, action-stream, wire-projection, and projected replay claims for executable predicate conformance.",
         "The theorem exposes that accepted raw ingress predicates satisfy request projection, pending reload, staged sidecar reload, staged proof reload, and transfer-state preconditions. When the accepted transfer uses the sidecar route, it proves sidecar ciphertext bytes are available, sidecar sizes are present, and sidecar sizes match before composing with DA-root and projected replay facts.",
-        "The projected replay theorem composes those raw-ingress and sidecar-materialization facts with accepted DA/sidecar replay facts, preserving projected carried-state preconditions and final nullifier/bridge-replay uniqueness for accepted projected replay.",
+        "The projected and raw-projected replay theorems compose those raw-ingress and sidecar-materialization facts with accepted DA/sidecar replay facts, preserving carried-state preconditions, replayed supply and leaf equality for the raw-decoded surface, and final nullifier/bridge-replay uniqueness for accepted projected replay.",
         "The theorem does not prove full SCALE parser correctness, BLAKE3 hash security or implementation equivalence, DA erasure-code recoverability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
@@ -3780,7 +3781,7 @@
       "id": "native.bridge-action-payload-admission",
       "component": "native decoded bridge action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply, proves accepted inbound bridge actions carry zero direct native mint delta in the current state-delta-free production surface, defines a first-class decoded mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality, and composes accepted inbound authorization, decoded amount authorization, fresh replay one-shot import, ledger replay supply equality, and final replay-key uniqueness; generated Lean vectors are checked against the production native helper used by bridge action validation, and block validation is bound to run bridge payload admission before deriving inbound bridge replay keys.",
+      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply, proves accepted inbound bridge actions carry zero direct native mint delta in the current state-delta-free production surface, defines a first-class decoded mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality, and composes accepted inbound authorization, decoded amount authorization, fresh replay one-shot import, projected and raw-projected ledger replay supply equality, carried-state preconditions, final nullifier uniqueness, and final replay-key uniqueness; generated Lean vectors are checked against the production native helper used by bridge action validation, and block validation is bound to run bridge payload admission before deriving inbound bridge replay keys.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3807,12 +3808,14 @@
         "Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply",
         "Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling",
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_fresh_replay_safe",
-        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_ledger_replay_safe"
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_ledger_replay_safe",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_projected_replay_safe",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_projected_replay_safe"
       ],
       "assumptions": [
         "The Lean model treats SCALE decoding, bridge_payload_hash computation, route identity, and state-delta scanning as production-derived predicates; it proves the decoded pre-receipt admission table and rejection precedence.",
         "Generated Lean conformance vectors cover valid outbound, inbound, and verifier-registration payloads; non-bridge actions; state-delta smuggling; unsupported bridge actions; empty outbound payloads; empty inbound proof receipts; inbound replay-key, destination, and payload-hash mismatches; and not-bridge/state-delta/inbound-precondition precedence.",
-        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, replay/supply coupling across accepted block and ledger replay, the current production invariant that accepted inbound bridge actions are state-delta-free and therefore have zero direct native mint delta, a first-class decoded mint-amount authorization surface that requires payload-hash binding plus decoded/external amount equality, and the composed accepted inbound amount/fresh-replay/ledger replay safety package. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, the future decoded bridge-mint payload grammar, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
+        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, replay/supply coupling across accepted block, accepted ledger replay, production-style projected replay, and raw-decoded projected replay, the current production invariant that accepted inbound bridge actions are state-delta-free and therefore have zero direct native mint delta, a first-class decoded mint-amount authorization surface that requires payload-hash binding plus decoded/external amount equality, and the composed accepted inbound amount/fresh-replay/projected-replay safety package. It does not prove arbitrary raw SCALE/bincode decoding, bridge payload hash cryptographic security or implementation equivalence, the future decoded bridge-mint payload grammar, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",

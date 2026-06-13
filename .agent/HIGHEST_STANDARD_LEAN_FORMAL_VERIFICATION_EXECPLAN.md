@@ -86,6 +86,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 14:58Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1270 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 15:10Z) Strengthened `Hegemon.Native.BlockReplayInputProjection` with a raw decoded native replay projection surface: decoded carried supply, leaf cursor, spent-nullifier state, consumed bridge replay state, actions, and block commitment flags now project into the existing projected replay executor, and accepted raw-projected replay inherits supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. Current tracked completion is 69.26%.
 - [x] (2026-06-13 15:17Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1277 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 15:45Z) Strengthened `Hegemon.Native.BridgeMintSafety` and `Hegemon.Native.RawIngressSidecarReplayRecoverability` so accepted inbound bridge amount/replay facts and accepted raw-ingress sidecar facts compose with projected and raw-decoded projected replay, exposing replayed supply equality, leaf-cursor equality, carried-state preconditions, canonical commitment-plan preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. Current tracked completion is 69.58%.
+- [x] (2026-06-13 16:05Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 95 claims, 1280 named Lean theorems, 86 production-eligible claims, 385 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -186,6 +188,8 @@ The proof-system boundary facts slice adds `formal/lean/Hegemon/Transaction/Proo
 The native tx-leaf artifact-boundary packaging slice strengthens `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. `native_tx_leaf_canonical_artifact_boundary_facts` packages accepted native tx-leaf/action equality admission with the canonical deployed-verifier fact package, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and receipt/public-input/proof/backend/ciphertext-payload binding. This raises the tracked baseline to 68.98% without changing runtime behavior. It still depends on `DeployedTxVerifierSoundnessAssumption`; deployed AIR/STARK/SmallWood soundness, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, stablecoin/bridge authorization, and complete native-node refinement remain open.
 
 The raw decoded native replay projection slice strengthens `formal/lean/Hegemon/Native/BlockReplayInputProjection.lean`. `accepted_raw_projected_ledger_state_after_startup_equivalence` maps decoded native replay fields into the projected replay executor and inherits accepted replay's supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. Representative raw decoded valid and stale-carried-state examples now pin acceptance and rejection at this layer. This raises the tracked baseline to 69.26% without changing runtime behavior. It still does not prove arbitrary raw SCALE/bincode decoding, hash implementation/security, sled transaction correctness, filesystem durability, tx/recursive proof soundness, or complete native-node equivalence.
+
+The bridge/raw-ingress projected replay composition slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean` and `formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean`. `accepted_inbound_payload_authorized_amount_projected_replay_safe` and `accepted_inbound_payload_authorized_amount_raw_projected_replay_safe` package accepted inbound payload authorization, decoded amount equality, zero direct native mint delta, one-shot replay import, replay duplicate rejection, replayed supply equality, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness over projected and raw-decoded projected replay. `accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows` packages accepted action-request projection, pending/staged sidecar reload, sidecar transfer materialization, DA-root binding facts, raw accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, raw carried-state preconditions, and final replay-set uniqueness. This raises the tracked baseline to 69.58% without changing runtime behavior. It still does not prove arbitrary raw SCALE/bincode/JSON parser refinement, external-chain/PQ receipt soundness, bridge payload-hash/DA-root security, sidecar retention/availability, storage durability, proof soundness, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -499,6 +503,14 @@ The latest full formal-core pass after the raw decoded native replay projection 
 
     claims=95
     named_lean_theorems=1277
+    production_eligible_claims=86
+    falsification_cases=385
+    implementation_bindings=180
+
+The latest full formal-core pass after the bridge/raw-ingress projected replay composition slice reported:
+
+    claims=95
+    named_lean_theorems=1280
     production_eligible_claims=86
     falsification_cases=385
     implementation_bindings=180

@@ -246,6 +246,90 @@ theorem accepted_raw_ingress_projected_replay_binds_sidecar_rows
       replayFacts.2.2.2.2.1,
       replayFacts.2.2.2.2.2⟩
 
+theorem accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {initial final : AcceptedChain.NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (facts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedReplay :
+      rawProjectedLedgerStateAfter initial blocks = some final) :
+    actionRequestProjectionPreconditions surface.actionRequest = true
+      ∧ pendingActionReloadPreconditions surface.pendingReload = true
+      ∧ stagedCiphertextReloadPreconditions
+          surface.stagedCiphertextReload = true
+      ∧ stagedProofReloadPreconditions surface.stagedProofReload = true
+      ∧ surface.transferState.sidecarCiphertextsAvailable = true
+      ∧ surface.transferState.sidecarCiphertextSizesPresent = true
+      ∧ surface.transferState.sidecarCiphertextSizesMatch = true
+      ∧ surface.daSidecarReplay.candidateBinding.daRootMatches = true
+      ∧ surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+      ∧ semanticFields.daRoot =
+          surface.daSidecarReplay.recursiveSemanticSource.daRoot
+      ∧ AcceptedChain.validateNativeLedgerReplayChain
+          initial
+          (rawReplayInputs blocks) =
+          some final
+      ∧ AcceptedChain.expectedNativeSupplyAfter
+          initial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ AcceptedChain.expectedNativeLeafCountAfter
+          initial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ AcceptedChain.nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  have preconditions :=
+    accepted_raw_ingress_sidecar_replay_exposes_preconditions facts
+  have sidecarMaterialized :=
+    accepted_sidecar_transfer_state_implies_sidecar_materialized
+      facts.transferStateAccepted
+      sidecarRoute
+  have daFacts :=
+    accepted_da_sidecar_replay_facts_expose_binding_preconditions
+      facts.daSidecarReplayFacts
+  have replayFacts :=
+    accepted_raw_projected_ledger_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  exact
+    ⟨preconditions.1,
+      preconditions.2.1,
+      preconditions.2.2.1,
+      preconditions.2.2.2.1,
+      sidecarMaterialized.2.2.2.1,
+      sidecarMaterialized.2.2.2.2.1,
+      sidecarMaterialized.2.2.2.2.2,
+      daFacts.1,
+      daFacts.2.2.2.1,
+      daFacts.2.2.2.2.2.1,
+      replayFacts.left,
+      replayFacts.right.left,
+      replayFacts.right.right.left,
+      replayFacts.right.right.right.left,
+      replayFacts.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.left,
+      replayFacts.right.right.right.right.right.right⟩
+
 end RawIngressSidecarReplayRecoverability
 end Native
 end Hegemon

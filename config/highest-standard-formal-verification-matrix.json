@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 69.26,
+  "overall_completion_percent": 69.58,
   "last_full_formal_core": {
-    "commit": "working tree after raw decoded native replay projection slice",
+    "commit": "working tree after bridge/raw-ingress projected replay composition slice",
     "status": "passed",
     "claims": 95,
-    "named_lean_theorems": 1277,
+    "named_lean_theorems": 1280,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,41 +29,39 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added a raw decoded native replay projection theorem surface: decoded block replay fields now map into the existing projected replay executor, and accepted raw-projected replay inherits supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness.",
+    "summary": "Strengthened bridge mint/replay safety and raw-ingress sidecar recoverability over production-style projected and raw-decoded projected replay: accepted bridge/sidecar predicates now compose with replayed supply equality, leaf-cursor equality, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness.",
     "lean_modules": [
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
       "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
-      "formal/lean/Hegemon/Native/AcceptedChain.lean",
-      "formal/lean/Hegemon/Native/BlockReplayRefinement.lean"
+      "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+      "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BlockReplayInputProjection.replayInputFromRawDecodedBlock_projects_decoded_fields",
-      "Hegemon.Native.BlockReplayInputProjection.accepted_raw_projected_ledger_state_after_startup_equivalence",
-      "Hegemon.Native.BlockReplayInputProjection.raw_decoded_block_projection_round_trips",
-      "Hegemon.Native.BlockReplayInputProjection.raw_decoded_blocks_projection_round_trips",
-      "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_state_after_accepts",
-      "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_state_after_startup_equivalence",
-      "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_carried_state_rejects"
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_projected_replay_safe",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_projected_replay_safe",
+      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows"
     ],
     "validation": {
       "lean_formal": "targeted module passed",
       "formal_core": "passed",
       "claims": 95,
-      "named_lean_theorems": 1277,
+      "named_lean_theorems": 1280,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorem starts at decoded native replay fields; arbitrary raw SCALE/bincode decoding and malformed byte-stream equivalence remain separate obligations.",
-      "Hash implementation/security, sled transaction correctness, filesystem durability, tx/recursive proof soundness, and complete native-node equivalence remain explicit residual assumptions.",
-      "The proof is performance-neutral because it adds Lean model/refinement theorems and metadata only."
+      "The theorem batch composes decoded bridge payload admission and accepted raw-ingress sidecar predicates with projected and raw-decoded projected replay; it still starts after arbitrary raw SCALE/bincode or JSON decoding.",
+      "External-chain/PQ receipt proof soundness, bridge payload-hash/DA-root cryptographic security and implementation equivalence, live bridge mint grammar, sidecar availability/retention, and complete native-node equivalence remain explicit residual assumptions.",
+      "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 80,
+      "completion_percent": 81,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -77,7 +75,8 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean projected replay inputs derive parent supply from carried ledger state",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor is extensionally equal to accepted replay and preserves replayed supply equality",
         "node/src/native/mod.rs native_block_replay_refinement_input_from_state helper is called by mined import, announced import, and canonical replay",
-        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now maps raw decoded native block fields into projected replay and lifts accepted raw-projected replay to replayed supply equality"
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now maps raw decoded native block fields into projected replay and lifts accepted raw-projected replay to replayed supply equality",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean now composes bridge amount/replay safety with projected and raw-projected replayed supply equality"
       ],
       "missing_work": [
         "Bind remaining sync, startup-repair, canonical publication, and raw decoded block input paths to the stronger ledger-state transition.",
@@ -138,7 +137,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 69,
+      "completion_percent": 70,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -197,7 +196,7 @@
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted transaction-chain aggregate theorem: nonzero non-native chain delta requires a selected stablecoin exception",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action binding with canonical verifier soundness to derive authorized per-asset delta values",
         "native bridge payload admission",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, and a decoded amount-equality authorization boundary",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, a decoded amount-equality authorization boundary, and projected/raw-projected replay safety packages for authorized bridge amounts",
         "native transfer payload/state admission"
       ],
       "missing_work": [
@@ -331,7 +330,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 91,
+      "completion_percent": 92,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -345,7 +344,8 @@
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean composes projected replay startup equivalence with accepted DA/sidecar binding facts",
         "node/src/native/mod.rs native_block_replay_refinement_input_from_state centralizes state-derived replay input projection",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes raw ingress sidecar predicates with accepted projected replay startup equivalence",
-        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now adds a raw decoded native replay block surface over projected replay, with accepted/stale raw examples and startup-equivalence inheritance"
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now adds a raw decoded native replay block surface over projected replay, with accepted/stale raw examples and startup-equivalence inheritance",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
@@ -373,7 +373,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 70,
+      "completion_percent": 71,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -381,7 +381,7 @@
         "staged ciphertext/proof reload gates",
         "mineable-action admission gate",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, and projected replay startup facts",
-        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, and projected replay startup facts"
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts"
       ],
       "missing_work": [
         "Lift the accepted-predicate ingress composition into a full arbitrary-byte SCALE/JSON parser refinement theorem for every PendingAction and sidecar field.",
@@ -393,7 +393,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 51,
+      "completion_percent": 53,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -402,7 +402,7 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block and ledger replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, and a composed authorized-amount/fresh-replay/ledger-supply theorem",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, and raw-projected replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, and composed authorized-amount/fresh-replay/projected-replay theorems",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys"
       ],
       "missing_work": [
