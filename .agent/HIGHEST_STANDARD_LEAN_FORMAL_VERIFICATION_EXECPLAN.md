@@ -59,6 +59,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 16:30Z) Added `Hegemon.Native.BlockReplayInputProjection` and centralized native Rust replay-input construction through `native_block_replay_refinement_input_from_state`, proving that production-style projected replay inputs derive parent supply, leaf cursor, spent-nullifier state, and consumed bridge replay state from carried ledger state before reusing the accepted ledger replay startup theorem. Current tracked completion is 66.51%.
 - [x] (2026-06-13 16:55Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1218 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 178 implementation bindings.
 - [x] (2026-06-13 17:20Z) Deployed commit `915034ff` to `hegemon-dev` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3`, rebuilding `target/release/hegemon-node` with `make node`, and restarting `hegemon-node.service`. Remote `bash scripts/smoke-test.sh` passed, mining advanced from height 9164 to 9171 over the liveness sample, `bash scripts/test-node.sh wallet-send` passed, and the final snapshot showed service active with zero restarts, height 9210, `is_mining=true`, `threads=1`, `blocks_found=57`, empty pending extrinsics, NTP active/synchronized, `HEGEMON_MINE=1`, `HEGEMON_MINE_THREADS=1`, `HEGEMON_PQ_STRICT_COMPATIBILITY=1`, and isolated-dev `HEGEMON_SEEDS=`.
+- [x] (2026-06-13 17:45Z) Strengthened `Hegemon.Native.BridgeMintSafety` with a decoded bridge mint-amount boundary: accepted inbound bridge payloads have zero direct native mint delta under the current state-delta-free production surface; state-delta bridge payloads reject; any future decoded bridge mint amount is authorized only when payload-hash binding and decoded/external amount equality both hold; and formal-core metadata now requires block validation to run bridge payload admission before deriving inbound bridge replay keys. Current tracked completion is 66.68%.
+- [x] (2026-06-13 17:55Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1222 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -137,6 +139,8 @@ The observer-chain surface slice strengthens `formal/lean/Hegemon/Privacy/Observ
 The output-slot statement-binding slice strengthens `formal/lean/Hegemon/Transaction/PublicInputs.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It defines indexed output slots and proves that valid output slots expose active nonzero public commitments or inactive zero commitment/ciphertext-hash pairs; lifts those facts through the accepted transaction relation; and binds the same output flags, commitments, and ciphertext hashes across public shape, statement preimage, and proof binding message in the canonical verifier surface. This raises the tracked baseline to 66.36%. It still does not prove output note plaintext correctness, recipient authorization, ciphertext indistinguishability, BLAKE3/Poseidon2 security or implementation equivalence, deployed AIR/STARK/SmallWood soundness, witness extraction, or complete Rust/native-node refinement.
 
 The native replay-input projection slice adds `formal/lean/Hegemon/Native/BlockReplayInputProjection.lean` and centralizes production Rust construction through `native_block_replay_refinement_input_from_state` in `node/src/native/mod.rs`. The Lean theorem `accepted_projected_native_ledger_replay_chain_startup_equivalence` proves that projected replay inputs derive parent supply, leaf cursor, spent-nullifier state, and consumed bridge replay state from an explicit carried ledger state, that accepted projected chains preserve carried-state preconditions, and that the stronger accepted ledger replay startup theorem still gives replayed supply equality, replayed leaf-cursor equality, canonical commitment plans, final nullifier uniqueness, and final bridge replay-key uniqueness. The Rust helper is now called by mined import, announced import, and canonical replay before the fallible replay-refinement helper. This raises the tracked baseline to 66.51%. It still does not prove raw SCALE decoding, sled transaction implementation correctness, filesystem durability, full raw-action replay equivalence, tx-leaf/recursive proof soundness, PoW threshold validity, or complete native-node equivalence.
+
+The bridge mint amount-boundary slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It proves that accepted inbound bridge payloads have zero direct native mint delta under the current production surface, because accepted inbound bridge payloads are state-delta-free; it proves state-delta-bearing inbound bridge payloads reject; and it defines a first-class decoded bridge mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality before any future decoded amount can be treated as authorized. The blueprint now also requires native block validation to run bridge payload admission before deriving inbound bridge replay keys. This raises the tracked baseline to 66.68%. It still does not implement or prove a live PQ-clean bridge mint payload grammar, external-chain proof soundness, SCALE decoder correctness, bridge payload-hash cryptographic security or implementation equivalence, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, raw-byte import/reorg/startup/sync refinement, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -341,6 +345,14 @@ The latest full formal-core pass after the native replay-input projection slice 
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=178
+
+The latest full formal-core pass after the bridge mint amount-boundary slice reported:
+
+    claims=92
+    named_lean_theorems=1222
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=180
 
 ## Interfaces and Dependencies
 

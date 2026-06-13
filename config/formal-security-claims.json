@@ -3594,7 +3594,7 @@
       "id": "native.bridge-action-payload-admission",
       "component": "native decoded bridge action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, and couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply; generated Lean vectors are checked against the production native helper used by bridge action validation.",
+      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply, proves accepted inbound bridge actions carry zero direct native mint delta in the current state-delta-free production surface, and defines a first-class decoded mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality; generated Lean vectors are checked against the production native helper used by bridge action validation, and block validation is bound to run bridge payload admission before deriving inbound bridge replay keys.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3612,6 +3612,10 @@
         "Hegemon.Native.BridgeActionPayloadAdmission.valid_outbound_accepts",
         "Hegemon.Native.BridgeActionPayloadAdmission.valid_register_accepts",
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorization_facts",
+        "Hegemon.Native.BridgeMintSafety.bridge_mint_amount_authorized_facts",
+        "Hegemon.Native.BridgeMintSafety.inbound_payload_with_state_delta_rejects",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_direct_mint_delta_zero",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_decoded_mint_amount_bound",
         "Hegemon.Native.BridgeMintSafety.fresh_bridge_replay_import_consumes_once",
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe",
         "Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply",
@@ -3620,7 +3624,7 @@
       "assumptions": [
         "The Lean model treats SCALE decoding, bridge_payload_hash computation, route identity, and state-delta scanning as production-derived predicates; it proves the decoded pre-receipt admission table and rejection precedence.",
         "Generated Lean conformance vectors cover valid outbound, inbound, and verifier-registration payloads; non-bridge actions; state-delta smuggling; unsupported bridge actions; empty outbound payloads; empty inbound proof receipts; inbound replay-key, destination, and payload-hash mismatches; and not-bridge/state-delta/inbound-precondition precedence.",
-        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, and replay/supply coupling across accepted block and ledger replay only. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, external message amount authorization beyond payload-hash binding, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
+        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, replay/supply coupling across accepted block and ledger replay, the current production invariant that accepted inbound bridge actions are state-delta-free and therefore have zero direct native mint delta, and a first-class decoded mint-amount authorization surface that requires payload-hash binding plus decoded/external amount equality. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, the future decoded bridge-mint payload grammar, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",

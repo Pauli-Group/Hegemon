@@ -22,6 +22,48 @@ def InboundBridgePayloadAuthorizationFacts
     ∧ input.inboundDestinationMatches = true
     ∧ input.inboundPayloadHashMatches = true
 
+structure InboundBridgeMintAmountSurface where
+  decodedPayloadAmount : Nat
+  authorizedExternalAmount : Nat
+  payloadHashMatches : Bool
+deriving DecidableEq, Repr
+
+def inboundBridgeDirectMintDelta
+    (input : BridgePayloadInput) : Nat :=
+  if input.stateDeltasAbsent then 0 else 1
+
+def bridgeMintAmountAuthorized
+    (surface : InboundBridgeMintAmountSurface) : Bool :=
+  surface.payloadHashMatches
+    && (if surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount then true else false)
+
+theorem bridge_mint_amount_authorized_facts
+    {surface : InboundBridgeMintAmountSurface}
+    (authorized : bridgeMintAmountAuthorized surface = true) :
+    surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount := by
+  unfold bridgeMintAmountAuthorized at authorized
+  cases payload : surface.payloadHashMatches <;> simp [payload] at authorized
+  by_cases amountEq :
+      surface.decodedPayloadAmount = surface.authorizedExternalAmount
+  · simp [amountEq] at authorized
+    exact ⟨rfl, amountEq⟩
+  · simp [amountEq] at authorized
+
+theorem inbound_payload_with_state_delta_rejects
+    {input : BridgePayloadInput}
+    (bridge : input.bridgeRoute = true)
+    (delta : input.stateDeltasAbsent = false) :
+    bridgePayloadAccepts input = false := by
+  unfold bridgePayloadAccepts
+  have rejected :=
+    state_deltas_present_rejects
+      bridge
+      delta
+  rw [rejected]
+
 theorem accepted_inbound_payload_authorization_facts
     {input : BridgePayloadInput}
     (inbound : input.actionKind = BridgeActionKind.inbound)
@@ -39,8 +81,40 @@ theorem accepted_inbound_payload_authorization_facts
         cases inboundReplayKeyMatches <;>
         cases inboundDestinationMatches <;>
         cases inboundPayloadHashMatches <;>
-        simp [bridgePayloadAccepts, evaluateBridgePayload,
-          InboundBridgePayloadAuthorizationFacts] at inbound accepted ⊢
+      simp [bridgePayloadAccepts, evaluateBridgePayload,
+        InboundBridgePayloadAuthorizationFacts] at inbound accepted ⊢
+
+theorem accepted_inbound_payload_direct_mint_delta_zero
+    {input : BridgePayloadInput}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (accepted : bridgePayloadAccepts input = true) :
+    inboundBridgeDirectMintDelta input = 0 := by
+  have facts :=
+    accepted_inbound_payload_authorization_facts inbound accepted
+  simp [inboundBridgeDirectMintDelta, facts.right.left]
+
+theorem accepted_inbound_decoded_mint_amount_bound
+    {input : BridgePayloadInput}
+    {surface : InboundBridgeMintAmountSurface}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (accepted : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized surface = true) :
+    InboundBridgePayloadAuthorizationFacts input
+      ∧ surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0 := by
+  have payloadFacts :=
+    accepted_inbound_payload_authorization_facts inbound accepted
+  have amountFacts :=
+    bridge_mint_amount_authorized_facts authorized
+  have noDirectMint :=
+    accepted_inbound_payload_direct_mint_delta_zero inbound accepted
+  exact
+    ⟨payloadFacts,
+      amountFacts.left,
+      amountFacts.right,
+      noDirectMint⟩
 
 theorem fresh_bridge_replay_import_consumes_once
     {consumed next : List Nat}

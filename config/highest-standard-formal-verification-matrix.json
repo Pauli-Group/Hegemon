@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.51,
+  "overall_completion_percent": 66.68,
   "last_full_formal_core": {
-    "commit": "working tree after native replay-input projection slice",
+    "commit": "working tree after bridge mint amount-boundary slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1218,
+    "named_lean_theorems": 1222,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
-    "implementation_bindings": 178
+    "implementation_bindings": 180
   },
   "last_coordinator_audit": {
     "date": "2026-06-13",
@@ -29,35 +29,30 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened native block replay projection: production-style replay inputs now derive parent supply, leaf cursor, spent-nullifier state, and consumed bridge replay state from an explicit carried ledger state in Lean, accepted projected replay chains preserve carried-state preconditions before reusing the startup/replay equivalence theorem, and mined import, announced import, and canonical replay now call one Rust projection helper for the state-derived replay input fields.",
+    "summary": "Strengthened bridge mint/replay safety: accepted inbound bridge payloads now prove zero direct native mint delta under the current state-delta-free production surface, state-delta bridge payloads reject, and a first-class decoded bridge mint-amount surface is authorized only when payload-hash binding and decoded/external amount equality both hold.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
-      "formal/lean/Hegemon/Native/AcceptedChain.lean",
-      "formal/lean/Hegemon/Native/BlockReplayRefinement.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BlockReplayInputProjection.replayInputFromProjection_projects_carried_state",
-      "Hegemon.Native.BlockReplayInputProjection.projection_carries_state_of_replay_fields_eq",
-      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_block_claims_carried_state",
-      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_carried_states",
-      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_startup_equivalence",
-      "Hegemon.Native.BlockReplayInputProjection.valid_projected_native_ledger_replay_chain_accepts",
-      "Hegemon.Native.BlockReplayInputProjection.valid_projected_native_ledger_replay_chain_startup_equivalence",
-      "Hegemon.Native.BlockReplayInputProjection.stale_projected_carried_state_rejects"
+      "Hegemon.Native.BridgeMintSafety.bridge_mint_amount_authorized_facts",
+      "Hegemon.Native.BridgeMintSafety.inbound_payload_with_state_delta_rejects",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_direct_mint_delta_zero",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_decoded_mint_amount_bound"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1218,
+      "named_lean_theorems": 1222,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
-      "implementation_bindings": 178
+      "implementation_bindings": 180
     },
     "known_limitations": [
-      "The projection theorem models production-derived decoded action summaries and carried native state; it does not prove raw SCALE decoding, sled durability, filesystem semantics, or full native-node equivalence.",
-      "The Rust helper centralizes state-derived replay input fields but does not add new runtime validation or a full refinement proof for every caller argument.",
-      "Proof-system soundness, hash security/implementation equivalence, PoW threshold validity, and complete startup/reorg publication equivalence remain open."
+      "The current production inbound bridge action is state-delta-free and therefore cannot directly mint native supply; this does not implement or prove a live bridge-mint payload grammar.",
+      "The decoded mint-amount theorem is a boundary theorem over a first-class amount surface; external-chain proof soundness and payload decoding remain assumptions until a PQ-clean verifier path exists.",
+      "Bridge replay/supply coupling still needs full raw-byte native import, reorg, startup, and sync refinement."
     ]
   },
   "properties": [
@@ -178,7 +173,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 65,
+      "completion_percent": 66,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -187,12 +182,12 @@
         "AcceptedProofArtifact conditional accepted-wrapper asset-isolation theorems",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted-relation theorem: nonzero non-native delta implies selected stablecoin exception",
         "native bridge payload admission",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts and fresh replay-key one-shot consumption",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, and a decoded amount-equality authorization boundary",
         "native transfer payload/state admission"
       ],
       "missing_work": [
         "State asset isolation as a chain-level theorem.",
-        "Formalize stablecoin issuance and bridge mint authorization exceptions as separate predicates.",
+        "Formalize stablecoin issuance and live bridge mint authorization exceptions as separate chain-level predicates.",
         "Bind exception predicates to production admission paths."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
@@ -365,7 +360,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 46,
+      "completion_percent": 49,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -374,10 +369,11 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, and replay/supply coupling across accepted block and ledger replay"
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block and ledger replay, zero direct native mint delta for current state-delta-free inbound actions, and decoded mint amount equality under payload-hash binding",
+        "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys"
       ],
       "missing_work": [
-        "Add a first-class decoded bridge mint amount surface and prove minted amount equals authorized external-message amount under payload-hash binding.",
+        "Replace the boundary-only decoded bridge mint amount surface with a live PQ-clean bridge mint payload grammar and production decoder when bridge minting is enabled.",
         "Mechanize or parameterize external-chain proof soundness.",
         "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths."
       ],
