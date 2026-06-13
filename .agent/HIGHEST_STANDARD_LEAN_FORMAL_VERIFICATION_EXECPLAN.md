@@ -246,6 +246,8 @@ The bounded chain ciphertext wire-shape slice strengthens `formal/lean/Hegemon/W
 
 The raw-ingress bridge mint/replay composition slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. `accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe` composes existing accepted inbound bridge amount/replay facts with `Hegemon.Native.RawIngressSidecarReplayRecoverability`: accepted raw ingress now carries action-request, pending reload, staged ciphertext/proof reload, sidecar ciphertext availability, sidecar size presence/agreement, DA-root binding, semantic DA-root sourcing, wire-replay preconditions, wire action-count equality, accepted raw replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, raw carried-state preconditions, final nullifier uniqueness, final bridge replay-key uniqueness, payload authorization, amount equality, zero direct native mint delta, one-shot replay import, and duplicate replay rejection in one theorem. This raises the tracked baseline to 71.10% without changing runtime behavior. It still does not prove arbitrary raw SCALE/bincode/JSON parser refinement, external-chain or future PQ receipt soundness, bridge payload-hash/DA-root security, sidecar retention/availability, storage durability, proof soundness, or complete native-node equivalence.
 
+The wallet decrypt-boundary slice adds `formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean` and strengthens the existing wallet note-ciphertext claim. `decrypt_admission_rejects_version_mismatch`, `decrypt_admission_rejects_crypto_suite_mismatch`, and `decrypt_admission_rejects_diversifier_mismatch` prove the modeled metadata gates reject before crypto. `wrong_recipient_or_malleated_ciphertext_fails_under_crypto_assumptions` states the honest boundary for wrong-recipient, wrong-key, and malleated-byte cases as the explicit `cryptoAuthenticates = false` predicate. `decrypt_success_implies_metadata_matches` proves accepted decrypts imply version, crypto-suite, diversifier, and crypto-authentication agreement. Production regressions now cover wallet metadata mismatch, wrong root key, and KEM/note/memo payload malleation plus synthetic-crypto wrong recipient, wrong secret key, version tamper, and KEM/note/memo payload malleation. This raises the tracked baseline to 71.93% without changing runtime behavior. It still does not prove ML-KEM security, AEAD confidentiality or unforgeability, ciphertext indistinguishability, note plaintext-to-commitment binding, or complete wallet/native-node equivalence.
+
 ## Context and Orientation
 
 The canonical branch is `codex/superneo-formal-verification`. The baseline commit is `19acdaab5b6bece8e0afcece57d8b4953ccfe36f`, which hard-disables legacy aggregation V4 and passed the full formal-core gate before branch cleanup. The formal sources live under `formal/lean`. The formal claim ledger is `config/formal-security-claims.json`, and the implementation-binding blueprint is `config/formal-security-blueprint.json`. The new theorem matrix is `config/highest-standard-formal-verification-matrix.json`.
@@ -592,6 +594,14 @@ The latest full formal-core pass after the native artifact active-input no-theft
     named_lean_theorems=1304
     production_eligible_claims=86
     falsification_cases=385
+    implementation_bindings=180
+
+The latest full formal-core pass after the wallet decrypt-boundary slice reported:
+
+    claims=95
+    named_lean_theorems=1316
+    production_eligible_claims=86
+    falsification_cases=387
     implementation_bindings=180
 
 ## Interfaces and Dependencies

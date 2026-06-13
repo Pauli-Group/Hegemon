@@ -98,4 +98,5 @@ import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash
+import Hegemon.Wallet.NoteCiphertextDecrypt
 import Hegemon.Wallet.NoteCiphertextWire

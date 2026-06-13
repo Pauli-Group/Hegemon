@@ -401,6 +401,15 @@ mod tests {
     use crate::ml_kem::MlKemKeyPair;
     use crate::traits::KemKeyPair;
 
+    fn sample_ciphertext(seed: &[u8], pk_recipient: [u8; 32]) -> (MlKemKeyPair, NoteCiphertext) {
+        let keypair = MlKemKeyPair::generate_deterministic(seed);
+        let pk_enc = keypair.public_key();
+        let note = NotePlaintext::new(321, 4, [11u8; 32], [12u8; 32], b"memo".to_vec());
+        let ciphertext =
+            NoteCiphertext::encrypt(&pk_enc, pk_recipient, 2, 3, 7, &note, &[13u8; 32]).unwrap();
+        (keypair, ciphertext)
+    }
+
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-seed-1234");
@@ -472,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn test_crypto_suite_tamper_rejected() {
+    fn test_decrypt_rejects_crypto_suite_tamper() {
         let keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-suite-tamper");
         let pk_enc = keypair.public_key();
         let sk_enc = keypair.secret_key();
@@ -489,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diversifier_tamper_rejected() {
+    fn test_decrypt_rejects_diversifier_tamper() {
         let keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-div-tamper");
         let pk_enc = keypair.public_key();
         let sk_enc = keypair.secret_key();
@@ -503,6 +512,65 @@ mod tests {
 
         let result = tampered.decrypt(&sk_enc, [2u8; 32], 7);
         assert!(result.is_err(), "tampered diversifier_index must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_wrong_expected_pk_recipient() {
+        let (keypair, ciphertext) = sample_ciphertext(b"test-keypair-wrong-recipient", [6u8; 32]);
+
+        let result = ciphertext.decrypt(keypair.secret_key(), [7u8; 32], 7);
+        assert!(result.is_err(), "wrong expected recipient must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_wrong_secret_key() {
+        let (_, ciphertext) = sample_ciphertext(b"test-keypair-right-secret", [8u8; 32]);
+        let wrong_keypair = MlKemKeyPair::generate_deterministic(b"test-keypair-wrong-secret");
+
+        let result = ciphertext.decrypt(wrong_keypair.secret_key(), [8u8; 32], 7);
+        assert!(result.is_err(), "wrong ML-KEM secret key must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_version_tamper() {
+        let (keypair, mut ciphertext) =
+            sample_ciphertext(b"test-keypair-version-tamper", [9u8; 32]);
+        ciphertext.version = ciphertext.version.wrapping_add(1);
+
+        let result = ciphertext.decrypt(keypair.secret_key(), [9u8; 32], 7);
+        assert!(result.is_err(), "tampered version must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_kem_ciphertext_malleation() {
+        let (keypair, mut ciphertext) =
+            sample_ciphertext(b"test-keypair-kem-malleation", [10u8; 32]);
+        ciphertext.kem_ciphertext[0] ^= 0x01;
+
+        let result = ciphertext.decrypt(keypair.secret_key(), [10u8; 32], 7);
+        assert!(result.is_err(), "malleated KEM ciphertext must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_note_payload_malleation() {
+        let (keypair, mut ciphertext) =
+            sample_ciphertext(b"test-keypair-note-malleation", [14u8; 32]);
+        assert!(!ciphertext.note_payload.is_empty());
+        ciphertext.note_payload[0] ^= 0x01;
+
+        let result = ciphertext.decrypt(keypair.secret_key(), [14u8; 32], 7);
+        assert!(result.is_err(), "malleated note payload must fail");
+    }
+
+    #[test]
+    fn test_decrypt_rejects_memo_payload_malleation() {
+        let (keypair, mut ciphertext) =
+            sample_ciphertext(b"test-keypair-memo-malleation", [15u8; 32]);
+        assert!(!ciphertext.memo_payload.is_empty());
+        ciphertext.memo_payload[0] ^= 0x01;
+
+        let result = ciphertext.decrypt(keypair.secret_key(), [15u8; 32], 7);
+        assert!(result.is_err(), "malleated memo payload must fail");
     }
 
     #[test]

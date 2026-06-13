@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 71.68,
+  "overall_completion_percent": 71.93,
   "last_full_formal_core": {
-    "commit": "working tree after active output ciphertext/output-slot boundary package",
-    "status": "passed 2026-06-13 19:56Z",
+    "commit": "working tree after wallet decrypt-boundary package",
+    "status": "passed 2026-06-13 20:22Z",
     "claims": 95,
-    "named_lean_theorems": 1306,
+    "named_lean_theorems": 1316,
     "production_eligible_claims": 86,
-    "falsification_cases": 385,
+    "falsification_cases": 387,
     "implementation_bindings": 180
   },
   "last_coordinator_audit": {
@@ -29,30 +29,33 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the native observer/ciphertext and proof-system output-slot implementation-equivalence boundary: active native tx-leaf output slots now package the selected observer wire row, parser-derived chain summary, byte-bounded fixed chain ciphertext wire shape, public/statement/proof-binding commitment and ciphertext-hash indices, and native tx-leaf ciphertext-hash, ciphertext-payload-hash, and output-count equality gates; the packaged canonical deployed-verifier boundary now also exposes output-slot statement/proof-binding facts symmetrically with the existing input-slot theorem.",
+    "summary": "Added a wallet note-ciphertext decrypt-boundary slice: Lean now models decrypt admission as metadata gates followed by an explicit crypto-authentication predicate, proving metadata mismatches reject before crypto, crypto failure rejects after matching metadata, and decrypt success implies version/crypto-suite/diversifier agreement plus crypto authentication. Production Rust regressions cover wallet and synthetic-crypto wrong-recipient/wrong-key and KEM/note/memo malleation failures.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean"
+      "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_output_slot_bound_to_statement"
+      "Hegemon.Wallet.NoteCiphertextDecrypt.decrypt_success_implies_metadata_matches",
+      "Hegemon.Wallet.NoteCiphertextDecrypt.wrong_recipient_or_malleated_ciphertext_fails_under_crypto_assumptions"
     ],
     "validation": {
-      "lean_formal": "targeted NativeObserverSurface and ProofSystemBoundary modules passed",
-      "formal_core": "passed 2026-06-13 19:56Z",
+      "lean_formal": "targeted NoteCiphertextDecrypt and lake build Hegemon passed",
+      "targeted_rust": [
+        "cargo test -p wallet decrypt_rejects --lib -- --nocapture",
+        "cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture",
+        "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture"
+      ],
+      "formal_core": "passed 2026-06-13 20:22Z",
       "claims": 95,
-      "named_lean_theorems": 1306,
+      "named_lean_theorems": 1316,
       "production_eligible_claims": 86,
-      "falsification_cases": 385,
+      "falsification_cases": 387,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorems package observer/ciphertext and output-slot facts from the existing native output-slot, observer-chain, and canonical deployed-verifier surfaces; they still depend on valid observer-chain parsing and the explicit deployed verifier soundness boundary.",
-      "The theorems do not prove note plaintext correctness, public ciphertext-hash equality/security for selected wire bytes, ML-KEM/AEAD confidentiality, simulator zero-knowledge, timing privacy, wallet metadata privacy, deployed AIR/STARK/SmallWood soundness, or complete wallet/native-node equivalence.",
-      "The proofs are performance-neutral because they add Lean composition theorems and metadata only."
+      "The decrypt theorem uses an explicit cryptoAuthenticates predicate; it does not prove ML-KEM encapsulation/decapsulation security, AEAD confidentiality or unforgeability, or ciphertext indistinguishability.",
+      "The slice does not prove note plaintext-to-commitment binding, note commitment/nullifier derivation, ciphertext-hash security, wallet key custody, or complete wallet/native-node equivalence.",
+      "The proof and regressions are performance-neutral because they add Lean evidence and tests only."
     ]
   },
   "properties": [
@@ -304,7 +307,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 56,
+      "completion_percent": 61,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -321,12 +324,14 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean packages active native output ciphertext boundary facts: selected parsed observer row, fixed chain wire shape, public/statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates",
         "wallet note ciphertext wire vector gate",
-        "DA sidecar ciphertext hash and staged-ciphertext reload gates"
+        "DA sidecar ciphertext hash and staged-ciphertext reload gates",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean proves metadata-gated decrypt admission and crypto-failure boundary over an explicit crypto-authentication predicate",
+        "wallet/src/notes.rs decrypt fail-closed regressions for version, crypto-suite, diversifier, wrong root key, and KEM/note/memo payload malleation",
+        "crypto/src/note_encryption.rs decrypt fail-closed regressions for wrong recipient, wrong secret key, version tamper, and KEM/note/memo payload malleation"
       ],
       "missing_work": [
-        "Formalize note plaintext-to-commitment binding at the wallet/chain boundary.",
-        "Parameterize ML-KEM and symmetric encryption confidentiality assumptions.",
-        "Add recipient/wrong-key/malleated-ciphertext regression coverage if absent."
+        "Mechanize note plaintext-to-commitment binding at the wallet/chain boundary.",
+        "Promote ML-KEM and AEAD confidentiality/authentication assumptions into named privacy-game assumption nodes."
       ],
       "performance_constraint": "No extra chain verification of private plaintext; keep correctness checks in wallet tests and public hash bindings."
     },

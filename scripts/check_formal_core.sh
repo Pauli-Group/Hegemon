@@ -358,6 +358,8 @@ HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
   cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS="$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS" \
   cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture
+cargo test -p wallet decrypt_rejects --lib -- --nocapture
+cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \

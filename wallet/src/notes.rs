@@ -555,18 +555,40 @@ mod serde_bytes_vec {
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
-    use crate::keys::RootSecret;
+    use crate::keys::{AddressKeyMaterial, RootSecret};
 
     use super::*;
 
-    fn sample_ciphertext(seed: u64, memo: &[u8]) -> NoteCiphertext {
+    fn sample_material_note_ciphertext(
+        seed: u64,
+        memo: &[u8],
+    ) -> (AddressKeyMaterial, NotePlaintext, NoteCiphertext) {
         let mut rng = StdRng::seed_from_u64(seed);
         let root = RootSecret::from_rng(&mut rng);
         let keys = root.derive();
         let material = keys.address(0).unwrap();
         let address = material.shielded_address();
         let note = NotePlaintext::random(100, 0, MemoPlaintext::new(memo.to_vec()), &mut rng);
-        NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap()
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        (material, note, ciphertext)
+    }
+
+    fn sample_ciphertext(seed: u64, memo: &[u8]) -> NoteCiphertext {
+        sample_material_note_ciphertext(seed, memo).2
+    }
+
+    fn assert_note_mismatch(result: Result<NotePlaintext, WalletError>, expected: &'static str) {
+        match result {
+            Err(WalletError::NoteMismatch(actual)) => assert_eq!(actual, expected),
+            other => panic!("expected NoteMismatch({expected:?}), got {other:?}"),
+        }
+    }
+
+    fn assert_decryption_failure(result: Result<NotePlaintext, WalletError>) {
+        match result {
+            Err(WalletError::DecryptionFailure) => {}
+            other => panic!("expected DecryptionFailure, got {other:?}"),
+        }
     }
 
     fn payload_offsets(chain_bytes: &[u8]) -> (usize, usize, usize, usize) {
@@ -665,6 +687,66 @@ mod tests {
     fn empty_ciphertext_uses_current_version() {
         let empty = NoteCiphertext::empty();
         assert_eq!(empty.version, NOTE_ENCRYPTION_VERSION);
+    }
+
+    #[test]
+    fn decrypt_rejects_wrong_version_metadata() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(800, b"memo");
+        ciphertext.version = ciphertext.version.wrapping_add(1);
+
+        assert_note_mismatch(ciphertext.decrypt(&material), "note version mismatch");
+    }
+
+    #[test]
+    fn decrypt_rejects_wrong_crypto_suite_metadata() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(801, b"memo");
+        ciphertext.crypto_suite = ciphertext.crypto_suite.wrapping_add(1);
+
+        assert_note_mismatch(ciphertext.decrypt(&material), "note crypto suite mismatch");
+    }
+
+    #[test]
+    fn decrypt_rejects_wrong_diversifier_metadata() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(802, b"memo");
+        ciphertext.diversifier_index = ciphertext.diversifier_index.wrapping_add(1);
+
+        assert_note_mismatch(ciphertext.decrypt(&material), "diversifier index mismatch");
+    }
+
+    #[test]
+    fn decrypt_rejects_wrong_recipient_key() {
+        let (_, _, ciphertext) = sample_material_note_ciphertext(803, b"memo");
+        let mut rng = StdRng::seed_from_u64(804);
+        let wrong_root = RootSecret::from_rng(&mut rng);
+        let wrong_material = wrong_root.derive().address(0).unwrap();
+
+        assert_decryption_failure(ciphertext.decrypt(&wrong_material));
+    }
+
+    #[test]
+    fn decrypt_rejects_malleated_kem_ciphertext() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(805, b"memo");
+        ciphertext.kem_ciphertext[0] ^= 0x01;
+
+        assert_decryption_failure(ciphertext.decrypt(&material));
+    }
+
+    #[test]
+    fn decrypt_rejects_malleated_note_payload() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(806, b"memo");
+        assert!(!ciphertext.note_payload.is_empty());
+        ciphertext.note_payload[0] ^= 0x01;
+
+        assert_decryption_failure(ciphertext.decrypt(&material));
+    }
+
+    #[test]
+    fn decrypt_rejects_malleated_memo_payload() {
+        let (material, _, mut ciphertext) = sample_material_note_ciphertext(807, b"memo");
+        assert!(!ciphertext.memo_payload.is_empty());
+        ciphertext.memo_payload[0] ^= 0x01;
+
+        assert_decryption_failure(ciphertext.decrypt(&material));
     }
 
     #[test]
