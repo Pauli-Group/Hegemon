@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 64.55,
+  "overall_completion_percent": 65.13,
   "last_full_formal_core": {
-    "commit": "working tree after indexed no-theft/canonical verifier slice",
+    "commit": "working tree after native ledger replay-state slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1149,
+    "named_lean_theorems": 1165,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,40 +29,50 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the transaction no-theft and canonical verifier boundary by proving that authorization facts lift to any indexed active input in aligned flag/nullifier/witness vectors, not just the head input. The canonical statement surface now also binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof binding message before deriving accepted transaction facts under the single deployed verifier soundness assumption.",
+    "summary": "Strengthened native replay/startup refinement with a carried ledger replay state that requires each accepted block to match the carried supply, commitment leaf cursor, spent nullifier set, and consumed bridge replay set before replay. The new theorems recurse with accepted block summaries and prove replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, final bridge replay uniqueness, and representative stale leaf/bridge replay rejection cases.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
-      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
+      "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_tail_authorized",
-      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_vectors_bound",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at"
+      "Hegemon.Native.ActionStreamEffect.importBridgeReplay_preserves_nodup",
+      "Hegemon.Native.ActionStreamEffect.evaluateActionStreamFrom_preserves_imported_bridge_replay_nodup",
+      "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_supply_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_leaf_cursor_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_commitment_plans_canonical_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_startup_equivalence",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique",
+      "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_accepts",
+      "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_startup_equivalence",
+      "Hegemon.Native.AcceptedChain.stale_leaf_native_ledger_replay_chain_rejects",
+      "Hegemon.Native.AcceptedChain.duplicate_bridge_replay_native_ledger_replay_chain_rejects",
+      "Hegemon.Native.AcceptedChain.stale_bridge_replay_native_ledger_replay_chain_rejects"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1149,
+      "named_lean_theorems": 1165,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "This still depends on the explicit `DeployedTxVerifierSoundnessAssumption`; it does not prove deployed STARK/AIR, SmallWood, witness extraction, or verifier implementation correctness.",
-      "The vector-binding theorem is over the Lean canonical statement surface. It does not prove hash collision resistance, BLAKE2/BLAKE3 implementation equivalence, or bincode/postcard implementation correctness.",
-      "The no-theft facts use abstract digest arithmetic for note commitments, spend keys, nullifiers, and Merkle nodes; cryptographic security and full Rust/native-node refinement remain open."
+      "The carried ledger replay state is over production-derived block replay inputs, not raw network bytes or SCALE-decoded action payloads.",
+      "Commitment-tree coverage here proves leaf-cursor and canonical commitment-start plan agreement, not Merkle hash security or full tree-root implementation equivalence.",
+      "Bridge replay uniqueness is over modeled replay keys; bridge receipt/proof soundness, payload amount authorization, and PQ-clean external proof verification remain separate open targets.",
+      "Storage durability, sled transaction correctness, filesystem fsync semantics, and complete native-node equivalence remain outside this theorem slice."
     ]
   },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 76,
+      "completion_percent": 77,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -71,10 +81,11 @@
         "node/src/native/mod.rs native supply vector conformance",
         "formal-core supply and supply-chain gates",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain no-counterfeiting theorem",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger replay state supply equality theorem"
       ],
       "missing_work": [
-        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the theorem-backed accepted-chain transition.",
+        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the stronger ledger-state transition from raw decoded block inputs.",
         "State cryptographic and proof-system assumptions explicitly as theorem parameters."
       ],
       "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
@@ -82,7 +93,7 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 86,
+      "completion_percent": 87,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
@@ -93,10 +104,11 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried spent-nullifier chain precondition theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain nullifiers Nodup theorem",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve imported-nullifier Nodup theorem",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay state preserves final nullifier Nodup"
       ],
       "missing_work": [
-        "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the same carried nullifier transition relation.",
+        "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the stronger carried ledger-state transition relation.",
         "Add hostile reorg/startup duplicate-nullifier regressions if any import path lacks them."
       ],
       "performance_constraint": "Use existing nullifier set membership checks; avoid extra scans beyond replay planning already required."
@@ -125,17 +137,19 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 63,
+      "completion_percent": 66,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
         "formal/lean/Hegemon/Consensus/TreeTransition.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean action-stream/action-plan/tree-transition refinement",
         "native action-plan/action-state/action-stream gates",
-        "canonical-state reload gate"
+        "canonical-state reload gate",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay leaf-cursor equality theorem",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger replay canonical commitment-plan theorem"
       ],
       "missing_work": [
-        "Lift the action-stream/action-plan/tree-transition refinement with Merkle membership, native replay, and startup reload into one chain-level tree invariant.",
+        "Lift leaf-cursor and canonical commitment-plan replay into a full Merkle-root/tree-content invariant with membership and startup reload equivalence.",
         "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
       ],
       "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."
@@ -292,18 +306,18 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 84,
+      "completion_percent": 86,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
         "canonical-state/block-index/bridge-replay reload gates",
         "atomic commit manifest and storage durability gates",
         "implementation bindings in config/formal-security-blueprint.json",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean parent-linked supply/nullifier chain lift",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state chain lift for supply, leaf cursor, nullifiers, and bridge replay",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem"
       ],
       "missing_work": [
-        "Extend the accepted-chain lift into one Lean native ledger transition relation covering commitments, sidecars, bridge replay, and storage reload.",
+        "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
         "Bind every production import and startup publication path to that transition.",
         "Add reorg/restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
@@ -346,18 +360,20 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 40,
+      "completion_percent": 43,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
         "long-range proof-shape gates",
         "bridge payload admission gates",
-        "RISC Zero release verifier fail-closed gate"
+        "RISC Zero release verifier fail-closed gate",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness"
       ],
       "missing_work": [
         "Define bridge mint authorization theorem independent of the current disabled RISC Zero verifier.",
         "Mechanize or parameterize external-chain proof soundness.",
-        "Prove replay-key uniqueness and supply/mint coupling for bridge assets."
+        "Lift replay-key uniqueness from native consumed-key state to authorized bridge asset mint amount/destination and supply coupling."
       ],
       "performance_constraint": "Keep release verifier fail-closed until a PQ-clean verifier exists; avoid classical verifier runtime costs."
     },

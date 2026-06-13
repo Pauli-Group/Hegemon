@@ -129,6 +129,33 @@ def importBridgeReplay
       else
         Except.ok (replay :: known, 1)
 
+theorem importBridgeReplay_preserves_nodup
+    {known next : List Nat}
+    {imported : Nat}
+    {key : Option Nat}
+    (knownNodup : known.Nodup)
+    (ok : importBridgeReplay known key = Except.ok (next, imported)) :
+    next.Nodup := by
+  cases key with
+  | none =>
+      simp [importBridgeReplay] at ok
+      rcases ok with ⟨hnext, _⟩
+      subst next
+      exact knownNodup
+  | some replay =>
+      unfold importBridgeReplay at ok
+      cases present : containsNat replay known with
+      | true =>
+          simp [present] at ok
+      | false =>
+          simp [present] at ok
+          rcases ok with ⟨hnext, _⟩
+          subst next
+          have replayNotMem : replay ∉ known :=
+            containsNat_false_not_mem present
+          rw [List.nodup_cons]
+          exact ⟨replayNotMem, knownNodup⟩
+
 def evaluateActionStreamFrom :
     Nat ->
     List Nat ->
@@ -176,6 +203,15 @@ def importedNullifierStateFrom :
       | Except.error _ => spent
       | Except.ok (nextSpent, _) =>
           importedNullifierStateFrom nextSpent rest
+
+def importedBridgeReplayStateFrom :
+    List Nat -> List StreamAction -> List Nat
+  | consumed, [] => consumed
+  | consumed, action :: rest =>
+      match importBridgeReplay consumed action.bridgeReplayKey with
+      | Except.error _ => consumed
+      | Except.ok (nextConsumed, _) =>
+          importedBridgeReplayStateFrom nextConsumed rest
 
 theorem evaluateActionStreamFrom_preserves_imported_nullifier_nodup
     {leaf : Nat}
@@ -259,6 +295,80 @@ theorem evaluateActionStreamEffect_preserves_imported_nullifier_nodup
     (importedNullifierStateFrom input.spentNullifiers input.actions).Nodup :=
   evaluateActionStreamFrom_preserves_imported_nullifier_nodup
     spentNodup accepted
+
+theorem evaluateActionStreamFrom_preserves_imported_bridge_replay_nodup
+    {leaf : Nat}
+    {spent consumed plannedStarts : List Nat}
+    {actions : List StreamAction}
+    {importedNullifiers importedReplays : Nat}
+    {output : ActionStreamOutput}
+    (consumedNodup : consumed.Nodup)
+    (accepted :
+      evaluateActionStreamFrom
+        leaf
+        spent
+        consumed
+        actions
+        plannedStarts
+        importedNullifiers
+        importedReplays =
+          Except.ok output) :
+    (importedBridgeReplayStateFrom consumed actions).Nodup := by
+  induction actions generalizing leaf spent consumed plannedStarts
+      importedNullifiers importedReplays output with
+  | nil =>
+      simp [importedBridgeReplayStateFrom]
+      exact consumedNodup
+  | cons action rest ih =>
+      unfold evaluateActionStreamFrom at accepted
+      unfold importedBridgeReplayStateFrom
+      by_cases countMatches : action.commitmentCount = action.ciphertextCount
+      · simp [countMatches] at accepted
+        cases nextLeafResult : checkedAddU64 leaf action.ciphertextCount with
+        | none =>
+            simp [nextLeafResult] at accepted
+        | some nextLeaf =>
+            cases importResult :
+                importNullifiers spent action.nullifiers with
+            | error rejection =>
+                simp [nextLeafResult, importResult] at accepted
+            | ok importedPair =>
+                cases importedPair with
+                | mk nextSpent nullifierImports =>
+                    cases bridgeResult :
+                        importBridgeReplay consumed action.bridgeReplayKey with
+                    | error rejection =>
+                        simp [
+                          nextLeafResult,
+                          importResult,
+                          bridgeResult
+                        ] at accepted ⊢
+                    | ok bridgePair =>
+                        cases bridgePair with
+                        | mk nextConsumed replayImports =>
+                            have nextConsumedNodup :
+                                nextConsumed.Nodup :=
+                              importBridgeReplay_preserves_nodup
+                                consumedNodup
+                                bridgeResult
+                            simp [
+                              nextLeafResult,
+                              importResult,
+                              bridgeResult
+                            ] at accepted ⊢
+                            exact ih nextConsumedNodup accepted
+      · simp [countMatches] at accepted
+
+theorem evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup
+    {input : ActionStreamInput}
+    {output : ActionStreamOutput}
+    (consumedNodup : input.consumedBridgeReplays.Nodup)
+    (accepted : evaluateActionStreamEffect input = Except.ok output) :
+    (importedBridgeReplayStateFrom
+      input.consumedBridgeReplays
+      input.actions).Nodup :=
+  evaluateActionStreamFrom_preserves_imported_bridge_replay_nodup
+    consumedNodup accepted
 
 def actionStreamAccepts (input : ActionStreamInput) : Bool :=
   match evaluateActionStreamEffect input with

@@ -42,6 +42,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 10:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1143 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 11:02Z) Strengthened the no-theft and canonical verifier boundary with indexed active-input spend facts and nullifier/commitment/ciphertext-vector agreement across public shape, statement preimage, and proof binding message. Current tracked completion is 64.55%.
 - [x] (2026-06-13 11:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1149 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 11:42Z) Strengthened native replay/startup refinement with a carried ledger replay state for supply, commitment leaf cursor, spent nullifiers, and consumed bridge replay keys. Current tracked completion is 65.13%.
+- [x] (2026-06-13 11:56Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1165 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -104,6 +106,8 @@ The native commitment-tree refinement slice adds `formal/lean/Hegemon/Native/Com
 The wallet/observer ciphertext-format slice strengthens `formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean` and `formal/lean/Hegemon/Privacy/Observer.lean`. It proves generic accepted-summary facts for the modeled parsers: accepted crypto-format summaries have the fixed ML-KEM ciphertext length; accepted chain containers and full chain ciphertexts have the expected chain crypto suite and fixed ML-KEM length; and observer-visible summaries parsed from public chain wire bytes all have that accepted chain format. This raises the tracked baseline to 64.04% by narrowing the public ciphertext format boundary. It does not prove ML-KEM security, AEAD confidentiality, ciphertext indistinguishability, note plaintext-to-commitment binding, wrong-key behavior, simulator-based ZK, wallet metadata privacy, or complete wallet/native equivalence.
 
 The indexed no-theft and canonical verifier-boundary slice strengthens `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It proves that any indexed active input in aligned public flag/nullifier/witness vectors yields note-commitment reconstruction, spend-authority derivation, nullifier derivation, and Merkle membership facts, then lifts that theorem through the accepted transaction relation and the canonical deployed-verifier boundary. It also strengthens `CanonicalTxStatementSurface` so nullifier, commitment, and ciphertext-hash vectors agree across public shape, statement preimage, and proof binding message. This raises the tracked baseline to 64.55%. It still depends on `DeployedTxVerifierSoundnessAssumption`; deployed STARK/AIR soundness, SmallWood soundness, witness extraction, verifier implementation correctness, hash security, and complete Rust/native refinement remain open.
+
+The native ledger replay-state slice strengthens `formal/lean/Hegemon/Native/ActionStreamEffect.lean` and `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves that accepted action streams preserve `List.Nodup` for consumed bridge replay keys, then adds a carried `NativeLedgerReplayState` requiring each accepted block to match carried supply, commitment leaf cursor, spent nullifiers, and consumed bridge replay keys before replay. The packaged theorem `accepted_native_ledger_replay_chain_startup_equivalence` proves replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, and final bridge replay uniqueness, with concrete rejection examples for stale leaf cursors, duplicate bridge replay consumption, and stale bridge replay state. This raises the tracked baseline to 65.13%. It still operates over production-derived replay inputs; raw byte decoding, Merkle hash security, bridge proof/mint authorization, storage durability, and complete native-node equivalence remain open.
 
 ## Context and Orientation
 
@@ -241,6 +245,14 @@ The latest full formal-core pass after the indexed no-theft/canonical verifier s
 
     claims=92
     named_lean_theorems=1149
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the native ledger replay-state slice reported:
+
+    claims=92
+    named_lean_theorems=1165
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177

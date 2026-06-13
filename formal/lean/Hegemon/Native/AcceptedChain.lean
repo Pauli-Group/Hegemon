@@ -1,4 +1,5 @@
 import Hegemon.Native.BlockReplayRefinement
+import Hegemon.Native.CommitmentTreeRefinement
 
 namespace Hegemon
 namespace Native
@@ -6,6 +7,7 @@ namespace AcceptedChain
 
 open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.BlockReplayRefinement
+open Hegemon.Native.CommitmentTreeRefinement
 
 def validateNativeReplayChain
     (parentSupply : Nat)
@@ -206,6 +208,375 @@ theorem accepted_native_replay_chain_startup_equivalence
       accepted_native_replay_chain_nullifier_preconditions accepted,
       accepted_native_replay_chain_nullifiers_unique accepted⟩
 
+structure NativeLedgerReplayState where
+  supply : Nat
+  leafCount : Nat
+  spentNullifiers : List Nat
+  consumedBridgeReplays : List Nat
+deriving DecidableEq, Repr
+
+def initialNativeLedgerState
+    (supply leafCount : Nat) : NativeLedgerReplayState :=
+  {
+    supply := supply,
+    leafCount := leafCount,
+    spentNullifiers := [],
+    consumedBridgeReplays := []
+  }
+
+def nextLedgerState
+    (state : NativeLedgerReplayState)
+    (block : BlockReplayInput)
+    (summary : BlockReplaySummary) : NativeLedgerReplayState :=
+  {
+    supply := summary.expectedSupply,
+    leafCount := summary.nextLeafCount,
+    spentNullifiers :=
+      importedNullifierStateFrom state.spentNullifiers block.actions,
+    consumedBridgeReplays :=
+      importedBridgeReplayStateFrom state.consumedBridgeReplays block.actions
+  }
+
+def validateNativeLedgerReplayChain
+    (state : NativeLedgerReplayState) :
+    List BlockReplayInput -> Option NativeLedgerReplayState
+  | [] => some state
+  | block :: rest =>
+      if block.parentSupply = state.supply then
+        if block.leafStart = state.leafCount then
+          if block.spentNullifiers = state.spentNullifiers then
+            if block.consumedBridgeReplays = state.consumedBridgeReplays then
+              match evaluateBlockReplayRefinement block with
+              | Except.error _ => none
+              | Except.ok summary =>
+                  validateNativeLedgerReplayChain
+                    (nextLedgerState state block summary)
+                    rest
+            else
+              none
+          else
+            none
+        else
+          none
+      else
+        none
+
+def expectedNativeLeafCountAfter
+    (leafCount : Nat) :
+    List BlockReplayInput -> Option Nat
+  | [] => some leafCount
+  | block :: rest =>
+      if block.leafStart = leafCount then
+        match evaluateBlockReplayRefinement block with
+        | Except.error _ => none
+        | Except.ok summary =>
+            expectedNativeLeafCountAfter summary.nextLeafCount rest
+      else
+        none
+
+def nativeLedgerReplayCommitmentPlanPreconditions :
+    NativeLedgerReplayState -> List BlockReplayInput -> Bool
+  | _, [] => true
+  | state, block :: rest =>
+      if block.leafStart = state.leafCount then
+        match evaluateBlockReplayRefinement block with
+        | Except.error _ => false
+        | Except.ok summary =>
+            match commitmentStartsFrom state.leafCount block.actions with
+            | none => false
+            | some (nextLeaf, plannedStarts) =>
+                if nextLeaf = summary.nextLeafCount then
+                  if plannedStarts = summary.plannedStarts then
+                    nativeLedgerReplayCommitmentPlanPreconditions
+                      (nextLedgerState state block summary)
+                      rest
+                  else
+                    false
+                else
+                  false
+      else
+        false
+
+theorem accepted_native_ledger_replay_chain_supply_from
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    expectedNativeSupplyAfter initial.supply blocks = some final.supply := by
+  induction blocks generalizing initial with
+  | nil =>
+      simp [validateNativeLedgerReplayChain] at accepted
+      subst final
+      rfl
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      unfold expectedNativeSupplyAfter
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted ⊢
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  have supplyFacts :=
+                    accepted_claims_expected_supply replayResult
+                  rw [supplyFacts.left]
+                  simp [replayResult] at accepted
+                  simpa [nextLedgerState] using ih accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
+theorem accepted_native_ledger_replay_chain_leaf_cursor_from
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    expectedNativeLeafCountAfter initial.leafCount blocks =
+      some final.leafCount := by
+  induction blocks generalizing initial with
+  | nil =>
+      simp [validateNativeLedgerReplayChain] at accepted
+      subst final
+      rfl
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      unfold expectedNativeLeafCountAfter
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted ⊢
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  simp [replayResult] at accepted ⊢
+                  simpa [nextLedgerState] using ih accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
+theorem accepted_native_ledger_replay_chain_commitment_plans_canonical_from
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    nativeLedgerReplayCommitmentPlanPreconditions initial blocks = true := by
+  induction blocks generalizing initial with
+  | nil =>
+      rfl
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      unfold nativeLedgerReplayCommitmentPlanPreconditions
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted ⊢
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  have streamOk :=
+                    accepted_has_action_stream_effect replayResult
+                  have startsOk :
+                      commitmentStartsFrom
+                          initial.leafCount
+                          block.actions =
+                        some
+                          (summary.nextLeafCount,
+                            summary.plannedStarts) := by
+                    simpa [streamInput, leafEq] using
+                      accepted_stream_commitment_starts_from streamOk
+                  simp [replayResult, startsOk] at accepted ⊢
+                  exact ih accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
+theorem accepted_native_ledger_replay_chain_nullifiers_unique_from
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (initialNodup : initial.spentNullifiers.Nodup)
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    final.spentNullifiers.Nodup := by
+  induction blocks generalizing initial with
+  | nil =>
+      simp [validateNativeLedgerReplayChain] at accepted
+      subst final
+      exact initialNodup
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  have streamOk :=
+                    accepted_has_action_stream_effect replayResult
+                  have streamSpentNodup :
+                      (streamInput block).spentNullifiers.Nodup := by
+                    simp [streamInput, spentEq, initialNodup]
+                  have nextSpentNodup :
+                      (importedNullifierStateFrom
+                        initial.spentNullifiers
+                        block.actions).Nodup := by
+                    have preserved :=
+                      evaluateActionStreamEffect_preserves_imported_nullifier_nodup
+                        streamSpentNodup
+                        streamOk
+                    simpa [streamInput, spentEq] using preserved
+                  simp [replayResult] at accepted
+                  exact ih
+                    (by
+                      simpa [nextLedgerState] using nextSpentNodup)
+                    accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
+theorem accepted_native_ledger_replay_chain_bridge_replays_unique_from
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (initialNodup : initial.consumedBridgeReplays.Nodup)
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    final.consumedBridgeReplays.Nodup := by
+  induction blocks generalizing initial with
+  | nil =>
+      simp [validateNativeLedgerReplayChain] at accepted
+      subst final
+      exact initialNodup
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  have streamOk :=
+                    accepted_has_action_stream_effect replayResult
+                  have streamConsumedNodup :
+                      (streamInput block).consumedBridgeReplays.Nodup := by
+                    simp [streamInput, consumedEq, initialNodup]
+                  have nextConsumedNodup :
+                      (importedBridgeReplayStateFrom
+                        initial.consumedBridgeReplays
+                        block.actions).Nodup := by
+                    have preserved :=
+                      evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup
+                        streamConsumedNodup
+                        streamOk
+                    simpa [streamInput, consumedEq] using preserved
+                  simp [replayResult] at accepted
+                  exact ih
+                    (by
+                      simpa [nextLedgerState] using nextConsumedNodup)
+                    accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
+theorem accepted_native_ledger_replay_chain_startup_equivalence
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup : initial.consumedBridgeReplays.Nodup)
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    expectedNativeSupplyAfter initial.supply blocks = some final.supply
+      ∧ expectedNativeLeafCountAfter initial.leafCount blocks =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  exact
+    ⟨accepted_native_ledger_replay_chain_supply_from accepted,
+      accepted_native_ledger_replay_chain_leaf_cursor_from accepted,
+      accepted_native_ledger_replay_chain_commitment_plans_canonical_from
+        accepted,
+      accepted_native_ledger_replay_chain_nullifiers_unique_from
+        initialNullifiersNodup
+        accepted,
+      accepted_native_ledger_replay_chain_bridge_replays_unique_from
+        initialBridgeReplaysNodup
+        accepted⟩
+
+theorem accepted_native_ledger_replay_chain_nullifiers_unique
+    {genesis leafCount : Nat}
+    {final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (accepted :
+      validateNativeLedgerReplayChain
+          (initialNativeLedgerState genesis leafCount)
+          blocks =
+        some final) :
+    final.spentNullifiers.Nodup :=
+  accepted_native_ledger_replay_chain_nullifiers_unique_from
+    (by simp [initialNativeLedgerState])
+    accepted
+
+theorem accepted_native_ledger_replay_chain_bridge_replays_unique
+    {genesis leafCount : Nat}
+    {final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    (accepted :
+      validateNativeLedgerReplayChain
+          (initialNativeLedgerState genesis leafCount)
+          blocks =
+        some final) :
+    final.consumedBridgeReplays.Nodup :=
+  accepted_native_ledger_replay_chain_bridge_replays_unique_from
+    (by simp [initialNativeLedgerState])
+    accepted
+
 def validNativeReplayChain : List BlockReplayInput :=
   [
     validReplay,
@@ -280,6 +651,159 @@ def staleSpentNativeReplayChain : List BlockReplayInput :=
 
 theorem stale_spent_native_replay_chain_rejects :
     validateNativeReplayChain 100 [] staleSpentNativeReplayChain = none := by
+  rfl
+
+def validNativeLedgerReplayChain : List BlockReplayInput :=
+  [
+    validReplay,
+    {
+      validReplay with
+      parentSupply := 100,
+      height := 2,
+      leafStart := 12,
+      spentNullifiers := [1],
+      consumedBridgeReplays := [],
+      actions := [
+        {
+          commitmentCount := 1,
+          ciphertextCount := 1,
+          nullifiers := [2],
+          bridgeReplayKey := some 7
+        }
+      ]
+    }
+  ]
+
+theorem valid_native_ledger_replay_chain_accepts :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        validNativeLedgerReplayChain =
+      some
+        {
+          supply := 100,
+          leafCount := 13,
+          spentNullifiers := [2, 1],
+          consumedBridgeReplays := [7]
+        } := by
+  rfl
+
+theorem valid_native_ledger_replay_chain_startup_equivalence :
+    expectedNativeSupplyAfter 100 validNativeLedgerReplayChain = some 100
+      ∧ expectedNativeLeafCountAfter 10 validNativeLedgerReplayChain =
+          some 13
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          (initialNativeLedgerState 100 10)
+          validNativeLedgerReplayChain = true := by
+  have accepted := valid_native_ledger_replay_chain_accepts
+  have equivalence :=
+    accepted_native_ledger_replay_chain_startup_equivalence
+      (by simp [initialNativeLedgerState])
+      (by simp [initialNativeLedgerState])
+      accepted
+  exact ⟨equivalence.left, equivalence.right.left, equivalence.right.right.left⟩
+
+def staleLeafNativeLedgerReplayChain : List BlockReplayInput :=
+  [
+    validReplay,
+    {
+      validReplay with
+      parentSupply := 100,
+      height := 2,
+      leafStart := 10,
+      spentNullifiers := [1],
+      consumedBridgeReplays := [],
+      actions := [
+        {
+          commitmentCount := 1,
+          ciphertextCount := 1,
+          nullifiers := [2],
+          bridgeReplayKey := none
+        }
+      ]
+    }
+  ]
+
+theorem stale_leaf_native_ledger_replay_chain_rejects :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        staleLeafNativeLedgerReplayChain =
+      none := by
+  rfl
+
+def duplicateBridgeReplayNativeLedgerReplayChain : List BlockReplayInput :=
+  [
+    {
+      validReplay with
+      actions := [
+        {
+          commitmentCount := 2,
+          ciphertextCount := 2,
+          nullifiers := [1],
+          bridgeReplayKey := some 7
+        }
+      ]
+    },
+    {
+      validReplay with
+      parentSupply := 100,
+      height := 2,
+      leafStart := 12,
+      spentNullifiers := [1],
+      consumedBridgeReplays := [7],
+      actions := [
+        {
+          commitmentCount := 0,
+          ciphertextCount := 0,
+          nullifiers := [],
+          bridgeReplayKey := some 7
+        }
+      ]
+    }
+  ]
+
+theorem duplicate_bridge_replay_native_ledger_replay_chain_rejects :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        duplicateBridgeReplayNativeLedgerReplayChain =
+      none := by
+  rfl
+
+def staleBridgeReplayNativeLedgerReplayChain : List BlockReplayInput :=
+  [
+    {
+      validReplay with
+      actions := [
+        {
+          commitmentCount := 2,
+          ciphertextCount := 2,
+          nullifiers := [1],
+          bridgeReplayKey := some 7
+        }
+      ]
+    },
+    {
+      validReplay with
+      parentSupply := 100,
+      height := 2,
+      leafStart := 12,
+      spentNullifiers := [1],
+      consumedBridgeReplays := [],
+      actions := [
+        {
+          commitmentCount := 0,
+          ciphertextCount := 0,
+          nullifiers := [],
+          bridgeReplayKey := none
+        }
+      ]
+    }
+  ]
+
+theorem stale_bridge_replay_native_ledger_replay_chain_rejects :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        staleBridgeReplayNativeLedgerReplayChain =
+      none := by
   rfl
 
 end AcceptedChain

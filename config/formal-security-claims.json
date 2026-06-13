@@ -87,7 +87,7 @@
       "id": "formal.transaction-balance",
       "component": "shielded transaction semantics",
       "claim_class": "lean_theorem",
-  "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, proves that valid non-stablecoin balances force every non-native asset delta to zero, and proves stablecoin-enabled balances confine the nonzero non-native delta to the explicitly selected stablecoin asset. The AcceptedProofArtifact lift carries those balance facts to accepted proof wrappers under an explicit proof-system balance-soundness assumption. Generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior.",
+      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, proves that valid non-stablecoin balances force every non-native asset delta to zero, and proves stablecoin-enabled balances confine the nonzero non-native delta to the explicitly selected stablecoin asset. The AcceptedProofArtifact lift carries those balance facts to accepted proof wrappers under an explicit proof-system balance-soundness assumption. Generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
@@ -98,25 +98,25 @@
         "Hegemon.Transaction.validBalance_rejects_slot_overflow",
         "Hegemon.Transaction.validBalance_stablecoin_rules",
         "Hegemon.Transaction.allNonNativeZero_slotDelta_zero",
-    "Hegemon.Transaction.slotDelta_zeroSelected_preserves_other",
-    "Hegemon.Transaction.validBalance_no_stablecoin_non_native_delta_zero",
-    "Hegemon.Transaction.validBalance_stablecoin_selected_delta",
-    "Hegemon.Transaction.validBalance_stablecoin_non_selected_non_native_delta_zero",
-    "Hegemon.Transaction.validBalance_per_asset_transaction_conservation",
-    "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_native_delta",
-    "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_no_stablecoin_non_native_delta_zero",
-    "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_selected_delta",
-    "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_non_selected_non_native_delta_zero"
+        "Hegemon.Transaction.slotDelta_zeroSelected_preserves_other",
+        "Hegemon.Transaction.validBalance_no_stablecoin_non_native_delta_zero",
+        "Hegemon.Transaction.validBalance_stablecoin_selected_delta",
+        "Hegemon.Transaction.validBalance_stablecoin_non_selected_non_native_delta_zero",
+        "Hegemon.Transaction.validBalance_per_asset_transaction_conservation",
+        "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_native_delta",
+        "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_no_stablecoin_non_native_delta_zero",
+        "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_selected_delta",
+        "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_non_selected_non_native_delta_zero"
       ],
       "assumptions": [
         "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitment hashing, Merkle hash-function security, ciphertext hashes, or hash-derived nullifiers.",
         "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, stablecoin mismatch, native-asset stablecoin rejection, and slot overflow cases.",
-    "The theorem covers executable balance-slot and validation semantics, including the per-asset no-transmutation boundary exposed by those slots. The AcceptedProofArtifact lift is conditional on an explicit balance-soundness assumption from proof acceptance to the validBalance relation; it does not prove full AIR/proof-system soundness or every witness/public-input field."
+        "The theorem covers executable balance-slot and validation semantics, including the per-asset no-transmutation boundary exposed by those slots. The AcceptedProofArtifact lift is conditional on an explicit balance-soundness assumption from proof acceptance to the validBalance relation; it does not prove full AIR/proof-system soundness or every witness/public-input field."
       ],
       "evidence_paths": [
-    "formal/lean/Hegemon/Transaction/Balance.lean",
-    "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
-    "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
+        "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
         "circuits/transaction/src/witness.rs",
         "circuits/formal/transaction_balance.tla",
         "circuits/formal/transaction_balance.cfg",
@@ -261,14 +261,14 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "component": "transaction proof wrapper admission",
       "claim_class": "lean_theorem",
-  "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves that every accepted wrapper exposes the full statement surface as theorem-level facts. Generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
+      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves that every accepted wrapper exposes the full statement surface as theorem-level facts. Generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
-    "Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions",
-    "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface",
-    "Hegemon.Transaction.ProofWrapperAdmission.balance_slot_mismatch_rejects_before_verifier_acceptance",
+        "Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions",
+        "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface",
+        "Hegemon.Transaction.ProofWrapperAdmission.balance_slot_mismatch_rejects_before_verifier_acceptance",
         "Hegemon.Transaction.ProofWrapperAdmission.invalid_public_inputs_rejects_before_balance_slots",
         "Hegemon.Transaction.ProofWrapperAdmission.missing_proof_bytes_rejects_before_public_inputs",
         "Hegemon.Transaction.ProofWrapperAdmission.missing_serialized_public_inputs_rejects_before_public_validity",
@@ -316,21 +316,21 @@
         "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_membership",
         "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_implies_public_shape_valid",
         "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_implies_slots_authorized",
-    "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_authorized",
-    "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts",
-    "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_inactive_public_nullifier_zero",
-    "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_tail_authorized",
-    "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at",
-    "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
-    "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_authorized",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_inactive_public_nullifier_zero",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_tail_authorized",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at",
+        "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
+        "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_secret_rejects",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_nullifier_rejects",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_membership_root_rejects"
       ],
       "assumptions": [
         "The executable Lean model uses abstract digest arithmetic for note commitments, spend-authority keys, nullifiers, and Merkle nodes. It proves relation plumbing, not hash security or implementation equivalence.",
-    "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
-    "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
+        "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
+        "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
         "This claim does not prove the deployed STARK/AIR or SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
@@ -367,17 +367,17 @@
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_statement_surface",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_native_delta",
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_no_stablecoin_non_native_delta_zero",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_selected_delta",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts",
-    "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at"
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_selected_delta",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `BalanceSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled `validBalance` relation for the exact balance witness and slots.",
         "The theorem depends on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled active-input spend-authorization relation for the exact public input shape and Merkle root.",
-    "The theorem packages the abstract accepted transaction relation and now exposes any active indexed input slot, not only the head input. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
+        "The theorem packages the abstract accepted transaction relation and now exposes any active indexed input slot, not only the head input. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
@@ -413,19 +413,19 @@
       "lean_theorems": [
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_binding_valid",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_length",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_vectors_bound",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts",
-    "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at"
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_vectors_bound",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
-    "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, balance-slot asset agreement, and stablecoin field agreement.",
+        "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, balance-slot asset agreement, and stablecoin field agreement.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
@@ -3078,7 +3078,7 @@
       "id": "native.action-stream-effect-planning",
       "component": "native ordered action stream mutation planning",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action-stream effect kernel proves representative ordered-list replay facts for native action planning: the stream records one planned commitment start per accepted action, advances leaf counts with checked u64 arithmetic across the whole list, imports nullifiers into a shared stream state so within-action and cross-action duplicates reject, proves accepted imports preserve `List.Nodup` for the accumulated nullifier state, imports inbound bridge replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, and preserves the same rejection precedence as the production planner. Generated Lean vectors are checked against the production stream helper now called by memory replay, pending-action planning, and canonical-index rebuild; the blueprint/regression gate requires reorg and startup canonical-index repair to plan rebuilds before their atomic sled commits, and requires canonical reorg commits to land in sled before publishing in-memory reorganized state.",
+      "summary": "The Lean action-stream effect kernel proves representative ordered-list replay facts for native action planning: the stream records one planned commitment start per accepted action, advances leaf counts with checked u64 arithmetic across the whole list, imports nullifiers into a shared stream state so within-action and cross-action duplicates reject, proves accepted imports preserve `List.Nodup` for the accumulated nullifier state, imports inbound bridge replay keys into a shared stream state so prior-consumed and cross-action replay duplicates reject, proves accepted imports preserve `List.Nodup` for the accumulated consumed bridge replay state, and preserves the same rejection precedence as the production planner. Generated Lean vectors are checked against the production stream helper now called by memory replay, pending-action planning, and canonical-index rebuild; the blueprint/regression gate requires reorg and startup canonical-index repair to plan rebuilds before their atomic sled commits, and requires canonical reorg commits to land in sled before publishing in-memory reorganized state.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3096,12 +3096,15 @@
         "Hegemon.Native.ActionStreamEffect.count_mismatch_precedes_duplicate",
         "Hegemon.Native.ActionStreamEffect.overflow_precedes_nullifier",
         "Hegemon.Native.ActionStreamEffect.nullifier_precedes_bridge_replay",
-        "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_nullifier_nodup"
+        "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_nullifier_nodup",
+        "Hegemon.Native.ActionStreamEffect.importBridgeReplay_preserves_nodup",
+        "Hegemon.Native.ActionStreamEffect.evaluateActionStreamFrom_preserves_imported_bridge_replay_nodup",
+        "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup"
       ],
       "assumptions": [
         "The Lean stream model uses natural-number keys for already-decoded nullifiers and inbound replay keys. The Rust vector test maps those keys to concrete 48-byte values before calling production state machines, but this claim does not prove nullifier derivation, inbound replay-key derivation, SCALE decoding, or bridge message parsing.",
         "Generated Lean conformance vectors cover a valid two-action stream, empty streams at max leaf count, cross-action duplicate nullifiers, duplicate nullifiers within one action, duplicates against prior spent state, zero nullifiers in later actions, cross-action bridge replay duplicates, duplicates against prior consumed replay state, cumulative second-action leaf overflow, and rejection precedence.",
-        "The theorem and vectors cover the production stream helper now used by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state is mutated. The theorem `evaluateActionStreamEffect_preserves_imported_nullifier_nodup` is now the source of the accepted-chain nullifier uniqueness lift rather than a separate chain-level guard. The blueprint additionally enforces that `plan_canonical_index_rebuild` appears before reorg canonical-state commits and startup canonical-index repair commits, that `commit_reorg_state_atomically` appears before `publish_reorganized_state`, and that `reorg_rebuild_failure_preserves_canonical_indexes`, `reorg_action_block_commit_reloads_canonical_sled_state`, and `startup_canonical_index_repair_rebuilds_archive_atomically` cover semantic-failure preservation plus successful canonical reorg/startup reload of the best pointer, block records, canonical indexes, ciphertext archive, and pending-action tree. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. This does not prove sled transaction implementation correctness, filesystem/fsync durability, commitment-tree hash security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
+        "The theorem and vectors cover the production stream helper now used by native memory replay, pending-action planning, and canonical-index rebuild before commitment/nullifier/replay state is mutated. The theorem `evaluateActionStreamEffect_preserves_imported_nullifier_nodup` is the source of the accepted-chain nullifier uniqueness lift, and `evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup` is the source of the accepted ledger-chain bridge replay uniqueness lift. The blueprint additionally enforces that `plan_canonical_index_rebuild` appears before reorg canonical-state commits and startup canonical-index repair commits, that `commit_reorg_state_atomically` appears before `publish_reorganized_state`, and that `reorg_rebuild_failure_preserves_canonical_indexes`, `reorg_action_block_commit_reloads_canonical_sled_state`, and `startup_canonical_index_repair_rebuilds_archive_atomically` cover semantic-failure preservation plus successful canonical reorg/startup reload of the best pointer, block records, canonical indexes, ciphertext archive, and pending-action tree. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. This does not prove sled transaction implementation correctness, filesystem/fsync durability, commitment-tree hash security, bridge replay-key derivation/security, full action payload validity, tx leaf proof soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
@@ -3857,7 +3860,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block replay-refinement kernel composes native ordered action-stream planning, checked native supply advancement, and block commitment admission; accepted-chain theorems now lift the per-block boundary across parent-linked native replay chains while threading spent nullifier state, and package the startup/replay equivalence surface as a single theorem. Generated Lean vectors check both the production helper result and its staged transition trace for mined-block import, announced-block import, and canonical replay, and the production helper materializes inline/sidecar ciphertext bytes before deriving action-stream counts so accepted multi-action replay summaries cannot carry counterfeit state-root or supply claims under the modeled predicates.",
+      "summary": "The Lean block replay-refinement kernel composes native ordered action-stream planning, checked native supply advancement, and block commitment admission; accepted-chain theorems now lift the per-block boundary across parent-linked native replay chains while threading supply, commitment leaf cursor, spent nullifier state, and consumed bridge replay state, and package the startup/replay equivalence surface as a single ledger-state theorem. Generated Lean vectors check both the production helper result and its staged transition trace for mined-block import, announced-block import, and canonical replay, and the production helper materializes inline/sidecar ciphertext bytes before deriving action-stream counts so accepted multi-action replay summaries cannot carry counterfeit state-root or supply claims under the modeled predicates.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3883,12 +3886,25 @@
         "Hegemon.Native.BlockReplayRefinement.supply_overflow_replay_rejects",
         "Hegemon.Native.BlockReplayRefinement.traced_result_matches_untraced",
         "Hegemon.Native.BlockReplayRefinement.valid_two_action_replay_accepts",
-        "Hegemon.Native.BlockReplayRefinement.valid_replay_accepts"
+        "Hegemon.Native.BlockReplayRefinement.valid_replay_accepts",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_supply_from",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_leaf_cursor_from",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_commitment_plans_canonical_from",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique_from",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique_from",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_startup_equivalence",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique",
+        "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique",
+        "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_accepts",
+        "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_startup_equivalence",
+        "Hegemon.Native.AcceptedChain.stale_leaf_native_ledger_replay_chain_rejects",
+        "Hegemon.Native.AcceptedChain.duplicate_bridge_replay_native_ledger_replay_chain_rejects",
+        "Hegemon.Native.AcceptedChain.stale_bridge_replay_native_ledger_replay_chain_rejects"
       ],
       "assumptions": [
         "The Lean model composes already-modeled native predicates: ordered action-stream effect planning, native supply advancement from height/fee/coinbase presence, and block commitment admission. It does not prove cryptographic hash binding or derive those predicates from raw encoded actions.",
-        "The accepted-chain lift threads the same imported nullifier state computed by the Lean action-stream effect kernel between accepted replay blocks before validating the next block, and proves `chainNullifiers blocks` is `List.Nodup` for accepted native replay chains via `evaluateActionStreamEffect_preserves_imported_nullifier_nodup`. The theorem `accepted_native_replay_chain_startup_equivalence` packages replayed supply equality, carried nullifier preconditions, and global nullifier uniqueness as one startup/replay equivalence surface. This proves the theorem boundary rejects stale spent-state and cross-block duplicate-nullifier replay in the model, but it still depends on the production binding that constructs the block replay inputs from decoded canonical state.",
-        "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, and `accepted_trace_is_canonical` pins the accepted-stage order.",
+        "The original accepted-chain lift threads imported nullifier state between accepted replay blocks and proves `chainNullifiers blocks` is `List.Nodup` via `evaluateActionStreamEffect_preserves_imported_nullifier_nodup`. The stronger ledger-state lift additionally requires each block to match the carried supply, commitment leaf cursor, spent-nullifier set, and consumed bridge replay set before replay; recursing with `summary.expectedSupply`, `summary.nextLeafCount`, `importedNullifierStateFrom`, and `importedBridgeReplayStateFrom` proves replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, and final bridge replay uniqueness. The hostile examples reject stale leaf cursors, duplicate bridge replay consumption, and stale bridge replay state. This proves the theorem boundary rejects stale carried state and cross-block replay in the model, but it still depends on the production binding that constructs block replay inputs from decoded canonical state.",
+        "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, `accepted_trace_is_canonical` pins the accepted-stage order, and the ledger-chain theorems pin stale leaf/bridge replay carried-state rejection at the chain level.",
         "The production helper is called by native mined-block import, announced-block import, and explicit-chain canonical branch replay. Before it constructs action-stream steps, `materialize_native_action_payloads` reloads inline or sidecar ciphertext payloads, and sidecar materialization checks presence, byte-size cap, declared size, and ciphertext-hash binding. The blueprint gate now enforces both non-test caller wiring and declared call-order constraints: mined import must run replay-refinement before payload validation, artifact verification, the atomic mined-block sled commit, in-memory state publication, and broadcast; announced import must run it before deeper payload/artifact validation, nonwinning side-branch block-record persistence, and winning explicit-chain reorganization; canonical replay must run it before memory mutation. Nonwinning announced side-branch persistence is also bound to the named production helper `persist_noncanonical_block_record`, and `nonwinning_announced_side_branch_record_reloads_without_canonicalizing` checks that such a block remains hash-addressable after reopen without replacing the canonical height index. Persistence and state publication still require decoded-action validation and artifact checks, winning canonical reorg publication is separately gated through `commit_reorg_state_atomically` before `publish_reorganized_state`, with canonical block records included in that commit, canonical replay re-runs `verify_native_block_artifacts_locked` before memory application, and startup canonical-index repair is gated through `commit_canonical_index_repair_atomically`. The theorem covers the replay/accounting refinement boundary over production-derived decoded action summaries and materialized ciphertext counts; it does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, full raw-action replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
       ],
       "evidence_paths": [
