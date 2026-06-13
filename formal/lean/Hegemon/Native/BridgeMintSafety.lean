@@ -3,6 +3,7 @@ import Hegemon.Native.AcceptedChain
 import Hegemon.Native.BlockReplayRefinement
 import Hegemon.Native.BlockReplayInputProjection
 import Hegemon.Native.BridgeActionPayloadAdmission
+import Hegemon.Native.RawIngressSidecarReplayRecoverability
 
 namespace Hegemon
 namespace Native
@@ -13,6 +14,12 @@ open Hegemon.Native.AcceptedChain
 open Hegemon.Native.BlockReplayRefinement
 open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.BridgeActionPayloadAdmission
+open Hegemon.Native.ActionRequestProjectionAdmission
+open Hegemon.Native.ActionWireReplayProjectionAdmission
+open Hegemon.Native.PendingActionReload
+open Hegemon.Native.RawIngressSidecarReplayRecoverability
+open Hegemon.Native.StagedCiphertextReload
+open Hegemon.Native.StagedProofReload
 
 def InboundBridgePayloadAuthorizationFacts
     (input : BridgePayloadInput) : Prop :=
@@ -461,6 +468,181 @@ theorem accepted_inbound_payload_authorized_amount_raw_projected_replay_safe
       bridgeFacts.right.right.right.right.right.left,
       bridgeFacts.right.right.right.right.right.right.left,
       bridgeFacts.right.right.right.right.right.right.right⟩
+
+theorem accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe
+    {input : BridgePayloadInput}
+    {mintSurface : InboundBridgeMintAmountSurface}
+    {rawSurface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized mintSurface = true)
+    (rawIngress :
+      AcceptedRawIngressSidecarReplay
+        rawSurface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : rawSurface.transferState.sidecarRoute = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (initialNullifiersNodup :
+      initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerStateAfter initial blocks = some final) :
+    actionRequestProjectionPreconditions
+        rawSurface.actionRequest = true
+      ∧ pendingActionReloadPreconditions rawSurface.pendingReload = true
+      ∧ stagedCiphertextReloadPreconditions
+          rawSurface.stagedCiphertextReload = true
+      ∧ stagedProofReloadPreconditions rawSurface.stagedProofReload = true
+      ∧ rawSurface.transferState.sidecarCiphertextsAvailable = true
+      ∧ rawSurface.transferState.sidecarCiphertextSizesPresent = true
+      ∧ rawSurface.transferState.sidecarCiphertextSizesMatch = true
+      ∧ rawSurface.daSidecarReplay.candidateBinding.daRootMatches = true
+      ∧ rawSurface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+      ∧ semanticFields.daRoot =
+          rawSurface.daSidecarReplay.recursiveSemanticSource.daRoot
+      ∧ actionWireReplayProjectionPreconditions
+          rawSurface.daSidecarReplay.wireReplayProjection = true
+      ∧ rawSurface.daSidecarReplay.wireReplayProjection.actionCount =
+          rawSurface.daSidecarReplay.wireReplayProjection.plannedCount
+      ∧ rawSurface.daSidecarReplay.wireReplayProjection.actionCount =
+          rawSurface.daSidecarReplay.wireReplayProjection.actions.length
+      ∧ validateNativeLedgerReplayChain
+          initial
+          (rawReplayInputs blocks) =
+          some final
+      ∧ expectedNativeSupplyAfter
+          initial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions initial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup
+      ∧ InboundBridgePayloadAuthorizationFacts input
+      ∧ mintSurface.payloadHashMatches = true
+      ∧ mintSurface.decodedPayloadAmount =
+          mintSurface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0
+      ∧ replay ∈ next
+      ∧ imported = 1
+      ∧ next.Nodup
+      ∧ importBridgeReplay next (some replay) =
+          Except.error ActionStreamReject.bridgeReplayDuplicate := by
+  have rawIngressPreconditions :=
+    accepted_raw_ingress_sidecar_replay_exposes_preconditions
+      rawIngress
+  have rawReplayFacts :=
+    accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows
+      rawIngress
+      sidecarRoute
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  have bridgeFacts :=
+    accepted_inbound_payload_authorized_amount_raw_projected_replay_safe
+      inbound
+      acceptedPayload
+      authorized
+      consumedNodup
+      fresh
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  rcases rawIngressPreconditions with
+    ⟨requestPre,
+      pendingPre,
+      stagedCipherPre,
+      stagedProofPre,
+      _transferPre,
+      _candidateDaRoot,
+      _provenBatchDaRoot,
+      _provenBatchNonzero,
+      wirePre,
+      wirePlanned,
+      wireActionLength⟩
+  rcases rawReplayFacts with
+    ⟨_requestPre2,
+      _pendingPre2,
+      _stagedCipherPre2,
+      _stagedProofPre2,
+      sidecarAvailable,
+      sidecarSizesPresent,
+      sidecarSizesMatch,
+      candidateDaRoot,
+      provenBatchDaRoot,
+      semanticDaRoot,
+      rawAccepted,
+      rawSupply,
+      rawLeaf,
+      rawCommitmentPlan,
+      rawCarried,
+      finalNullifiers,
+      finalBridgeReplays⟩
+  rcases bridgeFacts with
+    ⟨_bridgeAccepted,
+      _bridgeSupply,
+      _bridgeLeaf,
+      _bridgeCommitmentPlan,
+      _bridgeCarried,
+      _bridgeFinalNullifiers,
+      _bridgeFinalReplays,
+      payloadFacts,
+      payloadHash,
+      decodedAmount,
+      noDirectMint,
+      replayMem,
+      importedOne,
+      nextNodup,
+      duplicateRejects⟩
+  exact
+    ⟨requestPre,
+      pendingPre,
+      stagedCipherPre,
+      stagedProofPre,
+      sidecarAvailable,
+      sidecarSizesPresent,
+      sidecarSizesMatch,
+      candidateDaRoot,
+      provenBatchDaRoot,
+      semanticDaRoot,
+      wirePre,
+      wirePlanned,
+      wireActionLength,
+      rawAccepted,
+      rawSupply,
+      rawLeaf,
+      rawCommitmentPlan,
+      rawCarried,
+      finalNullifiers,
+      finalBridgeReplays,
+      payloadFacts,
+      payloadHash,
+      decodedAmount,
+      noDirectMint,
+      replayMem,
+      importedOne,
+      nextNodup,
+      duplicateRejects⟩
 
 end BridgeMintSafety
 end Native

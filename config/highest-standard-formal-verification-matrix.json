@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 71.06,
+  "overall_completion_percent": 71.10,
   "last_full_formal_core": {
-    "commit": "working tree after bounded chain ciphertext wire/vector package",
-    "status": "passed 2026-06-13 18:50Z",
+    "commit": "working tree after raw-ingress bridge mint composition",
+    "status": "passed 2026-06-13 19:14Z",
     "claims": 95,
-    "named_lean_theorems": 1302,
+    "named_lean_theorems": 1303,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,28 +29,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the wallet/observer ciphertext implementation-equivalence boundary: bounded accepted chain note-ciphertext wires now have the fixed production chain-container plus canonical compact ML-KEM length plus ML-KEM ciphertext length, active native tx-leaf observer rows carry that bounded fixed-wire shape alongside statement/proof-binding vector indices, and generated wallet conformance vectors carry expected wire lengths checked by production Rust tests.",
+    "summary": "Strengthened the bridge mint/replay implementation-equivalence boundary: accepted inbound bridge payload authorization, decoded amount equality, one-shot fresh replay import, raw-decoded projected replay, accepted raw-ingress sidecar materialization, DA-root binding, and wire-replay row counts now compose into one theorem surface.",
     "lean_modules": [
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Wallet.NoteCiphertextWire.bounded_parse_compact_mlkem_consumes_two",
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape"
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe"
     ],
     "validation": {
-      "lean_formal": "targeted modules passed",
-      "formal_core": "passed 2026-06-13 18:50Z",
+      "lean_formal": "targeted BridgeMintSafety module passed",
+      "formal_core": "passed 2026-06-13 19:14Z",
       "claims": 95,
-      "named_lean_theorems": 1302,
+      "named_lean_theorems": 1303,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The fixed wire-length theorem is intentionally byte-bounded because the Lean Byte model is Nat; without byte-boundedness, unbounded Nat values can encode ML-KEM length through impossible production single-byte compact prefixes.",
-      "The theorem does not prove ciphertext-hash equality/security, note plaintext correctness, ML-KEM/AEAD confidentiality, simulator zero-knowledge, or complete wallet/native-node equivalence.",
+      "The theorem composes existing decoded and production-derived predicates; it still does not prove arbitrary raw SCALE/bincode/JSON parser refinement.",
+      "The theorem does not prove external-chain proof soundness, future PQ bridge receipt soundness, bridge payload-hash or DA-root cryptographic security, sidecar retention, or complete native-node equivalence.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -410,7 +408,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 53,
+      "completion_percent": 54,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -419,7 +417,7 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, and raw-projected replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, and composed authorized-amount/fresh-replay/projected-replay theorems",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys"
       ],
       "missing_work": [
