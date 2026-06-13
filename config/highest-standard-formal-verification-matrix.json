@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 62.06,
+  "overall_completion_percent": 62.63,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,28 +29,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added `Hegemon.Transaction.SpendAuthorization` as an explicit spend-authorization relation. The theorems prove that authorized active inputs reconstruct note commitments, derive spend-authority public keys from spend secrets, derive the public nullifier, and verify Merkle membership, and that accepted proof wrappers imply this relation under a named `SpendAuthorizationSoundnessAssumption`. The slice is proof-only and non-production-eligible until deployed AIR/SmallWood soundness is mechanized or parameterized at the verifier boundary.",
-    "lean_module": "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+    "summary": "Added `Hegemon.Transaction.AcceptedTransactionSoundness` as the combined accepted-transaction soundness boundary. It proves that accepted proof wrappers imply one abstract transaction relation containing statement-surface facts, balance validity, per-asset delta consequences, public input shape validity, and active spend-authorization facts under explicit balance and spend proof-system soundness assumptions. The slice is proof-only and non-production-eligible until deployed AIR/SmallWood soundness is discharged.",
+    "lean_module": "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
     "top_level_theorems": [
-      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_facts",
-      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_spend_authority",
-      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_nullifier",
-      "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_membership",
-      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts",
-      "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
-      "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts"
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_transaction_relation",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_statement_surface",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_native_delta",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_no_stablecoin_non_native_delta_zero",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_selected_delta",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts"
     ],
     "validation": {
       "formal_core": "passed",
-      "claims": 88,
-      "named_lean_theorems": 1108,
+      "claims": 89,
+      "named_lean_theorems": 1116,
       "production_eligible_claims": 84,
-      "falsification_cases": 369,
+      "falsification_cases": 371,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The accepted-wrapper lift is conditional on `SpendAuthorizationSoundnessAssumption`; deployed STARK/AIR and SmallWood soundness are not yet mechanized.",
-      "The digest/commitment/nullifier/key functions are executable abstract models; this does not prove hash implementation equivalence, PRF security, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
+      "The accepted-transaction relation is conditional on `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption`; deployed STARK/AIR and SmallWood soundness are not yet mechanized.",
+      "This packages abstract transaction consequences but does not prove verifier implementation correctness, witness extraction, hash implementation equivalence, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
     ]
   },
   "properties": [
@@ -99,13 +100,14 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 40,
+      "completion_percent": 42,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
         "statement-hash and proof-statement binding vectors",
-        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary"
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -133,7 +135,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 75,
+      "completion_percent": 76,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -143,6 +145,7 @@
         "validBalance_stablecoin_non_selected_non_native_delta_zero theorem",
         "validBalance_per_asset_transaction_conservation theorem",
         "AcceptedProofArtifact conditional accepted-wrapper conservation theorems",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean accepted relation packages per-asset delta consequences",
         "public input shape and binding gates",
         "native block artifact binding admission"
       ],
@@ -175,13 +178,14 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 75,
+      "completion_percent": 76,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean accepted statement-surface theorem",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean conditional accepted-proof artifact theorems",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted wrapper statement-surface facts into the accepted transaction relation",
         "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
       ],
       "missing_work": [
@@ -194,7 +198,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 47,
+      "completion_percent": 50,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -202,13 +206,14 @@
         "recursive-block admission gates",
         "AcceptedProofArtifact names the proof-system balance-soundness assumption used to lift balance facts",
         "SpendAuthorization names the proof-system authorization-soundness assumption used to lift no-theft facts",
+        "AcceptedTransactionSoundness packages balance and spend assumptions into one accepted transaction relation",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction of it.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
-        "Prove artifact acceptance implies the abstract ledger relation."
+        "Discharge the accepted-transaction soundness assumptions at the deployed verifier boundary."
       ],
       "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
     },

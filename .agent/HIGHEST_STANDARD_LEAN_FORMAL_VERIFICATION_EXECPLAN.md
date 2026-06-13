@@ -29,6 +29,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 07:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 87 claims, 1093 named Lean theorems, 84 production-eligible claims, 367 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 07:30Z) Added `Hegemon.Transaction.SpendAuthorization`, an explicit active-input authorization relation covering note commitment reconstruction, spend-authority derivation, nullifier derivation, Merkle membership, public slot authorization, and accepted-wrapper lift under `SpendAuthorizationSoundnessAssumption`. Current tracked completion is 62.06%.
 - [x] (2026-06-13 07:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 88 claims, 1108 named Lean theorems, 84 production-eligible claims, 369 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 07:50Z) Added `Hegemon.Transaction.AcceptedTransactionSoundness`, combining accepted proof-wrapper surface, balance facts, public-input shape validity, per-asset delta consequences, and active-input authorization facts into one accepted-transaction relation under explicit balance and spend soundness assumptions. Current tracked completion is 62.63%.
+- [x] (2026-06-13 07:50Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 89 claims, 1116 named Lean theorems, 84 production-eligible claims, 371 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -76,6 +78,8 @@ The latest theorem slice packages those balance helpers into `validBalance_per_a
 The privacy theorem slice adds `formal/lean/Hegemon/Privacy/Observer.lean`. It defines the public observer view for shielded transactions as public inputs, ciphertext bytes, parsed ciphertext summaries, block height, and action index, and proves that private witnesses and prover randomness do not affect that view. This makes the privacy target more honest by mechanizing the allowed-leakage boundary before any simulator-based ZK or ciphertext-indistinguishability claim. It raises the tracked baseline to 61.61%; proof-system privacy, ML-KEM/AEAD confidentiality, wallet metadata hygiene, timing privacy, network privacy, and complete wallet/native-node refinement remain open.
 
 The spend-authorization theorem slice adds `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`. It defines an explicit active-input authorization relation: the private witness must reconstruct the note commitment, derive the spend-authority public key from the spend secret, derive the public nullifier, and verify Merkle membership under the public root. The accepted-wrapper lift is intentionally conditional on `SpendAuthorizationSoundnessAssumption`, so the branch now has an honest Lean boundary for no-theft reasoning without claiming deployed STARK/AIR or SmallWood soundness. This raises the tracked baseline to 62.06%; discharging or production-binding that soundness assumption remains one of the central blockers.
+
+The accepted-transaction soundness slice adds `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`. It packages proof-wrapper admission, accepted statement surface, valid balance facts, public input shape validity, per-asset delta consequences, and active-input authorization facts into a single relation that downstream no-counterfeiting and no-theft theorems can target. The relation is deliberately conditional on `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption`; it does not yet prove deployed STARK/AIR soundness, SmallWood soundness, verifier correctness, witness extraction, hash implementation equivalence, proof privacy, note encryption correctness, or complete Rust/native refinement. This raises the tracked baseline to 62.63%, with the next hard gap being to discharge the accepted-transaction soundness assumptions at the deployed verifier boundary.
 
 ## Context and Orientation
 
@@ -167,6 +171,14 @@ The latest full formal-core pass after the spend-authorization boundary slice re
     named_lean_theorems=1108
     production_eligible_claims=84
     falsification_cases=369
+    implementation_bindings=177
+
+The latest full formal-core pass after the accepted-transaction soundness boundary slice reported:
+
+    claims=89
+    named_lean_theorems=1116
+    production_eligible_claims=84
+    falsification_cases=371
     implementation_bindings=177
 
 ## Interfaces and Dependencies

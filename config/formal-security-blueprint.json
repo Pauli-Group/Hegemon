@@ -461,6 +461,56 @@
       "scope_boundary": "This node proves the executable spend-authorization relation and its accepted-wrapper assumption boundary only. It uses abstract digest arithmetic and does not prove Poseidon2/BLAKE3 implementation equivalence, hash collision resistance, nullifier PRF security, note commitment hiding/binding, deployed STARK/AIR or SmallWood proof-system soundness, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
     },
     {
+      "id": "formal.transaction-accepted-soundness-boundary",
+      "claim_id": "formal.transaction-accepted-soundness-boundary",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean accepted-transaction boundary, accepted proof-wrapper verification implies one abstract transaction relation containing statement-surface facts, valid balance slots and per-asset delta facts, public input shape validity, and active spend authorization facts, but only under explicit balance and spend proof-system soundness assumptions.",
+      "informal_argument": "`Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_transaction_relation` combines accepted proof-wrapper admission with `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption`. The relation exposes accepted wrapper statement-surface facts, balance slot validity, public input shape validity, and input slot authorization. Companion theorems lift native and stablecoin per-asset deltas plus active-input spend facts out of that relation. This is the single Lean theorem boundary that future deployed STARK/AIR or SmallWood soundness work must discharge.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "formal.transaction-proof-wrapper-admission",
+        "formal.transaction-spend-authorization-boundary",
+        "formal.transaction-statement-hash-binding"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "DESIGN.md",
+        "METHODS.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a non-production accepted-transaction soundness boundary. It is deliberately assumption-bearing and does not certify deployed proof-system soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-accepted-transaction-soundness-boundary-theorem",
+          "description": "Removing or weakening the accepted-transaction soundness boundary theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-accepted-transaction-soundness-boundary-gate",
+          "description": "The release formal-core wrapper must include the accepted-transaction soundness module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves the abstract accepted-transaction relation and its assumption boundary only. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, cryptographic hash security, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
+    },
+    {
       "id": "formal.transaction-statement-hash-binding",
       "claim_id": "formal.transaction-statement-hash-binding",
       "kind": "target_claim",

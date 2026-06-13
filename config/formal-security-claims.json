@@ -352,6 +352,52 @@
       ]
     },
     {
+      "id": "formal.transaction-accepted-soundness-boundary",
+      "component": "accepted transaction proof-system soundness boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, and active-input witness facts into one abstract relation under explicit balance and spend proof-system soundness assumptions.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_transaction_relation",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_statement_surface",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_native_delta",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_no_stablecoin_non_native_delta_zero",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_selected_delta",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_stablecoin_non_selected_non_native_delta_zero",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_head_active_input_facts",
+        "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_head_active_input_facts"
+      ],
+      "assumptions": [
+        "The theorem depends on `BalanceSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled `validBalance` relation for the exact balance witness and slots.",
+        "The theorem depends on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled active-input spend-authorization relation for the exact public input shape and Merkle root.",
+        "The theorem packages the abstract accepted transaction relation. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier cryptographic security, or complete Rust/native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "accepted-transaction-soundness-assumptions-not-discharged",
+          "description": "The accepted-transaction relation is proved only under explicit balance and spend soundness assumptions; the deployed verifier-to-relation theorem remains open.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.transaction-statement-hash-binding",
       "component": "transaction statement-hash byte binding",
       "claim_class": "lean_theorem",
