@@ -300,6 +300,65 @@ theorem parsed_chain_ciphertext_summaries_have_chain_format
               | inr inRest =>
                   exact ih parsedRest parsedSummary inRest
 
+theorem parsed_chain_ciphertext_summary_at_rank
+    {wires : List (List Byte)}
+    {summaries : List NoteCiphertextSummary}
+    {rank : Nat}
+    {wire : List Byte}
+    (parsed : parsedChainCiphertextSummaries wires = some summaries)
+    (wireAt : wires[rank]? = some wire) :
+    ∃ summary,
+      summaries[rank]? = some summary
+        ∧ parseChainNoteCiphertext wire = some summary
+        ∧ summaryHasChainCiphertextFormat summary := by
+  induction wires generalizing summaries rank with
+  | nil =>
+      simp at wireAt
+  | cons wireHead rest ih =>
+      cases rank with
+      | zero =>
+          unfold parsedChainCiphertextSummaries at parsed
+          cases parsedWire : parseChainNoteCiphertext wireHead with
+          | none =>
+              simp [parsedWire] at parsed
+          | some summary =>
+              simp [parsedWire] at parsed
+              cases parsedRest : parsedChainCiphertextSummaries rest with
+              | none =>
+                  simp [parsedRest] at parsed
+              | some restSummaries =>
+                  simp [parsedRest] at parsed
+                  cases parsed
+                  cases wireAt
+                  exact
+                    ⟨summary,
+                      by simp,
+                      parsedWire,
+                      parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
+                        parsedWire⟩
+      | succ rankTail =>
+          unfold parsedChainCiphertextSummaries at parsed
+          cases parsedWire : parseChainNoteCiphertext wireHead with
+          | none =>
+              simp [parsedWire] at parsed
+          | some summaryHead =>
+              simp [parsedWire] at parsed
+              cases parsedRest : parsedChainCiphertextSummaries rest with
+              | none =>
+                  simp [parsedRest] at parsed
+              | some restSummaries =>
+                  simp [parsedRest] at parsed
+                  cases parsed
+                  have tailWireAt : rest[rankTail]? = some wire := by
+                    simpa using wireAt
+                  rcases ih parsedRest tailWireAt with
+                    ⟨summary, summaryAt, parsedSummary, format⟩
+                  exact
+                    ⟨summary,
+                      by simpa using summaryAt,
+                      parsedSummary,
+                      format⟩
+
 theorem observer_view_summaries_have_chain_format
     {world : ShieldedTransactionWorld}
     (parsed : summariesMatchChainWire world) :
@@ -321,6 +380,30 @@ theorem valid_observer_chain_surface_ciphertext_count
     (parsed_chain_ciphertext_summaries_length
       valid.right.left).trans
       valid.right.right
+
+theorem valid_observer_chain_surface_ciphertext_at_rank
+    {world : ShieldedTransactionWorld}
+    {rank : Nat}
+    (valid : validObserverChainSurface world)
+    (rankLt : rank < world.ciphertextBytes.length) :
+    ∃ wire summary,
+      world.ciphertextBytes[rank]? = some wire
+        ∧ world.ciphertextSummaries[rank]? = some summary
+        ∧ parseChainNoteCiphertext wire = some summary
+        ∧ summaryHasChainCiphertextFormat summary := by
+  let wire := world.ciphertextBytes[rank]
+  have wireAt :
+      world.ciphertextBytes[rank]? = some wire := by
+    exact
+      List.getElem?_eq_getElem
+        (l := world.ciphertextBytes)
+        rankLt
+  rcases
+      parsed_chain_ciphertext_summary_at_rank
+        valid.right.left
+        wireAt with
+    ⟨summary, summaryAt, parsedSummary, format⟩
+  exact ⟨wire, summary, wireAt, summaryAt, parsedSummary, format⟩
 
 theorem same_public_inputs_active_output_count
     {left right : ShieldedTransactionWorld}
