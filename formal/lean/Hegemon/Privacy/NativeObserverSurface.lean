@@ -105,6 +105,96 @@ theorem native_tx_leaf_output_slot_bound_to_observer_surface
       observerFacts.left,
       observerFacts.right⟩
 
+theorem native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape) :
+    world.ciphertextBytes.length ≠ 0
+      ∧ world.ciphertextSummaries.length ≠ 0
+      ∧ summariesHaveChainCiphertextFormat world.ciphertextSummaries
+      ∧ OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        1
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        1
+        publicCommitment
+        publicCiphertextHash
+      ∧ TxLeafActionBindingFacts input := by
+  have activeCountNonzero :
+      activeOutputCount shape ≠ 0 :=
+    output_slot_active_flag_count_nonzero slot
+  have observerFacts :=
+    native_tx_leaf_output_slot_bound_to_observer_surface
+      bindingAccepted
+      surface
+      slot
+      observerValid
+      shapeEq
+  have ciphertextBytesCount :
+      world.ciphertextBytes.length = activeOutputCount shape := by
+    have count := observerValid.right.right
+    rw [shapeEq] at count
+    exact count
+  have ciphertextBytesNonzero :
+      world.ciphertextBytes.length ≠ 0 := by
+    rw [ciphertextBytesCount]
+    exact activeCountNonzero
+  have ciphertextSummariesNonzero :
+      world.ciphertextSummaries.length ≠ 0 := by
+    rw [observerFacts.right.right.right.right.right]
+    exact activeCountNonzero
+  exact
+    ⟨ciphertextBytesNonzero,
+      ciphertextSummariesNonzero,
+      observerFacts.right.right.right.right.left,
+      observerFacts.right.left,
+      observerFacts.right.right.left,
+      observerFacts.right.right.right.left⟩
+
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

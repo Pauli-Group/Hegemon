@@ -64,6 +64,53 @@ def activeFlagCount : List Nat -> Nat
 def activeOutputCount (shape : PublicInputShape) : Nat :=
   activeFlagCount shape.outputFlags
 
+theorem output_slot_active_flag_count_nonzero
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (slot :
+      OutputSlotAt
+        flags
+        commitments
+        ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash) :
+    activeFlagCount flags ≠ 0 := by
+  induction flags generalizing commitments ciphertextHashes index with
+  | nil =>
+      cases commitments <;> cases ciphertextHashes <;> cases index <;>
+        simp [OutputSlotAt] at slot
+  | cons flag rest ih =>
+      cases commitments with
+      | nil =>
+          cases ciphertextHashes <;> cases index <;>
+            simp [OutputSlotAt] at slot
+      | cons commitment commitmentsTail =>
+          cases ciphertextHashes with
+          | nil =>
+              cases index <;> simp [OutputSlotAt] at slot
+          | cons ciphertextHash ciphertextHashesTail =>
+              cases index with
+              | zero =>
+                  have active : flag = 1 := by
+                    exact slot.left.symm
+                  simp [activeFlagCount, active]
+              | succ indexTail =>
+                  have tailNonzero :
+                      activeFlagCount rest ≠ 0 :=
+                    ih
+                      (commitments := commitmentsTail)
+                      (ciphertextHashes := ciphertextHashesTail)
+                      (index := indexTail)
+                      slot
+                  unfold activeFlagCount
+                  by_cases active : flag = 1
+                  · simp [active]
+                  · simp [active, tailNonzero]
+
 def validObserverChainSurface
     (world : ShieldedTransactionWorld) : Prop :=
   validPublicInputShape world.publicInputs = true

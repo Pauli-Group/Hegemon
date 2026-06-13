@@ -49,6 +49,13 @@ structure CanonicalDeployedVerifierBoundaryFacts
     StatementHash.statementPreimage statementFields = some statementBytes
   bindingMessage :
     ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
   vectorBinding :
     shape.nullifiers = statementFields.nullifierSeeds
       ∧ shape.commitments = statementFields.commitmentSeeds
@@ -157,6 +164,8 @@ theorem deployed_soundness_canonical_surface_implies_boundary_facts
     canonical_statement_surface_statement_length surface
   statementPreimage := surface.statementPreimage
   bindingMessage := surface.bindingMessage
+  coreStatementBinding :=
+    canonical_statement_surface_core_binding surface
   vectorBinding :=
     canonical_statement_surface_vectors_bound surface
   outputVectorBinding :=
@@ -201,6 +210,43 @@ theorem canonical_boundary_facts_expose_spend_and_balance
   ⟨facts.deployedRelationFacts.balanceSlotsEq,
     facts.deployedRelationFacts.validBalanceEq,
     facts.deployedRelationFacts.spendAuthorized⟩
+
+theorem canonical_boundary_facts_core_statement_binding
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot :=
+  facts.coreStatementBinding
 
 theorem deployed_soundness_canonical_surface_exposes_spend_and_balance
     {wrapper : ProofWrapperInput}

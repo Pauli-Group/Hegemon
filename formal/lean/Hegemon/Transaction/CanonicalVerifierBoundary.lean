@@ -112,6 +112,77 @@ structure CanonicalTxStatementSurface
   bindingStablecoinPolicyVersion :
     bindingFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
 
+structure CanonicalStatementCoreBinding
+    (shape : PublicInputShape)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (merkleRoot : Digest) : Prop where
+  relationRoot : merkleRoot = bound.merkleRoot
+  statementRoot : statementFields.merkleRootSeed = bound.merkleRoot
+  bindingAnchor : bindingFields.anchorSeed = bound.merkleRoot
+  statementFee : statementFields.fee = bound.fee
+  bindingFee : bindingFields.fee = bound.fee
+  shapeBalanceSlotAssets : shape.balanceSlotAssets = bound.balanceSlotAssets
+  bindingBalanceSlotAssets :
+    bindingFields.balanceSlotAssets = bound.balanceSlotAssets
+  balanceSlotAssetsCount :
+    bound.balanceSlotAssets.length = PublicInputs.balanceSlotCount
+  shapeValueBalanceSign : shape.valueBalanceSign = bound.valueBalanceSign
+  statementValueBalanceSign :
+    statementFields.valueBalanceSign = bound.valueBalanceSign
+  statementValueBalanceMagnitude :
+    statementFields.valueBalanceMagnitude = bound.valueBalanceMagnitude
+  bindingValueBalance :
+    PublicInputBinding.signedMagnitudeMatches
+      bindingFields.valueBalance
+      bound.valueBalanceSign
+      bound.valueBalanceMagnitude = true
+  shapeStablecoinEnabled : shape.stablecoinEnabled = bound.stablecoinEnabled
+  shapeStablecoinAsset : shape.stablecoinAsset = bound.stablecoinAsset
+  shapeStablecoinIssuanceSign :
+    shape.stablecoinIssuanceSign = bound.stablecoinIssuanceSign
+  statementStablecoinEnabled :
+    statementFields.stablecoinEnabled = bound.stablecoinEnabled
+  statementStablecoinAsset :
+    statementFields.stablecoinAsset = bound.stablecoinAsset
+  statementStablecoinPolicyHash :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  statementStablecoinOracleCommitment :
+    statementFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  statementStablecoinAttestationCommitment :
+    statementFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
+  statementStablecoinPolicyVersion :
+    statementFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
+  statementStablecoinIssuanceSign :
+    statementFields.stablecoinIssuanceSign = bound.stablecoinIssuanceSign
+  statementStablecoinIssuanceMagnitude :
+    statementFields.stablecoinIssuanceMagnitude =
+      bound.stablecoinIssuanceMagnitude
+  bindingStablecoinEnabled :
+    stablecoinEnabledFlagMatches
+      bound.stablecoinEnabled
+      bindingFields.stablecoinEnabled
+  bindingStablecoinAsset :
+    bindingFields.stablecoinAsset = bound.stablecoinAsset
+  bindingStablecoinPolicyHash :
+    bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  bindingStablecoinOracleCommitment :
+    bindingFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  bindingStablecoinAttestationCommitment :
+    bindingFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
+  bindingStablecoinIssuanceDelta :
+    PublicInputBinding.signedMagnitudeMatches
+      bindingFields.stablecoinIssuanceDelta
+      bound.stablecoinIssuanceSign
+      bound.stablecoinIssuanceMagnitude = true
+  bindingStablecoinPolicyVersion :
+    bindingFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
+
 structure DeployedTxRelationFacts
     (shape : PublicInputShape)
     (merkleRoot : Digest)
@@ -285,6 +356,71 @@ theorem canonical_statement_surface_public_shape_valid
         merkleRoot) :
     validPublicInputShape shape = true :=
   surface.publicShape
+
+theorem canonical_statement_surface_core_binding
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot where
+  relationRoot := surface.relationMerkleRoot
+  statementRoot := surface.statementMerkleRoot
+  bindingAnchor := surface.bindingAnchor
+  statementFee := surface.statementFee
+  bindingFee := surface.bindingFee
+  shapeBalanceSlotAssets := surface.shapeBalanceSlotAssets
+  bindingBalanceSlotAssets := surface.bindingBalanceSlotAssets
+  balanceSlotAssetsCount := surface.statementBalanceSlotAssetsCount
+  shapeValueBalanceSign := surface.shapeValueBalanceSign
+  statementValueBalanceSign := surface.statementValueBalanceSign
+  statementValueBalanceMagnitude := surface.statementValueBalanceMagnitude
+  bindingValueBalance := surface.bindingValueBalance
+  shapeStablecoinEnabled := surface.shapeStablecoinEnabled
+  shapeStablecoinAsset := surface.shapeStablecoinAsset
+  shapeStablecoinIssuanceSign := surface.shapeStablecoinIssuanceSign
+  statementStablecoinEnabled := surface.statementStablecoinEnabled
+  statementStablecoinAsset := surface.statementStablecoinAsset
+  statementStablecoinPolicyHash := surface.statementStablecoinPolicyHash
+  statementStablecoinOracleCommitment :=
+    surface.statementStablecoinOracleCommitment
+  statementStablecoinAttestationCommitment :=
+    surface.statementStablecoinAttestationCommitment
+  statementStablecoinPolicyVersion := surface.statementStablecoinPolicyVersion
+  statementStablecoinIssuanceSign := surface.statementStablecoinIssuanceSign
+  statementStablecoinIssuanceMagnitude :=
+    surface.statementStablecoinIssuanceMagnitude
+  bindingStablecoinEnabled := surface.bindingStablecoinEnabled
+  bindingStablecoinAsset := surface.bindingStablecoinAsset
+  bindingStablecoinPolicyHash := surface.bindingStablecoinPolicyHash
+  bindingStablecoinOracleCommitment :=
+    surface.bindingStablecoinOracleCommitment
+  bindingStablecoinAttestationCommitment :=
+    surface.bindingStablecoinAttestationCommitment
+  bindingStablecoinIssuanceDelta := surface.bindingStablecoinIssuanceDelta
+  bindingStablecoinPolicyVersion := surface.bindingStablecoinPolicyVersion
 
 theorem canonical_statement_surface_vectors_bound
     {wrapper : ProofWrapperInput}
