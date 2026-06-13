@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.9,
+  "overall_completion_percent": 66.98,
   "last_full_formal_core": {
-    "commit": "working tree after accepted transaction-chain asset-isolation slice",
+    "commit": "working tree after bridge authorized amount and replay safety slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1231,
+    "named_lean_theorems": 1233,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 180
@@ -29,32 +29,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened asset isolation: accepted transaction-chain asset deltas now aggregate the per-transaction authorized deltas, and any nonzero non-native aggregate delta requires at least one selected stablecoin exception.",
+    "summary": "Strengthened bridge mint/replay safety: accepted inbound bridge payloads with an authorized decoded amount and fresh replay import now package authorization facts, payload-hash and amount equality, zero direct native mint delta, one-shot replay import, ledger replay supply equality, and final replay-key uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
-      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
-      "formal/lean/Hegemon/Transaction/Balance.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta_value",
-      "Hegemon.Transaction.AssetIsolation.accepted_transition_delta_authorized",
-      "Hegemon.Transaction.AssetIsolation.accepted_chain_asset_delta_authorized",
-      "Hegemon.Transaction.AssetIsolation.accepted_chain_non_native_no_exception_delta_zero",
-      "Hegemon.Transaction.AssetIsolation.accepted_chain_non_native_nonzero_requires_exception"
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_fresh_replay_safe",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_ledger_replay_safe"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1231,
+      "named_lean_theorems": 1233,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The chain aggregate theorem is over accepted transaction relation objects; complete block/native-node execution, raw action decoding, reorg, startup replay, and proof-system soundness remain open.",
-      "Stablecoin policy/oracle/attestation authorization and live bridge mint exceptions are still separate production-binding targets.",
-      "The theorem does not prove cryptographic hash security, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
+      "The theorem packages decoded bridge payload admission, modeled amount authorization, and modeled fresh replay import; it does not prove live SCALE decoder correctness or raw-byte native-node import equivalence.",
+      "External-chain proof soundness, PQ-clean receipt verification, bridge payload-hash cryptographic security, and future bridge mint payload grammar remain separate targets.",
+      "The proof is performance-neutral because it adds Lean theorems and metadata only; release runtime still keeps inbound bridge receipt acceptance fail-closed unless the configured verifier admits it."
     ]
   },
   "properties": [
@@ -365,7 +362,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 49,
+      "completion_percent": 51,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -374,7 +371,7 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block and ledger replay, zero direct native mint delta for current state-delta-free inbound actions, and decoded mint amount equality under payload-hash binding",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block and ledger replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, and a composed authorized-amount/fresh-replay/ledger-supply theorem",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys"
       ],
       "missing_work": [
