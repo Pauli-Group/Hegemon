@@ -25,6 +25,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 06:14Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1081 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 06:51Z) Added theorem lifts for per-asset conservation, accepted proof-artifact balance soundness boundaries, accepted wrapper statement-surface facts, and accepted-chain startup/replay equivalence. Current tracked completion is 61.32%.
 - [x] (2026-06-13 06:51Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1088 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 07:10Z) Added `Hegemon.Privacy.Observer`, an explicit shielded-transaction observer/leakage boundary proving that private witnesses and prover randomness are not projected into the observer view. Current tracked completion is 61.61%.
+- [x] (2026-06-13 07:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 87 claims, 1093 named Lean theorems, 84 production-eligible claims, 367 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -68,6 +70,8 @@ The first theorem slice adds `formal/lean/Hegemon/Native/AcceptedChain.lean`. It
 The next theorem slice strengthens `formal/lean/Hegemon/Transaction/Balance.lean`. It proves that valid non-stablecoin balances have zero delta for every non-native asset, that valid stablecoin balances give the selected stablecoin asset exactly the authorized issuance delta, and that every other non-native asset remains zero. This raises the tracked baseline to 60.57% while leaving proof-system soundness and public-input/proof-artifact lifting open.
 
 The latest theorem slice packages those balance helpers into `validBalance_per_asset_transaction_conservation`, adds `formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean` to conditionally lift balance facts to accepted proof wrappers under an explicit `BalanceSoundnessAssumption`, exposes accepted proof-wrapper statement-surface facts in `ProofWrapperAdmission`, and packages accepted native replay-chain supply/nullifier facts as `accepted_native_replay_chain_startup_equivalence`. This raises the tracked baseline to 61.32% while still leaving the deployed STARK/AIR soundness theorem, broader accepted-artifact field lift, complete native-node refinement, and privacy/confidentiality games open.
+
+The privacy theorem slice adds `formal/lean/Hegemon/Privacy/Observer.lean`. It defines the public observer view for shielded transactions as public inputs, ciphertext bytes, parsed ciphertext summaries, block height, and action index, and proves that private witnesses and prover randomness do not affect that view. This makes the privacy target more honest by mechanizing the allowed-leakage boundary before any simulator-based ZK or ciphertext-indistinguishability claim. It raises the tracked baseline to 61.61%; proof-system privacy, ML-KEM/AEAD confidentiality, wallet metadata hygiene, timing privacy, network privacy, and complete wallet/native-node refinement remain open.
 
 ## Context and Orientation
 
@@ -143,6 +147,14 @@ The last full formal-core pass at that baseline reported:
     named_lean_theorems=1069
     production_eligible_claims=84
     falsification_cases=365
+    implementation_bindings=177
+
+The latest full formal-core pass after the privacy observer slice reported:
+
+    claims=87
+    named_lean_theorems=1093
+    production_eligible_claims=84
+    falsification_cases=367
     implementation_bindings=177
 
 ## Interfaces and Dependencies

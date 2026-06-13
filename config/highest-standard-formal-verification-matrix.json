@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 61.32,
+  "overall_completion_percent": 61.61,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,28 +29,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added transaction and native theorem lifts: `validBalance_per_asset_transaction_conservation` packages the per-asset conservation/no-transmutation boundary; `AcceptedProofArtifact` conditionally lifts balance facts to accepted proof wrappers under an explicit proof-system balance-soundness assumption; `proofWrapperAccepts_implies_statement_surface` exposes accepted wrapper statement facts; and `accepted_native_replay_chain_startup_equivalence` packages accepted-chain replayed supply, nullifier preconditions, and global nullifier uniqueness. The slice has no runtime cost.",
-    "lean_module": "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
+    "summary": "Added `Hegemon.Privacy.Observer` as an explicit shielded-transaction observer/leakage model. The theorems prove that changing private witnesses or prover randomness does not change the observer view, and that equal public inputs, ciphertext wire observations, and placement imply equal allowed leakage. The slice is proof-only and non-production-eligible; simulator-based ZK, ciphertext confidentiality, wallet metadata, and timing/network privacy remain open assumptions/targets.",
+    "lean_module": "formal/lean/Hegemon/Privacy/Observer.lean",
     "top_level_theorems": [
-      "Hegemon.Transaction.validBalance_per_asset_transaction_conservation",
-      "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface",
-      "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_native_delta",
-      "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_no_stablecoin_non_native_delta_zero",
-      "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_selected_delta",
-      "Hegemon.Transaction.AcceptedProofArtifact.accepted_proof_artifact_stablecoin_non_selected_non_native_delta_zero",
-      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_startup_equivalence"
+      "Hegemon.Privacy.Observer.observer_view_ignores_private_witness",
+      "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
+      "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
+      "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
+      "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq"
     ],
     "validation": {
       "formal_core": "passed",
-      "claims": 86,
-      "named_lean_theorems": 1088,
+      "claims": 87,
+      "named_lean_theorems": 1093,
       "production_eligible_claims": 84,
-      "falsification_cases": 365,
+      "falsification_cases": 367,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "AcceptedProofArtifact balance lifts are conditional on an explicit proof-system balance-soundness assumption; they do not prove the deployed STARK/AIR soundness theorem.",
-      "Does not prove note commitment hashing, Merkle hash-function security, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
+      "The observer model is an extensional leakage boundary, not a simulator-based zero-knowledge proof.",
+      "Does not prove ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or complete Rust refinement."
     ]
   },
   "properties": [
@@ -214,15 +212,15 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 25,
+      "completion_percent": 28,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
+        "formal/lean/Hegemon/Privacy/Observer.lean observer/leakage boundary theorems",
         "note ciphertext wire grammar vectors",
         "public/private field separation in transaction statement docs"
       ],
       "missing_work": [
-        "Define a formal observer view and allowed leakage model.",
         "State ZK/privacy assumptions for the proof system and note encryption.",
         "Add unlinkability tests for wallet metadata, ciphertext format, proof wrappers, and sidecars.",
         "Prove or parameterize simulator-based zero-knowledge."
@@ -232,10 +230,11 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 42,
+      "completion_percent": 43,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "formal/lean/Hegemon/Privacy/Observer.lean includes ciphertext bytes and parsed summaries in observer leakage",
         "wallet note ciphertext wire vector gate",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates"
       ],
