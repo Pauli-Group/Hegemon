@@ -15,9 +15,10 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 04:15Z) Started four read-only audit agents covering ledger invariants, proof-system boundaries, privacy/DA/bridge properties, and node/network/release refinement.
 - [x] (2026-06-13 04:16Z) Added the first checked-in theorem matrix with weighted completion tracking. Initial highest-standard completion is 44.35%.
 - [x] (2026-06-13 04:30Z) Integrated all four agent audit results into the theorem matrix. Current highest-standard completion is 59.46%.
-- [ ] Promote existing supply and nullifier fragments into named top-level accepted-chain theorem targets.
+- [x] (2026-06-13 05:06Z) Promoted supply and nullifier replay fragments into `Hegemon.Native.AcceptedChain` theorem targets. Current tracked completion is 60.00%.
+- [x] (2026-06-13 05:18Z) Ran `bash scripts/check_formal_core.sh` for the `AcceptedChain` theorem slice; formal-core passed with 86 claims, 1074 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
-- [ ] Run `bash scripts/check_formal_core.sh` after each theorem slice and deploy validated heads to `hegemon-dev` for mining/transaction smoke.
+- [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
 ## Surprises & Discoveries
 
@@ -32,6 +33,9 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 
 - Observation: The generated claim and blueprint metadata still named `codex/formal-equivalence-010`, a deleted historical branch.
   Evidence: `config/formal-security-claims.json` and `config/formal-security-blueprint.json` had `generated_for_branch` set to the old branch until this coordinator update.
+
+- Observation: A local-only action-stream theorem is not enough for chain-wide double-spend safety because two individually accepted blocks can reuse a nullifier unless the modeled chain carries spent state across block boundaries.
+  Evidence: The first accepted-chain draft accepted two copies of `validReplay`; the finalized `Hegemon.Native.AcceptedChain.validateNativeReplayChain` now threads `spentNullifiers` and rejects both stale spent-state and cross-block duplicate-nullifier replay.
 
 ## Decision Log
 
@@ -50,6 +54,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 ## Outcomes & Retrospective
 
 The immediate outcome is a concrete target and tracking system: 18 critical formal property families, weighted to 100 total points. The initial conservative completion was 44.35%; after four read-only audits, the branch-local tracked completion is 59.46%. This is not a claim of full formal verification. It means the coordinator now has an evidence-weighted baseline for what is already strong and what still blocks the highest standard.
+
+The first theorem slice adds `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves `accepted_native_replay_chain_no_counterfeiting` and `accepted_native_replay_chain_nullifier_preconditions` over parent-linked native replay chains with carried spent-nullifier state, plus concrete rejection theorems for counterfeit second-block supply, stale spent state, and duplicate cross-block nullifier replay. This raises the tracked baseline to 60.00% while leaving full raw-byte/native-node refinement, explicit `Nodup` nullifier theorem strength, storage crash semantics, proof-system soundness, and cryptographic assumptions open.
 
 ## Context and Orientation
 

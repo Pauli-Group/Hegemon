@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 59.46,
+  "overall_completion_percent": 60.0,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -27,22 +27,43 @@
       "Bridge local replay binding is stronger than production mint safety; external proof soundness and release verifier posture remain limiting."
     ]
   },
+  "last_theorem_slice": {
+    "date": "2026-06-13",
+    "summary": "Added Hegemon.Native.AcceptedChain with parent-linked native replay-chain theorems for checked supply replay and carried spent-nullifier preconditions. The slice has no runtime cost; it composes existing Lean replay predicates and records the theorem names in the formal claim ledger and blueprint.",
+    "lean_module": "formal/lean/Hegemon/Native/AcceptedChain.lean",
+    "top_level_theorems": [
+      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_no_counterfeiting",
+      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifier_preconditions"
+    ],
+    "validation": {
+      "formal_core": "passed",
+      "claims": 86,
+      "named_lean_theorems": 1074,
+      "production_eligible_claims": 84,
+      "falsification_cases": 365,
+      "implementation_bindings": 177
+    },
+    "known_limitations": [
+      "Still depends on production bindings from decoded native state into BlockReplayInput.",
+      "Does not prove SCALE/raw-byte decode correctness, storage crash consistency, proof-system soundness, nullifier derivation security, or full native-node equivalence."
+    ]
+  },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 72,
+      "completion_percent": 75,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
         "consensus/src/reward.rs Lean vector conformance",
         "node/src/native/mod.rs native supply vector conformance",
-        "formal-core supply and supply-chain gates"
+        "formal-core supply and supply-chain gates",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain no-counterfeiting theorem"
       ],
       "missing_work": [
-        "Promote current supply-chain lemmas into one named accepted-native-chain no-counterfeiting theorem.",
-        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the theorem-backed replay transition.",
+        "Bind all native import, mined-block, announced-block, sync, reorg, startup-repair, and replay paths to the theorem-backed accepted-chain transition.",
         "State cryptographic and proof-system assumptions explicitly as theorem parameters."
       ],
       "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
@@ -50,18 +71,19 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 78,
+      "completion_percent": 81,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
         "formal/lean/Hegemon/Native/ActionStateEffect.lean",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
         "native action-state/action-stream vector gates",
-        "pending-action reload and transfer-state admission gates"
+        "pending-action reload and transfer-state admission gates",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried spent-nullifier chain precondition theorem"
       ],
       "missing_work": [
-        "Add a top-level accepted-chain nullifier uniqueness theorem.",
-        "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the same nullifier transition relation.",
+        "Strengthen the accepted-chain nullifier theorem from carried preconditions to an explicit chainNullifiers Nodup statement.",
+        "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the same carried nullifier transition relation.",
         "Add hostile reorg/startup duplicate-nullifier regressions if any import path lacks them."
       ],
       "performance_constraint": "Use existing nullifier set membership checks; avoid extra scans beyond replay planning already required."
@@ -227,16 +249,17 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 82,
+      "completion_percent": 83,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
         "canonical-state/block-index/bridge-replay reload gates",
         "atomic commit manifest and storage durability gates",
-        "implementation bindings in config/formal-security-blueprint.json"
+        "implementation bindings in config/formal-security-blueprint.json",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean parent-linked supply/nullifier chain lift"
       ],
       "missing_work": [
-        "Create one Lean native ledger transition relation and prove replay/refinement lemmas over it.",
+        "Extend the accepted-chain lift into one Lean native ledger transition relation covering commitments, sidecars, bridge replay, and storage reload.",
         "Bind every production import and startup publication path to that transition.",
         "Add reorg/restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
