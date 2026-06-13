@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_for_branch": "codex/formal-blueprint-dag",
+  "generated_for_branch": "codex/formal-equivalence-010",
   "methodology": {
     "name": "hegemon-formal-blueprint-dag-v1",
     "summary": "LeanMarathon-inspired formal-security blueprint: every release claim is a reviewed graph node with implementation bindings, call-order constraints, evidence, dependencies, and cheap falsification cases.",
@@ -6226,7 +6226,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
-        "notes": "Accepted as a bounded implementation-equivalence hardening slice for the native RPC action projection boundary. This does not prove complete SCALE parser implementation correctness or the later block replay semantics."
+        "notes": "Accepted as a bounded conformance/vector-and-wiring hardening slice for the native RPC action projection boundary. This does not prove complete SCALE parser implementation correctness or the later block replay semantics."
       },
       "falsification_cases": [
         {

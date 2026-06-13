@@ -27,7 +27,8 @@ Hegemon's Lean claims should describe the same objects that the native node actu
 - [x] (2026-06-12) Implemented the transaction proof-statement binding slice: Lean theorem evidence, Lean-generated binding-message/chunk-preimage vectors, production `StarkVerifier::compute_binding_hash` conformance, and `transaction_statement_hash_from_parts` conformance in both transaction and consensus paths.
 - [x] (2026-06-12) Removed a SuperNeo receipt statement-hash drift risk by routing canonical/native receipt construction through the shared statement-hash helper and adding a formal-core regression for the shared helper path.
 - [x] (2026-06-12) Re-ran the full formal-core gate after the proof-statement binding slice: 86 theorem-backed claims, 1069 named Lean theorem declarations, 84 production-eligible claims, 86 blueprint nodes, 319 dependency edges, 365 falsification cases, 177 implementation bindings, 132 order constraints / 352 order edges, 147 result obligations, and 121 dominance constraints / 323 dominance edges.
-- [x] (2026-06-12) Folded sidecar audit findings into the branch: formal-core now runs the listed manifest/SuperNeo/consensus regressions, aggregation V5 and block commitment proving use the shared transaction statement-hash helper instead of local serializers, legacy aggregation V4 is release-gated off by default, and Lean statement vectors now check serialized public-input digest preimage bytes.
+- [x] (2026-06-12) Folded sidecar audit findings into the branch: formal-core now runs the listed manifest/SuperNeo/consensus regressions, aggregation V5 and block commitment proving use the shared transaction statement-hash helper instead of local serializers, legacy aggregation V4 is hard-disabled in release code, and Lean statement vectors now check serialized public-input digest preimage bytes.
+- [x] (2026-06-12) Removed the `HEGEMON_AGG_LEGACY_V4` production footgun: the V4 verifier stays fail-closed even when the old environment variable is set, and formal-core runs that regression.
 
 ## Surprises & Discoveries
 
@@ -76,8 +77,8 @@ Hegemon's Lean claims should describe the same objects that the native node actu
 - Decision: Replace SuperNeo's local statement-hash layout with the shared production helper.
   Rationale: Implementation equivalence is stronger when there is one production grammar. The regression keeps future receipt paths from reintroducing a duplicate statement-hash encoder.
   Date/Author: 2026-06-12 / Codex.
-- Decision: Do not extend proof evidence to retired aggregation V4; keep it fail-closed by default.
-  Rationale: V4 is not the fresh-testnet product path and still has a local binding transcript. The release-relevant invariant is that V4 payloads reject unless `HEGEMON_AGG_LEGACY_V4` is explicitly set, so formal-core now runs that default-disable regression.
+- Decision: Do not extend proof evidence to retired aggregation V4; keep it hard-disabled in release code.
+  Rationale: V4 is not the fresh-testnet product path and still has a local binding transcript. The release-relevant invariant is that V4 payloads reject even if an operator sets the old `HEGEMON_AGG_LEGACY_V4` variable, so formal-core now runs both default-disable and env-set rejection regressions.
   Date/Author: 2026-06-12 / Codex.
 
 ## Outcomes & Retrospective

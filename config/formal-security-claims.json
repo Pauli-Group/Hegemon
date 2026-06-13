@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_for_branch": "codex/formal-blueprint-dag",
+  "generated_for_branch": "codex/formal-equivalence-010",
   "claims": [
     {
       "id": "release.pq-binary",

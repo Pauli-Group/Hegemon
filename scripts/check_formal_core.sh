@@ -382,8 +382,9 @@ HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p consensus lean_generated_statement_hash_vectors_match_production -- --nocapture
 cargo test -p consensus tx_validity_ --lib -- --nocapture
-env -u HEGEMON_AGG_LEGACY_V4 \
-  cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
+cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
+HEGEMON_AGG_LEGACY_V4=1 \
+  cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_even_when_env_set --lib -- --nocapture
 
 printf '\n[5/12] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then
