@@ -279,5 +279,45 @@ theorem validBalance_stablecoin_non_selected_non_native_delta_zero
   rw [slotDelta_zeroSelected_preserves_other notStablecoin] at mappedZero
   exact mappedZero
 
+theorem validBalance_per_asset_transaction_conservation
+    {witness : BalanceWitness}
+    (valid : validBalance witness = true) :
+    ∃ slots,
+      balanceSlots witness = some slots
+        ∧ slotDelta nativeAsset slots = nativeExpected witness
+        ∧ ∀ assetId, assetId ≠ nativeAsset ->
+            if witness.stablecoin.enabled then
+              if assetId = witness.stablecoin.assetId then
+                slotDelta assetId slots = witness.stablecoin.issuanceDelta
+              else
+                slotDelta assetId slots = 0
+            else
+              slotDelta assetId slots = 0 := by
+  obtain ⟨slots, slotsEq⟩ := validBalance_has_slots valid
+  refine
+    ⟨slots, slotsEq, validBalance_native_delta slotsEq valid, ?_⟩
+  intro assetId nonNative
+  cases stablecoinEq : witness.stablecoin.enabled
+  · simp
+    exact validBalance_no_stablecoin_non_native_delta_zero
+      slotsEq
+      valid
+      stablecoinEq
+      nonNative
+  · simp
+    by_cases selected : assetId = witness.stablecoin.assetId
+    · simp [selected]
+      exact validBalance_stablecoin_selected_delta
+        slotsEq
+        valid
+        stablecoinEq
+    · simp [selected]
+      exact validBalance_stablecoin_non_selected_non_native_delta_zero
+        slotsEq
+        valid
+        stablecoinEq
+        nonNative
+        selected
+
 end Transaction
 end Hegemon

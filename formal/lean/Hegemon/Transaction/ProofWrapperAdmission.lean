@@ -73,10 +73,42 @@ def evaluateProofWrapperRejection (input : ProofWrapperInput) : Option ProofWrap
 def proofWrapperAccepts (input : ProofWrapperInput) : Bool :=
   evaluateProofWrapperRejection input = none
 
+def acceptedProofWrapperSurface (input : ProofWrapperInput) : Prop :=
+  input.exactConsumption = true
+    ∧ input.canonicalReencode = true
+    ∧ input.backendSupported = true
+    ∧ input.proofBytesPresent = true
+    ∧ input.serializedPublicInputsPresent = true
+    ∧ input.publicInputsValid = true
+    ∧ input.nullifierVectorAgrees = true
+    ∧ input.commitmentVectorAgrees = true
+    ∧ input.balanceSlotsAgree = true
+    ∧ input.verifierAccepts = true
+
 theorem accepts_iff_proof_wrapper_preconditions {input : ProofWrapperInput} :
     proofWrapperAccepts input = true ↔ proofWrapperPreconditions input = true := by
   by_cases h : proofWrapperPreconditions input <;>
     simp [proofWrapperAccepts, evaluateProofWrapperRejection, h]
+
+theorem proofWrapperAccepts_implies_statement_surface {input : ProofWrapperInput}
+    (accepted : proofWrapperAccepts input = true) :
+    acceptedProofWrapperSurface input := by
+  have preconditions :=
+    (accepts_iff_proof_wrapper_preconditions (input := input)).mp accepted
+  simp [proofWrapperPreconditions] at preconditions
+  rcases preconditions with ⟨preconditions, verifierAccepts⟩
+  rcases preconditions with ⟨preconditions, balanceSlotsAgree⟩
+  rcases preconditions with ⟨preconditions, commitmentVectorAgrees⟩
+  rcases preconditions with ⟨preconditions, nullifierVectorAgrees⟩
+  rcases preconditions with ⟨preconditions, publicInputsValid⟩
+  rcases preconditions with ⟨preconditions, serializedPublicInputsPresent⟩
+  rcases preconditions with ⟨preconditions, proofBytesPresent⟩
+  rcases preconditions with ⟨preconditions, backendSupported⟩
+  rcases preconditions with ⟨exactConsumption, canonicalReencode⟩
+  exact
+    ⟨exactConsumption, canonicalReencode, backendSupported, proofBytesPresent,
+      serializedPublicInputsPresent, publicInputsValid, nullifierVectorAgrees,
+      commitmentVectorAgrees, balanceSlotsAgree, verifierAccepts⟩
 
 def validWrapper : ProofWrapperInput :=
   { exactConsumption := true

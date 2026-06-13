@@ -194,6 +194,18 @@ theorem accepted_native_replay_chain_nullifiers_unique
     (by simp : ([] : List Nat).Nodup)
     accepted
 
+theorem accepted_native_replay_chain_startup_equivalence
+    {genesis final : Nat}
+    {blocks : List BlockReplayInput}
+    (accepted : validateNativeReplayChain genesis [] blocks = some final) :
+    expectedNativeSupplyAfter genesis blocks = some final
+      ∧ nativeReplayChainNullifierPreconditions [] blocks = true
+      ∧ (chainNullifiers blocks).Nodup := by
+  exact
+    ⟨accepted_native_replay_chain_no_counterfeiting accepted,
+      accepted_native_replay_chain_nullifier_preconditions accepted,
+      accepted_native_replay_chain_nullifiers_unique accepted⟩
+
 def validNativeReplayChain : List BlockReplayInput :=
   [
     validReplay,
