@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 66.68,
+  "overall_completion_percent": 66.8,
   "last_full_formal_core": {
-    "commit": "working tree after bridge mint amount-boundary slice",
+    "commit": "working tree after accepted ledger/tree replay slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1222,
+    "named_lean_theorems": 1226,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 180
@@ -29,30 +29,31 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened bridge mint/replay safety: accepted inbound bridge payloads now prove zero direct native mint delta under the current state-delta-free production surface, state-delta bridge payloads reject, and a first-class decoded bridge mint-amount surface is authorized only when payload-hash binding and decoded/external amount equality both hold.",
+    "summary": "Strengthened commitment-tree integrity: accepted ledger/tree replay chains now thread a commitment-root cursor through accepted tree transitions while projecting to an accepted ledger replay that preserves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
-      "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean"
+      "formal/lean/Hegemon/Native/AcceptedChain.lean",
+      "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+      "formal/lean/Hegemon/Consensus/TreeTransition.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BridgeMintSafety.bridge_mint_amount_authorized_facts",
-      "Hegemon.Native.BridgeMintSafety.inbound_payload_with_state_delta_rejects",
-      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_direct_mint_delta_zero",
-      "Hegemon.Native.BridgeMintSafety.accepted_inbound_decoded_mint_amount_bound"
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_root_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_ledger_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity_from",
+      "Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1222,
+      "named_lean_theorems": 1226,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The current production inbound bridge action is state-delta-free and therefore cannot directly mint native supply; this does not implement or prove a live bridge-mint payload grammar.",
-      "The decoded mint-amount theorem is a boundary theorem over a first-class amount surface; external-chain proof soundness and payload decoding remain assumptions until a PQ-clean verifier path exists.",
-      "Bridge replay/supply coupling still needs full raw-byte native import, reorg, startup, and sync refinement."
+      "The root cursor theorem is over modeled accepted ledger/tree replay pairs and abstract roots; it does not prove Merkle hash security, note commitment correctness, or production tree mutation implementation equivalence.",
+      "The theorem projects to accepted ledger replay and canonical commitment plans, but raw byte decoding and complete native-node refinement remain open.",
+      "Startup/reorg repair equivalence still needs a complete proof that rebuilt canonical commitment trees match genesis replay under storage durability assumptions."
     ]
   },
   "properties": [
@@ -128,7 +129,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 66,
+      "completion_percent": 68,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -137,10 +138,12 @@
         "native action-plan/action-state/action-stream gates",
         "canonical-state reload gate",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay leaf-cursor equality theorem",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger replay canonical commitment-plan theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger replay canonical commitment-plan theorem",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger/tree replay root-cursor integrity theorem"
       ],
       "missing_work": [
-        "Lift leaf-cursor and canonical commitment-plan replay into a full Merkle-root/tree-content invariant with membership and startup reload equivalence.",
+        "Lift the abstract root-cursor theorem into a full Merkle-root/tree-content invariant with membership.",
+        "Bind the tree replay pair model to complete raw native import/reorg/startup paths.",
         "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
       ],
       "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."
