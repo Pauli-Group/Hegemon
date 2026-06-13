@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 64.04,
+  "overall_completion_percent": 64.55,
   "last_full_formal_core": {
-    "commit": "working tree after wallet/observer ciphertext-format slice",
+    "commit": "working tree after indexed no-theft/canonical verifier slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1143,
+    "named_lean_theorems": 1149,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,31 +29,33 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened the wallet note-ciphertext parser model and privacy observer boundary with generic accepted-summary format facts. The slice proves accepted crypto-format summaries carry the fixed ML-KEM ciphertext length, accepted chain containers and full chain ciphertexts carry the expected chain crypto suite plus fixed ML-KEM length, and observer-visible summaries derived from public chain wire bytes all satisfy that chain format.",
+    "summary": "Strengthened the transaction no-theft and canonical verifier boundary by proving that authorization facts lift to any indexed active input in aligned flag/nullifier/witness vectors, not just the head input. The canonical statement surface now also binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof binding message before deriving accepted transaction facts under the single deployed verifier soundness assumption.",
     "lean_modules": [
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Privacy/Observer.lean"
+      "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len",
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem",
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem",
-      "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format",
-      "Hegemon.Privacy.Observer.observer_view_summaries_have_chain_format"
+      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_tail_authorized",
+      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_active_input_facts_at",
+      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_active_input_facts_at",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_vectors_bound",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_active_input_facts_at"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1143,
+      "named_lean_theorems": 1149,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "This is a parser/observer boundary proof only; it does not prove ML-KEM security, AEAD confidentiality, ciphertext indistinguishability, or wrong-key decryption behavior.",
-      "The theorem does not prove note plaintext-to-commitment binding, note commitment/nullifier derivation, wallet key custody, BLAKE3 ciphertext-hash security, or complete wallet/native equivalence.",
-      "Privacy zero-knowledge and unlinkability remain assumption/game targets; this slice only narrows the public ciphertext format leakage boundary."
+      "This still depends on the explicit `DeployedTxVerifierSoundnessAssumption`; it does not prove deployed STARK/AIR, SmallWood, witness extraction, or verifier implementation correctness.",
+      "The vector-binding theorem is over the Lean canonical statement surface. It does not prove hash collision resistance, BLAKE2/BLAKE3 implementation equivalence, or bincode/postcard implementation correctness.",
+      "The no-theft facts use abstract digest arithmetic for note commitments, spend keys, nullifiers, and Merkle nodes; cryptographic security and full Rust/native-node refinement remain open."
     ]
   },
   "properties": [
@@ -102,15 +104,17 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 44,
+      "completion_percent": 49,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
         "statement-hash and proof-statement binding vectors",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts active-input facts"
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean lifts indexed active-input facts from the accepted transaction relation",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts indexed active-input facts"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -185,7 +189,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -193,7 +197,7 @@
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean accepted statement-surface theorem",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean conditional accepted-proof artifact theorems",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted wrapper statement-surface facts into the accepted transaction relation",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds wrapper admission, public-input binding, statement preimage, proof-binding message, balance-slot assets, and stablecoin fields into one canonical verifier surface",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds wrapper admission, public-input binding, statement preimage, proof-binding message, nullifier/commitment/ciphertext vectors, balance-slot assets, and stablecoin fields into one canonical verifier surface",
         "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
       ],
       "missing_work": [
@@ -206,7 +210,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 53,
+      "completion_percent": 54,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -216,6 +220,7 @@
         "SpendAuthorization names the proof-system authorization-soundness assumption used to lift no-theft facts",
         "AcceptedTransactionSoundness packages balance and spend assumptions into one accepted transaction relation",
         "CanonicalVerifierBoundary collapses balance and spend assumptions into one canonical deployed transaction verifier soundness assumption over the exact statement surface modeled in Lean",
+        "CanonicalVerifierBoundary now binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof-binding message before deriving indexed active-input facts",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [

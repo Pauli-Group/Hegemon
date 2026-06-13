@@ -34,6 +34,10 @@ structure CanonicalTxStatementSurface
   relationMerkleRoot : merkleRoot = bound.merkleRoot
   shapeInputFlags : shape.inputFlags = bound.inputFlags
   shapeOutputFlags : shape.outputFlags = bound.outputFlags
+  shapeNullifiers : shape.nullifiers = statementFields.nullifierSeeds
+  shapeCommitments : shape.commitments = statementFields.commitmentSeeds
+  shapeCiphertextHashes :
+    shape.ciphertextHashes = statementFields.ciphertextHashSeeds
   shapeBalanceSlotAssets : shape.balanceSlotAssets = bound.balanceSlotAssets
   shapeValueBalanceSign : shape.valueBalanceSign = bound.valueBalanceSign
   shapeStablecoinEnabled : shape.stablecoinEnabled = bound.stablecoinEnabled
@@ -43,6 +47,12 @@ structure CanonicalTxStatementSurface
   statementPreimage :
     StatementHash.statementPreimage statementFields = some statementBytes
   statementMerkleRoot : statementFields.merkleRootSeed = bound.merkleRoot
+  bindingNullifiers :
+    bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+  bindingCommitments :
+    bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+  bindingCiphertextHashes :
+    bindingFields.ciphertextHashSeeds = statementFields.ciphertextHashSeeds
   statementFee : statementFields.fee = bound.fee
   statementValueBalanceSign :
     statementFields.valueBalanceSign = bound.valueBalanceSign
@@ -249,6 +259,43 @@ theorem canonical_statement_surface_public_shape_valid
         merkleRoot) :
     validPublicInputShape shape = true :=
   surface.publicShape
+
+theorem canonical_statement_surface_vectors_bound
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    shape.nullifiers = statementFields.nullifierSeeds
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds :=
+  ⟨surface.shapeNullifiers,
+    surface.shapeCommitments,
+    surface.shapeCiphertextHashes,
+    surface.bindingNullifiers,
+    surface.bindingCommitments,
+    surface.bindingCiphertextHashes⟩
 
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
@@ -461,6 +508,68 @@ theorem canonical_statement_implies_head_active_input_facts
     shapeFlags
     shapeNullifiers
     witnessShape
+    active
+
+theorem canonical_statement_implies_active_input_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    InputSpendFacts merkleRoot publicNullifier witness :=
+  accepted_transaction_relation_active_input_facts_at
+    (accepted_wrapper_and_canonical_statement_implies_transaction_relation
+      surface
+      sound)
+    slot
     active
 
 end CanonicalVerifierBoundary

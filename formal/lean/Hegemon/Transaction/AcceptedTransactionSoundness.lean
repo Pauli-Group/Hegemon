@@ -221,6 +221,41 @@ theorem accepted_transaction_relation_head_active_input_facts
   rw [shapeFlags, shapeNullifiers, witnessShape] at slotsAuthorized
   exact authorizeInputSlots_head_active_facts active slotsAuthorized
 
+theorem accepted_transaction_relation_active_input_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (relation :
+      AcceptedTransactionRelation
+        wrapper
+        shape
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    InputSpendFacts merkleRoot publicNullifier witness := by
+  exact
+    authorizeInputSlots_active_input_facts_at
+      slot
+      active
+      relation.right.right.right.right.right
+
 theorem accepted_wrapper_implies_head_active_input_facts
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -251,6 +286,42 @@ theorem accepted_wrapper_implies_head_active_input_facts
       shapeFlags
       shapeNullifiers
       witnessShape
+      active
+
+theorem accepted_wrapper_implies_active_input_facts_at
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1)
+    (accepted : proofWrapperAccepts wrapper = true)
+    (sound :
+      AcceptedTransactionSoundnessAssumption
+        wrapper
+        shape
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    InputSpendFacts merkleRoot publicNullifier witness := by
+  exact
+    accepted_transaction_relation_active_input_facts_at
+      (accepted_wrapper_implies_transaction_relation accepted sound)
+      slot
       active
 
 end AcceptedTransactionSoundness
