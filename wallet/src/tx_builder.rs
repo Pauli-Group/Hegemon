@@ -1060,7 +1060,9 @@ fn build_output(
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
-    use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
+    use superneo_hegemon::{
+        decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
+    };
     use tempfile::tempdir;
 
     use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -1241,17 +1243,41 @@ mod tests {
     #[test]
     fn build_transaction_can_emit_native_tx_leaf_payloads() {
         let (sender, recipient_store, _) = seeded_sender_and_recipient(777);
+        let recipient_fvk = recipient_store.full_viewing_key().unwrap().unwrap();
 
         let recipient = Recipient {
             address: recipient_store.primary_address().unwrap(),
-            value: 100_000_000,
+            value: 160_000_000,
             asset_id: 0,
             memo: MemoPlaintext::new(b"native tx leaf".to_vec()),
         };
         let built = build_transaction(&sender, &[recipient], 0).unwrap();
+        assert_eq!(built.bundle.commitments.len(), 1);
+        assert_eq!(built.outgoing_disclosures.len(), 1);
+        assert_eq!(
+            built.outgoing_disclosures[0].commitment,
+            built.bundle.commitments[0]
+        );
+
+        let decoded_notes = built.bundle.decode_notes().unwrap();
+        assert_eq!(decoded_notes.len(), 1);
+        let recovered = recipient_fvk.decrypt_note(&decoded_notes[0]).unwrap();
+        let recovered_commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        assert_eq!(recovered_commitment, built.bundle.commitments[0]);
+        assert_eq!(
+            felts_to_bytes48(&built.outgoing_disclosures[0].note.commitment()),
+            recovered_commitment
+        );
 
         let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
             .expect("native tx-leaf payload should decode");
+        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
+        verify_native_tx_leaf_artifact_bytes(
+            &decoded.tx,
+            &decoded.receipt,
+            &built.bundle.proof_bytes,
+        )
+        .expect("native tx-leaf payload should verify");
         assert_eq!(
             decoded.receipt.verifier_profile,
             superneo_hegemon::experimental_native_tx_leaf_verifier_profile()

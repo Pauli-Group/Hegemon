@@ -729,8 +729,8 @@
       "id": "formal.wallet-note-ciphertext-wire",
       "claim_id": "formal.wallet-note-ciphertext-wire",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean wallet note-ciphertext wire/decrypt grammar, crypto-format note ciphertexts and chain-format fixed containers are accepted only when their byte fields are exactly consumed, the ML-KEM ciphertext length is fixed to 1568 bytes, chain container padding is zero, chain KEM length uses canonical SCALE compact encoding, accepted parser summaries bind the expected chain suite/KEM fields, byte-bounded accepted chain wires have the fixed production wire length, decrypt admission rejects version, crypto-suite, and diversifier mismatches before crypto, decrypt success implies those metadata fields match and the explicit crypto-authentication predicate is true, and representative truncation, overrun, padding, noncanonical, trailing-byte, metadata-mismatch, wrong-recipient, wrong-key, and malleated-ciphertext cases reject.",
-      "informal_argument": "The Lean theorems `Hegemon.Wallet.NoteCiphertextWire.crypto_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.crypto_truncated_after_kem_rejects`, `Hegemon.Wallet.NoteCiphertextWire.crypto_trailing_byte_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.chain_memo_overrun_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_rejects`, and `Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects` pin representative accept/reject facts over the executable parser grammar. `Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len`, `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem`, and `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem` lift the sample grammar to generic accepted-summary suite/KEM facts. `Hegemon.Wallet.NoteCiphertextWire.bounded_parse_compact_mlkem_consumes_two` and `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded` prove that bounded accepted chain wires consume exactly the fixed chain container, the two canonical compact ML-KEM length bytes, and the ML-KEM ciphertext bytes; the bounded hypothesis is required because the Lean byte model is Nat while production bytes are u8. The Lean decrypt-boundary theorems `Hegemon.Wallet.NoteCiphertextDecrypt.decrypt_admission_rejects_version_mismatch`, `decrypt_admission_rejects_crypto_suite_mismatch`, `decrypt_admission_rejects_diversifier_mismatch`, `wrong_recipient_or_malleated_ciphertext_fails_under_crypto_assumptions`, and `decrypt_success_implies_metadata_matches` prove the wallet decrypt admission ordering and state the wrong-recipient/malleated-byte boundary as an explicit crypto-authentication assumption rather than an in-repo proof of ML-KEM or AEAD security. `gen_note_ciphertext_wire_vectors` emits the representative parser cases with expected wire lengths, and the production wallet test checks those lengths and parser summaries against `synthetic_crypto::note_encryption::NoteCiphertext::from_bytes` and `wallet::NoteCiphertext::from_chain_bytes`, including the fixed valid chain length. Focused Rust regressions also check the no-panic truncated crypto parser, wallet chain parser canonicality rules, synthetic-crypto decrypt rejection for wrong recipient, wrong secret key, version tamper, KEM tamper, note-payload tamper, and memo-payload tamper, and wallet decrypt rejection for metadata mismatches, wrong root key, and KEM/note/memo payload malleation.",
+      "formal_statement": "For the executable Lean wallet note-ciphertext wire/decrypt/plaintext grammar, crypto-format note ciphertexts and chain-format fixed containers are accepted only when their byte fields are exactly consumed, the ML-KEM ciphertext length is fixed to 1568 bytes, chain container padding is zero, chain KEM length uses canonical SCALE compact encoding, accepted parser summaries bind the expected chain suite/KEM fields, byte-bounded accepted chain wires have the fixed production wire length, decrypt admission rejects version, crypto-suite, and diversifier mismatches before crypto, decrypt success implies those metadata fields match and the explicit crypto-authentication predicate is true, decrypted plaintext plus recipient material exports the exact note-data fields whose commitment is the spend-authorization note commitment relation, active public output slots can be tied to that exported plaintext commitment, and representative truncation, overrun, padding, noncanonical, trailing-byte, metadata-mismatch, wrong-recipient, wrong-key, malleated-ciphertext, full-view witness-binding, and native tx-leaf commitment-consistency cases reject or agree as expected.",
+      "informal_argument": "The Lean theorems `Hegemon.Wallet.NoteCiphertextWire.crypto_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.crypto_truncated_after_kem_rejects`, `Hegemon.Wallet.NoteCiphertextWire.crypto_trailing_byte_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts`, `Hegemon.Wallet.NoteCiphertextWire.chain_memo_overrun_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects`, `Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_rejects`, and `Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects` pin representative accept/reject facts over the executable parser grammar. `Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len`, `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem`, and `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem` lift the sample grammar to generic accepted-summary suite/KEM facts. `Hegemon.Wallet.NoteCiphertextWire.bounded_parse_compact_mlkem_consumes_two` and `Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded` prove that bounded accepted chain wires consume exactly the fixed chain container, the two canonical compact ML-KEM length bytes, and the ML-KEM ciphertext bytes; the bounded hypothesis is required because the Lean byte model is Nat while production bytes are u8. The Lean decrypt-boundary theorems `Hegemon.Wallet.NoteCiphertextDecrypt.decrypt_admission_rejects_version_mismatch`, `decrypt_admission_rejects_crypto_suite_mismatch`, `decrypt_admission_rejects_diversifier_mismatch`, `wrong_recipient_or_malleated_ciphertext_fails_under_crypto_assumptions`, and `decrypt_success_implies_metadata_matches` prove the wallet decrypt admission ordering and state the wrong-recipient/malleated-byte boundary as an explicit crypto-authentication assumption rather than an in-repo proof of ML-KEM or AEAD security. The Lean plaintext-binding theorems `Hegemon.Wallet.NotePlaintextCommitment.exported_note_data_replays_plaintext_and_material_fields`, `exported_note_data_commitment_uses_spend_authorization_relation`, `input_witness_from_recovered_reconstructs_note_commitment`, `input_witness_from_exported_plaintext_reconstructs_commitment`, `decrypt_success_plaintext_to_commitment_boundary`, and `active_output_slot_commitment_matches_exported_plaintext` connect decrypted wallet plaintext and recipient material to the same abstract note commitment relation used by spend authorization and public output slots. `gen_note_ciphertext_wire_vectors` emits the representative parser cases with expected wire lengths, and the production wallet test checks those lengths and parser summaries against `synthetic_crypto::note_encryption::NoteCiphertext::from_bytes` and `wallet::NoteCiphertext::from_chain_bytes`, including the fixed valid chain length. Focused Rust regressions also check the no-panic truncated crypto parser, wallet chain parser canonicality rules, synthetic-crypto decrypt rejection for wrong recipient, wrong secret key, version tamper, KEM tamper, note-payload tamper, and memo-payload tamper, wallet decrypt rejection for metadata mismatches, wrong root key, and KEM/note/memo payload malleation, full-view decryption to NoteData/input/output witness commitment equality, and tx-builder equality from recipient-decrypted ciphertext to outgoing disclosure, transaction bundle, decoded native tx-leaf public commitments, and native tx-leaf verification.",
       "depends_on": [
         "release.pq-binary",
         "release.dependency-waivers"
@@ -738,9 +738,13 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
+        "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
         "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
         "crypto/src/note_encryption.rs",
         "wallet/src/notes.rs",
+        "wallet/src/viewing.rs",
+        "wallet/src/tx_builder.rs",
+        "circuits/superneo-hegemon/src/lib.rs",
         "wallet/tests/note_ciphertext_wire_vectors.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -748,9 +752,13 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
+        "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
         "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
         "crypto/src/note_encryption.rs",
         "wallet/src/notes.rs",
+        "wallet/src/viewing.rs",
+        "wallet/src/tx_builder.rs",
+        "circuits/superneo-hegemon/src/lib.rs",
         "wallet/tests/note_ciphertext_wire_vectors.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -759,7 +767,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for wallet note-ciphertext parser grammar and focused Rust fail-closed decrypt regressions. Privacy, note correctness, KEM/AEAD security, and hash security remain outside this node."
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for wallet note-ciphertext parser grammar, focused Rust fail-closed decrypt regressions, plaintext-to-commitment witness binding, and native tx-leaf commitment consistency. Privacy, concrete hash/commitment implementation equivalence, KEM/AEAD security, and complete wallet/native equivalence remain outside this node."
       },
       "falsification_cases": [
         {
@@ -793,12 +801,22 @@
           "gate": "cargo test -p wallet decrypt_rejects --lib -- --nocapture"
         },
         {
+          "id": "wallet-note-plaintext-commitment-binding",
+          "description": "Full-view wallet decryption must export NoteData whose commitment equals the plaintext-derived input/output witness commitment.",
+          "gate": "cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture"
+        },
+        {
+          "id": "wallet-native-tx-leaf-commitment-consistency",
+          "description": "Wallet transaction construction must keep recipient-decrypted note commitments equal to outgoing disclosure commitments, bundle commitments, decoded native tx-leaf commitments, and a verifying native tx-leaf artifact.",
+          "gate": "cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture"
+        },
+        {
           "id": "formal-core-note-ciphertext-wire-gate",
           "description": "The release formal-core wrapper must generate note-ciphertext wire vectors and run the Rust conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks representative parser grammar for crypto note ciphertext bytes and wallet chain note ciphertext containers, plus generic accepted-summary suite/KEM facts, byte-bounded fixed chain-wire length for the modeled parsers, and metadata-gated decrypt admission over an explicit crypto-authentication predicate. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, wallet key custody, note plaintext or note commitment correctness, nullifier derivation, BLAKE3 ciphertext-hash security or implementation equivalence, DA availability, or complete wallet/native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks representative parser grammar for crypto note ciphertext bytes and wallet chain note ciphertext containers, plus generic accepted-summary suite/KEM facts, byte-bounded fixed chain-wire length for the modeled parsers, metadata-gated decrypt admission over an explicit crypto-authentication predicate, and abstract plaintext-to-note-data commitment binding through the spend-authorization commitment relation. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, wallet key custody, concrete Poseidon2/BLAKE3 commitment implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security or implementation equivalence, DA availability, or complete wallet/native-node equivalence."
     },
     {
       "id": "formal.privacy-observer-boundary",
