@@ -788,20 +788,24 @@
       "id": "formal.privacy-observer-boundary",
       "claim_id": "formal.privacy-observer-boundary",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean privacy observer model, the public observer view of a shielded transaction consists of verifier-facing public inputs, ciphertext bytes, ciphertext summaries parsed from chain wire bytes, block height, and action index. Changing private witnesses or prover randomness cannot change that observer view, parsed summaries have the same length as the public chain ciphertext byte list, accepted parsed summaries have the expected chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, and equal public inputs, chain ciphertext wire bytes, and placement imply equal allowed leakage.",
-      "informal_argument": "The Lean theorems `Hegemon.Privacy.Observer.observer_view_ignores_private_witness`, `Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness`, and `Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness` prove that note values, asset ids, note randomness, spend secret seeds, plaintext seeds, memo seeds, and prover randomness are outside the formal observer projection. `Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length` proves parser-derived summaries align with the public chain ciphertext byte list, while `Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format` and `Hegemon.Privacy.Observer.observer_view_summaries_have_chain_format` prove accepted observer summaries have the expected chain suite/KEM shape. `Hegemon.Privacy.Observer.valid_observer_chain_surface_ciphertext_count` proves valid observer-chain surfaces have exactly one parsed ciphertext summary per active public output; `Hegemon.Privacy.Observer.same_allowed_leakage_preserves_active_output_count`, `Hegemon.Privacy.Observer.same_public_valid_observer_surfaces_ciphertext_count`, and `Hegemon.Privacy.Observer.same_allowed_leakage_of_valid_observer_chain_surfaces` lift that count boundary through same-public-input and same-leakage worlds. `Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement`, `Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement`, and `Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq` define the equality boundary future ZK, ciphertext confidentiality, wallet metadata, and timing privacy games must refine.",
+      "formal_statement": "For the executable Lean privacy observer model, the public observer view of a shielded transaction consists of verifier-facing public inputs, ciphertext bytes, ciphertext summaries parsed from chain wire bytes, block height, and action index. Changing private witnesses or prover randomness cannot change that observer view, parsed summaries have the same length as the public chain ciphertext byte list, accepted parsed summaries have the expected chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire bytes, and placement imply equal allowed leakage, and accepted native tx-leaf output-slot binding composes with that observer surface under the canonical deployed verifier boundary.",
+      "informal_argument": "The Lean theorems `Hegemon.Privacy.Observer.observer_view_ignores_private_witness`, `Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness`, and `Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness` prove that note values, asset ids, note randomness, spend secret seeds, plaintext seeds, memo seeds, and prover randomness are outside the formal observer projection. `Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length` proves parser-derived summaries align with the public chain ciphertext byte list, while `Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format` and `Hegemon.Privacy.Observer.observer_view_summaries_have_chain_format` prove accepted observer summaries have the expected chain suite/KEM shape. `Hegemon.Privacy.Observer.valid_observer_chain_surface_ciphertext_count` proves valid observer-chain surfaces have exactly one parsed ciphertext summary per active public output; `Hegemon.Privacy.Observer.same_allowed_leakage_preserves_active_output_count`, `Hegemon.Privacy.Observer.same_public_valid_observer_surfaces_ciphertext_count`, and `Hegemon.Privacy.Observer.same_allowed_leakage_of_valid_observer_chain_surfaces` lift that count boundary through same-public-input and same-leakage worlds. `Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement`, `Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement`, and `Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq` define the equality boundary future ZK, ciphertext confidentiality, wallet metadata, and timing privacy games must refine. `Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_bound_to_observer_surface` and `native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage` compose that boundary with the accepted native tx-leaf/action output-slot binding theorem, so output commitment/ciphertext slots bound to the canonical statement vectors also determine the observer count/format surface and same-chain-wire leakage equality.",
       "depends_on": [
         "formal.transaction-public-input-shape",
-        "formal.wallet-note-ciphertext-wire"
+        "formal.wallet-note-ciphertext-wire",
+        "formal.native-tx-leaf-canonical-surface"
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon.lean",
         "DESIGN.md",
         "METHODS.md",
@@ -812,7 +816,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as a non-production leakage-boundary model. It defines the observer projection used by future privacy games but does not prove cryptographic zero-knowledge or ciphertext confidentiality."
+        "notes": "Accepted as a non-production leakage-boundary model. It defines the observer projection used by future privacy games and composes native tx-leaf output-slot binding into that surface, but it does not prove cryptographic zero-knowledge or ciphertext confidentiality."
       },
       "falsification_cases": [
         {
@@ -826,7 +830,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves only the formal observer projection, parser-derived chain-wire summary boundary, accepted-summary suite/KEM format boundary, public active-output ciphertext-count boundary, and allowed-leakage equality boundary. It does not prove simulator-based zero-knowledge, proof-system privacy, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or complete wallet/native-node equivalence."
+      "scope_boundary": "This node proves only the formal observer projection, parser-derived chain-wire summary boundary, accepted-summary suite/KEM format boundary, public active-output ciphertext-count boundary, native tx-leaf output-slot-to-observer composition under the explicit deployed verifier soundness assumption, and allowed-leakage equality boundary. It does not prove simulator-based zero-knowledge, proof-system privacy, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, hash security, or complete wallet/native-node equivalence."
     },
     {
       "id": "shielded.nullifier-state",

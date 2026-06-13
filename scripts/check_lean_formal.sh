@@ -163,6 +163,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Network/GenerateSecureChannelVectors.lean
   lake env lean Hegemon/Network/PqNoise.lean
   lake env lean Hegemon/Network/GeneratePqNoiseVectors.lean
+  lake env lean Hegemon/Privacy/Observer.lean
+  lake env lean Hegemon/Privacy/NativeObserverSurface.lean
   lake env lean Hegemon/Wallet/NoteCiphertextWire.lean
   lake env lean Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean
   lake env lean Hegemon/Release/DependencyAuditPolicy.lean

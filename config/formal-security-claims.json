@@ -630,7 +630,7 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, and equal public inputs, chain ciphertext wire observations, and placement imply equal allowed leakage.",
+      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal allowed leakage, and accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
@@ -649,17 +649,23 @@
         "Hegemon.Privacy.Observer.same_public_valid_observer_surfaces_ciphertext_count",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_valid_observer_chain_surfaces",
-        "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq"
+        "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq",
+        "Hegemon.Privacy.NativeObserverSurface.valid_observer_chain_surface_bound_to_shape",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_bound_to_observer_surface",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage"
       ],
       "assumptions": [
         "The observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index.",
         "Accepted parsed chain summaries are proved to carry the expected chain crypto suite and fixed ML-KEM ciphertext length before they enter the observer leakage model.",
         "A valid observer-chain surface requires a valid public-input shape, parser-derived chain ciphertext summaries, and a public ciphertext-byte count equal to the active output count derived from public output flags.",
+        "The native observer-surface theorem composes the observer boundary with accepted native tx-leaf/action output-slot binding and the canonical deployed verifier surface, but it inherits that surface's explicit `DeployedTxVerifierSoundnessAssumption` boundary.",
         "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer projection.",
         "This is a leakage-boundary theorem only. It does not prove simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon.lean",
         "DESIGN.md",
         "METHODS.md",
@@ -673,7 +679,7 @@
       "residual_risks": [
         {
           "id": "privacy-game-not-mechanized",
-          "description": "The observer model defines allowed leakage but does not yet mechanize simulator-based zero-knowledge, unlinkability, ML-KEM/AEAD confidentiality, or wallet/network metadata privacy games.",
+          "description": "The observer model defines allowed leakage and now composes native tx-leaf output-slot binding into that leakage surface, but it does not yet mechanize simulator-based zero-knowledge, unlinkability, ML-KEM/AEAD confidentiality, or wallet/network metadata privacy games.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
