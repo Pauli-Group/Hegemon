@@ -334,6 +334,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "scripts/check_lean_claim_axioms.py",
         "config/lean-axiom-waivers.json",
         "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",

@@ -1272,6 +1272,16 @@ mod tests {
         let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
             .expect("native tx-leaf payload should decode");
         assert_eq!(decoded.tx.commitments, built.bundle.commitments);
+        let decoded_ciphertext_hashes = decoded_notes
+            .iter()
+            .map(|note| {
+                note.to_da_bytes()
+                    .map(|bytes| ciphertext_hash_bytes(&bytes))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decoded notes should serialize to DA bytes");
+        assert_eq!(decoded.tx.ciphertext_hashes.len(), decoded_notes.len());
+        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
         verify_native_tx_leaf_artifact_bytes(
             &decoded.tx,
             &decoded.receipt,

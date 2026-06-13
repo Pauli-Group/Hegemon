@@ -625,6 +625,41 @@ mod tests {
     }
 
     #[test]
+    fn encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness() {
+        let mut setup_rng = StdRng::seed_from_u64(124);
+        let root = RootSecret::from_rng(&mut setup_rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(
+            42,
+            7,
+            MemoPlaintext::new(b"same plaintext memo".to_vec()),
+            &mut setup_rng,
+        );
+
+        let mut left_rng = StdRng::seed_from_u64(125);
+        let mut right_rng = StdRng::seed_from_u64(126);
+        let left = NoteCiphertext::encrypt(&address, &note, &mut left_rng).unwrap();
+        let right = NoteCiphertext::encrypt(&address, &note, &mut right_rng).unwrap();
+
+        assert_ne!(
+            left.kem_ciphertext, right.kem_ciphertext,
+            "fresh KEM randomness must unlink repeated plaintext encryption"
+        );
+        assert_ne!(
+            left.to_chain_bytes().unwrap(),
+            right.to_chain_bytes().unwrap(),
+            "chain wire bytes must not deterministically identify repeated plaintexts"
+        );
+
+        let recovered_left = left.decrypt(&material).unwrap();
+        let recovered_right = right.decrypt(&material).unwrap();
+        assert_eq!(recovered_left, note);
+        assert_eq!(recovered_right, note);
+    }
+
+    #[test]
     fn coinbase_note_deterministic() {
         let seed = [42u8; 32];
         let note1 = NotePlaintext::coinbase(5_000_000_000, &seed);

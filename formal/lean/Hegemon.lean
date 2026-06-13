@@ -80,6 +80,7 @@ import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.SecureChannel
+import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
 import Hegemon.Privacy.NativeObserverSurface
 import Hegemon.Release.DependencyAuditPolicy

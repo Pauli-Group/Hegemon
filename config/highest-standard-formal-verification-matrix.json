@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 73.32,
+  "overall_completion_percent": 73.58,
   "last_full_formal_core": {
-    "commit": "working tree after sync canonical body materialization package",
-    "status": "passed 2026-06-13T23:22Z",
-    "claims": 97,
-    "named_lean_theorems": 1338,
+    "commit": "working tree after ciphertext privacy-game boundary package",
+    "status": "passed 2026-06-13T23:49Z",
+    "claims": 98,
+    "named_lean_theorems": 1344,
     "production_eligible_claims": 88,
-    "falsification_cases": 400,
+    "falsification_cases": 404,
     "implementation_bindings": 196
   },
   "last_coordinator_audit": {
@@ -29,35 +29,35 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added a transaction nullifier input-equivalence slice: Lean now fixes nullifier domain tag 2, the one-block six-limb absorbed transcript, the order prf_key, position, rho, and the 8-byte big-endian field-limb grammar for rho. Generated Lean vectors check the shared production helper, and Rust regressions require Plonky3 and SmallWood nullifier preimage builders to use it.",
+    "summary": "Added a ciphertext privacy-game boundary slice: Lean now packages two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit wire-indistinguishability premise. It proves public shape, active-output count, ciphertext summary count, and accepted chain-format summaries are preserved before the cryptographic premise is used, and exposes that premise as the only non-public crypto obligation. A wallet regression checks same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
-      "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean"
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.NullifierInputs.nullifier_domain_tag_is_two",
-      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_have_six_limbs",
-      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_start_with_prf_and_position",
-      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_absorb_rho_after_position",
-      "Hegemon.Transaction.NullifierInputs.nullifier_inputs_one_absorb_block"
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_ciphertext_shape",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_active_output_count",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_ciphertext_summary_count",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
+      "Hegemon.Privacy.CiphertextPrivacy.same_wire_ciphertext_privacy_game_implies_same_allowed_leakage"
     ],
     "validation": {
-      "lean_formal": "bash scripts/check_lean_formal.sh passed",
+      "lean_formal": "lake env lean Hegemon/Privacy/CiphertextPrivacy.lean passed",
       "targeted_rust": [
-        "HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_nullifier_input_vectors_match_production -- --nocapture",
-        "cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture"
+        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
+        "cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13T23:22Z after the sync canonical body materialization production-binding slice",
-      "claims": 97,
-      "named_lean_theorems": 1338,
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13T23:49Z",
+      "claims": 98,
+      "named_lean_theorems": 1344,
       "production_eligible_claims": 88,
-      "falsification_cases": 400,
+      "falsification_cases": 404,
       "implementation_bindings": 196
     },
     "known_limitations": [
-      "The slice proves the nullifier transcript layout, not Poseidon2 cryptographic security, PRF pseudorandomness, or full Poseidon2 implementation equivalence.",
-      "It does not discharge deployed AIR/STARK/SmallWood proof-system soundness, witness extraction, wallet key custody, or complete native-node equivalence.",
-      "The production change is helper deduplication and conformance gating only; it adds no prover-cost-critical arithmetic."
+      "The slice states and carries the ciphertext wire-indistinguishability obligation; it does not prove ML-KEM IND-CCA security, AEAD confidentiality, KDF security, OS RNG quality, or simulator-based zero knowledge.",
+      "The wallet regression detects accidental deterministic or reused-seed encryption for the tested production path; it is not a statistical RNG certification.",
+      "The production change is test/gate-only and adds no runtime verification or prover cost."
     ]
   },
   "last_production_binding_slice": {
@@ -328,7 +328,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 41,
+      "completion_percent": 43,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -344,19 +344,21 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now carries byte-bounded fixed chain ciphertext wire length through the selected active observer row",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected active observer row, parser summary, fixed wire shape, statement/proof-binding vector indices, and native ciphertext equality gates in one boundary theorem",
         "note ciphertext wire grammar vectors",
-        "public/private field separation in transaction statement docs"
+        "public/private field separation in transaction statement docs",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean states the same-shape ciphertext privacy-game boundary and exposes `wireIndistinguishable` as the explicit cryptographic premise",
+        "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
       ],
       "missing_work": [
-        "State ZK/privacy assumptions for the proof system and note encryption.",
-        "Add unlinkability tests for wallet metadata, ciphertext format, proof wrappers, and sidecars.",
-        "Prove or parameterize simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
+        "State ZK/privacy assumptions for the proof system, wallet metadata, timing, sidecars, and network surfaces.",
+        "Add unlinkability tests for wallet metadata, proof wrappers, sidecars, batching, and timing surfaces.",
+        "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
     },
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 70,
+      "completion_percent": 72,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -380,11 +382,13 @@
     "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean proves decrypted plaintext plus recipient material exports the same abstract note commitment relation used by spend authorization and active public output slots",
     "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean and generated Rust conformance vectors bind that abstract note commitment relation to the deployed input order and byte-limb grammar",
     "wallet/src/viewing.rs full-view decrypt regression proves recovered NoteData, input witness, output witness, and plaintext-derived commitment agree",
-    "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, and a verifying native tx-leaf artifact"
-  ],
-  "missing_work": [
-    "Promote ML-KEM and AEAD confidentiality/authentication assumptions into named privacy-game assumption nodes."
-  ],
+        "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, decoded native tx-leaf ciphertext hashes recomputed from decoded note DA bytes, and a verifying native tx-leaf artifact",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean promotes ciphertext wire indistinguishability to a named privacy-game obligation",
+        "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks fresh KEM randomness changes KEM ciphertext and chain wire bytes while preserving decrypt correctness"
+      ],
+      "missing_work": [
+        "Discharge or externally justify the named ML-KEM, AEAD, KDF, and RNG assumptions behind `wireIndistinguishable`."
+      ],
       "performance_constraint": "No extra chain verification of private plaintext; keep correctness checks in wallet tests and public hash bindings."
     },
     {

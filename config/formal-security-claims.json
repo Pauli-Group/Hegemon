@@ -703,7 +703,7 @@
       "id": "formal.wallet-note-ciphertext-wire",
       "component": "wallet note ciphertext wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; accepted parser summaries bind the expected ML-KEM ciphertext length and chain crypto suite, bounded accepted chain wires have the fixed production wire length, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, and generated Lean vectors plus focused Rust regressions check the production parsers, decrypt fail-closed behavior, full-view plaintext-to-commitment witness binding, and wallet bundle/native tx-leaf commitment consistency.",
+      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; accepted parser summaries bind the expected ML-KEM ciphertext length and chain crypto suite, bounded accepted chain wires have the fixed production wire length, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, and generated Lean vectors plus focused Rust regressions check the production parsers, decrypt fail-closed behavior, full-view plaintext-to-commitment witness binding, wallet bundle/native tx-leaf commitment consistency, decoded chain-ciphertext byte hashing, and same-plaintext re-encryption freshness.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -743,7 +743,8 @@
         "The Lean model covers byte-level parser grammar for the two production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes and wallet::NoteCiphertext::from_chain_bytes.",
         "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, trailing chain bytes, and expected wire lengths, including the fixed valid chain length.",
         "The decrypt-admission model treats wrong-recipient, wrong-secret-key, and malleated-byte rejection as the explicit Boolean predicate `cryptoAuthenticates = false`. Focused Rust regressions check that the production wallet and synthetic-crypto wrappers map wrong keys and KEM/note/memo payload malleation to failure and that wallet metadata mismatches fail before crypto.",
-        "The plaintext-to-commitment model reuses `Hegemon.Transaction.SpendAuthorization.noteCommitmentFromWitness` as the abstract commitment relation, so decrypted wallet note data, input witness construction, and active public output commitment slots share one formal commitment formula. Focused Rust regressions check both full-view decryption to `NoteData`/input/output witnesses and the tx-builder path from decrypted recipient ciphertext to bundle commitments, outgoing disclosures, decoded native tx-leaf public commitments, and native tx-leaf verification.",
+        "The plaintext-to-commitment model reuses `Hegemon.Transaction.SpendAuthorization.noteCommitmentFromWitness` as the abstract commitment relation, so decrypted wallet note data, input witness construction, and active public output commitment slots share one formal commitment formula. Focused Rust regressions check both full-view decryption to `NoteData`/input/output witnesses and the tx-builder path from decrypted recipient ciphertext to bundle commitments, outgoing disclosures, decoded native tx-leaf public commitments, decoded native tx-leaf public ciphertext hashes recomputed from decoded note DA bytes, and native tx-leaf verification.",
+        "A focused same-plaintext same-recipient re-encryption regression checks that wallet encryption consumes fresh KEM randomness and changes both the KEM ciphertext and full chain wire bytes under distinct RNG streams while preserving decrypt correctness.",
         "The theorem covers exact consumption, fixed ML-KEM ciphertext length, chain crypto-suite admission, fixed container padding, canonical compact length admission, accepted-summary suite/KEM facts, byte-bounded accepted chain-wire fixed length, metadata-gated decrypt admission, and abstract plaintext-to-note-data commitment binding. The fixed-length theorem is intentionally byte-bounded because the Lean Byte model is Nat. Concrete note-commitment input order and asset-id field admission are covered by `formal.transaction-note-commitment-inputs`; this wallet theorem does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, Poseidon2/BLAKE3 hash security or full implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
       ],
       "evidence_paths": [
@@ -766,6 +767,7 @@
         "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture",
         "cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture",
         "cargo test -p wallet decrypt_rejects --lib -- --nocapture",
+        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
         "cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture",
         "cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture",
         "cargo test -p wallet from_chain_bytes --lib -- --nocapture",
@@ -838,6 +840,55 @@
         {
           "id": "privacy-game-not-mechanized",
           "description": "The observer model defines allowed leakage and now composes native tx-leaf output-slot binding into that leakage surface, but it does not yet mechanize simulator-based zero-knowledge, unlinkability, ML-KEM/AEAD confidentiality, or wallet/network metadata privacy games.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "formal.ciphertext-privacy-game-boundary",
+      "component": "note ciphertext privacy game boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, and accepted chain-format summaries, and that the only non-public cryptographic obligation carried by this boundary is the named wire-indistinguishability premise. A focused wallet regression checks that same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_explicit_crypto_indistinguishability_assumption_and_rust_randomness_regression",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_ciphertext_shape",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_active_output_count",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_ciphertext_summary_count",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
+        "Hegemon.Privacy.CiphertextPrivacy.same_wire_ciphertext_privacy_game_implies_same_allowed_leakage"
+      ],
+      "assumptions": [
+        "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, and active-output ciphertext counts are inherited from `formal.privacy-observer-boundary`.",
+        "The cryptographic privacy step is the explicit `wireIndistinguishable` field. It stands for the ML-KEM encapsulation, AEAD confidentiality, KDF/domain separation, and RNG freshness assumptions needed to treat different same-shape ciphertext wires as computationally indistinguishable.",
+        "The wallet regression proves production encryption is not accidentally deterministic for same plaintext and same recipient under distinct RNG streams. It is not a proof of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator-based zero knowledge."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+        "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "wallet/src/notes.rs",
+        "scripts/check_lean_formal.sh",
+        "scripts/check_formal_core.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "ciphertext-wire-indistinguishability-not-discharged",
+          "description": "The Lean boundary names and carries the ciphertext wire-indistinguishability obligation, but does not mechanize ML-KEM/AEAD security or a simulator theorem.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "wallet-metadata-and-timing-privacy-not-covered",
+          "description": "The boundary covers observer chain wire shape and same-recipient re-encryption randomness, not wallet metadata, network metadata, mempool timing, batching, or amount-pattern privacy.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
