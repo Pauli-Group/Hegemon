@@ -15,7 +15,7 @@ use transaction_core::{
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing_pq::{bytes48_to_felts, merkle_node, Felt, HashFelt},
+    hashing_pq::{bytes48_to_felts, merkle_node, note_commitment_inputs, Felt, HashFelt},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
     proof::{
         admit_transaction_proof_wrapper as admit_shared_transaction_proof_wrapper,
@@ -3403,14 +3403,14 @@ fn bytes_to_felts(bytes: &[u8]) -> Vec<Felt> {
 }
 
 fn commitment_inputs(note: &crate::note::NoteData) -> Vec<Felt> {
-    let mut inputs = Vec::new();
-    inputs.push(Felt::from_u64(note.value));
-    inputs.push(Felt::from_u64(note.asset_id));
-    inputs.extend(bytes_to_felts(&note.pk_recipient));
-    inputs.extend(bytes_to_felts(&note.rho));
-    inputs.extend(bytes_to_felts(&note.r));
-    inputs.extend(bytes_to_felts(&note.pk_auth));
-    inputs
+    note_commitment_inputs(
+        note.value,
+        note.asset_id,
+        &note.pk_recipient,
+        &note.rho,
+        &note.r,
+        &note.pk_auth,
+    )
 }
 
 fn nullifier_inputs(prf: Felt, input: &InputNoteWitness) -> Vec<Felt> {
@@ -3535,7 +3535,9 @@ fn dummy_output() -> OutputNoteWitness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes};
+    use crate::hashing_pq::{
+        felts_to_bytes48, merkle_node, note_commitment_inputs, spend_auth_key_bytes,
+    };
     use crate::note::NoteData;
     use crate::public_inputs::StablecoinPolicyBinding;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
@@ -3619,6 +3621,22 @@ mod tests {
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         }
+    }
+
+    #[test]
+    fn smallwood_commitment_inputs_use_shared_core_preimage() {
+        let note = &sample_witness().outputs[0].note;
+        assert_eq!(
+            commitment_inputs(note),
+            note_commitment_inputs(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.rho,
+                &note.r,
+                &note.pk_auth,
+            )
+        );
     }
 
     fn stablecoin_witness() -> TransactionWitness {

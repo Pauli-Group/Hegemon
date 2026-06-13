@@ -238,6 +238,9 @@ lean_exe gen_native_receipt_root_vectors where
 lean_exe gen_transaction_vectors where
   root := `Hegemon.Transaction.GenerateVectors
 
+lean_exe gen_note_commitment_input_vectors where
+  root := `Hegemon.Transaction.GenerateNoteCommitmentInputVectors
+
 lean_exe gen_merkle_vectors where
   root := `Hegemon.Transaction.GenerateMerkleVectors
 

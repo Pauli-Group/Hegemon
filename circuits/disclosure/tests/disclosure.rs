@@ -4,7 +4,9 @@ use disclosure_circuit::{
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-use transaction_core::hashing_pq::note_commitment_bytes;
+use transaction_core::{
+    constants::BALANCE_SLOT_PADDING_FIELD_ID, hashing_pq::note_commitment_bytes,
+};
 
 fn sample_claim_and_witness() -> (PaymentDisclosureClaim, PaymentDisclosureWitness) {
     let mut rng = StdRng::seed_from_u64(42);
@@ -87,6 +89,25 @@ fn reject_non_canonical_commitment() {
     let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
     match err {
         DisclosureCircuitError::NonCanonicalCommitment => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn reject_padding_field_alias_asset_id() {
+    let (mut claim, witness) = sample_claim_and_witness();
+    claim.asset_id = BALANCE_SLOT_PADDING_FIELD_ID;
+    claim.commitment = note_commitment_bytes(
+        claim.value,
+        claim.asset_id,
+        &claim.pk_recipient,
+        &claim.pk_auth,
+        &witness.rho,
+        &witness.r,
+    );
+    let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
+    match err {
+        DisclosureCircuitError::InvalidAssetId => {}
         other => panic!("unexpected error: {other:?}"),
     }
 }

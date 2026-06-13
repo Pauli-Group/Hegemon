@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 72.28,
+  "overall_completion_percent": 72.94,
   "last_full_formal_core": {
-    "commit": "working tree after wallet plaintext-commitment package",
-    "status": "passed 2026-06-13 20:48Z",
-    "claims": 95,
-    "named_lean_theorems": 1323,
-    "production_eligible_claims": 86,
-    "falsification_cases": 389,
-    "implementation_bindings": 180
+    "commit": "working tree after note-commitment input package",
+    "status": "passed 2026-06-13 22:02Z",
+    "claims": 96,
+    "named_lean_theorems": 1333,
+    "production_eligible_claims": 87,
+    "falsification_cases": 394,
+    "implementation_bindings": 186
   },
   "last_coordinator_audit": {
     "date": "2026-06-13",
@@ -29,38 +29,41 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added a wallet note-ciphertext decrypt/plaintext binding slice: Lean now models decrypt admission as metadata gates followed by an explicit crypto-authentication predicate, proving metadata mismatches reject before crypto, crypto failure rejects after matching metadata, decrypt success implies version/crypto-suite/diversifier agreement plus crypto authentication, and decrypted wallet plaintext plus recipient material exports the exact note data whose commitment is the spend-authorization note commitment relation. Production Rust regressions cover wallet and synthetic-crypto wrong-recipient/wrong-key and KEM/note/memo malleation failures, full-view decrypted NoteData/input/output witness commitment equality, and recipient-decrypted wallet bundle/native tx-leaf commitment consistency.",
+    "summary": "Added a transaction note-commitment input and asset-id field-admission slice: Lean now fixes note domain tag 1, the 18-limb absorbed transcript, the order value, asset_id, pk_recipient, rho, r, pk_auth, and the 8-byte big-endian field-limb grammar for 32-byte note fields. Generated Lean vectors check the shared production helper, and Rust regressions require Plonky3, SmallWood, and disclosure preimage builders to use it while note/public-input/disclosure boundaries reject field-aliasing asset ids.",
     "lean_modules": [
-      "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
-      "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean"
+      "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
+      "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Wallet.NoteCiphertextDecrypt.decrypt_success_implies_metadata_matches",
-      "Hegemon.Wallet.NoteCiphertextDecrypt.wrong_recipient_or_malleated_ciphertext_fails_under_crypto_assumptions",
-      "Hegemon.Wallet.NotePlaintextCommitment.decrypt_success_plaintext_to_commitment_boundary",
-      "Hegemon.Wallet.NotePlaintextCommitment.active_output_slot_commitment_matches_exported_plaintext"
+      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_domain_tag_is_one",
+      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_have_eighteen_limbs",
+      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_start_with_value_and_asset",
+      "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_absorb_recipient_rho_randomness_auth",
+      "Hegemon.Transaction.NoteCommitmentInputs.padding_asset_id_is_not_canonical",
+      "Hegemon.Transaction.NoteCommitmentInputs.padding_field_alias_is_not_canonical",
+      "Hegemon.Transaction.NoteCommitmentInputs.field_modulus_is_not_canonical"
     ],
     "validation": {
-      "lean_formal": "targeted NoteCiphertextDecrypt and lake build Hegemon passed",
+      "lean_formal": "targeted NoteCommitmentInputs and generator passed",
       "targeted_rust": [
-        "cargo test -p wallet decrypt_rejects --lib -- --nocapture",
-        "cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture",
-        "cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture",
-        "cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture",
-        "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture"
+        "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_note_commitment_input_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit commitment_inputs_use_shared_core_preimage -- --nocapture",
+        "cargo test -p transaction-circuit field_alias_asset_id -- --nocapture",
+        "cargo test -p transaction-circuit note_validation_rejects_field_aliasing_asset_ids -- --nocapture",
+        "cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture",
+        "cargo test -p disclosure-circuit reject_padding_field_alias_asset_id -- --nocapture"
       ],
-      "formal_core": "passed 2026-06-13 20:48Z",
-      "claims": 95,
-      "named_lean_theorems": 1323,
-      "production_eligible_claims": 86,
-      "falsification_cases": 389,
-      "implementation_bindings": 180
+      "formal_core": "passed 2026-06-13 22:02Z",
+      "claims": 96,
+      "named_lean_theorems": 1333,
+      "production_eligible_claims": 87,
+      "falsification_cases": 394,
+      "implementation_bindings": 186
     },
     "known_limitations": [
-      "The decrypt theorem uses an explicit cryptoAuthenticates predicate; it does not prove ML-KEM encapsulation/decapsulation security, AEAD confidentiality or unforgeability, or ciphertext indistinguishability.",
-      "The slice proves abstract plaintext-to-commitment binding through the modeled spend-authorization commitment relation, but it does not prove concrete Poseidon2/BLAKE3 commitment implementation equivalence, nullifier derivation, ciphertext-hash security, wallet key custody, or complete wallet/native-node equivalence.",
-      "The proof and regressions are performance-neutral because they add Lean evidence and tests only."
+      "The slice proves the commitment transcript layout and public asset-id field-domain policy, not Poseidon2 cryptographic binding/hiding or full Poseidon2 implementation equivalence.",
+      "It does not discharge deployed AIR/proof-system soundness, nullifier derivation, ciphertext-hash security, wallet key custody, or complete native-node equivalence.",
+      "The production change is a cheap admission hardening and helper deduplication; no prover-cost-critical arithmetic was added."
     ]
   },
   "properties": [
@@ -118,12 +121,14 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 58,
+      "completion_percent": 60,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
         "statement-hash and proof-statement binding vectors",
+        "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean proves the concrete deployed note-commitment input order used by spend-opening reconstruction",
+        "transaction-circuit and disclosure-circuit regressions require Plonky3, SmallWood, and disclosure preimage builders to use the shared core note_commitment_inputs helper",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed input slot is either inactive with zero nullifier or active with full spend facts",
@@ -169,7 +174,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 78,
+      "completion_percent": 79,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -183,6 +188,7 @@
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean proves accepted-relation authorized asset-delta policy",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean re-lifts native delta from the accepted relation under one canonical deployed verifier soundness assumption",
         "public input shape and binding gates",
+        "transaction public-input and serialized-input admission rejects noncanonical asset ids, including balance-slot padding field aliases",
         "native block artifact binding admission"
       ],
       "missing_work": [
@@ -194,7 +200,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 69,
+      "completion_percent": 72,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -204,6 +210,8 @@
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted-relation theorem: nonzero non-native delta implies selected stablecoin exception",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted transaction-chain aggregate theorem: nonzero non-native chain delta requires a selected stablecoin exception",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action binding with canonical verifier soundness to derive authorized per-asset delta values",
+        "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean proves padding sentinels, padding field aliases, and field-modulus asset ids are noncanonical",
+        "transaction witness, note, public-input, proof, and disclosure admission reject noncanonical real asset ids before they can alias a balance-slot padding value",
         "native bridge payload admission",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, a decoded amount-equality authorization boundary, and projected/raw-projected replay safety packages for authorized bridge amounts",
         "native transfer payload/state admission"
@@ -250,7 +258,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 68,
+      "completion_percent": 70,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -264,6 +272,7 @@
         "CanonicalVerifierBoundary now binds value-balance, stablecoin policy/oracle/attestation/issuance payloads, and active spend facts to the same canonical statement surface",
         "SpendAuthorization, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total input-slot facts so future AIR soundness can target inactive-zero and active-spend cases uniformly",
         "PublicInputs, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total output-slot facts so future AIR soundness can target active-output and inactive-padding cases uniformly",
+        "NoteCommitmentInputs now pins the exact deployed note-commitment preimage vector and asset-id field-domain policy that future AIR/refinement work must target",
         "ProofSystemBoundary packages DeployedTxRelationFacts, AcceptedTransactionRelation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, core statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, spend/balance facts, and total input-slot projection into one future AIR/refinement target",
         "Native TxLeafCanonicalSurface composes production-bound tx-leaf/action equality admission with the canonical deployed verifier soundness boundary to derive the accepted transaction relation, authorized asset deltas, active input spend facts, total input-slot facts, and output slot facts bound to canonical statement vectors",
         "Native TxLeafCanonicalSurface now composes accepted native tx-leaf/action equality admission with the packaged deployed-verifier boundary facts theorem",
@@ -312,7 +321,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 68,
+      "completion_percent": 70,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -334,6 +343,7 @@
     "wallet/src/notes.rs decrypt fail-closed regressions for version, crypto-suite, diversifier, wrong root key, and KEM/note/memo payload malleation",
     "crypto/src/note_encryption.rs decrypt fail-closed regressions for wrong recipient, wrong secret key, version tamper, and KEM/note/memo payload malleation",
     "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean proves decrypted plaintext plus recipient material exports the same abstract note commitment relation used by spend authorization and active public output slots",
+    "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean and generated Rust conformance vectors bind that abstract note commitment relation to the deployed input order and byte-limb grammar",
     "wallet/src/viewing.rs full-view decrypt regression proves recovered NoteData, input witness, output witness, and plaintext-derived commitment agree",
     "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, and a verifying native tx-leaf artifact"
   ],

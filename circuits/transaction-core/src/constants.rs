@@ -11,6 +11,27 @@ pub const BALANCE_SLOTS: usize = MAX_INPUTS + MAX_OUTPUTS;
 
 /// Goldilocks field modulus: 2^64 - 2^32 + 1.
 pub const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
+pub const FIELD_MODULUS_U64: u64 = FIELD_MODULUS as u64;
+
+/// External balance-slot padding sentinel.
+///
+/// This is intentionally not a valid real asset id. In-circuit it is encoded as
+/// `u64::MAX mod FIELD_MODULUS`, so that reduced field value is reserved too.
+pub const BALANCE_SLOT_PADDING_ASSET_ID: u64 = u64::MAX;
+pub const BALANCE_SLOT_PADDING_FIELD_ID: u64 =
+    (BALANCE_SLOT_PADDING_ASSET_ID as u128 % FIELD_MODULUS) as u64;
+
+pub fn is_canonical_asset_id(asset_id: u64) -> bool {
+    (asset_id as u128) < FIELD_MODULUS && asset_id != BALANCE_SLOT_PADDING_FIELD_ID
+}
+
+pub fn is_balance_slot_padding_asset_id(asset_id: u64) -> bool {
+    asset_id == BALANCE_SLOT_PADDING_ASSET_ID
+}
+
+pub fn is_balance_slot_asset_id(asset_id: u64) -> bool {
+    is_balance_slot_padding_asset_id(asset_id) || is_canonical_asset_id(asset_id)
+}
 
 /// Monetary range bound enforced in-circuit.
 ///

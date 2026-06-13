@@ -205,6 +205,130 @@
       "scope_boundary": "This node proves and vector-checks Merkle path control flow only. It does not prove Poseidon2 merkle_node cryptographic security, Poseidon2 implementation equivalence, note commitment hashing, nullifier derivation, ciphertext hashing, full AIR/proof-system soundness, or complete Rust refinement."
     },
     {
+      "id": "formal.transaction-note-commitment-inputs",
+      "claim_id": "formal.transaction-note-commitment-inputs",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean note-commitment input grammar, deployed note commitments absorb domain tag 1 over exactly 18 field limbs: value, asset id, recipient key limbs, rho limbs, commitment-randomness limbs, and authorization-public-key limbs, with each 32-byte field split into four 8-byte big-endian limbs. Real asset ids must be canonical Goldilocks-field representatives and must not equal the external padding sentinel, the padding field alias, or the field modulus.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.NoteCommitmentInputs.note_commitment_domain_tag_is_one`, `note_commitment_inputs_have_eighteen_limbs`, `note_commitment_inputs_start_with_value_and_asset`, `note_commitment_inputs_absorb_recipient_rho_randomness_auth`, and the canonical asset-id theorems pin the note-commitment transcript and field-domain boundary. `gen_note_commitment_input_vectors` emits patterned byte-field and asset-id edge cases. The formal-core gate checks those vectors against the shared production `note_commitment_inputs` helper, while focused regressions require P3, SmallWood, and disclosure preimage builders to route through the same helper and require note/public-input/disclosure admission to reject padding-field alias asset ids.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "formal.transaction-merkle-membership",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean",
+        "circuits/transaction-core/src/constants.rs",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction/src/public_inputs.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/disclosure/src/lib.rs",
+        "circuits/disclosure/src/prover.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "circuits/transaction-core/src/hashing_pq.rs",
+          "callee": "note_commitment_inputs",
+          "required_callers": [
+            "note_commitment"
+          ]
+        },
+        {
+          "path": "circuits/transaction/src/p3_prover.rs",
+          "callee": "commitment_inputs",
+          "required_callers": [
+            "build_cycle_specs"
+          ]
+        },
+        {
+          "path": "circuits/transaction/src/smallwood_frontend.rs",
+          "callee": "commitment_inputs",
+          "required_callers": [
+            "poseidon_subtrace_rows"
+          ]
+        },
+        {
+          "path": "circuits/disclosure/src/prover.rs",
+          "callee": "commitment_inputs",
+          "required_callers": [
+            "build_trace"
+          ]
+        },
+        {
+          "path": "circuits/transaction/src/public_inputs.rs",
+          "callee": "validate_balance_slot_asset_ids",
+          "required_callers": [
+            "new"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "circuits/transaction/src/proof.rs",
+          "callee": "validate_raw_balance_slot_asset_ids",
+          "required_callers": [
+            "transaction_public_inputs_p3_from_parts"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean",
+        "circuits/transaction-core/src/constants.rs",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction/src/public_inputs.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/disclosure/src/lib.rs",
+        "circuits/disclosure/src/prover.rs",
+        "circuits/disclosure/tests/disclosure.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for note-commitment preimage ordering and field encoding, and as production hardening for asset ids that would alias padding or reduce modulo the Goldilocks field."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-note-commitment-input-theorem",
+          "description": "Removing or weakening the note-commitment input or asset-id canonicality theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-note-commitment-input-conformance",
+          "description": "Changing production note-commitment input ordering, 8-byte big-endian field encoding, input count, domain tag, or asset-id canonicality away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_note_commitment_input_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "shared-preimage-wrapper-regression",
+          "description": "P3, SmallWood, and disclosure commitment-input builders must continue matching the shared transaction-core note_commitment_inputs helper.",
+          "gate": "cargo test -p transaction-circuit commitment_inputs_use_shared_core_preimage -- --nocapture && cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture"
+        },
+        {
+          "id": "asset-id-field-alias-regression",
+          "description": "Note, serialized public-input, raw public-input, and disclosure boundaries must reject asset ids that alias padding or exceed the field domain.",
+          "gate": "cargo test -p transaction-circuit field_alias_asset_id -- --nocapture && cargo test -p transaction-circuit note_validation_rejects_field_aliasing_asset_ids -- --nocapture && cargo test -p disclosure-circuit reject_padding_field_alias_asset_id -- --nocapture"
+        },
+        {
+          "id": "formal-core-note-commitment-input-gate",
+          "description": "The release formal-core wrapper must generate note-commitment vectors and run the production conformance and regression tests.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks transcript layout, field-limb encoding, and asset-id field canonicality only. It does not prove Poseidon2 cryptographic security, Poseidon2 implementation equivalence beyond the input transcript, note commitment hiding or binding reductions, nullifier derivation, ciphertext hash derivation, deployed STARK or SmallWood proof-system soundness, or complete Rust/native-node refinement."
+    },
+    {
       "id": "formal.transaction-public-input-shape",
       "claim_id": "formal.transaction-public-input-shape",
       "kind": "target_claim",
@@ -816,7 +940,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks representative parser grammar for crypto note ciphertext bytes and wallet chain note ciphertext containers, plus generic accepted-summary suite/KEM facts, byte-bounded fixed chain-wire length for the modeled parsers, metadata-gated decrypt admission over an explicit crypto-authentication predicate, and abstract plaintext-to-note-data commitment binding through the spend-authorization commitment relation. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, wallet key custody, concrete Poseidon2/BLAKE3 commitment implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security or implementation equivalence, DA availability, or complete wallet/native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks representative parser grammar for crypto note ciphertext bytes and wallet chain note ciphertext containers, plus generic accepted-summary suite/KEM facts, byte-bounded fixed chain-wire length for the modeled parsers, metadata-gated decrypt admission over an explicit crypto-authentication predicate, and abstract plaintext-to-note-data commitment binding through the spend-authorization commitment relation. Concrete note-commitment input order and asset-id field admission are covered by `formal.transaction-note-commitment-inputs`; this node does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, wallet key custody, Poseidon2/BLAKE3 hash security or full implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security or implementation equivalence, DA availability, or complete wallet/native-node equivalence."
     },
     {
       "id": "formal.privacy-observer-boundary",

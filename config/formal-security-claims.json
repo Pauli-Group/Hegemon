@@ -170,6 +170,63 @@
       "residual_risks": []
     },
     {
+      "id": "formal.transaction-note-commitment-inputs",
+      "component": "transaction note commitment preimage and asset-id field admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean note-commitment input kernel proves the deployed transcript layout for note commitments: domain tag 1, 18 absorbed field limbs, value and asset first, then pk_recipient, rho, commitment randomness, and pk_auth as 8-byte big-endian limbs. It also proves the field-canonical asset-id policy that rejects the external padding sentinel, the padding field alias, and the field modulus. Generated Lean vectors are checked against the shared production helper, and Rust regressions require P3, SmallWood, and disclosure preimage builders to use the shared helper while raw note/public/disclosure boundaries reject field-aliasing asset ids.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_alias_regressions",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_domain_tag_is_one",
+        "Hegemon.Transaction.NoteCommitmentInputs.bytes32_to_felts_has_four_limbs",
+        "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_have_eighteen_limbs",
+        "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_start_with_value_and_asset",
+        "Hegemon.Transaction.NoteCommitmentInputs.note_commitment_inputs_absorb_recipient_rho_randomness_auth",
+        "Hegemon.Transaction.NoteCommitmentInputs.native_asset_id_is_canonical",
+        "Hegemon.Transaction.NoteCommitmentInputs.padding_asset_id_is_not_canonical",
+        "Hegemon.Transaction.NoteCommitmentInputs.padding_field_alias_is_not_canonical",
+        "Hegemon.Transaction.NoteCommitmentInputs.field_modulus_is_not_canonical",
+        "Hegemon.Transaction.NoteCommitmentInputs.ordinary_asset_id_is_canonical"
+      ],
+      "assumptions": [
+        "The theorem and vectors prove note-commitment preimage layout and asset-id field canonicality, not Poseidon2 permutation security or collision resistance.",
+        "Generated Lean conformance vectors cover representative 32-byte recipient/auth/rho/randomness encodings and asset-id canonicality edge cases; Rust tests additionally cover P3, SmallWood, and disclosure wrappers against the shared helper.",
+        "The production asset-id gate treats u64::MAX as an external padding sentinel only and reserves its reduced Goldilocks-field alias as an invalid real asset id."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean",
+        "formal/lean/Hegemon/Transaction/GenerateNoteCommitmentInputVectors.lean",
+        "circuits/transaction-core/src/constants.rs",
+        "circuits/transaction-core/src/hashing_pq.rs",
+        "circuits/transaction/src/note.rs",
+        "circuits/transaction/src/proof.rs",
+        "circuits/transaction/src/p3_prover.rs",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/disclosure/src/prover.rs",
+        "circuits/disclosure/tests/disclosure.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_note_commitment_input_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit commitment_inputs_use_shared_core_preimage -- --nocapture",
+        "cargo test -p transaction-circuit field_alias_asset_id -- --nocapture",
+        "cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture",
+        "cargo test -p disclosure-circuit reject_padding_field_alias_asset_id -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "note-commitment-cryptographic-and-proof-system-soundness-open",
+          "description": "Poseidon2 cryptographic security, full Poseidon2 implementation equivalence, note commitment hiding/binding reductions, and deployed AIR/proof-system soundness remain separate targets.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.transaction-public-input-shape",
       "component": "transaction verifier public-input shape",
       "claim_class": "lean_theorem",
@@ -642,7 +699,7 @@
         "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, trailing chain bytes, and expected wire lengths, including the fixed valid chain length.",
         "The decrypt-admission model treats wrong-recipient, wrong-secret-key, and malleated-byte rejection as the explicit Boolean predicate `cryptoAuthenticates = false`. Focused Rust regressions check that the production wallet and synthetic-crypto wrappers map wrong keys and KEM/note/memo payload malleation to failure and that wallet metadata mismatches fail before crypto.",
         "The plaintext-to-commitment model reuses `Hegemon.Transaction.SpendAuthorization.noteCommitmentFromWitness` as the abstract commitment relation, so decrypted wallet note data, input witness construction, and active public output commitment slots share one formal commitment formula. Focused Rust regressions check both full-view decryption to `NoteData`/input/output witnesses and the tx-builder path from decrypted recipient ciphertext to bundle commitments, outgoing disclosures, decoded native tx-leaf public commitments, and native tx-leaf verification.",
-        "The theorem covers exact consumption, fixed ML-KEM ciphertext length, chain crypto-suite admission, fixed container padding, canonical compact length admission, accepted-summary suite/KEM facts, byte-bounded accepted chain-wire fixed length, metadata-gated decrypt admission, and abstract plaintext-to-note-data commitment binding. The fixed-length theorem is intentionally byte-bounded because the Lean Byte model is Nat. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, concrete Poseidon2/BLAKE3 commitment implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
+        "The theorem covers exact consumption, fixed ML-KEM ciphertext length, chain crypto-suite admission, fixed container padding, canonical compact length admission, accepted-summary suite/KEM facts, byte-bounded accepted chain-wire fixed length, metadata-gated decrypt admission, and abstract plaintext-to-note-data commitment binding. The fixed-length theorem is intentionally byte-bounded because the Lean Byte model is Nat. Concrete note-commitment input order and asset-id field admission are covered by `formal.transaction-note-commitment-inputs`; this wallet theorem does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, Poseidon2/BLAKE3 hash security or full implementation equivalence, nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",

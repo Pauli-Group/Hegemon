@@ -12,7 +12,8 @@ use crate::constants::{
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
+    bytes48_to_felts, merkle_node, note_commitment, note_commitment_inputs, nullifier, prf_key,
+    spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{
@@ -836,14 +837,14 @@ fn bytes48_to_vals(bytes: &[u8; 48]) -> Result<[Val; 6], TransactionCircuitError
 }
 
 fn commitment_inputs(note: &NoteData) -> Vec<Val> {
-    let mut inputs = Vec::new();
-    inputs.push(Val::from_u64(note.value));
-    inputs.push(Val::from_u64(note.asset_id));
-    inputs.extend(bytes_to_vals(&note.pk_recipient));
-    inputs.extend(bytes_to_vals(&note.rho));
-    inputs.extend(bytes_to_vals(&note.r));
-    inputs.extend(bytes_to_vals(&note.pk_auth));
-    inputs
+    note_commitment_inputs(
+        note.value,
+        note.asset_id,
+        &note.pk_recipient,
+        &note.rho,
+        &note.r,
+        &note.pk_auth,
+    )
 }
 
 fn nullifier_inputs(prf: Val, input: &InputNoteWitness) -> Vec<Val> {
@@ -1042,15 +1043,15 @@ fn build_cycle_specs(
     let mut cycles = Vec::with_capacity(TOTAL_USED_CYCLES - DUMMY_CYCLES);
 
     for (idx, input) in inputs.iter().enumerate() {
-        let commitment_inputs = commitment_inputs(&input.note);
+        let commitment_preimage = commitment_inputs(&input.note);
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            let take = commitment_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&commitment_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1122,15 +1123,15 @@ fn build_cycle_specs(
     }
 
     for output in outputs.iter() {
-        let commitment_inputs = commitment_inputs(&output.note);
+        let commitment_preimage = commitment_inputs(&output.note);
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            let take = commitment_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&commitment_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1149,7 +1150,9 @@ fn build_cycle_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt};
+    use crate::hashing_pq::{
+        felts_to_bytes48, merkle_node, note_commitment, note_commitment_inputs, HashFelt,
+    };
     use crate::note::{MerklePath, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
@@ -1215,6 +1218,22 @@ mod tests {
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         }
+    }
+
+    #[test]
+    fn p3_commitment_inputs_use_shared_core_preimage() {
+        let note = &sample_witness().outputs[0].note;
+        assert_eq!(
+            commitment_inputs(note),
+            note_commitment_inputs(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.rho,
+                &note.r,
+                &note.pk_auth,
+            )
+        );
     }
 
     #[test]

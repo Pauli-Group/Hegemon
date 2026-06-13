@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS},
+    constants::{is_canonical_asset_id, BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS},
     error::TransactionCircuitError,
     hashing_pq::{felts_to_bytes48, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
@@ -84,9 +84,9 @@ impl TransactionWitness {
                     "stablecoin asset id cannot be native",
                 ));
             }
-            if self.stablecoin.asset_id == u64::MAX {
+            if !is_canonical_asset_id(self.stablecoin.asset_id) {
                 return Err(TransactionCircuitError::ConstraintViolation(
-                    "stablecoin asset id cannot be padding",
+                    "stablecoin asset id must be canonical",
                 ));
             }
             let issuance_mag = self.stablecoin.issuance_delta.unsigned_abs();

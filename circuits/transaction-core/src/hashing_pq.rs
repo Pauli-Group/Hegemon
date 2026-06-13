@@ -85,6 +85,18 @@ pub fn note_commitment(
     rho: &[u8],
     r: &[u8],
 ) -> HashFelt {
+    let inputs = note_commitment_inputs(value, asset_id, pk_recipient, rho, r, pk_auth);
+    sponge_hash(NOTE_DOMAIN_TAG, &inputs)
+}
+
+pub fn note_commitment_inputs(
+    value: u64,
+    asset_id: u64,
+    pk_recipient: &[u8],
+    rho: &[u8],
+    r: &[u8],
+    pk_auth: &[u8],
+) -> Vec<Felt> {
     let mut inputs = Vec::new();
     inputs.push(Felt::from_u64(value));
     inputs.push(Felt::from_u64(asset_id));
@@ -92,7 +104,7 @@ pub fn note_commitment(
     inputs.extend(bytes_to_field_elements(rho));
     inputs.extend(bytes_to_field_elements(r));
     inputs.extend(bytes_to_field_elements(pk_auth));
-    sponge_hash(NOTE_DOMAIN_TAG, &inputs)
+    inputs
 }
 
 pub fn merkle_node(left: HashFelt, right: HashFelt) -> HashFelt {

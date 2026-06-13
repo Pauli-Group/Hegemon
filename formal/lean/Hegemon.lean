@@ -91,6 +91,7 @@ import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.Balance
 import Hegemon.Transaction.CanonicalVerifierBoundary
 import Hegemon.Transaction.MerklePath
+import Hegemon.Transaction.NoteCommitmentInputs
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.ProofStatementBinding

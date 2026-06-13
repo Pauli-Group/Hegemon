@@ -2,7 +2,7 @@ use p3_field::PrimeCharacteristicRing;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    constants::MAX_NOTE_VALUE,
+    constants::{is_canonical_asset_id, MAX_NOTE_VALUE},
     error::TransactionCircuitError,
     hashing_pq::{merkle_node, note_commitment, HashFelt},
 };
@@ -25,6 +25,9 @@ impl NoteData {
     pub fn validate(&self) -> Result<(), TransactionCircuitError> {
         if self.value as u128 > MAX_NOTE_VALUE {
             return Err(TransactionCircuitError::ValueOutOfRange(self.value as u128));
+        }
+        if !is_canonical_asset_id(self.asset_id) {
+            return Err(TransactionCircuitError::AssetIdTooLarge);
         }
         Ok(())
     }
@@ -227,7 +230,7 @@ pub(crate) mod serde_bytes32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{Felt, HashFelt};
+    use crate::hashing_pq::{note_commitment_inputs, Felt, HashFelt};
     use p3_field::{PrimeCharacteristicRing, PrimeField64};
     use std::collections::BTreeSet;
 
@@ -251,6 +254,37 @@ mod tests {
         expected_valid: bool,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNoteCommitmentInputVectorFile {
+        schema_version: u32,
+        note_domain_tag: u64,
+        note_commitment_input_cases: Vec<LeanNoteCommitmentInputCase>,
+        asset_id_cases: Vec<LeanAssetIdCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNoteCommitmentInputCase {
+        name: String,
+        value: u64,
+        asset_id: u64,
+        pk_recipient: Vec<u8>,
+        pk_auth: Vec<u8>,
+        rho: Vec<u8>,
+        r: Vec<u8>,
+        expected_inputs: Vec<u64>,
+        expected_input_count: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAssetIdCase {
+        name: String,
+        asset_id: u64,
+        expected_canonical: bool,
+    }
+
     #[test]
     fn lean_generated_merkle_path_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_MERKLE_VECTORS") else {
@@ -270,6 +304,47 @@ mod tests {
         for case in &vectors.merkle_path_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_merkle_case(case);
+        }
+    }
+
+    #[test]
+    fn lean_generated_note_commitment_input_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean note-commitment vectors");
+        let vectors: LeanNoteCommitmentInputVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean note-commitment vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.note_domain_tag, crate::constants::NOTE_DOMAIN_TAG);
+        assert!(
+            !vectors.note_commitment_input_cases.is_empty(),
+            "Lean note-commitment input cases must not be empty"
+        );
+        assert!(
+            !vectors.asset_id_cases.is_empty(),
+            "Lean asset-id cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.note_commitment_input_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_note_commitment_input_case(case);
+        }
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.asset_id_cases {
+            assert!(names.insert(case.name.clone()));
+            assert_eq!(
+                crate::constants::is_canonical_asset_id(case.asset_id),
+                case.expected_canonical,
+                "{} production asset-id canonicality drifted from Lean spec",
+                case.name
+            );
         }
     }
 
@@ -300,6 +375,31 @@ mod tests {
         assert!(!path.verify_with_depth_and_node(2, leaf, 1, position_zero_root, mock_merkle_node));
     }
 
+    #[test]
+    fn note_validation_rejects_field_aliasing_asset_ids() {
+        for asset_id in [
+            crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+            crate::constants::FIELD_MODULUS_U64,
+            crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+        ] {
+            let note = NoteData {
+                value: 1,
+                asset_id,
+                pk_recipient: [1u8; 32],
+                pk_auth: [2u8; 32],
+                rho: [3u8; 32],
+                r: [4u8; 32],
+            };
+            assert!(
+                matches!(
+                    note.validate(),
+                    Err(TransactionCircuitError::AssetIdTooLarge)
+                ),
+                "asset id {asset_id} must not be accepted as a real note asset"
+            );
+        }
+    }
+
     fn verify_lean_merkle_case(case: &LeanMerkleCase) {
         let path = MerklePath {
             siblings: case.siblings.iter().copied().map(digest_from_u64).collect(),
@@ -324,6 +424,41 @@ mod tests {
             ),
             case.expected_valid,
             "{} production Merkle path admission drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_note_commitment_input_case(case: &LeanNoteCommitmentInputCase) {
+        assert_eq!(
+            case.pk_recipient.len(),
+            32,
+            "{} pk_recipient len",
+            case.name
+        );
+        assert_eq!(case.pk_auth.len(), 32, "{} pk_auth len", case.name);
+        assert_eq!(case.rho.len(), 32, "{} rho len", case.name);
+        assert_eq!(case.r.len(), 32, "{} r len", case.name);
+        let actual = note_commitment_inputs(
+            case.value,
+            case.asset_id,
+            &case.pk_recipient,
+            &case.rho,
+            &case.r,
+            &case.pk_auth,
+        );
+        let actual = actual
+            .iter()
+            .map(|felt| felt.as_canonical_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual.len(),
+            case.expected_input_count,
+            "{} production note-commitment input count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual, case.expected_inputs,
+            "{} production note-commitment input order/encoding drifted from Lean spec",
             case.name
         );
     }

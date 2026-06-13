@@ -16,7 +16,10 @@ use crate::smallwood_frontend::{
     verify_smallwood_candidate_transaction_proof,
 };
 use crate::{
-    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
+    constants::{
+        is_balance_slot_padding_asset_id, is_canonical_asset_id, BALANCE_SLOTS,
+        BALANCE_SLOT_PADDING_FIELD_ID, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID,
+    },
     error::TransactionCircuitError,
     hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
     keys::{ProvingKey, VerifyingKey},
@@ -804,6 +807,16 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
     };
     let normalize_balance_slot_asset_id =
         |asset_id: u64| Goldilocks::from_u64(asset_id).as_canonical_u64();
+    validate_serialized_balance_slot_asset_ids(&public_inputs.balance_slots)?;
+    if !stark_inputs.balance_slot_asset_ids.is_empty() {
+        validate_raw_balance_slot_asset_ids(&stark_inputs.balance_slot_asset_ids)?;
+    }
+    if public_inputs.stablecoin.enabled && !is_canonical_asset_id(stark_inputs.stablecoin_asset_id)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "serialized stablecoin asset id is not canonical",
+        ));
+    }
 
     if public_inputs.merkle_root != stark_inputs.merkle_root {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -968,6 +981,87 @@ pub(crate) fn transaction_public_inputs_p3_from_parts(
     })
 }
 
+fn validate_serialized_balance_slot_asset_ids(
+    slots: &[BalanceSlot],
+) -> Result<(), TransactionCircuitError> {
+    if slots.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid balance slot asset count",
+        ));
+    }
+    if slots
+        .first()
+        .map(|slot| slot.asset_id != NATIVE_ASSET_ID)
+        .unwrap_or(true)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "slot 0 asset must be native asset",
+        ));
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for slot in slots.iter().skip(1) {
+        if is_balance_slot_padding_asset_id(slot.asset_id) {
+            saw_padding = true;
+            if slot.delta != 0 {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "balance slot padding delta must be zero",
+                ));
+            }
+            continue;
+        }
+        if saw_padding {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot padding must be a suffix",
+            ));
+        }
+        if !is_canonical_asset_id(slot.asset_id) || slot.asset_id <= prev_asset {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot assets must be canonical and strictly increasing",
+            ));
+        }
+        prev_asset = slot.asset_id;
+    }
+
+    Ok(())
+}
+
+fn validate_raw_balance_slot_asset_ids(asset_ids: &[u64]) -> Result<(), TransactionCircuitError> {
+    if asset_ids.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid balance slot asset count",
+        ));
+    }
+    if asset_ids[0] != NATIVE_ASSET_ID {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "slot 0 asset must be native asset",
+        ));
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for asset_id in asset_ids.iter().skip(1).copied() {
+        if asset_id == BALANCE_SLOT_PADDING_FIELD_ID {
+            saw_padding = true;
+            continue;
+        }
+        if saw_padding {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot padding must be a suffix",
+            ));
+        }
+        if !is_canonical_asset_id(asset_id) || asset_id <= prev_asset {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot assets must be canonical and strictly increasing",
+            ));
+        }
+        prev_asset = asset_id;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStarkInputs {
     let input_flags = pub_inputs
         .input_flags
@@ -1097,7 +1191,7 @@ mod tests {
     use super::*;
     use crate::public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs};
     use crate::SmallwoodCandidateProof;
-    use protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
+    use protocol_versioning::{DEFAULT_VERSION_BINDING, LEGACY_PLONKY3_FRI_VERSION_BINDING};
     use std::collections::BTreeSet;
 
     #[derive(Debug, Deserialize)]
@@ -1245,6 +1339,141 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[test]
+    fn public_inputs_reject_padding_field_alias_asset_id() {
+        let balance_slots = vec![
+            BalanceSlot {
+                asset_id: crate::constants::NATIVE_ASSET_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+        ];
+
+        let result = TransactionPublicInputs::new(
+            [0u8; 48],
+            vec![[0u8; 48]; crate::constants::MAX_INPUTS],
+            vec![[0u8; 48]; crate::constants::MAX_OUTPUTS],
+            vec![[0u8; 48]; crate::constants::MAX_OUTPUTS],
+            balance_slots,
+            0,
+            0,
+            StablecoinPolicyBinding::default(),
+            DEFAULT_VERSION_BINDING,
+        );
+        assert!(
+            result.is_err(),
+            "raw public inputs must reject the padding field alias as a real asset"
+        );
+    }
+
+    #[test]
+    fn serialized_public_inputs_reject_padding_field_alias_asset_id() {
+        let mut public_inputs = TransactionPublicInputs::default();
+        public_inputs.balance_slots[1].asset_id = crate::constants::BALANCE_SLOT_PADDING_FIELD_ID;
+        let serialized = SerializedStarkInputs {
+            input_flags: vec![0; crate::constants::MAX_INPUTS],
+            output_flags: vec![0; crate::constants::MAX_OUTPUTS],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: vec![
+                crate::constants::NATIVE_ASSET_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+            ],
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        };
+
+        let result = transaction_public_inputs_p3_from_parts(&public_inputs, &serialized);
+        assert!(
+            result.is_err(),
+            "external public inputs must reject the padding field alias as a real asset"
+        );
+    }
+
+    #[test]
+    fn serialized_public_inputs_accept_padding_field_alias_suffix() {
+        let public_inputs = TransactionPublicInputs::default();
+        let serialized = SerializedStarkInputs {
+            input_flags: vec![0; crate::constants::MAX_INPUTS],
+            output_flags: vec![0; crate::constants::MAX_OUTPUTS],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: vec![
+                crate::constants::NATIVE_ASSET_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+            ],
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        };
+
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized)
+            .expect("serialized padding field aliases must be accepted as padding");
+    }
+
+    #[test]
+    fn serialized_public_inputs_reject_noncanonical_padding_sentinel() {
+        let public_inputs = TransactionPublicInputs::default();
+        let serialized = SerializedStarkInputs {
+            input_flags: vec![0; crate::constants::MAX_INPUTS],
+            output_flags: vec![0; crate::constants::MAX_OUTPUTS],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: vec![
+                crate::constants::NATIVE_ASSET_ID,
+                crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+            ],
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        };
+
+        let result = transaction_public_inputs_p3_from_parts(&public_inputs, &serialized);
+        assert!(
+            result.is_err(),
+            "verifier-facing serialized public inputs must be canonical field representatives"
+        );
+    }
+
     fn dummy_serialized_inputs() -> SerializedStarkInputs {
         SerializedStarkInputs {
             input_flags: vec![0; MAX_INPUTS],
@@ -1253,7 +1482,12 @@ mod tests {
             value_balance_sign: 0,
             value_balance_magnitude: 0,
             merkle_root: [0u8; 48],
-            balance_slot_asset_ids: vec![0, u64::MAX, u64::MAX, u64::MAX],
+            balance_slot_asset_ids: vec![
+                0,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+                crate::constants::BALANCE_SLOT_PADDING_FIELD_ID,
+            ],
             stablecoin_enabled: 0,
             stablecoin_asset_id: 0,
             stablecoin_policy_version: 0,
