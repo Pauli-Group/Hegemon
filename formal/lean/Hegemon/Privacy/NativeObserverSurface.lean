@@ -621,6 +621,158 @@ theorem native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fi
       outputFacts,
       bindingFacts⟩
 
+theorem native_tx_leaf_active_output_ciphertext_boundary_facts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape)
+    (observerBytesBounded :
+      ∀ wire,
+        wire ∈ world.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    ∃ wire summary,
+      world.ciphertextBytes[
+          activeFlagCountBefore shape.outputFlags index]? = some wire
+        ∧ world.ciphertextSummaries[
+          activeFlagCountBefore shape.outputFlags index]? = some summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+          wire = some summary
+        ∧ summaryHasChainCiphertextFormat summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire
+        ∧ wire.length =
+          Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+            + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+            + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+        ∧ shape.outputFlags[index]? = some 1
+        ∧ shape.commitments[index]? = some publicCommitment
+        ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+        ∧ bound.outputFlags[index]? = some 1
+        ∧ statementFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ statementFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ bindingFields.commitmentSeeds[index]? = some publicCommitment
+        ∧ bindingFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ input.ciphertextHashesMatch = true
+        ∧ input.ciphertextPayloadHashesMatch = true
+        ∧ input.outputCountMatches = true
+        ∧ OutputSlotFacts
+          1
+          publicCommitment
+          publicCiphertextHash
+        ∧ TxLeafActionBindingFacts input := by
+  rcases
+      native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape
+        bindingAccepted
+        surface
+        slot
+        observerValid
+        shapeEq
+        observerBytesBounded with
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      wireBounded,
+      wireLength,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingFlag,
+      bindingCommitment,
+      bindingCiphertext,
+      outputFacts,
+      bindingFacts⟩
+  rcases bindingFacts with
+    ⟨_hNullifiers,
+      _hCommitments,
+      hCiphertextHashes,
+      _hInputCount,
+      hOutputCount,
+      _hVersion,
+      _hFee,
+      _hStablecoinPayload,
+      _hBalanceTag,
+      _hReceiptStatementHash,
+      _hPublicInputsDigest,
+      _hProofDigest,
+      _hProofBackend,
+      hCiphertextPayloadHashes⟩
+  exact
+    ⟨wire,
+      summary,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      format,
+      wireBounded,
+      wireLength,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingCommitment,
+      bindingCiphertext,
+      hCiphertextHashes,
+      hCiphertextPayloadHashes,
+      hOutputCount,
+      outputFacts,
+      ⟨_hNullifiers,
+        _hCommitments,
+        hCiphertextHashes,
+        _hInputCount,
+        hOutputCount,
+        _hVersion,
+        _hFee,
+        _hStablecoinPayload,
+        _hBalanceTag,
+        _hReceiptStatementHash,
+        _hPublicInputsDigest,
+        _hProofDigest,
+        _hProofBackend,
+        hCiphertextPayloadHashes⟩⟩
+
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

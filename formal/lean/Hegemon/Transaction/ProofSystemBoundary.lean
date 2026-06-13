@@ -355,6 +355,101 @@ theorem canonical_boundary_facts_input_slot_bound_to_statement
   exact
     ⟨slotFacts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
 
+theorem canonical_boundary_facts_output_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    OutputSlotFacts
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+  have slotFacts :=
+    validPublicInputShape_output_slot_facts_at
+      facts.publicShapeValid
+      slot
+  rcases facts.outputVectorBinding with
+    ⟨shapeFlags,
+      shapeCommitments,
+      shapeCiphertextHashes,
+      bindingCommitments,
+      bindingCiphertextHashes⟩
+  have slotStatement :
+      OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← shapeFlags, ← shapeCommitments, ← shapeCiphertextHashes]
+    exact slot
+  have slotBinding :
+      OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← shapeFlags, bindingCommitments, bindingCiphertextHashes,
+      ← shapeCommitments, ← shapeCiphertextHashes]
+    exact slot
+  exact ⟨slotFacts, slotStatement, slotBinding⟩
+
 theorem deployed_soundness_canonical_surface_exposes_spend_and_balance
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
