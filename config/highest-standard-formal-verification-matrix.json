@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 65.13,
+  "overall_completion_percent": 65.31,
   "last_full_formal_core": {
-    "commit": "working tree after native ledger replay-state slice",
+    "commit": "working tree after PQ channel-state slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1165,
+    "named_lean_theorems": 1179,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,43 +29,40 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened native replay/startup refinement with a carried ledger replay state that requires each accepted block to match the carried supply, commitment leaf cursor, spent nullifier set, and consumed bridge replay set before replay. The new theorems recurse with accepted block summaries and prove replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, final bridge replay uniqueness, and representative stale leaf/bridge replay rejection cases.",
+    "summary": "Strengthened PQ channel safety with explicit channel-state send/open transitions for both legacy secure-channel and PQ Noise. The new theorems prove initial counters are zero, successful protect/open consume the current per-direction counter under the role-correct directional key slot, increment only the corresponding counter, leave the opposite counter unchanged, and reject at send/receive counter overflow.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
-      "formal/lean/Hegemon/Native/AcceptedChain.lean"
+      "formal/lean/Hegemon/Network/SecureChannel.lean",
+      "formal/lean/Hegemon/Network/PqNoise.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.ActionStreamEffect.importBridgeReplay_preserves_nodup",
-      "Hegemon.Native.ActionStreamEffect.evaluateActionStreamFrom_preserves_imported_bridge_replay_nodup",
-      "Hegemon.Native.ActionStreamEffect.evaluateActionStreamEffect_preserves_imported_bridge_replay_nodup",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_supply_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_leaf_cursor_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_commitment_plans_canonical_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique_from",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_startup_equivalence",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_nullifiers_unique",
-      "Hegemon.Native.AcceptedChain.accepted_native_ledger_replay_chain_bridge_replays_unique",
-      "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_accepts",
-      "Hegemon.Native.AcceptedChain.valid_native_ledger_replay_chain_startup_equivalence",
-      "Hegemon.Native.AcceptedChain.stale_leaf_native_ledger_replay_chain_rejects",
-      "Hegemon.Native.AcceptedChain.duplicate_bridge_replay_native_ledger_replay_chain_rejects",
-      "Hegemon.Native.AcceptedChain.stale_bridge_replay_native_ledger_replay_chain_rejects"
+      "Hegemon.Network.SecureChannel.initial_state_counters_zero",
+      "Hegemon.Network.SecureChannel.protectFrame_accepts_below_max",
+      "Hegemon.Network.SecureChannel.openFrame_accepts_below_max",
+      "Hegemon.Network.SecureChannel.protectFrame_rejects_send_overflow",
+      "Hegemon.Network.SecureChannel.openFrame_rejects_recv_overflow",
+      "Hegemon.Network.SecureChannel.protectFrame_direction_and_counter",
+      "Hegemon.Network.SecureChannel.openFrame_direction_and_counter",
+      "Hegemon.Network.PqNoise.initial_state_counters_zero",
+      "Hegemon.Network.PqNoise.protectFrame_accepts_below_max",
+      "Hegemon.Network.PqNoise.openFrame_accepts_below_max",
+      "Hegemon.Network.PqNoise.protectFrame_rejects_send_overflow",
+      "Hegemon.Network.PqNoise.openFrame_rejects_recv_overflow",
+      "Hegemon.Network.PqNoise.protectFrame_direction_and_counter",
+      "Hegemon.Network.PqNoise.openFrame_direction_and_counter"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1165,
+      "named_lean_theorems": 1179,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The carried ledger replay state is over production-derived block replay inputs, not raw network bytes or SCALE-decoded action payloads.",
-      "Commitment-tree coverage here proves leaf-cursor and canonical commitment-start plan agreement, not Merkle hash security or full tree-root implementation equivalence.",
-      "Bridge replay uniqueness is over modeled replay keys; bridge receipt/proof soundness, payload amount authorization, and PQ-clean external proof verification remain separate open targets.",
-      "Storage durability, sled transaction correctness, filesystem fsync semantics, and complete native-node equivalence remain outside this theorem slice."
+      "The channel-state theorem covers executable control logic and counter state, not SHA-256/HKDF/AES-GCM/ML-KEM/ML-DSA cryptographic security.",
+      "Generated vectors already bind nonce layout and role mappings to Rust helpers, but the new state theorem is pure Lean and does not add a new runtime transition vector family.",
+      "Full network liveness, OS RNG quality, handshake peer-authentication security reductions, and complete native-node equivalence remain open."
     ]
   },
   "properties": [
@@ -380,18 +377,20 @@
     {
       "id": "network.pq-channel-safety",
       "weight": 3,
-      "completion_percent": 70,
+      "completion_percent": 76,
       "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
       "current_evidence": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/PqNoise.lean",
         "network and pq-noise vector gates",
-        "prior ML-KEM seed and AES-GCM direction separation fixes"
+        "prior ML-KEM seed and AES-GCM direction separation fixes",
+        "formal/lean/Hegemon/Network/SecureChannel.lean channel-state protect/open transition theorems",
+        "formal/lean/Hegemon/Network/PqNoise.lean channel-state protect/open transition theorems"
       ],
       "missing_work": [
-        "Add a full channel-state theorem for nonce monotonicity and direction separation.",
-        "Bind all active frame send/receive paths to the theorem-backed key schedule.",
-        "State ML-KEM/ML-DSA/HKDF/AES-GCM assumptions explicitly."
+        "Bind all active frame send/receive paths to the theorem-backed channel-state transitions, not only helper call propagation.",
+        "State ML-KEM/ML-DSA/HKDF/AES-GCM assumptions explicitly.",
+        "Add a full handshake-to-channel theorem that composes authenticated PQ handshake completion with the stateful channel theorem."
       ],
       "performance_constraint": "No extra round trips; checks should remain key-schedule/frame-admission local."
     },

@@ -74,6 +74,37 @@ def nonceFromCounter (counter : Nat) : List Byte :=
 def nextCounter (counter : Nat) : Option Nat :=
   if counter < u64Max then some (counter + 1) else none
 
+structure ChannelState where
+  role : Role
+  sendCounter : Nat
+  recvCounter : Nat
+deriving DecidableEq, Repr
+
+def initialState (role : Role) : ChannelState :=
+  { role := role, sendCounter := 0, recvCounter := 0 }
+
+def protectFrame
+    (state : ChannelState) :
+    Option (KeySlot × List Byte × ChannelState) :=
+  match nextCounter state.sendCounter with
+  | none => none
+  | some nextSend =>
+      some
+        (sendSlot state.role,
+          nonceFromCounter state.sendCounter,
+          { state with sendCounter := nextSend })
+
+def openFrame
+    (state : ChannelState) :
+    Option (KeySlot × List Byte × ChannelState) :=
+  match nextCounter state.recvCounter with
+  | none => none
+  | some nextRecv =>
+      some
+        (recvSlot state.role,
+          nonceFromCounter state.recvCounter,
+          { state with recvCounter := nextRecv })
+
 theorem directional_labels_distinct :
     initiatorToResponderLabel ≠ responderToInitiatorLabel := by
   decide
@@ -162,6 +193,106 @@ theorem nextCounter_rejects_u64_max :
     nextCounter u64Max = none := by
   unfold nextCounter
   simp
+
+theorem initial_state_counters_zero
+    {role : Role} :
+    (initialState role).sendCounter = 0
+      ∧ (initialState role).recvCounter = 0 := by
+  simp [initialState]
+
+theorem protectFrame_accepts_below_max
+    {state : ChannelState}
+    (belowMax : state.sendCounter < u64Max) :
+    protectFrame state =
+      some
+        (sendSlot state.role,
+          nonceFromCounter state.sendCounter,
+          { state with sendCounter := state.sendCounter + 1 }) := by
+  unfold protectFrame
+  simp [nextCounter_accepts_below_max belowMax]
+
+theorem openFrame_accepts_below_max
+    {state : ChannelState}
+    (belowMax : state.recvCounter < u64Max) :
+    openFrame state =
+      some
+        (recvSlot state.role,
+          nonceFromCounter state.recvCounter,
+          { state with recvCounter := state.recvCounter + 1 }) := by
+  unfold openFrame
+  simp [nextCounter_accepts_below_max belowMax]
+
+theorem protectFrame_rejects_send_overflow
+    {state : ChannelState}
+    (atMax : state.sendCounter = u64Max) :
+    protectFrame state = none := by
+  unfold protectFrame
+  rw [atMax, nextCounter_rejects_u64_max]
+
+theorem openFrame_rejects_recv_overflow
+    {state : ChannelState}
+    (atMax : state.recvCounter = u64Max) :
+    openFrame state = none := by
+  unfold openFrame
+  rw [atMax, nextCounter_rejects_u64_max]
+
+theorem protectFrame_direction_and_counter
+    {state next : ChannelState}
+    {slot : KeySlot}
+    {nonce : List Byte}
+    (accepted :
+      protectFrame state = some (slot, nonce, next)) :
+    slot = sendSlot state.role
+      ∧ slot ≠ recvSlot state.role
+      ∧ nonce = nonceFromCounter state.sendCounter
+      ∧ next.role = state.role
+      ∧ next.sendCounter = state.sendCounter + 1
+      ∧ next.recvCounter = state.recvCounter := by
+  unfold protectFrame at accepted
+  unfold nextCounter at accepted
+  by_cases belowMax : state.sendCounter < u64Max
+  · simp [belowMax] at accepted
+    rcases accepted with ⟨hslot, hnonce, hnext⟩
+    subst slot
+    subst nonce
+    subst next
+    exact
+      ⟨rfl,
+        send_recv_slots_distinct,
+        rfl,
+        rfl,
+        rfl,
+        rfl⟩
+  · simp [belowMax] at accepted
+
+theorem openFrame_direction_and_counter
+    {state next : ChannelState}
+    {slot : KeySlot}
+    {nonce : List Byte}
+    (accepted :
+      openFrame state = some (slot, nonce, next)) :
+    slot = recvSlot state.role
+      ∧ slot ≠ sendSlot state.role
+      ∧ nonce = nonceFromCounter state.recvCounter
+      ∧ next.role = state.role
+      ∧ next.sendCounter = state.sendCounter
+      ∧ next.recvCounter = state.recvCounter + 1 := by
+  unfold openFrame at accepted
+  unfold nextCounter at accepted
+  by_cases belowMax : state.recvCounter < u64Max
+  · simp [belowMax] at accepted
+    rcases accepted with ⟨hslot, hnonce, hnext⟩
+    subst slot
+    subst nonce
+    subst next
+    exact
+      ⟨rfl,
+        Ne.symm send_recv_slots_distinct,
+        rfl,
+        rfl,
+        rfl,
+        rfl⟩
+  · simp [belowMax] at accepted
 
 end SecureChannel
 end Network

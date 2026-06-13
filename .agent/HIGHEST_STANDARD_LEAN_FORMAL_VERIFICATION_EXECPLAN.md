@@ -44,6 +44,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 11:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1149 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 11:42Z) Strengthened native replay/startup refinement with a carried ledger replay state for supply, commitment leaf cursor, spent nullifiers, and consumed bridge replay keys. Current tracked completion is 65.13%.
 - [x] (2026-06-13 11:56Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1165 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 12:18Z) Strengthened legacy secure-channel and PQ Noise models with stateful protect/open transition theorems for direction-separated key slots and per-direction nonce-counter advancement. Current tracked completion is 65.31%.
+- [x] (2026-06-13 12:35Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1179 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -108,6 +110,8 @@ The wallet/observer ciphertext-format slice strengthens `formal/lean/Hegemon/Wal
 The indexed no-theft and canonical verifier-boundary slice strengthens `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It proves that any indexed active input in aligned public flag/nullifier/witness vectors yields note-commitment reconstruction, spend-authority derivation, nullifier derivation, and Merkle membership facts, then lifts that theorem through the accepted transaction relation and the canonical deployed-verifier boundary. It also strengthens `CanonicalTxStatementSurface` so nullifier, commitment, and ciphertext-hash vectors agree across public shape, statement preimage, and proof binding message. This raises the tracked baseline to 64.55%. It still depends on `DeployedTxVerifierSoundnessAssumption`; deployed STARK/AIR soundness, SmallWood soundness, witness extraction, verifier implementation correctness, hash security, and complete Rust/native refinement remain open.
 
 The native ledger replay-state slice strengthens `formal/lean/Hegemon/Native/ActionStreamEffect.lean` and `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves that accepted action streams preserve `List.Nodup` for consumed bridge replay keys, then adds a carried `NativeLedgerReplayState` requiring each accepted block to match carried supply, commitment leaf cursor, spent nullifiers, and consumed bridge replay keys before replay. The packaged theorem `accepted_native_ledger_replay_chain_startup_equivalence` proves replayed supply equality, replayed leaf-cursor equality, canonical commitment-start plans, final nullifier uniqueness, and final bridge replay uniqueness, with concrete rejection examples for stale leaf cursors, duplicate bridge replay consumption, and stale bridge replay state. This raises the tracked baseline to 65.13%. It still operates over production-derived replay inputs; raw byte decoding, Merkle hash security, bridge proof/mint authorization, storage durability, and complete native-node equivalence remain open.
+
+The PQ channel-state slice strengthens `formal/lean/Hegemon/Network/SecureChannel.lean` and `formal/lean/Hegemon/Network/PqNoise.lean`. It adds explicit modeled channel states and proves that successful protect/open operations use the role-correct directional key slot, consume the current send or receive nonce, increment only the corresponding counter, leave the opposite counter unchanged, and reject at that direction's counter overflow. This raises the tracked baseline to 65.31% by closing the previous missing full channel-state theorem gap. It still does not prove SHA-256/HKDF/AES-GCM/ML-KEM/ML-DSA security, OS RNG quality, handshake peer-authentication reductions, full active frame-path state refinement, network liveness, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -253,6 +257,14 @@ The latest full formal-core pass after the native ledger replay-state slice repo
 
     claims=92
     named_lean_theorems=1165
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the PQ channel-state slice reported:
+
+    claims=92
+    named_lean_theorems=1179
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177
