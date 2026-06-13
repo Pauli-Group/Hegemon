@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 60.0,
+  "overall_completion_percent": 60.14,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,22 +29,24 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added Hegemon.Native.AcceptedChain with parent-linked native replay-chain theorems for checked supply replay and carried spent-nullifier preconditions. The slice has no runtime cost; it composes existing Lean replay predicates and records the theorem names in the formal claim ledger and blueprint.",
+    "summary": "Added Hegemon.Native.AcceptedChain with parent-linked native replay-chain theorems for checked supply replay, carried spent-nullifier preconditions, and explicit `chainNullifiers blocks` uniqueness. The slice has no runtime cost; it composes existing Lean replay predicates and records the theorem names in the formal claim ledger and blueprint.",
     "lean_module": "formal/lean/Hegemon/Native/AcceptedChain.lean",
     "top_level_theorems": [
       "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_no_counterfeiting",
-      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifier_preconditions"
+      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifier_preconditions",
+      "Hegemon.Native.AcceptedChain.accepted_native_replay_chain_nullifiers_unique"
     ],
     "validation": {
       "formal_core": "passed",
       "claims": 86,
-      "named_lean_theorems": 1074,
+      "named_lean_theorems": 1075,
       "production_eligible_claims": 84,
       "falsification_cases": 365,
       "implementation_bindings": 177
     },
     "known_limitations": [
       "Still depends on production bindings from decoded native state into BlockReplayInput.",
+      "The accepted-chain relation carries an explicit Nodup guard; a future slice should derive that guard directly from ActionStreamEffect import lemmas and Rust conformance.",
       "Does not prove SCALE/raw-byte decode correctness, storage crash consistency, proof-system soundness, nullifier derivation security, or full native-node equivalence."
     ]
   },
@@ -71,7 +73,7 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 81,
+      "completion_percent": 83,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
@@ -79,10 +81,11 @@
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
         "native action-state/action-stream vector gates",
         "pending-action reload and transfer-state admission gates",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean carried spent-nullifier chain precondition theorem"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried spent-nullifier chain precondition theorem",
+        "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain nullifiers Nodup theorem"
       ],
       "missing_work": [
-        "Strengthen the accepted-chain nullifier theorem from carried preconditions to an explicit chainNullifiers Nodup statement.",
+        "Derive the accepted-chain Nodup guard directly from ActionStreamEffect import lemmas and production conformance instead of carrying it as an explicit accepted-chain condition.",
         "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the same carried nullifier transition relation.",
         "Add hostile reorg/startup duplicate-nullifier regressions if any import path lacks them."
       ],

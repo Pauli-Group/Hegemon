@@ -17,6 +17,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 04:30Z) Integrated all four agent audit results into the theorem matrix. Current highest-standard completion is 59.46%.
 - [x] (2026-06-13 05:06Z) Promoted supply and nullifier replay fragments into `Hegemon.Native.AcceptedChain` theorem targets. Current tracked completion is 60.00%.
 - [x] (2026-06-13 05:18Z) Ran `bash scripts/check_formal_core.sh` for the `AcceptedChain` theorem slice; formal-core passed with 86 claims, 1074 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 05:33Z) Strengthened `Hegemon.Native.AcceptedChain` with `accepted_native_replay_chain_nullifiers_unique`, proving the accumulated `chainNullifiers` list is `List.Nodup` for accepted native replay chains. Current tracked completion is 60.14%.
+- [x] (2026-06-13 05:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 86 claims, 1075 named Lean theorems, 84 production-eligible claims, 365 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -55,7 +57,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 
 The immediate outcome is a concrete target and tracking system: 18 critical formal property families, weighted to 100 total points. The initial conservative completion was 44.35%; after four read-only audits, the branch-local tracked completion is 59.46%. This is not a claim of full formal verification. It means the coordinator now has an evidence-weighted baseline for what is already strong and what still blocks the highest standard.
 
-The first theorem slice adds `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves `accepted_native_replay_chain_no_counterfeiting` and `accepted_native_replay_chain_nullifier_preconditions` over parent-linked native replay chains with carried spent-nullifier state, plus concrete rejection theorems for counterfeit second-block supply, stale spent state, and duplicate cross-block nullifier replay. This raises the tracked baseline to 60.00% while leaving full raw-byte/native-node refinement, explicit `Nodup` nullifier theorem strength, storage crash semantics, proof-system soundness, and cryptographic assumptions open.
+The first theorem slice adds `formal/lean/Hegemon/Native/AcceptedChain.lean`. It proves `accepted_native_replay_chain_no_counterfeiting`, `accepted_native_replay_chain_nullifier_preconditions`, and `accepted_native_replay_chain_nullifiers_unique` over parent-linked native replay chains with carried spent-nullifier state, plus concrete rejection theorems for counterfeit second-block supply, stale spent state, and duplicate cross-block nullifier replay. This raises the tracked baseline to 60.14% while leaving full raw-byte/native-node refinement, derivation of the explicit `Nodup` guard from action-stream import lemmas, storage crash semantics, proof-system soundness, and cryptographic assumptions open.
 
 ## Context and Orientation
 
