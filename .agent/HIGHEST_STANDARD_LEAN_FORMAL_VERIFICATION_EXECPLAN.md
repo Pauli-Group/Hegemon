@@ -69,6 +69,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 20:05Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1233 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 20:35Z) Added `Hegemon.Native.TxLeafCanonicalSurface`, composing accepted native tx-leaf/action binding with the canonical deployed verifier surface and explicit deployed verifier soundness assumption to derive the accepted transaction relation, field-level tx-leaf binding facts, and authorized per-asset delta values. Current tracked completion is 67.19%.
 - [x] (2026-06-13 20:50Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1238 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 21:05Z) Strengthened `Hegemon.Native.BlockReplayInputProjection` with a direct projected ledger-state executor and proved it extensionally equal to accepted projected replay, then lifted the startup-equivalence theorem through that direct executor. Current tracked completion is 67.41%.
+- [x] (2026-06-13 21:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1242 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -157,6 +159,8 @@ The accepted transaction-chain asset-isolation slice strengthens `formal/lean/He
 The bridge authorized-amount/fresh-replay composition slice strengthens `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It adds `accepted_inbound_payload_authorized_amount_fresh_replay_safe`, proving that accepted inbound bridge payload admission plus decoded amount authorization and fresh replay import jointly expose payload authorization, payload-hash binding, decoded/external amount equality, zero direct native mint delta, replay-key membership, imported count one, preserved replay-key uniqueness, and immediate duplicate rejection. It also adds `accepted_inbound_payload_authorized_amount_ledger_replay_safe`, which packages those bridge facts with accepted ledger replay supply equality and final consumed bridge replay-key uniqueness. This raises the tracked baseline to 66.98%. It still does not prove live bridge mint payload grammar, SCALE decoder correctness, external-chain/PQ receipt soundness, bridge payload-hash cryptographic security, raw-byte native import/reorg/startup/sync refinement, or complete native-node equivalence.
 
 The native tx-leaf canonical-surface composition slice adds `formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean`. It proves that accepted native tx-leaf/action equality admission exposes field-level binding facts for nullifiers, commitments, ciphertext hashes, active counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend, and ciphertext payload hash. It then composes those facts with the canonical deployed verifier surface and explicit `DeployedTxVerifierSoundnessAssumption` to derive the accepted transaction relation and authorized per-asset delta values. This raises the tracked baseline to 67.19%. It still does not prove deployed AIR/STARK/SmallWood soundness, SCALE decoder correctness, tx-leaf parser completeness, hash security, stablecoin policy admission, bridge mint authorization, recursive proof soundness, or complete native-node refinement.
+
+The projected ledger-state executor slice strengthens `formal/lean/Hegemon/Native/BlockReplayInputProjection.lean`. It adds `projectedLedgerStateAfter`, proves `projectedLedgerStateAfter_eq_validate_projected_replay`, and packages `accepted_projected_ledger_state_after_startup_equivalence` so the direct production-style projected executor inherits accepted replay's supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. This raises the tracked baseline to 67.41%. It still does not prove raw SCALE decoding, sled transaction correctness, filesystem durability, full raw-action replay equivalence, tx-leaf/recursive proof soundness, PoW threshold validity, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -398,6 +402,14 @@ The latest full formal-core pass after the native tx-leaf canonical-surface slic
 
     claims=93
     named_lean_theorems=1238
+    production_eligible_claims=84
+    falsification_cases=379
+    implementation_bindings=180
+
+The latest full formal-core pass after the projected ledger-state executor slice reported:
+
+    claims=93
+    named_lean_theorems=1242
     production_eligible_claims=84
     falsification_cases=379
     implementation_bindings=180

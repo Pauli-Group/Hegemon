@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 67.19,
+  "overall_completion_percent": 67.41,
   "last_full_formal_core": {
-    "commit": "working tree after native tx-leaf canonical-surface slice",
+    "commit": "working tree after projected ledger-state executor slice",
     "status": "passed",
     "claims": 93,
-    "named_lean_theorems": 1238,
+    "named_lean_theorems": 1242,
     "production_eligible_claims": 84,
     "falsification_cases": 379,
     "implementation_bindings": 180
@@ -29,40 +29,38 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened native tx-leaf canonical-surface equivalence: accepted native tx-leaf/action binding plus the canonical deployed verifier surface and explicit deployed verifier soundness now imply the accepted transaction relation, field-level tx-leaf binding facts, and authorized per-asset delta values.",
+    "summary": "Strengthened native replay implementation equivalence: the production-style projected ledger-state executor is now proved extensionally equal to accepted ledger replay, so direct projected execution carries no-counterfeiting, leaf-cursor, canonical commitment-plan, nullifier uniqueness, bridge replay uniqueness, and carried-state precondition facts.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
-      "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Transaction/AssetIsolation.lean"
+      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean",
+      "formal/lean/Hegemon/Native/BlockReplayRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_preconditions",
-      "Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_binding_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_value"
+      "Hegemon.Native.BlockReplayInputProjection.projectedLedgerStateAfter_eq_validate_projected_replay",
+      "Hegemon.Native.BlockReplayInputProjection.accepted_projected_ledger_state_after_startup_equivalence",
+      "Hegemon.Native.BlockReplayInputProjection.valid_projected_ledger_state_after_accepts",
+      "Hegemon.Native.BlockReplayInputProjection.valid_projected_ledger_state_after_startup_equivalence"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 93,
-      "named_lean_theorems": 1238,
+      "named_lean_theorems": 1242,
       "production_eligible_claims": 84,
       "falsification_cases": 379,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorem is still conditional on `DeployedTxVerifierSoundnessAssumption`; it narrows the production binding but does not prove deployed AIR/STARK/SmallWood soundness.",
-      "The tx-leaf/action facts are decoded equality predicates; SCALE decoding, tx-leaf parser completeness, hash security, stablecoin policy admission, bridge mint authorization, and complete native-node refinement remain open.",
-      "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
+      "The theorem proves equivalence for production-style projected ledger state over decoded projection records; it still does not prove raw SCALE decoding, sled durability, filesystem behavior, or full native-node equivalence.",
+      "The proof reuses the modeled replay-refinement predicates and therefore does not discharge tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or hash binding.",
+      "The proof is performance-neutral because it adds Lean executor/equivalence theorems and metadata only."
     ]
   },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 78,
+      "completion_percent": 79,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -74,6 +72,7 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger replay state supply equality theorem",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean projected replay inputs derive parent supply from carried ledger state",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor is extensionally equal to accepted replay and preserves replayed supply equality",
         "node/src/native/mod.rs native_block_replay_refinement_input_from_state helper is called by mined import, announced import, and canonical replay"
       ],
       "missing_work": [
@@ -85,7 +84,7 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 87,
+      "completion_percent": 88,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
@@ -97,7 +96,8 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted native replay-chain nullifiers Nodup theorem",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve imported-nullifier Nodup theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean startup/replay supply-nullifier equivalence theorem",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay state preserves final nullifier Nodup"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay state preserves final nullifier Nodup",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor preserves final nullifier Nodup through accepted replay equivalence"
       ],
       "missing_work": [
         "Bind canonical replay, startup reload, side-branch canonicalization, and pending quarantine to the stronger carried ledger-state transition relation.",
@@ -313,7 +313,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 87,
+      "completion_percent": 88,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -323,6 +323,7 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state chain lift for supply, leaf cursor, nullifiers, and bridge replay",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean accepted projected replay chains preserve carried-state preconditions",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor is proved equal to accepted projected replay and inherits startup equivalence",
         "node/src/native/mod.rs native_block_replay_refinement_input_from_state centralizes state-derived replay input projection"
       ],
       "missing_work": [

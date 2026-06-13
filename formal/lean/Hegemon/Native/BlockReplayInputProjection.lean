@@ -91,6 +91,25 @@ def projectedCarriedStatePreconditions :
       else
         false
 
+def projectedLedgerStateAfter :
+    NativeLedgerReplayState -> List NativeBlockReplayProjection ->
+      Option NativeLedgerReplayState
+  | state, [] => some state
+  | state, projection :: rest =>
+      if projectionCarriesState state projection then
+        match evaluateBlockReplayRefinement
+            (replayInputFromProjection projection) with
+        | Except.error _ => none
+        | Except.ok summary =>
+            projectedLedgerStateAfter
+              (nextLedgerState
+                state
+                (replayInputFromProjection projection)
+                summary)
+              rest
+      else
+        none
+
 theorem replayInputFromProjection_projects_carried_state
     (projection : NativeBlockReplayProjection) :
     (replayInputFromProjection projection).parentSupply =
@@ -253,6 +272,83 @@ theorem accepted_projected_native_ledger_replay_chain_startup_equivalence
       replayEquivalence.right.right.right.left,
       replayEquivalence.right.right.right.right⟩
 
+theorem projectedLedgerStateAfter_eq_validate_projected_replay
+    (initial : NativeLedgerReplayState)
+    (projections : List NativeBlockReplayProjection) :
+    projectedLedgerStateAfter initial projections =
+      validateNativeLedgerReplayChain
+        initial
+        (projectedReplayInputs projections) := by
+  induction projections generalizing initial with
+  | nil =>
+      rfl
+  | cons projection rest ih =>
+      unfold projectedLedgerStateAfter
+      unfold projectedReplayInputs
+      unfold validateNativeLedgerReplayChain
+      unfold projectionCarriesState
+      by_cases parentEq :
+          projection.carried.supply = initial.supply
+      · simp [replayInputFromProjection, parentEq]
+        by_cases leafEq :
+            projection.carried.leafCount = initial.leafCount
+        · simp [leafEq]
+          by_cases spentEq :
+              projection.carried.spentNullifiers =
+                initial.spentNullifiers
+          · simp [spentEq]
+            by_cases consumedEq :
+                projection.carried.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq]
+              split
+              · simp_all
+              · simp_all
+            · simp [consumedEq]
+          · simp [spentEq]
+        · simp [leafEq]
+      · simp [replayInputFromProjection, parentEq]
+
+theorem accepted_projected_ledger_state_after_startup_equivalence
+    {initial final : NativeLedgerReplayState}
+    {projections : List NativeBlockReplayProjection}
+    (initialNullifiersNodup : initial.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup : initial.consumedBridgeReplays.Nodup)
+    (accepted : projectedLedgerStateAfter initial projections = some final) :
+    validateNativeLedgerReplayChain
+        initial
+        (projectedReplayInputs projections) =
+        some final
+      ∧ expectedNativeSupplyAfter
+          initial.supply
+          (projectedReplayInputs projections) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.leafCount
+          (projectedReplayInputs projections) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial
+          (projectedReplayInputs projections) = true
+      ∧ projectedCarriedStatePreconditions initial projections = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup := by
+  have acceptedReplay := accepted
+  rw [projectedLedgerStateAfter_eq_validate_projected_replay] at acceptedReplay
+  have replayEquivalence :=
+    accepted_projected_native_ledger_replay_chain_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  exact
+    ⟨acceptedReplay,
+      replayEquivalence.left,
+      replayEquivalence.right.left,
+      replayEquivalence.right.right.left,
+      replayEquivalence.right.right.right.left,
+      replayEquivalence.right.right.right.right.left,
+      replayEquivalence.right.right.right.right.right⟩
+
 def validNativeReplayProjectionChain : List NativeBlockReplayProjection :=
   [
     {
@@ -317,6 +413,19 @@ theorem valid_projected_native_ledger_replay_chain_accepts :
         } := by
   rfl
 
+theorem valid_projected_ledger_state_after_accepts :
+    projectedLedgerStateAfter
+        (initialNativeLedgerState 100 10)
+        validNativeReplayProjectionChain =
+      some
+        {
+          supply := 100,
+          leafCount := 13,
+          spentNullifiers := [2, 1],
+          consumedBridgeReplays := [7]
+        } := by
+  rfl
+
 theorem valid_projected_native_ledger_replay_chain_startup_equivalence :
     expectedNativeSupplyAfter
         100
@@ -343,6 +452,41 @@ theorem valid_projected_native_ledger_replay_chain_startup_equivalence :
       equivalence.right.left,
       equivalence.right.right.left,
       equivalence.right.right.right.left⟩
+
+theorem valid_projected_ledger_state_after_startup_equivalence :
+    validateNativeLedgerReplayChain
+        (initialNativeLedgerState 100 10)
+        (projectedReplayInputs validNativeReplayProjectionChain) =
+        some
+          {
+            supply := 100,
+            leafCount := 13,
+            spentNullifiers := [2, 1],
+            consumedBridgeReplays := [7]
+          }
+      ∧ expectedNativeSupplyAfter
+          100
+          (projectedReplayInputs validNativeReplayProjectionChain) =
+          some 100
+      ∧ expectedNativeLeafCountAfter
+          10
+          (projectedReplayInputs validNativeReplayProjectionChain) =
+          some 13
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          (initialNativeLedgerState 100 10)
+          (projectedReplayInputs validNativeReplayProjectionChain) = true
+      ∧ projectedCarriedStatePreconditions
+          (initialNativeLedgerState 100 10)
+          validNativeReplayProjectionChain = true
+      ∧ [2, 1].Nodup
+      ∧ [7].Nodup := by
+  have accepted := valid_projected_ledger_state_after_accepts
+  have equivalence :=
+    accepted_projected_ledger_state_after_startup_equivalence
+      (by simp [initialNativeLedgerState])
+      (by simp [initialNativeLedgerState])
+      accepted
+  exact equivalence
 
 def staleProjectedCarriedStateChain : List NativeBlockReplayProjection :=
   [
