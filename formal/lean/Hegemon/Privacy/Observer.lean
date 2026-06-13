@@ -56,6 +56,15 @@ def summariesMatchChainWire (world : ShieldedTransactionWorld) : Prop :=
   parsedChainCiphertextSummaries world.ciphertextBytes =
     some world.ciphertextSummaries
 
+def summaryHasChainCiphertextFormat
+    (summary : NoteCiphertextSummary) : Prop :=
+  summary.cryptoSuite = cryptoSuiteGamma
+    ∧ summary.kemLen = mlKemCiphertextLen
+
+def summariesHaveChainCiphertextFormat
+    (summaries : List NoteCiphertextSummary) : Prop :=
+  ∀ summary, summary ∈ summaries -> summaryHasChainCiphertextFormat summary
+
 def sameAllowedLeakage
     (left right : ShieldedTransactionWorld) : Prop :=
   observerView left = observerView right
@@ -136,6 +145,47 @@ theorem parsed_chain_ciphertext_summaries_length
               simp [parsedRest] at parsed
               cases parsed
               simp [ih parsedRest]
+
+theorem parsed_chain_ciphertext_summaries_have_chain_format
+    {wires : List (List Byte)}
+    {summaries : List NoteCiphertextSummary}
+    (parsed : parsedChainCiphertextSummaries wires = some summaries) :
+    summariesHaveChainCiphertextFormat summaries := by
+  induction wires generalizing summaries with
+  | nil =>
+      simp [parsedChainCiphertextSummaries,
+        summariesHaveChainCiphertextFormat] at parsed ⊢
+      cases parsed
+      simp
+  | cons wire rest ih =>
+      unfold parsedChainCiphertextSummaries at parsed
+      cases parsedWire : parseChainNoteCiphertext wire with
+      | none =>
+          simp [parsedWire] at parsed
+      | some summary =>
+          simp [parsedWire] at parsed
+          cases parsedRest : parsedChainCiphertextSummaries rest with
+          | none =>
+              simp [parsedRest] at parsed
+          | some restSummaries =>
+              simp [parsedRest] at parsed
+              cases parsed
+              intro parsedSummary inSummaries
+              simp [summariesHaveChainCiphertextFormat] at ih
+              simp at inSummaries
+              cases inSummaries with
+              | inl sameSummary =>
+                  cases sameSummary
+                  exact parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
+                    parsedWire
+              | inr inRest =>
+                  exact ih parsedRest parsedSummary inRest
+
+theorem observer_view_summaries_have_chain_format
+    {world : ShieldedTransactionWorld}
+    (parsed : summariesMatchChainWire world) :
+    summariesHaveChainCiphertextFormat world.ciphertextSummaries :=
+  parsed_chain_ciphertext_summaries_have_chain_format parsed
 
 theorem same_allowed_leakage_of_public_chain_wire_and_placement
     {left right : ShieldedTransactionWorld}

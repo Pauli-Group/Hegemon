@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 63.94,
+  "overall_completion_percent": 64.04,
   "last_full_formal_core": {
-    "commit": "working tree on 888967f5a2eed311e0d5a2856442fd0ea7db2430",
+    "commit": "working tree after wallet/observer ciphertext-format slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1138,
+    "named_lean_theorems": 1143,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,28 +29,31 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added `Hegemon.Native.CommitmentTreeRefinement` as a non-production implementation-equivalence refinement across existing native action-stream, action-plan application, and consensus tree-transition models. The slice proves that accepted action-stream replay determines a canonical planned commitment-start schedule, that the corresponding action-plan application accepts with the same next leaf cursor, and that accepted tree-transition execution exposes the applied commitment-tree root.",
-    "lean_module": "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+    "summary": "Strengthened the wallet note-ciphertext parser model and privacy observer boundary with generic accepted-summary format facts. The slice proves accepted crypto-format summaries carry the fixed ML-KEM ciphertext length, accepted chain containers and full chain ciphertexts carry the expected chain crypto suite plus fixed ML-KEM length, and observer-visible summaries derived from public chain wire bytes all satisfy that chain format.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean"
+    ],
     "top_level_theorems": [
-      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_from_commitment_starts_from",
-      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from",
-      "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_from_accepts",
-      "Hegemon.Native.CommitmentTreeRefinement.commitment_starts_plan_application_accepts",
-      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_canonical_plan_accepts",
-      "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_tree_transition_refines_applied_root"
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len",
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem",
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem",
+      "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format",
+      "Hegemon.Privacy.Observer.observer_view_summaries_have_chain_format"
     ],
     "validation": {
+      "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1138,
+      "named_lean_theorems": 1143,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "This is a Lean refinement between existing abstract kernels; it does not add a new Rust conformance vector or production implementation binding.",
-      "The theorem does not prove Merkle hash security, note commitment correctness, transaction proof soundness, or production Rust commitment-tree implementation equivalence.",
-      "Full commitment-tree integrity still needs one chain-level theorem covering Merkle membership, native replay, canonical reorg, startup repair, storage durability assumptions, and accepted state publication."
+      "This is a parser/observer boundary proof only; it does not prove ML-KEM security, AEAD confidentiality, ciphertext indistinguishability, or wrong-key decryption behavior.",
+      "The theorem does not prove note plaintext-to-commitment binding, note commitment/nullifier derivation, wallet key custody, BLAKE3 ciphertext-hash security, or complete wallet/native equivalence.",
+      "Privacy zero-knowledge and unlinkability remain assumption/game targets; this slice only narrows the public ciphertext format leakage boundary."
     ]
   },
   "properties": [
@@ -232,6 +235,7 @@
         "privacy-oriented design in DESIGN.md and METHODS.md",
         "formal/lean/Hegemon/Privacy/Observer.lean observer/leakage boundary theorems",
         "formal/lean/Hegemon/Privacy/Observer.lean parser-derived chain-wire ciphertext summary theorem",
+        "formal/lean/Hegemon/Privacy/Observer.lean proves observer summaries have the accepted chain suite/KEM shape",
         "note ciphertext wire grammar vectors",
         "public/private field separation in transaction statement docs"
       ],
@@ -245,12 +249,13 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 44,
+      "completion_percent": 46,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean accepted-summary suite/KEM format theorems",
         "formal/lean/Hegemon/Privacy/Observer.lean includes ciphertext bytes and parsed summaries in observer leakage",
-        "formal/lean/Hegemon/Privacy/Observer.lean proves observer summaries are derived from parsed chain ciphertext wire bytes",
+        "formal/lean/Hegemon/Privacy/Observer.lean proves observer summaries are derived from parsed chain ciphertext wire bytes and have the accepted chain suite/KEM shape",
         "wallet note ciphertext wire vector gate",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates"
       ],

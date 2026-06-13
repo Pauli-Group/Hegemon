@@ -552,7 +552,7 @@
       "id": "formal.wallet-note-ciphertext-wire",
       "component": "wallet note ciphertext wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean wallet note-ciphertext wire kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; generated Lean vectors are checked against the production parsers.",
+      "summary": "The Lean wallet note-ciphertext wire kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; accepted parser summaries bind the expected ML-KEM ciphertext length and chain crypto suite, and generated Lean vectors are checked against the production parsers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -562,6 +562,9 @@
         "Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts",
+        "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem",
+        "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem",
+        "Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len",
         "Hegemon.Wallet.NoteCiphertextWire.crypto_trailing_byte_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.crypto_truncated_after_kem_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.crypto_valid_accepts"
@@ -569,7 +572,7 @@
       "assumptions": [
         "The Lean model covers byte-level parser grammar for the two production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes and wallet::NoteCiphertext::from_chain_bytes.",
         "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, and trailing chain bytes.",
-        "The theorem covers exact consumption, fixed ML-KEM ciphertext length, fixed container padding, and canonical compact length admission. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, note plaintext correctness, note commitment/nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
+        "The theorem covers exact consumption, fixed ML-KEM ciphertext length, chain crypto-suite admission, fixed container padding, canonical compact length admission, and accepted-summary suite/KEM facts. It does not prove ML-KEM security or implementation equivalence, AEAD confidentiality, note plaintext correctness, note commitment/nullifier derivation, BLAKE3 ciphertext-hash security, DA availability, wallet key security, or complete wallet/native equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -593,7 +596,7 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; ciphertext summaries are derived from public chain wire bytes, and equal public inputs, chain ciphertext wire observations, and placement imply equal allowed leakage.",
+      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, and equal public inputs, chain ciphertext wire observations, and placement imply equal allowed leakage.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
@@ -603,11 +606,14 @@
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length",
+        "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format",
+        "Hegemon.Privacy.Observer.observer_view_summaries_have_chain_format",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq"
       ],
       "assumptions": [
         "The observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index.",
+        "Accepted parsed chain summaries are proved to carry the expected chain crypto suite and fixed ML-KEM ciphertext length before they enter the observer leakage model.",
         "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer projection.",
         "This is a leakage-boundary theorem only. It does not prove simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],

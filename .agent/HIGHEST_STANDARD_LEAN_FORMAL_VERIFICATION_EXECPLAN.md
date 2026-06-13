@@ -38,6 +38,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 09:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 91 claims, 1132 named Lean theorems, 84 production-eligible claims, 375 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 09:43Z) Added `Hegemon.Native.CommitmentTreeRefinement`, proving that accepted native action streams determine a canonical planned-start schedule, the corresponding action plan accepts with the same next leaf cursor, and accepted tree transitions expose the applied commitment-tree root. Current tracked completion is 63.94%.
 - [x] (2026-06-13 09:43Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1138 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 10:22Z) Strengthened `Hegemon.Wallet.NoteCiphertextWire` and `Hegemon.Privacy.Observer` with accepted-summary suite/KEM format theorems for crypto parser summaries, chain containers, full chain ciphertexts, and observer-visible parsed summaries. Current tracked completion is 64.04%.
+- [x] (2026-06-13 10:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1143 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -96,6 +98,8 @@ The asset-isolation and observer chain-wire slice adds `formal/lean/Hegemon/Tran
 The canonical verifier-boundary slice adds `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It defines `CanonicalTxStatementSurface` to bind proof-wrapper admission, public/serialized input binding, transaction statement preimage construction, proof binding-message construction, balance-slot asset agreement, and stablecoin field agreement, then proves that a single `DeployedTxVerifierSoundnessAssumption` over that surface implies the existing accepted-transaction soundness assumptions. This raises the tracked baseline to 63.76% by sharpening proof-system, statement-binding, spend-authorization, and per-asset-conservation accounting. It still does not prove deployed STARK/AIR, SmallWood, witness extraction, verifier implementation correctness, hash collision resistance, bincode/postcard correctness, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement.
 
 The native commitment-tree refinement slice adds `formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean`. It proves that accepted native action-stream replay determines a commitment-start schedule, that the canonical action-plan application accepts that schedule with the same next leaf cursor, and that an accepted consensus tree transition returns the applied commitment-tree root. This raises the tracked baseline to 63.94% by connecting previously separate native action-stream, action-plan, and tree-transition kernels. It remains non-production refinement evidence: Merkle hash security, note commitment correctness, transaction proof soundness, Rust commitment-tree implementation equivalence, reorg/startup replay equivalence, storage durability, and complete native-node refinement remain open.
+
+The wallet/observer ciphertext-format slice strengthens `formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean` and `formal/lean/Hegemon/Privacy/Observer.lean`. It proves generic accepted-summary facts for the modeled parsers: accepted crypto-format summaries have the fixed ML-KEM ciphertext length; accepted chain containers and full chain ciphertexts have the expected chain crypto suite and fixed ML-KEM length; and observer-visible summaries parsed from public chain wire bytes all have that accepted chain format. This raises the tracked baseline to 64.04% by narrowing the public ciphertext format boundary. It does not prove ML-KEM security, AEAD confidentiality, ciphertext indistinguishability, note plaintext-to-commitment binding, wrong-key behavior, simulator-based ZK, wallet metadata privacy, or complete wallet/native equivalence.
 
 ## Context and Orientation
 
@@ -211,6 +215,22 @@ The latest full formal-core pass after the canonical verifier-boundary slice rep
     named_lean_theorems=1132
     production_eligible_claims=84
     falsification_cases=375
+    implementation_bindings=177
+
+The latest full formal-core pass after the native commitment-tree refinement slice reported:
+
+    claims=92
+    named_lean_theorems=1138
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the wallet/observer ciphertext-format slice reported:
+
+    claims=92
+    named_lean_theorems=1143
+    production_eligible_claims=84
+    falsification_cases=377
     implementation_bindings=177
 
 ## Interfaces and Dependencies

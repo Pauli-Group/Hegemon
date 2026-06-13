@@ -269,6 +269,170 @@ theorem chain_trailing_byte_rejects :
     parseChainNoteCiphertext chainTrailingWire = none := by
   decide
 
+theorem parsed_crypto_ciphertext_has_fixed_kem_len
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseCryptoNoteCiphertext input = some summary) :
+    summary.kemLen = mlKemCiphertextLen := by
+  unfold parseCryptoNoteCiphertext at parsed
+  cases readU8Eq : readU8 input with
+  | none =>
+      simp [readU8Eq] at parsed
+  | some versionRest =>
+      rcases versionRest with ⟨version, rest0⟩
+      simp [readU8Eq] at parsed
+      cases readU16Eq : readU16 rest0 with
+      | none =>
+          simp [readU16Eq] at parsed
+      | some suiteRest =>
+          rcases suiteRest with ⟨cryptoSuite, rest1⟩
+          simp [readU16Eq] at parsed
+          cases readDivEq : readU32 rest1 with
+          | none =>
+              simp [readDivEq] at parsed
+          | some diversifierRest =>
+              rcases diversifierRest with ⟨diversifierIndex, rest2⟩
+              simp [readDivEq] at parsed
+              cases readKemEq : readU32 rest2 with
+              | none =>
+                  simp [readKemEq] at parsed
+              | some kemRest =>
+                  rcases kemRest with ⟨kemLen, rest3⟩
+                  simp [readKemEq] at parsed
+                  by_cases kemMatches : kemLen = mlKemCiphertextLen
+                  · subst kemLen
+                    cases skipKemEq : skipBytes mlKemCiphertextLen rest3 with
+                    | none =>
+                        simp [skipKemEq] at parsed
+                    | some rest4 =>
+                        simp [skipKemEq] at parsed
+                        cases readNoteEq : readU32 rest4 with
+                        | none =>
+                            simp [readNoteEq] at parsed
+                        | some noteRest =>
+                            rcases noteRest with ⟨notePayloadLen, rest5⟩
+                            simp [readNoteEq] at parsed
+                            cases skipNoteEq : skipBytes notePayloadLen rest5 with
+                            | none =>
+                                simp [skipNoteEq] at parsed
+                            | some rest6 =>
+                                simp [skipNoteEq] at parsed
+                                cases readMemoEq : readU32 rest6 with
+                                | none =>
+                                    simp [readMemoEq] at parsed
+                                | some memoRest =>
+                                    rcases memoRest with ⟨memoPayloadLen, rest7⟩
+                                    simp [readMemoEq] at parsed
+                                    cases skipMemoEq : skipBytes memoPayloadLen rest7 with
+                                    | none =>
+                                        simp [skipMemoEq] at parsed
+                                    | some rest8 =>
+                                        simp [skipMemoEq] at parsed
+                                        cases rest8 with
+                                        | nil =>
+                                            simp at parsed
+                                            cases parsed
+                                            rfl
+                                        | cons _ _ =>
+                                            simp at parsed
+                  · simp [kemMatches] at parsed
+
+theorem parsed_chain_container_has_gamma_suite_and_fixed_kem
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseChainContainer input = some summary) :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen := by
+  unfold parseChainContainer at parsed
+  cases readU8Eq : readU8 input with
+  | none =>
+      simp [readU8Eq] at parsed
+  | some versionRest =>
+      rcases versionRest with ⟨version, rest0⟩
+      simp [readU8Eq] at parsed
+      cases readSuiteEq : readU16 rest0 with
+      | none =>
+          simp [readSuiteEq] at parsed
+      | some suiteRest =>
+          rcases suiteRest with ⟨cryptoSuite, rest1⟩
+          simp [readSuiteEq] at parsed
+          cases readDivEq : readU32 rest1 with
+          | none =>
+              simp [readDivEq] at parsed
+          | some diversifierRest =>
+              rcases diversifierRest with ⟨diversifierIndex, rest2⟩
+              simp [readDivEq] at parsed
+              cases readNoteEq : readU32 rest2 with
+              | none =>
+                  simp [readNoteEq] at parsed
+              | some noteRest =>
+                  rcases noteRest with ⟨notePayloadLen, rest3⟩
+                  simp [readNoteEq] at parsed
+                  cases skipNoteEq : skipBytes notePayloadLen rest3 with
+                  | none =>
+                      simp [skipNoteEq] at parsed
+                  | some rest4 =>
+                      simp [skipNoteEq] at parsed
+                      cases readMemoEq : readU32 rest4 with
+                      | none =>
+                          simp [readMemoEq] at parsed
+                      | some memoRest =>
+                          rcases memoRest with ⟨memoPayloadLen, rest5⟩
+                          simp [readMemoEq] at parsed
+                          cases skipMemoEq : skipBytes memoPayloadLen rest5 with
+                          | none =>
+                              simp [skipMemoEq] at parsed
+                          | some rest6 =>
+                              simp [skipMemoEq] at parsed
+                              by_cases accepted :
+                                  cryptoSuite = cryptoSuiteGamma
+                                    ∧ ∀ byteValue, byteValue ∈ rest6 -> byteValue = 0
+                              · simp [accepted] at parsed
+                                cases parsed.right
+                                exact ⟨rfl, rfl⟩
+                              · simp [accepted] at parsed
+
+theorem parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen := by
+  unfold parseChainNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      simp [takeEq] at parsed
+      cases parsedContainer : parseChainContainer container with
+      | none =>
+          simp [parsedContainer] at parsed
+      | some containerSummary =>
+          simp [parsedContainer] at parsed
+          cases compactEq : parseCompactLen rest0 with
+          | none =>
+              simp [compactEq] at parsed
+          | some kemRest =>
+              rcases kemRest with ⟨kemLen, rest1⟩
+              simp [compactEq] at parsed
+              by_cases kemMatches : kemLen = mlKemCiphertextLen
+              · subst kemLen
+                cases skipKemEq : skipBytes mlKemCiphertextLen rest1 with
+                | none =>
+                    simp [skipKemEq] at parsed
+                | some rest2 =>
+                    simp [skipKemEq] at parsed
+                    cases rest2 with
+                    | nil =>
+                        simp at parsed
+                        cases parsed
+                        exact parsed_chain_container_has_gamma_suite_and_fixed_kem
+                          parsedContainer
+                    | cons _ _ =>
+                        simp at parsed
+              · simp [kemMatches] at parsed
+
 end NoteCiphertextWire
 end Wallet
 end Hegemon
