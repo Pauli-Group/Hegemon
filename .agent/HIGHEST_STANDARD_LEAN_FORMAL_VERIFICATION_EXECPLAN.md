@@ -77,6 +77,9 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 22:25Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1248 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
 - [x] (2026-06-13 22:45Z) Added `Hegemon.Transaction.ProofSystemBoundary` and `Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts`, packaging the explicit deployed-verifier assumption, canonical transcript/precondition bindings, deployed relation facts, accepted transaction relation, exposed spend/balance facts, and native tx-leaf/action equality facts into one future AIR/refinement target. Current tracked completion is 68.18%.
 - [x] (2026-06-13 23:05Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 93 claims, 1252 named Lean theorems, 84 production-eligible claims, 379 falsification cases, and 180 implementation bindings.
+- [x] (2026-06-13 23:35Z) Added `Hegemon.Native.DaSidecarReplayBinding`, composing accepted candidate artifact admission, candidate DA-root binding, proven-batch DA binding, recursive semantic DA-root sourcing, sidecar upload preconditions, action stream acceptance, wire replay projection counts, and projected replay startup equivalence into one DA/sidecar/replay fact package. Current tracked completion is 68.48%.
+- [x] (2026-06-13 23:40Z) Ran formal-core metadata checks for the DA/sidecar replay-binding slice; claims passed with 94 claims, 1261 named Lean theorems, 85 production-eligible claims, and blueprint passed with 382 falsification cases and 180 implementation bindings.
+- [x] (2026-06-13 23:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 94 claims, 1261 named Lean theorems, 85 production-eligible claims, 382 falsification cases, and 180 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -440,6 +443,22 @@ The latest full formal-core pass after the proof-system boundary facts slice rep
     named_lean_theorems=1252
     production_eligible_claims=84
     falsification_cases=379
+    implementation_bindings=180
+
+The latest metadata check after the DA/sidecar replay-binding slice reported:
+
+    claims=94
+    named_lean_theorems=1261
+    production_eligible_claims=85
+    falsification_cases=382
+    implementation_bindings=180
+
+The latest full formal-core pass after the DA/sidecar replay-binding slice reported:
+
+    claims=94
+    named_lean_theorems=1261
+    production_eligible_claims=85
+    falsification_cases=382
     implementation_bindings=180
 
 ## Interfaces and Dependencies

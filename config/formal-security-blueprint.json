@@ -7759,6 +7759,75 @@
       "scope_boundary": "This node proves and vector-checks decoded action wire-to-replay projection for ciphertext row hashes/sizes and inbound bridge replay-key equality before replay rows are derived. It does not prove SCALE decode equivalence, complete raw PendingAction field projection, BLAKE3 ciphertext-hash security or implementation equivalence, bridge replay-key hash security/equivalence, bridge receipt soundness, tx-leaf proof/artifact binding, sled transaction correctness, filesystem durability, or complete native-node equivalence."
     },
     {
+      "id": "native.da-sidecar-replay-binding",
+      "claim_id": "native.da-sidecar-replay-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean DA/sidecar replay-binding surface, accepted candidate artifact admission, candidate DA-root/artifact binding, candidate coupling, proven-batch binding, recursive semantic-field derivation, sidecar upload admission, action-stream acceptance, wire replay projection acceptance, and projected replay together imply that the candidate binding DA root matches, the proven-batch DA root matches with nonzero DA chunks, recursive semantic fields source `daRoot` from the same source field, sidecar upload predicates satisfy bounded request/capacity/metadata/decoded-proof preconditions, wire projection action counts match planned effects, projected replay carries state, and final nullifier plus bridge-replay states remain unique.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.DaSidecarReplayBinding.accepted_da_sidecar_replay_facts_expose_binding_preconditions` packages the existing candidate-artifact, candidate-binding, proven-batch, recursive semantic, sidecar upload, action-stream, and wire-replay admission facts into one DA/sidecar binding surface. `accepted_projected_replay_with_da_sidecar_facts` composes that surface with `Hegemon.Native.BlockReplayInputProjection.accepted_projected_ledger_state_after_startup_equivalence` so accepted projected replay inherits carried-state preconditions and final nullifier/bridge-replay uniqueness while retaining the DA-root and recursive semantic `daRoot` source facts. The component theorems `accepted_candidate_artifact_implies_nonzero_tx_and_da`, `accepted_candidate_artifact_binding_implies_root_matches`, `accepted_proven_batch_binding_implies_da_binding`, `derived_semantic_fields_da_root_matches_source`, `accepted_sidecar_upload_implies_preconditions`, and `accepted_wire_replay_projection_implies_action_counts` expose the individual facts used by the package.",
+      "depends_on": [
+        "consensus.da-root-byte-binding",
+        "consensus.proven-batch-binding",
+        "consensus.recursive-semantic-inputs",
+        "native.sidecar-upload-admission",
+        "native.staged-ciphertext-reload",
+        "native.staged-proof-reload",
+        "native.action-wire-replay-projection-admission",
+        "native.candidate-artifact-admission",
+        "native.candidate-artifact-coupling-admission",
+        "native.block-artifact-binding-admission",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
+        "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
+        "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a Lean composition slice over already production-bound DA, sidecar, artifact, semantic, wire projection, and projected replay predicates. Scope excludes raw byte projection, DA availability, hash security, recursive proof soundness, and complete native-node equivalence."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-da-sidecar-replay-binding-theorem",
+          "description": "Removing or weakening the DA/sidecar replay-binding composition theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-da-sidecar-replay-binding-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the new composition theorem or its evidence path is removed from the claim ledger or DAG.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "native-sidecar-artifact-regressions",
+          "description": "Existing native sidecar materialization and side-branch replay regressions must continue to reject sidecar/artifact drift before publish or replay mutation.",
+          "gate": "cargo test -p hegemon-node materialized_sidecar_ciphertext reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture"
+        }
+      ],
+      "scope_boundary": "This node proves a DA/sidecar/replay composition over existing admitted predicates. It does not prove raw SCALE PendingAction byte projection, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, network/chunk retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",

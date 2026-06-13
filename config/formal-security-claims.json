@@ -3333,6 +3333,66 @@
       ]
     },
     {
+      "id": "native.da-sidecar-replay-binding",
+      "component": "native DA sidecar replay binding",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean DA/sidecar replay-binding composition packages accepted candidate artifact admission, candidate DA-root/artifact binding, candidate coupling, proven-batch DA binding, recursive semantic DA field sourcing, sidecar upload admission, action stream acceptance, wire replay projection acceptance, and projected replay startup equivalence into one theorem surface.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_candidate_artifact_implies_nonzero_tx_and_da",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_candidate_artifact_binding_implies_root_matches",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_wire_replay_projection_implies_preconditions",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_wire_replay_projection_implies_action_counts",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_proven_batch_binding_implies_da_binding",
+        "Hegemon.Native.DaSidecarReplayBinding.derived_semantic_fields_da_root_matches_source",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_sidecar_upload_implies_preconditions",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_da_sidecar_replay_facts_expose_binding_preconditions",
+        "Hegemon.Native.DaSidecarReplayBinding.accepted_projected_replay_with_da_sidecar_facts"
+      ],
+      "assumptions": [
+        "This is a composition theorem over existing production-derived predicates. It relies on the separate DA-root, proven-batch, recursive semantic input, sidecar upload, candidate artifact, block-artifact binding, action-stream, wire-replay projection, and projected replay/refinement claims for their individual executable predicates and production conformance.",
+        "The theorem exposes that accepted candidate bindings have matching DA root, transaction-statement commitment, and recursive state root predicates; accepted proven-batch bindings have matching DA root and nonzero DA chunks; recursive semantic fields source `daRoot` from the same source field; accepted sidecar upload gates satisfy request, capacity, metadata, and decoded-proof preconditions; and accepted wire replay projection has matching action/planned counts.",
+        "The projected replay theorem composes those DA/sidecar facts with `accepted_projected_ledger_state_after_startup_equivalence`, preserving projected carried-state preconditions and final nullifier/bridge-replay uniqueness for accepted projected replay.",
+        "The theorem does not prove raw SCALE PendingAction byte projection, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean",
+        "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
+        "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
+        "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-da-sidecar-raw-byte-equivalence-missing",
+          "description": "The composition is over existing admitted predicates and production-bound helper calls; a full raw byte-to-sidecar-to-replay refinement theorem remains open.",
+          "status": "open",
+          "tracking": ".agent/HIGHEST_STANDARD_LEAN_FORMAL_VERIFICATION_EXECPLAN.md"
+        },
+        {
+          "id": "native-da-availability-retention-model-missing",
+          "description": "The theorem binds sidecar rows and DA-root predicates but does not prove network DA sampling, erasure-code recoverability, or hot/cold retention availability.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
