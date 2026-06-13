@@ -109,6 +109,7 @@ These mean:
 
 2. `serialization.canonical_native_artifact_bytes`
    The security claim assumes the byte encodings described in [native_backend_spec.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_spec.md) are canonical, injective over accepted inputs, and rejected on malformed or noncanonical encodings.
+   The Lean tx-leaf canonical-surface boundary now assumption-free projects an accepted decoded tx-leaf/action binding plus canonical statement surface into statement preimage, proof binding-message, public-input binding, wrapper-surface, and native artifact equality facts. That narrows the decoded semantic boundary, but it is not a proof of arbitrary byte-level parser injectivity.
 
 3. `fs.quint_goldilocks_profile_fold_challenges`
    The active schedule derives five indexed transcript challenges over Goldilocks, interprets them as the coefficients of a low-degree challenge polynomial in `Z_q[X] / (X^54 + X^27 + 1)`, and relies on the theorem note's exact tuple-min-entropy bound for that derivation. Accepted folds themselves are deterministic canonicalization checks, not a separate CCS soundness protocol.
@@ -118,6 +119,7 @@ These mean:
 
 5. `commitment.deterministic_public_witness_reconstruction`
    The live tx-leaf verifier must reconstruct the exact packed witness and deterministic commitment from the public tx view, serialized STARK public inputs, and fixed relation layout. The active security floor assumes that this reconstruction is canonical and that the verifier rejects mismatches.
+   The Lean boundary now proves the accepted decoded native tx-leaf/action predicate is tied to the canonical statement/proof fields and receipt/public-input/proof/backend/ciphertext-payload equality gates. Deterministic packed-witness reconstruction and commitment binding remain native-backend assumptions until the verifier/AIR/reconstruction path is mechanized.
 
 6. `commitment.bounded_kernel_module_sis_exact_reduction`
    Binding for the current commitment path is claimed through the exact reduction stated in [native_backend_commitment_reduction.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_commitment_reduction.md): a collision in the implemented bounded live message class yields a bounded nonzero kernel vector for the same commitment matrix. The theorem note proves that exact reduction and the zero-loss flattening from the active ring/module kernel to the coefficient-space SIS instance the repository estimates.

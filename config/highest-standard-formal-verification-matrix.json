@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 70.2,
+  "overall_completion_percent": 70.36,
   "last_full_formal_core": {
-    "commit": "working tree after privacy parsed observer row slice",
-    "status": "passed 2026-06-13 16:35Z",
+    "commit": "working tree after tx-leaf statement/proof boundary slice",
+    "status": "passed 2026-06-13 16:53Z",
     "claims": 95,
-    "named_lean_theorems": 1290,
+    "named_lean_theorems": 1292,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,28 +29,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened privacy observer implementation equivalence: active native tx-leaf output slots now select a concrete observer ciphertext wire row at the public active-output rank, and that row parses to the same chain-format summary while preserving statement/proof output-slot facts.",
+    "summary": "Strengthened native tx-leaf implementation equivalence: accepted native tx-leaf/action binding plus the canonical statement surface now assumption-free exposes statement preimage, proof binding-message, public-input binding, wrapper surface, and native receipt/public-input/proof/backend/ciphertext-payload equality facts; a packaged conditional theorem carries those facts with the deployed-verifier boundary.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summary_at_rank",
-      "Hegemon.Privacy.Observer.valid_observer_chain_surface_ciphertext_at_rank",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank"
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_statement_proof_facts",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts"
     ],
     "validation": {
       "lean_formal": "targeted modules passed",
-      "formal_core": "passed 2026-06-13 16:35Z",
+      "formal_core": "passed 2026-06-13 16:53Z",
       "claims": 95,
-      "named_lean_theorems": 1290,
+      "named_lean_theorems": 1292,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The theorem proves selected observer row parser alignment, not public ciphertext-hash equality/security for the selected wire bytes.",
-      "Simulator zero-knowledge, ML-KEM/AEAD confidentiality, proof-system privacy, wallet metadata privacy, timing privacy, hash security, and complete wallet/native-node equivalence remain explicit residual assumptions.",
+      "The assumption-free theorem proves statement/proof/native-artifact equality facts over decoded canonical-surface predicates; it does not prove arbitrary SCALE/postcard decoder correctness or tx-leaf parser completeness.",
+      "The accepted transaction relation, spend authorization, and asset authorization facts still depend on the explicit `DeployedTxVerifierSoundnessAssumption`; deployed STARK/AIR, SmallWood, recursive proof soundness, hash security, and complete native-node equivalence remain explicit residual assumptions.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -206,7 +204,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -222,7 +220,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the packaged proof-system boundary facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now binds native active input, total input-slot, and output commitment/ciphertext slots to the canonical statement and proof-binding vectors",
         "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free projects accepted native tx-leaf/action binding plus canonical statement surface into statement preimage success/length, proof binding-message success, public-input binding validity, wrapper preconditions/surface, and native receipt/public-input/proof/backend/ciphertext-payload equality gates"
       ],
       "missing_work": [
         "Lift the canonical verifier-boundary theorem beyond modeled transaction fields to every consensus statement field.",
@@ -234,7 +233,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 64,
+      "completion_percent": 65,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -252,7 +251,8 @@
         "Native TxLeafCanonicalSurface composes production-bound tx-leaf/action equality admission with the canonical deployed verifier soundness boundary to derive the accepted transaction relation, authorized asset deltas, active input spend facts, total input-slot facts, and output slot facts bound to canonical statement vectors",
         "Native TxLeafCanonicalSurface now composes accepted native tx-leaf/action equality admission with the packaged deployed-verifier boundary facts theorem",
         "docs/crypto native backend assumption notes",
-        "Native TxLeafCanonicalSurface now packages accepted tx-leaf/action equality admission, canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and native statement-artifact binding into one theorem target for future AIR/refinement work"
+        "Native TxLeafCanonicalSurface now packages accepted tx-leaf/action equality admission, canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and native statement-artifact binding into one theorem target for future AIR/refinement work",
+        "Native TxLeafCanonicalSurface now separates an assumption-free canonical statement/proof projection from the still-assumption-bound accepted-transaction relation, clarifying the exact future AIR/refinement target"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction of it.",

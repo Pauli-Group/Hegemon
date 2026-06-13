@@ -113,6 +113,85 @@ structure NativeTxLeafCanonicalArtifactBoundaryFacts
       ∧ input.proofBackendMatches = true
       ∧ input.ciphertextPayloadHashesMatch = true
 
+structure NativeTxLeafAcceptedArtifactStatementBoundaryFacts
+    (input : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (balanceWitness : Hegemon.Transaction.BalanceWitness)
+    (slots : List Hegemon.Transaction.BalanceSlot) : Prop where
+  canonicalBoundaryFacts :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  wrapperPreconditions : proofWrapperPreconditions wrapper = true
+  publicBindingValid :
+    Hegemon.Transaction.PublicInputBinding.validBinding
+      publicFields
+      serializedFields = true
+  publicShapeValid : validPublicInputShape shape = true
+  statementLength :
+    statementBytes.length =
+      Hegemon.Transaction.StatementHash.expectedPreimageLength
+  statementPreimage :
+    Hegemon.Transaction.StatementHash.statementPreimage
+      statementFields = some statementBytes
+  bindingMessage :
+    Hegemon.Transaction.ProofStatementBinding.bindingMessage
+      bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  vectorBinding :
+    shape.nullifiers = statementFields.nullifierSeeds
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  outputVectorBinding :
+    shape.outputFlags = bound.outputFlags
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  nativeStatementArtifactBinding :
+    input.receiptStatementHashMatches = true
+      ∧ input.publicInputsDigestMatches = true
+      ∧ input.proofDigestMatches = true
+      ∧ input.proofBackendMatches = true
+      ∧ input.ciphertextPayloadHashesMatch = true
+  txLeafActionPreconditions :
+    txLeafActionBindingPreconditions input = true
+  txLeafActionBindingFacts : TxLeafActionBindingFacts input
+
 theorem tx_leaf_action_accepts_implies_preconditions
     {input : TxLeafActionBindingInput}
     (accepted : txLeafActionBindingAccepts input = true) :
@@ -279,6 +358,159 @@ theorem native_tx_leaf_deployed_verifier_boundary_facts
         sound,
       tx_leaf_action_accepts_implies_preconditions bindingAccepted,
       tx_leaf_action_accepts_implies_binding_facts bindingAccepted⟩
+
+theorem native_tx_leaf_binding_and_canonical_surface_statement_proof_facts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    Hegemon.Transaction.StatementHash.statementPreimage
+        statementFields = some statementBytes
+      ∧ statementBytes.length =
+        Hegemon.Transaction.StatementHash.expectedPreimageLength
+      ∧ Hegemon.Transaction.ProofStatementBinding.bindingMessage
+        bindingFields = some bindingBytes
+      ∧ Hegemon.Transaction.PublicInputBinding.validBinding
+        publicFields
+        serializedFields = true
+      ∧ proofWrapperPreconditions wrapper = true
+      ∧ acceptedProofWrapperSurface wrapper
+      ∧ input.receiptStatementHashMatches = true
+      ∧ input.publicInputsDigestMatches = true
+      ∧ input.proofDigestMatches = true
+      ∧ input.proofBackendMatches = true
+      ∧ input.ciphertextPayloadHashesMatch = true := by
+  have txLeafFacts :=
+    tx_leaf_action_accepts_implies_binding_facts bindingAccepted
+  rcases txLeafFacts with
+    ⟨_hNullifiers, _hCommitments, _hCiphertextHashes, _hInputCount,
+      _hOutputCount, _hVersion, _hFee, _hStablecoinPayload, _hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    ⟨surface.statementPreimage,
+      canonical_statement_surface_statement_length surface,
+      surface.bindingMessage,
+      canonical_statement_surface_public_binding_valid surface,
+      canonical_statement_surface_wrapper_preconditions surface,
+      canonical_statement_surface_statement_surface surface,
+      hReceiptStatementHash,
+      hPublicInputsDigest,
+      hProofDigest,
+      hProofBackend,
+      hCiphertextPayloadHashes⟩
+
+theorem native_tx_leaf_accepted_artifact_statement_boundary_facts
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    NativeTxLeafAcceptedArtifactStatementBoundaryFacts
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots := by
+  have boundaryAndNative :=
+    native_tx_leaf_deployed_verifier_boundary_facts
+      bindingAccepted
+      surface
+      sound
+  rcases boundaryAndNative with
+    ⟨canonicalFacts, txLeafPreconditions, txLeafFacts⟩
+  rcases txLeafFacts with
+    ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    { canonicalBoundaryFacts := canonicalFacts
+      wrapperPreconditions := canonicalFacts.wrapperPreconditions
+      publicBindingValid := canonicalFacts.publicBindingValid
+      publicShapeValid := canonicalFacts.publicShapeValid
+      statementLength := canonicalFacts.statementLength
+      statementPreimage := canonicalFacts.statementPreimage
+      bindingMessage := canonicalFacts.bindingMessage
+      coreStatementBinding := canonicalFacts.coreStatementBinding
+      vectorBinding := canonicalFacts.vectorBinding
+      outputVectorBinding := canonicalFacts.outputVectorBinding
+      nativeStatementArtifactBinding :=
+        ⟨hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+          hProofBackend, hCiphertextPayloadHashes⟩
+      txLeafActionPreconditions := txLeafPreconditions
+      txLeafActionBindingFacts :=
+        ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+          hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+          hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+          hProofBackend, hCiphertextPayloadHashes⟩ }
 
 theorem native_tx_leaf_canonical_artifact_boundary_facts
     {input : TxLeafActionBindingInput}

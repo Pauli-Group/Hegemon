@@ -2990,7 +2990,7 @@
       "id": "formal.native-tx-leaf-canonical-surface",
       "component": "native tx-leaf canonical verifier surface composition",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary: if the production-bound tx-leaf/action equality gate accepts, the canonical statement surface is present, and the explicit deployed verifier soundness assumption holds, then the accepted transaction relation follows, every asset delta is authorized by the modeled balance/stablecoin policy, active and inactive input-slot authorization facts are bound to the statement and proof-binding vectors, output commitment/ciphertext slots are bound to those same vectors, and the packaged native artifact boundary exposes canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance facts, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding in one theorem. The theorem also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
+      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary. Assumption-free projection now proves that an accepted production-bound tx-leaf/action equality gate plus a canonical statement surface exposes statement preimage success and length, proof binding-message success, public-input binding validity, proof-wrapper preconditions and surface facts, and receipt/public-input/proof/backend/ciphertext-payload equality gates. With the explicit deployed verifier soundness assumption, the boundary also implies the accepted transaction relation, every modeled asset delta is authorized by the modeled balance/stablecoin policy, active and inactive input-slot authorization facts are bound to the statement and proof-binding vectors, output commitment/ciphertext slots are bound to those same vectors, and the packaged native artifact boundary exposes canonical deployed-verifier facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance facts, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding in one theorem. The theorem set also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_cross_boundary_composition_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -3000,16 +3000,18 @@
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_value",
-        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement",
-        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement",
-        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement",
-        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts"
-      ],
-      "assumptions": [
-        "The theorem composes the already vector-checked native tx-leaf/action equality gate with the canonical verifier boundary, but the accepted transaction relation still depends on `DeployedTxVerifierSoundnessAssumption`.",
-        "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
-        "The theorem narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical deployed-verifier, wrapper-surface, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
-      ],
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_statement_proof_facts",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts"
+    ],
+    "assumptions": [
+      "The statement/proof-facts theorem is assumption-free over the accepted native tx-leaf/action equality gate and canonical statement surface; the accepted transaction relation and asset authorization still depend on `DeployedTxVerifierSoundnessAssumption`.",
+      "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
+      "The theorem set narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical statement/proof facts, deployed-verifier facts, wrapper-surface facts, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
+    ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
