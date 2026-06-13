@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 69.88,
+  "overall_completion_percent": 70.01,
   "last_full_formal_core": {
-    "commit": "working tree after canonical core binding and observer nonemptiness slice",
+    "commit": "working tree after observer active-output rank slice",
     "status": "passed",
     "claims": 95,
-    "named_lean_theorems": 1284,
+    "named_lean_theorems": 1286,
     "production_eligible_claims": 86,
     "falsification_cases": 385,
     "implementation_bindings": 180
@@ -29,33 +29,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened implementation-equivalence boundaries for the deployed verifier and observer surface: canonical root/anchor, fee, balance-slot asset/count, value-balance, and stablecoin identity/payload fields are now exposed as one proof object carried by the packaged proof-system target; active native tx-leaf output slots now force nonempty observer ciphertext bytes and summaries through the valid observer-chain surface.",
+    "summary": "Strengthened the observer implementation-equivalence boundary: active native tx-leaf output slots now carry an in-bounds public active-output rank for both observer ciphertext bytes and parsed summaries, while preserving the statement/proof-binding output-slot facts and chain-format summary facts.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
       "formal/lean/Hegemon/Privacy/Observer.lean",
       "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_core_binding",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_core_statement_binding",
-      "Hegemon.Privacy.Observer.output_slot_active_flag_count_nonzero",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts"
+      "Hegemon.Privacy.Observer.output_slot_active_rank_lt_count",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_observer_rank"
     ],
     "validation": {
       "lean_formal": "targeted modules passed",
       "formal_core": "passed",
       "claims": 95,
-      "named_lean_theorems": 1284,
+      "named_lean_theorems": 1286,
       "production_eligible_claims": 86,
       "falsification_cases": 385,
       "implementation_bindings": 180
     },
     "known_limitations": [
-      "The canonical-verifier theorem batch packages non-cryptographic statement-surface facts for future AIR/refinement work; it still depends on the explicit `DeployedTxVerifierSoundnessAssumption`.",
-      "The observer theorem batch proves public active-output nonemptiness through the modeled observer surface, not indexed ciphertext-hash-to-wire correspondence.",
-      "Deployed STARK/AIR, SmallWood, witness extraction, verifier implementation equivalence, hash security, tx-leaf parser completeness, simulator zero-knowledge, ML-KEM/AEAD confidentiality, and complete native-node equivalence remain explicit residual assumptions.",
+      "The observer theorem batch proves active-output rank bounds through the modeled observer surface, not indexed ciphertext-hash-to-wire correspondence or ciphertext plaintext correctness.",
+      "Simulator zero-knowledge, ML-KEM/AEAD confidentiality, proof-system privacy, wallet metadata privacy, timing privacy, hash security, and complete wallet/native-node equivalence remain explicit residual assumptions.",
       "The proof is performance-neutral because it adds Lean composition theorems and metadata only."
     ]
   },
@@ -270,7 +264,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 36,
+      "completion_percent": 37,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -280,6 +274,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean proves valid observer-chain surfaces have exactly one parsed ciphertext summary per public active output and preserve active-output count under same-leakage worlds",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean composes accepted native tx-leaf output-slot binding with valid observer-chain surfaces to preserve same-chain-wire allowed leakage",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries through the valid observer-chain surface",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output slots have an in-bounds public active-output rank for observer ciphertext bytes and parsed summaries",
         "note ciphertext wire grammar vectors",
         "public/private field separation in transaction statement docs"
       ],
@@ -293,7 +288,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 49,
+      "completion_percent": 50,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -303,6 +298,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean valid observer-chain surface count theorem ties parsed chain ciphertexts to public active output flags",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean ties statement-bound native output slots to observer chain ciphertext summary format/count",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now lifts active output slots to nonempty observer ciphertext bytes and parsed summaries",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active output ranks are in bounds for observer ciphertext byte and summary lists",
         "wallet note ciphertext wire vector gate",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates"
       ],

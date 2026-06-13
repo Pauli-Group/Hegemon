@@ -64,6 +64,12 @@ def activeFlagCount : List Nat -> Nat
 def activeOutputCount (shape : PublicInputShape) : Nat :=
   activeFlagCount shape.outputFlags
 
+def activeFlagCountBefore : List Nat -> Nat -> Nat
+  | [], _ => 0
+  | _ :: _, 0 => 0
+  | flag :: rest, index + 1 =>
+      (if flag = 1 then 1 else 0) + activeFlagCountBefore rest index
+
 theorem output_slot_active_flag_count_nonzero
     {flags : List Nat}
     {commitments ciphertextHashes : List Digest}
@@ -110,6 +116,57 @@ theorem output_slot_active_flag_count_nonzero
                   by_cases active : flag = 1
                   · simp [active]
                   · simp [active, tailNonzero]
+
+theorem output_slot_active_rank_lt_count
+    {flags : List Nat}
+    {commitments ciphertextHashes : List Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (slot :
+      OutputSlotAt
+        flags
+        commitments
+        ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash) :
+    activeFlagCountBefore flags index < activeFlagCount flags := by
+  induction flags generalizing commitments ciphertextHashes index with
+  | nil =>
+      cases commitments <;> cases ciphertextHashes <;> cases index <;>
+        simp [OutputSlotAt] at slot
+  | cons flag rest ih =>
+      cases commitments with
+      | nil =>
+          cases ciphertextHashes <;> cases index <;>
+            simp [OutputSlotAt] at slot
+      | cons commitment commitmentsTail =>
+          cases ciphertextHashes with
+          | nil =>
+              cases index <;> simp [OutputSlotAt] at slot
+          | cons ciphertextHash ciphertextHashesTail =>
+              cases index with
+              | zero =>
+                  have active : flag = 1 := by
+                    exact slot.left.symm
+                  dsimp [activeFlagCountBefore, activeFlagCount]
+                  rw [if_pos active]
+                  rw [Nat.add_comm]
+                  exact Nat.zero_lt_succ (activeFlagCount rest)
+              | succ indexTail =>
+                  have tailLt :
+                      activeFlagCountBefore rest indexTail <
+                        activeFlagCount rest :=
+                    ih
+                      (commitments := commitmentsTail)
+                      (ciphertextHashes := ciphertextHashesTail)
+                      (index := indexTail)
+                      slot
+                  dsimp [activeFlagCountBefore, activeFlagCount]
+                  by_cases active : flag = 1
+                  · simpa [active] using Nat.add_lt_add_left tailLt 1
+                  · simpa [active] using tailLt
 
 def validObserverChainSurface
     (world : ShieldedTransactionWorld) : Prop :=

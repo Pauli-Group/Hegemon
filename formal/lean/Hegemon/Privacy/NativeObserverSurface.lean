@@ -195,6 +195,102 @@ theorem native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts
       observerFacts.right.right.left,
       observerFacts.right.right.right.left⟩
 
+theorem native_tx_leaf_active_output_slot_has_observer_rank
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape) :
+    activeFlagCountBefore shape.outputFlags index < world.ciphertextBytes.length
+      ∧ activeFlagCountBefore shape.outputFlags index <
+        world.ciphertextSummaries.length
+      ∧ summariesHaveChainCiphertextFormat world.ciphertextSummaries
+      ∧ OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        1
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        1
+        publicCommitment
+        publicCiphertextHash
+      ∧ TxLeafActionBindingFacts input := by
+  have rankLtCount :
+      activeFlagCountBefore shape.outputFlags index <
+        activeOutputCount shape :=
+    output_slot_active_rank_lt_count slot
+  have observerFacts :=
+    valid_observer_chain_surface_bound_to_shape
+      observerValid
+      shapeEq
+  have nativeFacts :=
+    native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement
+      bindingAccepted
+      surface
+      slot
+  have ciphertextBytesCount :
+      world.ciphertextBytes.length = activeOutputCount shape := by
+    have count := observerValid.right.right
+    rw [shapeEq] at count
+    exact count
+  have bytesRank :
+      activeFlagCountBefore shape.outputFlags index <
+        world.ciphertextBytes.length := by
+    rw [ciphertextBytesCount]
+    exact rankLtCount
+  have summariesRank :
+      activeFlagCountBefore shape.outputFlags index <
+        world.ciphertextSummaries.length := by
+    rw [observerFacts.right]
+    exact rankLtCount
+  exact
+    ⟨bytesRank,
+      summariesRank,
+      observerFacts.left,
+      nativeFacts.right.left,
+      nativeFacts.right.right.left,
+      nativeFacts.right.right.right⟩
+
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}
