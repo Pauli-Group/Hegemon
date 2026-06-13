@@ -31,6 +31,9 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 07:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 88 claims, 1108 named Lean theorems, 84 production-eligible claims, 369 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 07:50Z) Added `Hegemon.Transaction.AcceptedTransactionSoundness`, combining accepted proof-wrapper surface, balance facts, public-input shape validity, per-asset delta consequences, and active-input authorization facts into one accepted-transaction relation under explicit balance and spend soundness assumptions. Current tracked completion is 62.63%.
 - [x] (2026-06-13 07:50Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 89 claims, 1116 named Lean theorems, 84 production-eligible claims, 371 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 08:20Z) Added `Hegemon.Transaction.AssetIsolation`, proving accepted-relation authorized asset deltas, zero unselected non-native deltas, and the theorem that any nonzero non-native delta implies the selected stablecoin exception. Current tracked completion is 62.90%.
+- [x] (2026-06-13 08:20Z) Strengthened `Hegemon.Privacy.Observer` so observer-visible ciphertext summaries are parsed from public chain wire bytes, with equal public inputs, chain ciphertext bytes, and placement implying equal allowed leakage. Current tracked completion is 63.19%.
+- [x] (2026-06-13 08:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 90 claims, 1123 named Lean theorems, 84 production-eligible claims, 373 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -50,6 +53,9 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 
 - Observation: A local-only action-stream theorem is not enough for chain-wide double-spend safety because two individually accepted blocks can reuse a nullifier unless the modeled chain carries spent state across block boundaries.
   Evidence: The first accepted-chain draft accepted two copies of `validReplay`; the finalized `Hegemon.Native.AcceptedChain.validateNativeReplayChain` now threads `spentNullifiers` and rejects both stale spent-state and cross-block duplicate-nullifier replay.
+
+- Observation: The next proof-system boundary improvement should collapse `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption` into one canonical deployed-verifier soundness assumption over the exact statement surface, not into a claim that the deployed proof system is already sound.
+  Evidence: The proof-boundary audit identified `AcceptedTransactionSoundness`, `ProofWrapperAdmission`, `PublicInputBinding`, `StatementHash`, and `ProofStatementBinding` as enough to state a sharper `DeployedTxVerifierSoundnessAssumption`; STARK/AIR/SmallWood soundness and witness extraction remain undisguised residuals.
 
 ## Decision Log
 
@@ -80,6 +86,8 @@ The privacy theorem slice adds `formal/lean/Hegemon/Privacy/Observer.lean`. It d
 The spend-authorization theorem slice adds `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`. It defines an explicit active-input authorization relation: the private witness must reconstruct the note commitment, derive the spend-authority public key from the spend secret, derive the public nullifier, and verify Merkle membership under the public root. The accepted-wrapper lift is intentionally conditional on `SpendAuthorizationSoundnessAssumption`, so the branch now has an honest Lean boundary for no-theft reasoning without claiming deployed STARK/AIR or SmallWood soundness. This raises the tracked baseline to 62.06%; discharging or production-binding that soundness assumption remains one of the central blockers.
 
 The accepted-transaction soundness slice adds `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`. It packages proof-wrapper admission, accepted statement surface, valid balance facts, public input shape validity, per-asset delta consequences, and active-input authorization facts into a single relation that downstream no-counterfeiting and no-theft theorems can target. The relation is deliberately conditional on `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption`; it does not yet prove deployed STARK/AIR soundness, SmallWood soundness, verifier correctness, witness extraction, hash implementation equivalence, proof privacy, note encryption correctness, or complete Rust/native refinement. This raises the tracked baseline to 62.63%, with the next hard gap being to discharge the accepted-transaction soundness assumptions at the deployed verifier boundary.
+
+The asset-isolation and observer chain-wire slice adds `formal/lean/Hegemon/Transaction/AssetIsolation.lean` and strengthens `formal/lean/Hegemon/Privacy/Observer.lean`. `AssetIsolation` proves that the accepted transaction relation authorizes every asset delta: native deltas match modeled native balance, unselected non-native deltas are zero, and any nonzero non-native delta implies the selected stablecoin exception. The observer strengthening proves ciphertext summaries are derived by parsing public chain ciphertext wire bytes and that equal public inputs, equal chain ciphertext bytes, and equal placement imply equal allowed leakage. This raises the tracked baseline to 63.19%. It still does not prove chain-level stablecoin policy/oracle/attestation authorization, bridge mint authorization, deployed verifier soundness, simulator-based ZK, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata privacy, timing privacy, or complete Rust/native-node refinement.
 
 ## Context and Orientation
 
@@ -179,6 +187,14 @@ The latest full formal-core pass after the accepted-transaction soundness bounda
     named_lean_theorems=1116
     production_eligible_claims=84
     falsification_cases=371
+    implementation_bindings=177
+
+The latest full formal-core pass after the asset-isolation and observer chain-wire slice reported:
+
+    claims=90
+    named_lean_theorems=1123
+    production_eligible_claims=84
+    falsification_cases=373
     implementation_bindings=177
 
 ## Interfaces and Dependencies

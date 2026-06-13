@@ -44,6 +44,18 @@ def observerView (world : ShieldedTransactionWorld) : ObserverView :=
     blockHeight := world.blockHeight
     actionIndex := world.actionIndex }
 
+def parsedChainCiphertextSummaries :
+    List (List Byte) -> Option (List NoteCiphertextSummary)
+  | [] => some []
+  | wire :: rest => do
+      let summary ← parseChainNoteCiphertext wire
+      let summaries ← parsedChainCiphertextSummaries rest
+      some (summary :: summaries)
+
+def summariesMatchChainWire (world : ShieldedTransactionWorld) : Prop :=
+  parsedChainCiphertextSummaries world.ciphertextBytes =
+    some world.ciphertextSummaries
+
 def sameAllowedLeakage
     (left right : ShieldedTransactionWorld) : Prop :=
   observerView left = observerView right
@@ -99,6 +111,52 @@ theorem same_allowed_leakage_of_public_wire_and_placement
     samePlacement] at publicInputs ciphertexts placement ⊢
   exact ⟨publicInputs, ciphertexts.left, ciphertexts.right,
     placement.left, placement.right⟩
+
+theorem parsed_chain_ciphertext_summaries_length
+    {wires : List (List Byte)}
+    {summaries : List NoteCiphertextSummary}
+    (parsed : parsedChainCiphertextSummaries wires = some summaries) :
+    summaries.length = wires.length := by
+  induction wires generalizing summaries with
+  | nil =>
+      simp [parsedChainCiphertextSummaries] at parsed
+      cases parsed
+      rfl
+  | cons wire rest ih =>
+      unfold parsedChainCiphertextSummaries at parsed
+      cases parsedWire : parseChainNoteCiphertext wire with
+      | none =>
+          simp [parsedWire] at parsed
+      | some summary =>
+          simp [parsedWire] at parsed
+          cases parsedRest : parsedChainCiphertextSummaries rest with
+          | none =>
+              simp [parsedRest] at parsed
+          | some restSummaries =>
+              simp [parsedRest] at parsed
+              cases parsed
+              simp [ih parsedRest]
+
+theorem same_allowed_leakage_of_public_chain_wire_and_placement
+    {left right : ShieldedTransactionWorld}
+    (leftParsed : summariesMatchChainWire left)
+    (rightParsed : summariesMatchChainWire right)
+    (publicInputs : samePublicInputs left right)
+    (ciphertextBytes : left.ciphertextBytes = right.ciphertextBytes)
+    (placement : samePlacement left right) :
+    sameAllowedLeakage left right := by
+  have summaries :
+      left.ciphertextSummaries = right.ciphertextSummaries := by
+    have parsedEq :
+        some left.ciphertextSummaries =
+          some right.ciphertextSummaries := by
+      rw [← leftParsed, ← rightParsed, ciphertextBytes]
+    exact Option.some.inj parsedEq
+  exact
+    same_allowed_leakage_of_public_wire_and_placement
+      publicInputs
+      ⟨ciphertextBytes, summaries⟩
+      placement
 
 theorem same_allowed_leakage_iff_observer_view_eq
     {left right : ShieldedTransactionWorld} :

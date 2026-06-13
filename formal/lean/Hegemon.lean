@@ -80,6 +80,7 @@ import Hegemon.Release.PqBinaryPolicy
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.AcceptedProofArtifact
 import Hegemon.Transaction.AcceptedTransactionSoundness
+import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.Balance
 import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs

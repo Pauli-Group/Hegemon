@@ -398,6 +398,49 @@
       ]
     },
     {
+      "id": "formal.transaction-asset-isolation-boundary",
+      "component": "transaction asset isolation and authorized mint boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta",
+        "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_unselected_non_native_delta_zero",
+        "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_only_native_or_selected_stablecoin_may_be_nonzero",
+        "Hegemon.Transaction.AssetIsolation.accepted_wrapper_implies_authorized_asset_delta",
+        "Hegemon.Transaction.AssetIsolation.accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero"
+      ],
+      "assumptions": [
+        "The theorem depends on the accepted transaction relation introduced by `AcceptedTransactionSoundness`; that relation is still conditional on explicit balance and spend proof-system soundness assumptions.",
+        "The theorem is transaction-level asset isolation. It does not prove chain-level bridge mint authorization, stablecoin policy admission, oracle/attestation validity, deployed verifier soundness, hash security, or complete Rust/native-node refinement.",
+        "Bridge mint/burn authorization remains a separate exception predicate and production binding target."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon.lean",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "asset-isolation-exceptions-not-production-bound",
+          "description": "The asset-isolation theorem packages transaction-level consequences of the accepted relation, but stablecoin policy authorization and bridge mint exceptions still need chain-level predicates and production admission bindings.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.transaction-statement-hash-binding",
       "component": "transaction statement-hash byte binding",
       "claim_class": "lean_theorem",
@@ -500,7 +543,7 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; equal public inputs, ciphertext wire observations, and placement imply equal allowed leakage.",
+      "summary": "The Lean privacy observer kernel defines the public observer view for shielded transactions and proves that changing private witnesses or prover randomness does not change that view; ciphertext summaries are derived from public chain wire bytes, and equal public inputs, chain ciphertext wire observations, and placement imply equal allowed leakage.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
@@ -509,10 +552,12 @@
         "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
+        "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length",
+        "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq"
       ],
       "assumptions": [
-        "The observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries, block height, and action index.",
+        "The observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index.",
         "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer projection.",
         "This is a leakage-boundary theorem only. It does not prove simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],
