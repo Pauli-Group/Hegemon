@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 63.19,
+  "overall_completion_percent": 63.76,
   "last_full_formal_core": {
     "commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
     "status": "passed",
@@ -29,29 +29,31 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Added `Hegemon.Transaction.AssetIsolation` as the transaction-level asset-isolation boundary and strengthened `Hegemon.Privacy.Observer` so ciphertext summaries are parser-derived from public chain wire bytes. The asset slice proves native/selected-stablecoin/unselected-asset delta authorization under the accepted transaction relation. The privacy slice proves parsed summaries align with ciphertext byte observations and equal public inputs, chain ciphertext bytes, and placement imply equal allowed leakage. Both slices are proof-only and non-production-eligible until accepted-transaction soundness, chain-level mint authorization, and cryptographic privacy/confidentiality assumptions are discharged.",
-    "lean_module": "formal/lean/Hegemon/Transaction/AssetIsolation.lean and formal/lean/Hegemon/Privacy/Observer.lean",
+    "summary": "Added `Hegemon.Transaction.CanonicalVerifierBoundary` as the canonical deployed transaction verifier boundary. The slice defines `CanonicalTxStatementSurface` for accepted wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, field agreement, balance-slot asset agreement, and stablecoin field agreement. It replaces the old downstream need to reason about separate balance and spend assumptions with one explicit `DeployedTxVerifierSoundnessAssumption` over that canonical surface, then reuses the accepted-transaction relation to recover native-delta and active-input spend facts.",
+    "lean_module": "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
     "top_level_theorems": [
-      "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta",
-      "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_unselected_non_native_delta_zero",
-      "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_only_native_or_selected_stablecoin_may_be_nonzero",
-      "Hegemon.Transaction.AssetIsolation.accepted_wrapper_implies_authorized_asset_delta",
-      "Hegemon.Transaction.AssetIsolation.accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero",
-      "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length",
-      "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement"
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_binding_valid",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_length",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts"
     ],
     "validation": {
       "formal_core": "passed",
-      "claims": 90,
-      "named_lean_theorems": 1123,
+      "claims": 91,
+      "named_lean_theorems": 1132,
       "production_eligible_claims": 84,
-      "falsification_cases": 373,
+      "falsification_cases": 375,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The asset-isolation relation is conditional on `AcceptedTransactionSoundnessAssumption`, which still depends on explicit balance and spend proof-system soundness assumptions.",
-      "The observer chain-wire theorem proves parsed-summary provenance only; it does not prove simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, proof-system privacy, or complete wallet/native-node refinement.",
-      "This proves transaction-level asset isolation only; chain-level stablecoin policy/oracle/attestation authorization, bridge mint authorization, verifier implementation correctness, witness extraction, proof privacy, note encryption correctness, and complete Rust/native-node refinement remain open."
+      "The deployed verifier soundness theorem is still an explicit assumption; this slice sharpens the assumption surface but does not discharge STARK/AIR, SmallWood, witness-extraction, or Rust verifier implementation soundness.",
+      "The canonical surface binds public-input, statement-hash, and proof-binding grammars at the Lean model boundary only; bincode/postcard implementation correctness, BLAKE2/BLAKE3 collision resistance, Poseidon/nullifier/note commitment security, and complete Rust/native-node refinement remain open.",
+      "The theorem improves spend/conservation/statement-boundary accounting but does not change the no-counterfeiting supply-integrity percentage until chain-level proof-system assumptions are discharged and production-bound."
     ]
   },
   "properties": [
@@ -100,18 +102,19 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 42,
+      "completion_percent": 44,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
         "public-input binding vectors",
         "statement-hash and proof-statement binding vectors",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
-        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts"
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean collapses balance and spend assumptions into one canonical deployed verifier soundness assumption and re-lifts active-input facts"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
-        "Replace or discharge the explicit SpendAuthorizationSoundnessAssumption at the deployed verifier boundary."
+        "Discharge `DeployedTxVerifierSoundnessAssumption` with mechanized deployed verifier/AIR soundness and Rust verifier refinement."
       ],
       "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes."
     },
@@ -135,7 +138,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -147,11 +150,12 @@
         "AcceptedProofArtifact conditional accepted-wrapper conservation theorems",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean accepted relation packages per-asset delta consequences",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean proves accepted-relation authorized asset-delta policy",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean re-lifts native delta from the accepted relation under one canonical deployed verifier soundness assumption",
         "public input shape and binding gates",
         "native block artifact binding admission"
       ],
       "missing_work": [
-        "Replace the current AcceptedProofArtifact balance-soundness assumption with a proved AIR/proof-system soundness theorem.",
+        "Discharge `DeployedTxVerifierSoundnessAssumption` with a proved AIR/proof-system soundness theorem for balance slots and spend authorization.",
         "Separate native asset, stablecoin, and bridge asset conservation rules."
       ],
       "performance_constraint": "Formal proof only or cheap public-input checks; do not add per-proof duplicate arithmetic beyond existing verifier inputs."
@@ -180,7 +184,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 76,
+      "completion_percent": 77,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -188,11 +192,12 @@
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean accepted statement-surface theorem",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean conditional accepted-proof artifact theorems",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted wrapper statement-surface facts into the accepted transaction relation",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean binds wrapper admission, public-input binding, statement preimage, proof-binding message, balance-slot assets, and stablecoin fields into one canonical verifier surface",
         "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates"
       ],
       "missing_work": [
-        "Lift the accepted-proof-artifact theorem beyond balance facts to every consensus statement field.",
-        "Complete bindings for any remaining production proof artifact entry point.",
+        "Lift the canonical verifier-boundary theorem beyond modeled transaction fields to every consensus statement field.",
+        "Complete production/refinement bindings for remaining proof artifact entry points.",
         "State hash collision resistance and transcript assumptions explicitly."
       ],
       "performance_constraint": "Keep shared helper reuse; no extra hashing beyond already-required statement construction."
@@ -200,7 +205,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 50,
+      "completion_percent": 53,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -209,13 +214,14 @@
         "AcceptedProofArtifact names the proof-system balance-soundness assumption used to lift balance facts",
         "SpendAuthorization names the proof-system authorization-soundness assumption used to lift no-theft facts",
         "AcceptedTransactionSoundness packages balance and spend assumptions into one accepted transaction relation",
+        "CanonicalVerifierBoundary collapses balance and spend assumptions into one canonical deployed transaction verifier soundness assumption over the exact statement surface modeled in Lean",
         "docs/crypto native backend assumption notes"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction of it.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
-        "Discharge the accepted-transaction soundness assumptions at the deployed verifier boundary."
+        "Discharge `DeployedTxVerifierSoundnessAssumption` with the deployed verifier/AIR/refinement theorem instead of leaving it as an explicit assumption."
       ],
       "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
     },

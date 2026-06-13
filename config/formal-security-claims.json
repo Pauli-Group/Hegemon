@@ -398,6 +398,56 @@
       ]
     },
     {
+      "id": "formal.transaction-canonical-verifier-boundary",
+      "component": "canonical deployed transaction verifier soundness boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, and the accepted transaction relation under one deployed verifier soundness assumption instead of separate balance and spend assumptions.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_binding_valid",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_length",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_shape_valid",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.accepted_wrapper_and_canonical_statement_implies_transaction_relation",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_native_delta",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_head_active_input_facts"
+      ],
+      "assumptions": [
+        "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
+        "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, shape field agreement, balance-slot asset agreement, and stablecoin field agreement.",
+        "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+        "formal/lean/Hegemon/Transaction/StatementHash.lean",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon.lean",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "deployed-tx-verifier-soundness-not-discharged",
+          "description": "The deployed verifier-to-relation theorem is sharpened to one canonical statement-surface assumption, but that assumption is not yet discharged by mechanized AIR/proof-system soundness or full Rust verifier refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.transaction-asset-isolation-boundary",
       "component": "transaction asset isolation and authorized mint boundary",
       "claim_class": "lean_theorem",

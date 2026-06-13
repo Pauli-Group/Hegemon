@@ -511,6 +511,60 @@
       "scope_boundary": "This node proves the abstract accepted-transaction relation and its assumption boundary only. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, cryptographic hash security, proof privacy, note encryption correctness, or complete Rust/native-node refinement."
     },
     {
+      "id": "formal.transaction-canonical-verifier-boundary",
+      "claim_id": "formal.transaction-canonical-verifier-boundary",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean canonical transaction verifier boundary, one canonical statement surface containing accepted wrapper admission, public/serialized input binding, statement preimage construction, proof binding-message construction, field agreement, and balance-slot asset agreement is sufficient to derive the existing accepted transaction relation under one explicit deployed verifier soundness assumption.",
+      "informal_argument": "`Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption` collapses the older independent balance and spend assumptions into `DeployedTxVerifierSoundnessAssumption` over `CanonicalTxStatementSurface`. `accepted_wrapper_and_canonical_statement_implies_transaction_relation` then reuses the accepted-transaction theorem, while companion theorems expose public binding validity, statement-preimage length, wrapper preconditions, public shape validity, native-delta conservation, and active-input spend facts from the same canonical surface.",
+      "depends_on": [
+        "formal.transaction-balance",
+        "formal.transaction-proof-wrapper-admission",
+        "formal.transaction-public-input-binding",
+        "formal.transaction-spend-authorization-boundary",
+        "formal.transaction-statement-hash-binding",
+        "formal.transaction-accepted-soundness-boundary"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+        "formal/lean/Hegemon/Transaction/StatementHash.lean",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon.lean",
+        "DESIGN.md",
+        "METHODS.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-13",
+        "notes": "Accepted as a non-production canonical verifier-boundary refinement. It sharpens the accepted-transaction soundness assumption surface but does not certify deployed STARK, SmallWood, or native verifier soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-canonical-verifier-boundary-theorem",
+          "description": "Removing or weakening the canonical verifier-boundary theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-canonical-verifier-boundary-gate",
+          "description": "The release formal-core wrapper must include the canonical verifier-boundary module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves an assumption-sharpening canonical statement boundary only. It does not prove deployed STARK/AIR or SmallWood soundness, verifier implementation correctness, witness extraction, hash collision resistance, bincode/postcard implementation correctness, stablecoin policy/oracle validity, bridge mint authorization, note encryption correctness, proof privacy, or complete Rust/native-node refinement."
+    },
+    {
       "id": "formal.transaction-asset-isolation-boundary",
       "claim_id": "formal.transaction-asset-isolation-boundary",
       "kind": "target_claim",

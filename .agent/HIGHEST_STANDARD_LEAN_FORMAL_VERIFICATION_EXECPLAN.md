@@ -34,6 +34,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 08:20Z) Added `Hegemon.Transaction.AssetIsolation`, proving accepted-relation authorized asset deltas, zero unselected non-native deltas, and the theorem that any nonzero non-native delta implies the selected stablecoin exception. Current tracked completion is 62.90%.
 - [x] (2026-06-13 08:20Z) Strengthened `Hegemon.Privacy.Observer` so observer-visible ciphertext summaries are parsed from public chain wire bytes, with equal public inputs, chain ciphertext bytes, and placement implying equal allowed leakage. Current tracked completion is 63.19%.
 - [x] (2026-06-13 08:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 90 claims, 1123 named Lean theorems, 84 production-eligible claims, 373 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 09:05Z) Added `Hegemon.Transaction.CanonicalVerifierBoundary`, defining the canonical deployed transaction verifier statement surface and proving that one `DeployedTxVerifierSoundnessAssumption` over that surface implies the accepted-transaction relation, native-delta consequences, and active-input spend facts. Current tracked completion is 63.76%.
+- [x] (2026-06-13 09:20Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 91 claims, 1132 named Lean theorems, 84 production-eligible claims, 375 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -88,6 +90,8 @@ The spend-authorization theorem slice adds `formal/lean/Hegemon/Transaction/Spen
 The accepted-transaction soundness slice adds `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`. It packages proof-wrapper admission, accepted statement surface, valid balance facts, public input shape validity, per-asset delta consequences, and active-input authorization facts into a single relation that downstream no-counterfeiting and no-theft theorems can target. The relation is deliberately conditional on `BalanceSoundnessAssumption` and `SpendAuthorizationSoundnessAssumption`; it does not yet prove deployed STARK/AIR soundness, SmallWood soundness, verifier correctness, witness extraction, hash implementation equivalence, proof privacy, note encryption correctness, or complete Rust/native refinement. This raises the tracked baseline to 62.63%, with the next hard gap being to discharge the accepted-transaction soundness assumptions at the deployed verifier boundary.
 
 The asset-isolation and observer chain-wire slice adds `formal/lean/Hegemon/Transaction/AssetIsolation.lean` and strengthens `formal/lean/Hegemon/Privacy/Observer.lean`. `AssetIsolation` proves that the accepted transaction relation authorizes every asset delta: native deltas match modeled native balance, unselected non-native deltas are zero, and any nonzero non-native delta implies the selected stablecoin exception. The observer strengthening proves ciphertext summaries are derived by parsing public chain ciphertext wire bytes and that equal public inputs, equal chain ciphertext bytes, and equal placement imply equal allowed leakage. This raises the tracked baseline to 63.19%. It still does not prove chain-level stablecoin policy/oracle/attestation authorization, bridge mint authorization, deployed verifier soundness, simulator-based ZK, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata privacy, timing privacy, or complete Rust/native-node refinement.
+
+The canonical verifier-boundary slice adds `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It defines `CanonicalTxStatementSurface` to bind proof-wrapper admission, public/serialized input binding, transaction statement preimage construction, proof binding-message construction, balance-slot asset agreement, and stablecoin field agreement, then proves that a single `DeployedTxVerifierSoundnessAssumption` over that surface implies the existing accepted-transaction soundness assumptions. This raises the tracked baseline to 63.76% by sharpening proof-system, statement-binding, spend-authorization, and per-asset-conservation accounting. It still does not prove deployed STARK/AIR, SmallWood, witness extraction, verifier implementation correctness, hash collision resistance, bincode/postcard correctness, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement.
 
 ## Context and Orientation
 
@@ -195,6 +199,14 @@ The latest full formal-core pass after the asset-isolation and observer chain-wi
     named_lean_theorems=1123
     production_eligible_claims=84
     falsification_cases=373
+    implementation_bindings=177
+
+The latest full formal-core pass after the canonical verifier-boundary slice reported:
+
+    claims=91
+    named_lean_theorems=1132
+    production_eligible_claims=84
+    falsification_cases=375
     implementation_bindings=177
 
 ## Interfaces and Dependencies

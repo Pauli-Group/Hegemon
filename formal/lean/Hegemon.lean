@@ -82,6 +82,7 @@ import Hegemon.Transaction.AcceptedProofArtifact
 import Hegemon.Transaction.AcceptedTransactionSoundness
 import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.Balance
+import Hegemon.Transaction.CanonicalVerifierBoundary
 import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Transaction.PublicInputBinding
