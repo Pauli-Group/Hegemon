@@ -50,6 +50,8 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 13:30Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1182 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [x] (2026-06-13 13:52Z) Strengthened `Hegemon.Transaction.SpendAuthorization`, `Hegemon.Transaction.AcceptedTransactionSoundness`, and `Hegemon.Transaction.CanonicalVerifierBoundary` with total indexed input-slot facts: every authorized aligned input slot is either inactive with zero public nullifier or active with full note-commitment, spend-authority, nullifier, and Merkle-membership facts bound to the canonical statement and proof-binding nullifier vectors. Current tracked completion is 65.82%.
 - [x] (2026-06-13 14:10Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1189 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
+- [x] (2026-06-13 14:32Z) Added `Hegemon.Native.BridgeMintSafety`, proving that accepted inbound bridge payloads expose proof-receipt presence, clean state-delta scope, replay-key/message binding, Hegemon destination binding, and payload-hash binding; fresh replay import consumes the key once and rejects immediate reimport; and accepted block/ledger replay couples bridge replay uniqueness with claimed supply. Current tracked completion is 65.99%.
+- [x] (2026-06-13 14:45Z) Re-ran `bash scripts/check_formal_core.sh`; formal-core passed with 92 claims, 1194 named Lean theorems, 84 production-eligible claims, 377 falsification cases, and 177 implementation bindings.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -120,6 +122,8 @@ The PQ channel-state slice strengthens `formal/lean/Hegemon/Network/SecureChanne
 The canonical verifier payload-binding slice strengthens `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It adds `canonical_statement_surface_value_balance_bound`, `canonical_statement_surface_stablecoin_payload_bound`, and `canonical_surface_authorized_active_input_bound_to_statement`, proving that value-balance sign/magnitude, stablecoin policy/oracle/attestation/issuance payloads, and modeled active spend facts are bound to the exact public-input binding, statement-hash, and proof-binding anchor/nullifier surface. This raises the tracked baseline to 65.58% by narrowing the non-cryptographic statement-surface obligation for proof-system soundness and no-theft. It still depends on `DeployedTxVerifierSoundnessAssumption`; STARK/AIR, SmallWood, FRI, witness extraction, hash security, stablecoin policy validity, bridge mint authorization, and full native-node refinement remain open.
 
 The total input-slot authorization slice strengthens `formal/lean/Hegemon/Transaction/SpendAuthorization.lean`, `formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean`, and `formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean`. It proves that every authorized aligned input slot is either inactive with zero public nullifier or active with note-commitment reconstruction, spend-authority derivation, nullifier derivation, and Merkle membership; lifts that through the accepted transaction relation and canonical deployed-verifier boundary; and binds the facts to the exact statement and proof-binding nullifier vectors. This raises the tracked baseline to 65.82%. It still depends on proof-system soundness assumptions and does not prove STARK/AIR, SmallWood, FRI, witness extraction, hash security, wallet custody, or complete native-node equivalence.
+
+The bridge mint-safety slice adds `formal/lean/Hegemon/Native/BridgeMintSafety.lean`. It proves that accepted inbound bridge payloads imply proof-receipt presence, clean state-delta scope, replay-key/message binding, Hegemon destination binding, and payload-hash binding; that fresh replay import consumes a key once and immediate reimport rejects; that accepted block replay couples imported bridge replay-key uniqueness with expected and claimed supply; and that accepted ledger replay couples final consumed bridge replay-key uniqueness with replayed supply. This raises the tracked baseline to 65.99%. It still does not prove external-chain receipt soundness, exact decoded mint amount authorization, SCALE decoding correctness, bridge payload-hash cryptographic security, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence.
 
 ## Context and Orientation
 
@@ -289,6 +293,14 @@ The latest full formal-core pass after the total input-slot authorization slice 
 
     claims=92
     named_lean_theorems=1189
+    production_eligible_claims=84
+    falsification_cases=377
+    implementation_bindings=177
+
+The latest full formal-core pass after the bridge mint-safety slice reported:
+
+    claims=92
+    named_lean_theorems=1194
     production_eligible_claims=84
     falsification_cases=377
     implementation_bindings=177

@@ -6616,8 +6616,8 @@
       "id": "native.bridge-action-payload-admission",
       "claim_id": "native.bridge-action-payload-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean decoded bridge-payload admission transition, native bridge action validation accepts only when the action is in the bridge family, carries no shielded state deltas or candidate artifact payload, uses a supported bridge action kind, carries a nonempty outbound payload for outbound messages, and for inbound messages carries a nonempty proof receipt, binds the replay key to the embedded message source/nonce, targets the Hegemon chain id, and binds the embedded payload to its payload hash; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded bridge payload-admission predicate, with companion theorems for valid outbound/inbound/register payloads, non-bridge action rejection, state-delta smuggling rejection, unsupported action rejection, outbound empty-payload rejection, inbound empty-proof rejection, inbound replay-key mismatch rejection, inbound destination mismatch rejection, and inbound payload-hash mismatch rejection. `gen_bridge_action_payload_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_bridge_action_payload_admission` helper now called by native bridge action validation before the disabled RISC Zero receipt verifier path. Native regressions reject empty outbound payloads and inbound proof/replay/destination/payload-hash mismatches before receipt verification.",
+      "formal_statement": "For the executable Lean decoded bridge-payload admission transition, native bridge action validation accepts only when the action is in the bridge family, carries no shielded state deltas or candidate artifact payload, uses a supported bridge action kind, carries a nonempty outbound payload for outbound messages, and for inbound messages carries a nonempty proof receipt, binds the replay key to the embedded message source/nonce, targets the Hegemon chain id, and binds the embedded payload to its payload hash; rejection precedence is fixed by the executable table. The bridge mint-safety lift proves that an accepted inbound payload plus a fresh replay import consumes the replay key once and makes immediate reimport reject, and that accepted block/ledger replay couples consumed bridge replay-key uniqueness with the claimed native supply digest.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded bridge payload-admission predicate, with companion theorems for valid outbound/inbound/register payloads, non-bridge action rejection, state-delta smuggling rejection, unsupported action rejection, outbound empty-payload rejection, inbound empty-proof rejection, inbound replay-key mismatch rejection, inbound destination mismatch rejection, and inbound payload-hash mismatch rejection. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe` packages the accepted inbound authorization facts with fresh replay import so the key is consumed once and cannot be reimported; `Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply` and `Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling` lift that replay/supply coupling through accepted block and ledger replay. `gen_bridge_action_payload_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_bridge_action_payload_admission` helper now called by native bridge action validation before the disabled RISC Zero receipt verifier path. Native regressions reject empty outbound payloads and inbound proof/replay/destination/payload-hash mismatches before receipt verification.",
       "depends_on": [
         "native.action-scope-admission",
         "bridge.message-root-replay",
@@ -6626,6 +6626,7 @@
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
@@ -6661,6 +6662,7 @@
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "formal/lean/README.md",
@@ -6695,7 +6697,7 @@
           "gate": "cargo test -p hegemon-node bridge_inbound_ --lib --no-default-features"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission only. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, inbound replay-set state transitions, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission plus modeled bridge replay/supply coupling only. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, exact external message amount authorization beyond payload-hash binding, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, or complete native-node equivalence."
     },
     {
       "id": "native.bridge-witness-backscan",

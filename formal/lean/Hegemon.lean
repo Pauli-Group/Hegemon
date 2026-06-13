@@ -45,6 +45,7 @@ import Hegemon.Native.BlockArtifactBindingAdmission
 import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.BlockReplayRefinement
 import Hegemon.Native.BridgeActionPayloadAdmission
+import Hegemon.Native.BridgeMintSafety
 import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission
 import Hegemon.Native.CandidateArtifactAdmission

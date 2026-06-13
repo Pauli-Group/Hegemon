@@ -3577,7 +3577,7 @@
       "id": "native.bridge-action-payload-admission",
       "component": "native decoded bridge action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; generated Lean vectors are checked against the production native helper used by bridge action validation.",
+      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, and couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply; generated Lean vectors are checked against the production native helper used by bridge action validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3593,15 +3593,21 @@
         "Hegemon.Native.BridgeActionPayloadAdmission.unsupported_bridge_action_rejects",
         "Hegemon.Native.BridgeActionPayloadAdmission.valid_inbound_accepts",
         "Hegemon.Native.BridgeActionPayloadAdmission.valid_outbound_accepts",
-        "Hegemon.Native.BridgeActionPayloadAdmission.valid_register_accepts"
+        "Hegemon.Native.BridgeActionPayloadAdmission.valid_register_accepts",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorization_facts",
+        "Hegemon.Native.BridgeMintSafety.fresh_bridge_replay_import_consumes_once",
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe",
+        "Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply",
+        "Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling"
       ],
       "assumptions": [
         "The Lean model treats SCALE decoding, bridge_payload_hash computation, route identity, and state-delta scanning as production-derived predicates; it proves the decoded pre-receipt admission table and rejection precedence.",
         "Generated Lean conformance vectors cover valid outbound, inbound, and verifier-registration payloads; non-bridge actions; state-delta smuggling; unsupported bridge actions; empty outbound payloads; empty inbound proof receipts; inbound replay-key, destination, and payload-hash mismatches; and not-bridge/state-delta/inbound-precondition precedence.",
-        "The theorem covers executable decoded native bridge payload admission only. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, inbound replay-set state transitions, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
+        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, and replay/supply coupling across accepted block and ledger replay only. It does not prove SCALE decoder correctness, bridge payload hash cryptographic security or implementation equivalence, external message amount authorization beyond payload-hash binding, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",

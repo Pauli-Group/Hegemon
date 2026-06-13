@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 65.82,
+  "overall_completion_percent": 65.99,
   "last_full_formal_core": {
-    "commit": "working tree after total input-slot authorization slice",
+    "commit": "working tree after bridge mint-safety slice",
     "status": "passed",
     "claims": 92,
-    "named_lean_theorems": 1189,
+    "named_lean_theorems": 1194,
     "production_eligible_claims": 84,
     "falsification_cases": 377,
     "implementation_bindings": 177
@@ -29,34 +29,34 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-13",
-    "summary": "Strengthened spend authorization and accepted/canonical verifier boundaries with total indexed input-slot facts: every authorized aligned input slot is either inactive with zero public nullifier or active with full note-commitment, spend-authority, nullifier, and Merkle-membership facts, and canonical surfaces bind those slot facts to the exact statement and proof-binding nullifier vectors.",
+    "summary": "Added bridge mint-safety lift: accepted inbound bridge payloads imply proof-receipt presence, clean state-delta scope, replay-key/message binding, Hegemon destination binding, and payload-hash binding; fresh replay import consumes the key once and immediate reimport rejects; accepted block and ledger replay couple consumed bridge replay-key uniqueness with claimed supply.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
-      "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+      "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+      "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_input_slot_facts_at",
-      "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_input_slot_facts_at",
-      "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_input_slot_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_transaction_relation_input_slot_facts_at",
-      "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_input_slot_facts_at",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_surface_authorized_input_slot_bound_to_statement",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_input_slot_facts_at"
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorization_facts",
+      "Hegemon.Native.BridgeMintSafety.fresh_bridge_replay_import_consumes_once",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe",
+      "Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply",
+      "Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling"
     ],
     "validation": {
       "lean_formal": "passed",
       "formal_core": "passed",
       "claims": 92,
-      "named_lean_theorems": 1189,
+      "named_lean_theorems": 1194,
       "production_eligible_claims": 84,
       "falsification_cases": 377,
       "implementation_bindings": 177
     },
     "known_limitations": [
-      "The total input-slot theorem still depends on `SpendAuthorizationSoundnessAssumption` or `DeployedTxVerifierSoundnessAssumption` when lifted from accepted proof wrappers.",
-      "The theorem covers modeled aligned flag/nullifier/witness vectors, not raw transaction bytes or a complete Rust verifier refinement.",
-      "STARK/AIR, SmallWood, FRI, witness extraction, hash security, note commitment cryptographic binding, wallet key custody, and complete native-node equivalence remain separate open targets."
+      "The bridge mint-safety theorem binds replay, destination, payload hash, and claimed supply over modeled decoded payload and replay summaries, but it does not prove external-chain receipt soundness.",
+      "The current Lean bridge model binds the message payload hash, not a first-class decoded mint amount scalar; exact amount authorization remains a separate model target.",
+      "SCALE decoding, bridge payload-hash cryptographic security, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, and complete native-node equivalence remain separate open targets."
     ]
   },
   "properties": [
@@ -175,7 +175,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 64,
+      "completion_percent": 65,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -184,6 +184,7 @@
         "AcceptedProofArtifact conditional accepted-wrapper asset-isolation theorems",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean accepted-relation theorem: nonzero non-native delta implies selected stablecoin exception",
         "native bridge payload admission",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts and fresh replay-key one-shot consumption",
         "native transfer payload/state admission"
       ],
       "missing_work": [
@@ -355,7 +356,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 43,
+      "completion_percent": 46,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -363,12 +364,13 @@
         "bridge payload admission gates",
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
-        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness"
+        "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, and replay/supply coupling across accepted block and ledger replay"
       ],
       "missing_work": [
-        "Define bridge mint authorization theorem independent of the current disabled RISC Zero verifier.",
+        "Add a first-class decoded bridge mint amount surface and prove minted amount equals authorized external-message amount under payload-hash binding.",
         "Mechanize or parameterize external-chain proof soundness.",
-        "Lift replay-key uniqueness from native consumed-key state to authorized bridge asset mint amount/destination and supply coupling."
+        "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths."
       ],
       "performance_constraint": "Keep release verifier fail-closed until a PQ-clean verifier exists; avoid classical verifier runtime costs."
     },
