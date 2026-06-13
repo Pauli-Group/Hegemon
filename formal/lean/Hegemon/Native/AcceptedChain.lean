@@ -7,10 +7,6 @@ namespace AcceptedChain
 open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.BlockReplayRefinement
 
-def actionNullifiers : List StreamAction -> List Nat
-  | [] => []
-  | action :: rest => action.nullifiers ++ actionNullifiers rest
-
 def validateNativeReplayChain
     (parentSupply : Nat)
     (spentNullifiers : List Nat) :
@@ -19,16 +15,13 @@ def validateNativeReplayChain
   | block :: rest =>
       if block.parentSupply = parentSupply then
         if block.spentNullifiers = spentNullifiers then
-          if (actionNullifiers block.actions ++ spentNullifiers).Nodup then
-            match evaluateBlockReplayRefinement block with
-            | Except.error _ => none
-            | Except.ok summary =>
-                validateNativeReplayChain
-                  summary.expectedSupply
-                  (actionNullifiers block.actions ++ spentNullifiers)
-                  rest
-          else
-            none
+          match evaluateBlockReplayRefinement block with
+          | Except.error _ => none
+          | Except.ok summary =>
+              validateNativeReplayChain
+                summary.expectedSupply
+                (importedNullifierStateFrom spentNullifiers block.actions)
+                rest
         else
           none
       else
@@ -39,7 +32,7 @@ def replayedNullifierState :
   | spentNullifiers, [] => spentNullifiers
   | spentNullifiers, block :: rest =>
       replayedNullifierState
-        (actionNullifiers block.actions ++ spentNullifiers)
+        (importedNullifierStateFrom spentNullifiers block.actions)
         rest
 
 def chainNullifiers (blocks : List BlockReplayInput) : List Nat :=
@@ -65,7 +58,7 @@ def nativeReplayChainNullifierPreconditions :
       if block.spentNullifiers = spentNullifiers then
         actionStreamPreconditions (streamInput block)
           && nativeReplayChainNullifierPreconditions
-            (actionNullifiers block.actions ++ spentNullifiers)
+            (importedNullifierStateFrom spentNullifiers block.actions)
             rest
       else
         false
@@ -89,18 +82,14 @@ theorem accepted_native_replay_chain_no_counterfeiting_from
       · simp [parentEq] at accepted ⊢
         by_cases spentMatches : block.spentNullifiers = spentNullifiers
         · simp [spentMatches] at accepted
-          by_cases nullifiersNodup :
-              (actionNullifiers block.actions ++ spentNullifiers).Nodup
-          · simp [nullifiersNodup] at accepted
-            cases replayResult : evaluateBlockReplayRefinement block with
-            | error rejection =>
-                simp [replayResult] at accepted
-            | ok summary =>
-                have supplyFacts := accepted_claims_expected_supply replayResult
-                rw [supplyFacts.left]
-                simp [replayResult] at accepted
-                exact ih accepted
-          · simp [nullifiersNodup] at accepted
+          cases replayResult : evaluateBlockReplayRefinement block with
+          | error rejection =>
+              simp [replayResult] at accepted
+          | ok summary =>
+              have supplyFacts := accepted_claims_expected_supply replayResult
+              rw [supplyFacts.left]
+              simp [replayResult] at accepted
+              exact ih accepted
         · simp [spentMatches] at accepted
       · simp [parentEq] at accepted
 
@@ -130,24 +119,20 @@ theorem accepted_native_replay_chain_nullifier_preconditions_from
         by_cases spentMatches : block.spentNullifiers = spentNullifiers
         · simp [spentMatches]
           simp [spentMatches] at accepted
-          by_cases nullifiersNodup :
-              (actionNullifiers block.actions ++ spentNullifiers).Nodup
-          · simp [nullifiersNodup] at accepted
-            cases replayResult : evaluateBlockReplayRefinement block with
-            | error rejection =>
-                simp [replayResult] at accepted
-            | ok summary =>
-                have streamOk := accepted_has_action_stream_effect replayResult
-                have streamAcceptsTrue :
-                    actionStreamAccepts (streamInput block) = true := by
-                  simp [actionStreamAccepts, streamOk]
-                have streamPreconditionsTrue :
-                    actionStreamPreconditions (streamInput block) = true := by
-                  rw [← accepts_iff_stream_preconditions (streamInput block)]
-                  exact streamAcceptsTrue
-                simp [replayResult] at accepted
-                simp [streamPreconditionsTrue, ih accepted]
-          · simp [nullifiersNodup] at accepted
+          cases replayResult : evaluateBlockReplayRefinement block with
+          | error rejection =>
+              simp [replayResult] at accepted
+          | ok summary =>
+              have streamOk := accepted_has_action_stream_effect replayResult
+              have streamAcceptsTrue :
+                  actionStreamAccepts (streamInput block) = true := by
+                simp [actionStreamAccepts, streamOk]
+              have streamPreconditionsTrue :
+                  actionStreamPreconditions (streamInput block) = true := by
+                rw [← accepts_iff_stream_preconditions (streamInput block)]
+                exact streamAcceptsTrue
+              simp [replayResult] at accepted
+              simp [streamPreconditionsTrue, ih accepted]
         · simp [spentMatches] at accepted
       · simp [parentEq] at accepted
 
@@ -178,16 +163,25 @@ theorem accepted_native_replay_chain_nullifiers_unique_from
       · simp [parentEq] at accepted
         by_cases spentMatches : block.spentNullifiers = spentNullifiers
         · simp [spentMatches] at accepted
-          by_cases nullifiersNodup :
-              (actionNullifiers block.actions ++ spentNullifiers).Nodup
-          · simp [nullifiersNodup] at accepted
-            cases replayResult : evaluateBlockReplayRefinement block with
-            | error rejection =>
-                simp [replayResult] at accepted
-            | ok summary =>
-                simp [replayResult] at accepted
-                exact ih nullifiersNodup accepted
-          · simp [nullifiersNodup] at accepted
+          cases replayResult : evaluateBlockReplayRefinement block with
+          | error rejection =>
+              simp [replayResult] at accepted
+          | ok summary =>
+              have streamOk := accepted_has_action_stream_effect replayResult
+              have streamSpentNodup :
+                  (streamInput block).spentNullifiers.Nodup := by
+                simp [streamInput, spentMatches, spentNodup]
+              have nextSpentNodup :
+                  (importedNullifierStateFrom
+                    spentNullifiers
+                    block.actions).Nodup := by
+                have preserved :=
+                  evaluateActionStreamEffect_preserves_imported_nullifier_nodup
+                    streamSpentNodup
+                    streamOk
+                simpa [streamInput, spentMatches] using preserved
+              simp [replayResult] at accepted
+              exact ih nextSpentNodup accepted
         · simp [spentMatches] at accepted
       · simp [parentEq] at accepted
 

@@ -40,6 +40,32 @@ def containsNat (key : Nat) : List Nat -> Bool
   | head :: tail =>
       if head = key then true else containsNat key tail
 
+theorem containsNat_true_iff {key : Nat} {xs : List Nat} :
+    containsNat key xs = true ↔ key ∈ xs := by
+  induction xs with
+  | nil => simp [containsNat]
+  | cons head tail ih =>
+      by_cases h : head = key
+      · simp [containsNat, h]
+      · constructor
+        · intro ht
+          simp [containsNat, h] at ht
+          rw [List.mem_cons]
+          exact Or.inr (ih.mp ht)
+        · intro hm
+          rw [List.mem_cons] at hm
+          cases hm with
+          | inl hk => exact False.elim (h (Eq.symm hk))
+          | inr ht =>
+              simp [containsNat, h]
+              exact ih.mpr ht
+
+theorem containsNat_false_not_mem {key : Nat} {xs : List Nat}
+    (h : containsNat key xs = false) : key ∉ xs := by
+  intro mem
+  have trueH : containsNat key xs = true := containsNat_true_iff.mpr mem
+  simp [trueH] at h
+
 def importNullifiers :
     List Nat -> List Nat -> Except ActionStreamReject (List Nat × Nat)
   | known, [] => Except.ok (known, 0)
@@ -53,6 +79,43 @@ def importNullifiers :
         | Except.error rejection => Except.error rejection
         | Except.ok (nextKnown, imported) =>
             Except.ok (nextKnown, imported + 1)
+
+theorem importNullifiers_preserves_nodup
+    {known keys next : List Nat}
+    {imported : Nat}
+    (knownNodup : known.Nodup)
+    (ok : importNullifiers known keys = Except.ok (next, imported)) :
+    next.Nodup := by
+  induction keys generalizing known next imported with
+  | nil =>
+      simp [importNullifiers] at ok
+      rcases ok with ⟨hnext, _⟩
+      subst next
+      exact knownNodup
+  | cons key rest ih =>
+      unfold importNullifiers at ok
+      by_cases zero : key = 0
+      · simp [zero] at ok
+      · simp [zero] at ok
+        cases present : containsNat key known with
+        | true =>
+            simp [present] at ok
+        | false =>
+            cases rec : importNullifiers (key :: known) rest with
+            | error rejection =>
+                simp [present, rec] at ok
+            | ok pair =>
+                cases pair with
+                | mk nextKnown importedRest =>
+                    simp [present, rec] at ok
+                    rcases ok with ⟨hnext, _⟩
+                    subst next
+                    have keyNotMem : key ∉ known :=
+                      containsNat_false_not_mem present
+                    have nextKnownNodup : (key :: known).Nodup := by
+                      rw [List.nodup_cons]
+                      exact ⟨keyNotMem, knownNodup⟩
+                    exact ih nextKnownNodup rec
 
 def importBridgeReplay
     (known : List Nat)
@@ -105,6 +168,77 @@ def evaluateActionStreamFrom :
       else
         Except.error ActionStreamReject.ciphertextCountMismatch
 
+def importedNullifierStateFrom :
+    List Nat -> List StreamAction -> List Nat
+  | spent, [] => spent
+  | spent, action :: rest =>
+      match importNullifiers spent action.nullifiers with
+      | Except.error _ => spent
+      | Except.ok (nextSpent, _) =>
+          importedNullifierStateFrom nextSpent rest
+
+theorem evaluateActionStreamFrom_preserves_imported_nullifier_nodup
+    {leaf : Nat}
+    {spent consumed plannedStarts : List Nat}
+    {actions : List StreamAction}
+    {importedNullifiers importedReplays : Nat}
+    {output : ActionStreamOutput}
+    (spentNodup : spent.Nodup)
+    (accepted :
+      evaluateActionStreamFrom
+        leaf
+        spent
+        consumed
+        actions
+        plannedStarts
+        importedNullifiers
+        importedReplays =
+          Except.ok output) :
+    (importedNullifierStateFrom spent actions).Nodup := by
+  induction actions generalizing leaf spent consumed plannedStarts
+      importedNullifiers importedReplays output with
+  | nil =>
+      simp [evaluateActionStreamFrom, importedNullifierStateFrom] at accepted ⊢
+      exact spentNodup
+  | cons action rest ih =>
+      unfold evaluateActionStreamFrom at accepted
+      unfold importedNullifierStateFrom
+      by_cases countMatches : action.commitmentCount = action.ciphertextCount
+      · simp [countMatches] at accepted
+        cases nextLeafResult : checkedAddU64 leaf action.ciphertextCount with
+        | none =>
+            simp [nextLeafResult] at accepted
+        | some nextLeaf =>
+            cases importResult :
+                importNullifiers spent action.nullifiers with
+            | error rejection =>
+                simp [nextLeafResult, importResult] at accepted
+            | ok importedPair =>
+                cases importedPair with
+                | mk nextSpent nullifierImports =>
+                    have nextSpentNodup :
+                        nextSpent.Nodup :=
+                      importNullifiers_preserves_nodup spentNodup
+                        importResult
+                    cases bridgeResult :
+                        importBridgeReplay consumed action.bridgeReplayKey with
+                    | error rejection =>
+                        simp [
+                          nextLeafResult,
+                          importResult,
+                          bridgeResult
+                        ] at accepted
+                    | ok bridgePair =>
+                        cases bridgePair with
+                        | mk nextConsumed replayImports =>
+                            simp [
+                              nextLeafResult,
+                              importResult,
+                              bridgeResult
+                            ] at accepted
+                            exact ih nextSpentNodup accepted
+      · simp [countMatches] at accepted
+
 def evaluateActionStreamEffect
     (input : ActionStreamInput) :
     Except ActionStreamReject ActionStreamOutput :=
@@ -116,6 +250,15 @@ def evaluateActionStreamEffect
     []
     0
     0
+
+theorem evaluateActionStreamEffect_preserves_imported_nullifier_nodup
+    {input : ActionStreamInput}
+    {output : ActionStreamOutput}
+    (spentNodup : input.spentNullifiers.Nodup)
+    (accepted : evaluateActionStreamEffect input = Except.ok output) :
+    (importedNullifierStateFrom input.spentNullifiers input.actions).Nodup :=
+  evaluateActionStreamFrom_preserves_imported_nullifier_nodup
+    spentNodup accepted
 
 def actionStreamAccepts (input : ActionStreamInput) : Bool :=
   match evaluateActionStreamEffect input with
