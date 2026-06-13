@@ -56,6 +56,21 @@ def summariesMatchChainWire (world : ShieldedTransactionWorld) : Prop :=
   parsedChainCiphertextSummaries world.ciphertextBytes =
     some world.ciphertextSummaries
 
+def activeFlagCount : List Nat -> Nat
+  | [] => 0
+  | flag :: rest =>
+      (if flag = 1 then 1 else 0) + activeFlagCount rest
+
+def activeOutputCount (shape : PublicInputShape) : Nat :=
+  activeFlagCount shape.outputFlags
+
+def validObserverChainSurface
+    (world : ShieldedTransactionWorld) : Prop :=
+  validPublicInputShape world.publicInputs = true
+    ∧ summariesMatchChainWire world
+    ∧ world.ciphertextBytes.length =
+        activeOutputCount world.publicInputs
+
 def summaryHasChainCiphertextFormat
     (summary : NoteCiphertextSummary) : Prop :=
   summary.cryptoSuite = cryptoSuiteGamma
@@ -187,6 +202,58 @@ theorem observer_view_summaries_have_chain_format
     summariesHaveChainCiphertextFormat world.ciphertextSummaries :=
   parsed_chain_ciphertext_summaries_have_chain_format parsed
 
+theorem valid_observer_chain_surface_summaries_have_chain_format
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world) :
+    summariesHaveChainCiphertextFormat world.ciphertextSummaries :=
+  observer_view_summaries_have_chain_format valid.right.left
+
+theorem valid_observer_chain_surface_ciphertext_count
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world) :
+    world.ciphertextSummaries.length =
+      activeOutputCount world.publicInputs := by
+  exact
+    (parsed_chain_ciphertext_summaries_length
+      valid.right.left).trans
+      valid.right.right
+
+theorem same_public_inputs_active_output_count
+    {left right : ShieldedTransactionWorld}
+    (publicInputs : samePublicInputs left right) :
+    activeOutputCount left.publicInputs =
+      activeOutputCount right.publicInputs :=
+  congrArg activeOutputCount publicInputs
+
+theorem same_allowed_leakage_preserves_active_output_count
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right) :
+    activeOutputCount left.publicInputs =
+      activeOutputCount right.publicInputs := by
+  exact
+    congrArg
+      (fun view : ObserverView =>
+        activeOutputCount view.publicInputs)
+      same
+
+theorem same_public_valid_observer_surfaces_ciphertext_count
+    {left right : ShieldedTransactionWorld}
+    (leftValid : validObserverChainSurface left)
+    (rightValid : validObserverChainSurface right)
+    (publicInputs : samePublicInputs left right) :
+    left.ciphertextSummaries.length =
+      right.ciphertextSummaries.length := by
+  calc
+    left.ciphertextSummaries.length =
+        activeOutputCount left.publicInputs :=
+      valid_observer_chain_surface_ciphertext_count leftValid
+    _ = activeOutputCount right.publicInputs :=
+      same_public_inputs_active_output_count publicInputs
+    _ = right.ciphertextSummaries.length := by
+      exact
+        (valid_observer_chain_surface_ciphertext_count
+          rightValid).symm
+
 theorem same_allowed_leakage_of_public_chain_wire_and_placement
     {left right : ShieldedTransactionWorld}
     (leftParsed : summariesMatchChainWire left)
@@ -207,6 +274,21 @@ theorem same_allowed_leakage_of_public_chain_wire_and_placement
       publicInputs
       ⟨ciphertextBytes, summaries⟩
       placement
+
+theorem same_allowed_leakage_of_valid_observer_chain_surfaces
+    {left right : ShieldedTransactionWorld}
+    (leftValid : validObserverChainSurface left)
+    (rightValid : validObserverChainSurface right)
+    (publicInputs : samePublicInputs left right)
+    (ciphertextBytes : left.ciphertextBytes = right.ciphertextBytes)
+    (placement : samePlacement left right) :
+    sameAllowedLeakage left right :=
+  same_allowed_leakage_of_public_chain_wire_and_placement
+    leftValid.right.left
+    rightValid.right.left
+    publicInputs
+    ciphertextBytes
+    placement
 
 theorem same_allowed_leakage_iff_observer_view_eq
     {left right : ShieldedTransactionWorld} :
