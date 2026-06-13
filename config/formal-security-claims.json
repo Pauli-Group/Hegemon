@@ -4156,6 +4156,7 @@
         "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_carried_states",
         "Hegemon.Native.BlockReplayInputProjection.accepted_projected_native_ledger_replay_chain_startup_equivalence",
         "Hegemon.Native.BlockReplayInputProjection.projectedLedgerStateAfter_eq_validate_projected_replay",
+        "Hegemon.Native.BlockReplayInputProjection.rawProjectedLedgerStateAfter_eq_validate_raw_replay",
         "Hegemon.Native.BlockReplayInputProjection.accepted_projected_ledger_state_after_startup_equivalence",
         "Hegemon.Native.BlockReplayInputProjection.valid_projected_native_ledger_replay_chain_accepts",
         "Hegemon.Native.BlockReplayInputProjection.valid_projected_ledger_state_after_accepts",

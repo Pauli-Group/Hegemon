@@ -399,6 +399,17 @@ theorem projectedLedgerStateAfter_eq_validate_projected_replay
         · simp [leafEq]
       · simp [replayInputFromProjection, parentEq]
 
+theorem rawProjectedLedgerStateAfter_eq_validate_raw_replay
+    (initial : NativeLedgerReplayState)
+    (blocks : List RawDecodedNativeReplayBlock) :
+    rawProjectedLedgerStateAfter initial blocks =
+      validateNativeLedgerReplayChain initial (rawReplayInputs blocks) := by
+  simp [
+    rawProjectedLedgerStateAfter,
+    rawReplayInputs,
+    projectedLedgerStateAfter_eq_validate_projected_replay
+  ]
+
 theorem accepted_projected_ledger_state_after_startup_equivalence
     {initial final : NativeLedgerReplayState}
     {projections : List NativeBlockReplayProjection}
