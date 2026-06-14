@@ -4428,7 +4428,7 @@
       "claim_id": "native.storage-durability-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean storage-durability admission transition, critical native storage mutations may be treated as publishable or complete only when the storage transaction/write step accepted and the explicit durability flush step accepted; transaction rejection precedes flush-failure reporting.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.StorageDurabilityAdmission.accepts_iff_storage_durability_preconditions` proves the complete executable predicate, and concrete theorems pin valid acceptance, durability-flush rejection, and transaction-before-flush rejection precedence. `gen_storage_durability_admission_vectors` emits Lean-derived mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, transaction-rejected, and flush-failed examples checked against the production `evaluate_native_storage_durability_admission` helper. The production `flush_native_db_durability_barrier` performs a database flush and maps failures through the same rejection table; `flush_native_durability_barrier` routes initialized-node paths to that helper. Blueprint bindings require mined-block import to propagate the barrier before prepared-work cleanup, in-memory publication, or broadcast; canonical reorg to propagate it before publication; canonical-index repair and nonwinning side-branch persistence to propagate it before completion; pending-action and sidecar staging to propagate it before in-memory publication; and genesis bootstrap/marker repair to propagate it before startup succeeds.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.StorageDurabilityAdmission.accepts_iff_storage_durability_preconditions` proves the complete executable predicate, and concrete theorems pin valid acceptance, durability-flush rejection, and transaction-before-flush rejection precedence. `gen_storage_durability_admission_vectors` emits Lean-derived mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, startup staged-ciphertext repair, startup staged-proof repair, startup pending-action repair, transaction-rejected, and flush-failed examples checked against the production `evaluate_native_storage_durability_admission` helper. The production `flush_native_db_durability_barrier` performs a database flush and maps failures through the same rejection table; `flush_native_durability_barrier` routes initialized-node paths to that helper. Blueprint bindings require mined-block import to propagate the barrier before prepared-work cleanup, in-memory publication, or broadcast; canonical reorg to propagate it before publication; canonical-index repair and nonwinning side-branch persistence to propagate it before completion; pending-action and sidecar staging to propagate it before in-memory publication; genesis bootstrap/marker repair to propagate it before startup succeeds; and startup staged-sidecar and pending-action quarantine cleanup to propagate the DB durability barrier before the repaired startup state can be returned for publication.",
       "depends_on": [
         "native.mined-work-admission",
         "native.block-replay-refinement",
@@ -4455,9 +4455,32 @@
           "required_callers": [
             "NativeNode::flush_native_durability_barrier",
             "load_best_or_genesis",
-            "validate_loaded_block_indexes"
+            "validate_loaded_block_indexes",
+            "load_staged_sizes_with_limits",
+            "load_staged_proofs_with_limits",
+            "build_validated_startup_state_with_limits"
           ],
-          "result_obligation": "must_propagate_result"
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "load_staged_sizes_with_limits",
+              "callee_must_precede": [
+                "Ok"
+              ]
+            },
+            {
+              "caller": "load_staged_proofs_with_limits",
+              "callee_must_precede": [
+                "Ok"
+              ]
+            },
+            {
+              "caller": "build_validated_startup_state_with_limits",
+              "callee_must_precede": [
+                "Ok"
+              ]
+            }
+          ]
         },
         {
           "path": "node/src/native/mod.rs",
@@ -4554,13 +4577,13 @@
         },
         {
           "id": "formal-core-storage-durability-barrier-binding",
-          "description": "The blueprint gate must reject storage durability if mined-block import, canonical reorg, canonical-index repair, noncanonical block-record persistence, pending-action staging, sidecar staging, or genesis bootstrap/repair stop propagating the explicit durability barrier or move publication before it.",
+          "description": "The blueprint gate must reject storage durability if mined-block import, canonical reorg, canonical-index repair, noncanonical block-record persistence, pending-action staging, sidecar staging, startup staged-sidecar repair, startup pending-action repair, or genesis bootstrap/repair stop propagating the explicit durability barrier or move publication before it.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         },
         {
           "id": "native-storage-durability-reload-regressions",
-          "description": "Committed mined blocks, canonical reorgs, startup canonical-index repairs, and nonwinning side-branch records must reload from durable storage after reopen.",
-          "gate": "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture"
+          "description": "Committed mined blocks, canonical reorgs, startup canonical-index repairs, nonwinning side-branch records, and startup sidecar/pending-action repairs must reload from durable storage after reopen.",
+          "gate": "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing load_staged_sizes_ load_staged_proofs_ pending_action_startup --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-storage-durability-gate",
@@ -4568,7 +4591,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the explicit storage durability admission table and binds production critical mutation paths to propagate the database flush barrier before publication or success, including startup genesis bootstrap/marker repair and user-facing pending-action/sidecar staging. It reduces the filesystem durability residual by making the barrier explicit and gated, but it does not prove sled transaction implementation correctness, operating-system fsync semantics, disk firmware honesty, crash-consistency below sled, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the explicit storage durability admission table and binds production critical mutation paths to propagate the database flush barrier before publication or success, including startup genesis bootstrap/marker repair, startup staged-sidecar repair, startup pending-action quarantine cleanup, and user-facing pending-action/sidecar staging. It reduces the filesystem durability residual by making the barrier explicit and gated, but it does not prove sled transaction implementation correctness, operating-system fsync semantics, disk firmware honesty, crash-consistency below sled, or complete native-node equivalence."
     },
     {
       "id": "native.atomic-commit-manifest-admission",

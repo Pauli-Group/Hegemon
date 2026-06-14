@@ -2721,7 +2721,7 @@
       "id": "native.storage-durability-admission",
       "component": "native critical storage durability barrier",
       "claim_class": "lean_theorem",
-      "summary": "The Lean storage-durability admission kernel proves the executable table that critical native storage mutations may publish or return as durable only after the transaction step accepts and the durability flush step accepts; generated Lean vectors are checked against production Rust, and blueprint bindings require mined-block, canonical-reorg, canonical-index-repair, noncanonical block-record, pending-action, sidecar-staging, and genesis bootstrap/repair paths to propagate the durability barrier before publication or completion.",
+      "summary": "The Lean storage-durability admission kernel proves the executable table that critical native storage mutations may publish or return as durable only after the transaction step accepts and the durability flush step accepts; generated Lean vectors are checked against production Rust, and blueprint bindings require mined-block, canonical-reorg, canonical-index-repair, noncanonical block-record, pending-action, sidecar-staging, startup sidecar/pending-action repair, and genesis bootstrap/repair paths to propagate the durability barrier before publication or completion.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_blueprint_order_gate",
       "production_eligible": true,
@@ -2733,7 +2733,7 @@
       ],
       "assumptions": [
         "The Lean model represents the critical storage durability decision table over production-derived booleans: the sled transaction or write step accepted, and the explicit database durability flush accepted.",
-        "Generated Lean conformance vectors cover durable mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, and genesis-marker-repair operations plus transaction-rejection precedence and durability-flush failure rejection.",
+        "Generated Lean conformance vectors cover durable mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, startup-staged-ciphertext-repair, startup-staged-proof-repair, and startup-pending-action-repair operations plus transaction-rejection precedence and durability-flush failure rejection.",
         "The theorem covers the executable admission table and blueprint wiring for the explicit durability barrier only. It does not prove sled's transaction implementation correctness, operating-system fsync semantics, disk firmware honesty, crash-consistency below sled, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -2747,7 +2747,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_storage_durability_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
-        "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing load_staged_sizes_ load_staged_proofs_ pending_action_startup --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

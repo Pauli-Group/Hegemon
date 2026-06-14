@@ -2403,9 +2403,10 @@ impl NativeNode {
         validate_loaded_canonical_state(&best, &commitment_state, &nullifiers)?;
         let consumed_bridge_messages = load_consumed_bridge_messages(&bridge_inbound_tree)?;
         validate_loaded_bridge_replay_state(&best, &block_tree, &consumed_bridge_messages)?;
-        let staged_ciphertexts = load_staged_sizes(&da_ciphertext_tree)?;
-        let staged_proofs = load_staged_proofs(&da_proof_tree)?;
+        let staged_ciphertexts = load_staged_sizes(&db, &da_ciphertext_tree)?;
+        let staged_proofs = load_staged_proofs(&db, &da_proof_tree)?;
         let startup_state = build_validated_startup_state(
+            &db,
             &action_tree,
             best,
             pending_actions,
@@ -5987,11 +5988,17 @@ fn validate_loaded_block_indexes(
     Ok(())
 }
 
-fn load_staged_sizes(tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
-    load_staged_sizes_with_limits(tree, MAX_NATIVE_STAGED_CIPHERTEXTS, MAX_CIPHERTEXT_BYTES)
+fn load_staged_sizes(db: &sled::Db, tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
+    load_staged_sizes_with_limits(
+        db,
+        tree,
+        MAX_NATIVE_STAGED_CIPHERTEXTS,
+        MAX_CIPHERTEXT_BYTES,
+    )
 }
 
 fn load_staged_sizes_with_limits(
+    db: &sled::Db,
     tree: &sled::Tree,
     max_staged_count: usize,
     max_ciphertext_bytes: usize,
@@ -6103,13 +6110,14 @@ fn load_staged_sizes_with_limits(
         tree.remove(key)?;
     }
     if removed_stale_entries {
-        tree.flush()?;
+        flush_native_db_durability_barrier(db, "native startup staged ciphertext repair")?;
     }
     Ok(entries)
 }
 
-fn load_staged_proofs(tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
+fn load_staged_proofs(db: &sled::Db, tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
     load_staged_proofs_with_limits(
+        db,
         tree,
         MAX_NATIVE_STAGED_PROOFS,
         NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
@@ -6118,6 +6126,7 @@ fn load_staged_proofs(tree: &sled::Tree) -> Result<BTreeMap<String, Vec<u8>>> {
 }
 
 fn load_staged_proofs_with_limits(
+    db: &sled::Db,
     tree: &sled::Tree,
     max_staged_count: usize,
     max_proof_bytes: usize,
@@ -6191,7 +6200,7 @@ fn load_staged_proofs_with_limits(
         tree.remove(key)?;
     }
     if removed_stale_entries {
-        tree.flush()?;
+        flush_native_db_durability_barrier(db, "native startup staged proof repair")?;
     }
     Ok(entries)
 }
@@ -6250,6 +6259,7 @@ fn validate_loaded_pending_action_hash(
 }
 
 fn build_validated_startup_state(
+    db: &sled::Db,
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
@@ -6260,6 +6270,7 @@ fn build_validated_startup_state(
     staged_proofs: BTreeMap<String, Vec<u8>>,
 ) -> Result<NativeState> {
     build_validated_startup_state_with_limits(
+        db,
         action_tree,
         best,
         pending_actions,
@@ -6274,6 +6285,7 @@ fn build_validated_startup_state(
 }
 
 fn build_validated_startup_state_with_limits(
+    db: &sled::Db,
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
@@ -6330,7 +6342,7 @@ fn build_validated_startup_state_with_limits(
                 format!("remove invalid persisted pending action {}", hex32(&hash))
             })?;
         }
-        action_tree.flush()?;
+        flush_native_db_durability_barrier(db, "native startup pending action repair")?;
     }
     Ok(state)
 }
@@ -17924,6 +17936,9 @@ mod tests {
                     | "proof_sidecar_stage"
                     | "genesis_bootstrap"
                     | "genesis_marker_repair"
+                    | "startup_staged_ciphertext_repair"
+                    | "startup_staged_proof_repair"
+                    | "startup_pending_action_repair"
             ),
             "unknown Lean storage durability operation {}",
             case.operation
@@ -20838,7 +20853,7 @@ mod tests {
         tree.insert(hash.as_slice(), raw.as_slice())
             .expect("insert staged ciphertext");
 
-        let loaded = load_staged_sizes(&tree).expect("load staged ciphertext sizes");
+        let loaded = load_staged_sizes(&db, &tree).expect("load staged ciphertext sizes");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.get(&hex48(&hash)), Some(&(raw.len() as u32)));
@@ -20863,12 +20878,47 @@ mod tests {
         tree.insert(wrong_hash.as_slice(), raw.as_slice())
             .expect("insert mismatched staged ciphertext");
 
-        let loaded = load_staged_sizes(&tree).expect("load staged ciphertext sizes");
+        let loaded = load_staged_sizes(&db, &tree).expect("load staged ciphertext sizes");
 
         assert!(loaded.is_empty());
         assert!(tree
             .get(wrong_hash.as_slice())
             .expect("read dropped ciphertext")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_sizes_drops_hash_mismatch_across_reopen() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let raw = vec![1u8, 2, 3];
+        let wrong_hash = [9u8; 48];
+        assert_ne!(ciphertext_hash_bytes(&raw), wrong_hash);
+
+        {
+            let db = sled::Config::new()
+                .path(tmp.path())
+                .open()
+                .expect("sled db");
+            let tree = db
+                .open_tree("staged_ciphertexts")
+                .expect("staged ciphertext tree");
+            tree.insert(wrong_hash.as_slice(), raw.as_slice())
+                .expect("insert mismatched staged ciphertext");
+
+            let loaded = load_staged_sizes(&db, &tree).expect("load staged ciphertext sizes");
+            assert!(loaded.is_empty());
+        }
+
+        let db = sled::Config::new()
+            .path(tmp.path())
+            .open()
+            .expect("reopen sled db");
+        let tree = db
+            .open_tree("staged_ciphertexts")
+            .expect("reopen staged ciphertext tree");
+        assert!(tree
+            .get(wrong_hash.as_slice())
+            .expect("read dropped ciphertext after reopen")
             .is_none());
     }
 
@@ -20887,7 +20937,7 @@ mod tests {
             .expect("insert oversized staged ciphertext");
 
         let loaded =
-            load_staged_sizes_with_limits(&tree, MAX_NATIVE_STAGED_CIPHERTEXTS, raw.len() - 1)
+            load_staged_sizes_with_limits(&db, &tree, MAX_NATIVE_STAGED_CIPHERTEXTS, raw.len() - 1)
                 .expect("load staged ciphertext sizes");
 
         assert!(loaded.is_empty());
@@ -20915,7 +20965,7 @@ mod tests {
         tree.insert(second_hash.as_slice(), second.as_slice())
             .expect("insert second staged ciphertext");
 
-        let loaded = load_staged_sizes_with_limits(&tree, 1, MAX_CIPHERTEXT_BYTES)
+        let loaded = load_staged_sizes_with_limits(&db, &tree, 1, MAX_CIPHERTEXT_BYTES)
             .expect("load staged ciphertext sizes");
 
         assert_eq!(loaded.len(), 1);
@@ -20933,7 +20983,7 @@ mod tests {
         tree.insert(binding_hash.as_slice(), proof.as_slice())
             .expect("insert staged proof");
 
-        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+        let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.get(&hex64(&binding_hash)), Some(&proof));
@@ -20953,7 +21003,7 @@ mod tests {
         tree.insert(&[7u8; 63], [1u8, 2, 3].as_slice())
             .expect("insert malformed proof key");
 
-        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+        let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");
 
         assert!(loaded.is_empty());
         assert_eq!(tree.len(), 0);
@@ -20970,12 +21020,43 @@ mod tests {
         tree.insert(binding_hash.as_slice(), [].as_slice())
             .expect("insert empty staged proof");
 
-        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+        let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");
 
         assert!(loaded.is_empty());
         assert!(tree
             .get(binding_hash.as_slice())
             .expect("read dropped proof")
+            .is_none());
+    }
+
+    #[test]
+    fn load_staged_proofs_drops_empty_proof_across_reopen() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let binding_hash = [2u8; 64];
+
+        {
+            let db = sled::Config::new()
+                .path(tmp.path())
+                .open()
+                .expect("sled db");
+            let tree = db.open_tree("staged_proofs").expect("staged proof tree");
+            tree.insert(binding_hash.as_slice(), [].as_slice())
+                .expect("insert empty staged proof");
+
+            let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");
+            assert!(loaded.is_empty());
+        }
+
+        let db = sled::Config::new()
+            .path(tmp.path())
+            .open()
+            .expect("reopen sled db");
+        let tree = db
+            .open_tree("staged_proofs")
+            .expect("reopen staged proof tree");
+        assert!(tree
+            .get(binding_hash.as_slice())
+            .expect("read dropped proof after reopen")
             .is_none());
     }
 
@@ -20991,6 +21072,7 @@ mod tests {
             .expect("insert oversized staged proof");
 
         let loaded = load_staged_proofs_with_limits(
+            &db,
             &tree,
             MAX_NATIVE_STAGED_PROOFS,
             proof.len() - 1,
@@ -21017,7 +21099,7 @@ mod tests {
         tree.insert(binding_hash.as_slice(), proof.as_slice())
             .expect("insert mismatched staged proof");
 
-        let loaded = load_staged_proofs(&tree).expect("load staged proofs");
+        let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");
 
         assert!(loaded.is_empty());
         assert!(tree
@@ -21038,6 +21120,7 @@ mod tests {
             .expect("insert staged proof");
 
         let loaded = load_staged_proofs_with_limits(
+            &db,
             &tree,
             0,
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
@@ -21064,6 +21147,7 @@ mod tests {
             .expect("insert staged proof");
 
         let loaded = load_staged_proofs_with_limits(
+            &db,
             &tree,
             MAX_NATIVE_STAGED_PROOFS,
             NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
@@ -21735,9 +21819,10 @@ mod tests {
         let max_bytes = pending_action_mempool_bytes(&action).saturating_sub(1);
         let mut pending_actions = BTreeMap::new();
         pending_actions.insert(action.tx_hash, action);
-        let (_db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
+        let (db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
 
         let startup = build_validated_startup_state_with_limits(
+            &db,
             &action_tree,
             state.best,
             pending_actions,
@@ -21762,9 +21847,10 @@ mod tests {
         let action = test_outbound_bridge_action(b"startup count budget");
         let mut pending_actions = BTreeMap::new();
         pending_actions.insert(action.tx_hash, action);
-        let (_db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
+        let (db, action_tree) = temporary_action_tree_with_pending(&pending_actions);
 
         let startup = build_validated_startup_state_with_limits(
+            &db,
             &action_tree,
             state.best,
             pending_actions,

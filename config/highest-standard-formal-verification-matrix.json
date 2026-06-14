@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.25,
+  "overall_completion_percent": 74.37,
   "last_full_formal_core": {
     "commit": "e5ca6404cd823b56c0e4020eda35e9c424be9fff",
     "status": "passed locally 2026-06-14T02:20Z",
@@ -447,7 +447,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 97,
+      "completion_percent": 99,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -467,11 +467,12 @@
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
         "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
-        "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows"
+        "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows",
+        "node/src/native/mod.rs load_staged_sizes_with_limits, load_staged_proofs_with_limits, and build_validated_startup_state_with_limits now route startup staged-sidecar repair and pending-action quarantine cleanup through the same formal storage-durability barrier before returning repaired startup state"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
-        "Bind remaining startup publication and repair paths to that transition.",
+        "Bind any remaining startup publication and repair paths to that transition.",
         "Add remaining restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
