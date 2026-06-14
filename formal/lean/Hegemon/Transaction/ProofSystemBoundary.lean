@@ -1,3 +1,4 @@
+import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.CanonicalVerifierBoundary
 
 namespace Hegemon
@@ -5,6 +6,7 @@ namespace Transaction
 namespace ProofSystemBoundary
 
 open Hegemon.Transaction.AcceptedTransactionSoundness
+open Hegemon.Transaction.AssetIsolation
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
@@ -253,6 +255,108 @@ theorem canonical_boundary_facts_core_statement_binding
       bindingFields
       merkleRoot :=
   facts.coreStatementBinding
+
+theorem canonical_boundary_facts_native_delta
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness :=
+  accepted_transaction_relation_native_delta
+    facts.acceptedTransactionRelation
+
+theorem canonical_boundary_facts_authorized_asset_delta
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    AuthorizedAssetDelta balanceWitness slots assetId :=
+  accepted_transaction_relation_authorized_asset_delta
+    facts.acceptedTransactionRelation
+
+theorem canonical_boundary_facts_authorized_asset_delta_value
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    slotDelta assetId slots =
+      authorizedAssetDeltaValue balanceWitness assetId :=
+  accepted_transaction_relation_authorized_asset_delta_value
+    facts.acceptedTransactionRelation
 
 theorem canonical_boundary_facts_input_slot_bound_to_statement
     {wrapper : ProofWrapperInput}

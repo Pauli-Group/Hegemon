@@ -751,6 +751,16 @@ The `hegemon-dev` deployment of commit `c3ceda6b` fast-forwarded the VPS to the 
 
 The `hegemon-dev` deployment of commit `36193364` fast-forwarded the VPS to the validated transfer input-slot boundary slice without restarting the service, reran targeted Lean and JSON validation, confirmed RPC smoke and wallet-send, confirmed mining active with NTP synchronized, and used the isolated single-node miner to prove block production because the live 20-second sample did not find a block at current difficulty.
 
+The canonical proof/output, raw-ingress tree replay, and privacy wire/DA slice strengthens `Hegemon.Transaction.ProofSystemBoundary`, `Hegemon.Native.TxLeafCanonicalSurface`, `Hegemon.Native.RawIngressSidecarReplayRecoverability`, and `Hegemon.Privacy.NativeObserverSurface`. The new theorem set exposes native and per-asset authorized-delta facts from packaged canonical deployed-verifier boundary facts, packages selected native output slots with full statement/artifact output binding, lifts raw-ingress sidecar publication through raw decoded ledger/tree replay with `validateNativeLedgerTreeReplayChain` and `expectedCommitmentRootAfter`, and packages selected same-shape privacy-game output rows with fixed wire/DA projections while keeping ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability assumptions explicit. Current tracked completion is 76.08%.
+
+The latest full formal-core pass after the canonical proof/output, raw-ingress tree replay, and privacy wire/DA slice reported:
+
+    claims=100
+    named_lean_theorems=1422
+    production_eligible_claims=90
+    falsification_cases=413
+    implementation_bindings=200
+
 ## Interfaces and Dependencies
 
 The primary interface for progress tracking is `config/highest-standard-formal-verification-matrix.json`. The primary proof interface is Lean 4 under `formal/lean`. The primary production-binding interface is `config/formal-security-blueprint.json` plus the formal-core checker under `scripts/hegemon_formal_core`. The primary release gate is `scripts/check_formal_core.sh`.

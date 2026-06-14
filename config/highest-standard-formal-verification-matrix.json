@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 75.49,
+  "overall_completion_percent": 76.08,
   "last_full_formal_core": {
     "commit": "92e9e4e1b3dfcf79d8af26b957c452e2916fa87c",
     "status": "passed locally 2026-06-14T19:10:26Z",
@@ -47,25 +47,36 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened the native tx-leaf statement/artifact boundary with an assumption-free full package: accepted tx-leaf/action equality plus the canonical statement surface now exposes public-shape validity, core root/fee/value-balance/balance-slot/stablecoin binding, full nullifier/commitment/ciphertext vector binding, input/output vector binding, value-balance binding, stablecoin payload binding, tx-leaf preconditions, full tx-leaf equality facts, and native artifact digest/backend gates before any deployed-verifier soundness assumption is used.",
+    "summary": "Strengthened implementation equivalence across the canonical proof-system boundary, native output artifacts, raw-ingress sidecar/tree replay publication, and selected-output privacy wire/DA boundaries: packaged deployed-verifier boundary facts now directly expose native and per-asset authorized-delta projections; selected native tx-leaf output slots carry the full statement/artifact surface; raw ingress sidecar facts lift through raw decoded ledger/tree replay with commitment-root progression; and selected privacy-game output rows carry fixed wire/DA projections while keeping crypto assumptions explicit.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_facts"
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta",
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_full_statement_artifact_output_slot_full_binding",
+      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.TxLeafCanonicalSurface and bash scripts/check_lean_formal.sh passed",
+      "lean_formal": "targeted lake env lean passed for Hegemon.Transaction.ProofSystemBoundary, Hegemon.Native.TxLeafCanonicalSurface, Hegemon.Native.RawIngressSidecarReplayRecoverability, and Hegemon.Privacy.NativeObserverSurface; bash scripts/check_lean_formal.sh passed 2026-06-14T20:08:04Z with 1422 theorems, zero temporary axioms, and no unwaived axiom dependencies",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T19:10:26Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T20:21:51Z",
       "claims": 100,
-      "named_lean_theorems": 1416,
+      "named_lean_theorems": 1422,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem is assumption-free over the canonical statement surface and accepted native tx-leaf/action equality gate, but it does not discharge deployed verifier/AIR, SmallWood, recursive proof, witness extraction, or native tx-leaf proof soundness.",
+      "The output-slot theorem is assumption-free over the full statement/artifact facts, canonical statement surface, and accepted native tx-leaf/action equality gate, while the asset-delta projections still depend on packaged deployed-verifier boundary facts and therefore on the explicit deployed verifier soundness assumption.",
+      "The raw-ingress sidecar/tree replay theorem is over modeled accepted raw-decoded replay blocks and admitted predicates; it does not prove arbitrary SCALE/JSON byte parsing, DA retention, storage durability, or complete native-node refinement.",
+      "The selected-output privacy wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions; it does not prove cryptographic confidentiality or simulator zero knowledge.",
+      "This does not discharge deployed verifier/AIR, SmallWood, recursive proof, witness extraction, or native tx-leaf proof soundness.",
       "Hash security, digest implementation equivalence, SCALE decoding correctness, and complete native-node refinement remain explicit open assumptions.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
@@ -203,7 +214,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -216,6 +227,7 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger/tree replay root-cursor integrity theorem",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native ledger/tree replay blocks to accepted commitment-root progression, replayed supply, leaf-cursor, canonical commitment-plan, carried-state, nullifier, and bridge replay facts",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now lifts raw ingress sidecar publication through raw decoded ledger/tree replay, exposing validateNativeLedgerTreeReplayChain and expectedCommitmentRootAfter alongside sidecar publication facts",
         "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean proves verifier-side anchors must be in the parent commitment-tree root history before same-block commitments are applied",
         "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition"
       ],
@@ -229,7 +241,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 79,
+      "completion_percent": 80,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -242,6 +254,7 @@
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean accepted relation packages per-asset delta consequences",
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean proves accepted-relation authorized asset-delta policy",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean re-lifts native delta from the accepted relation under one canonical deployed verifier soundness assumption",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes native and per-asset authorized-delta facts directly from packaged canonical deployed-verifier boundary facts",
         "public input shape and binding gates",
         "transaction public-input and serialized-input admission rejects noncanonical asset ids, including balance-slot padding field aliases",
         "native block artifact binding admission"
@@ -281,7 +294,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 91,
+      "completion_percent": 92,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -301,6 +314,7 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free projects accepted native tx-leaf/action binding plus canonical statement surface into statement preimage success/length, proof binding-message success, public-input binding validity, wrapper preconditions/surface, and native receipt/public-input/proof/backend/ciphertext-payload equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free packages accepted native tx-leaf/action binding plus the canonical statement surface into public-shape validity, core statement binding, full vector/input/output binding, value-balance binding, stablecoin payload binding, tx-leaf preconditions, full tx-leaf equality facts, and native digest/backend gates",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages selected native output slots with the full statement/artifact surface, statement/proof-binding output rows, wrapper/public/statement facts, native output equality gates, and native artifact digest/backend gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct statement and proof-binding vector indices for the active output commitment/ciphertext-hash fields selected by an observer chain-wire row",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes total input-slot statement/proof-binding facts from packaged native artifact boundary facts",
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean now exposes accepted payload binding-hash, proof-binding-hash, and fee facts for downstream statement/proof-key composition",
@@ -316,7 +330,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 71,
+      "completion_percent": 72,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -334,12 +348,14 @@
         "NoteCommitmentInputs now pins the exact deployed note-commitment preimage vector and asset-id field-domain policy that future AIR/refinement work must target",
         "NullifierInputs now pins the exact deployed nullifier preimage vector and one-absorb-block shape that future AIR/refinement work must target",
         "ProofSystemBoundary packages DeployedTxRelationFacts, AcceptedTransactionRelation, wrapper preconditions, public-input binding validity, statement preimage success/length, proof binding-message success, core statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, spend/balance facts, and total input-slot projection into one future AIR/refinement target",
+        "ProofSystemBoundary now exposes native and per-asset authorized-delta projections directly from packaged canonical deployed-verifier boundary facts",
         "Native TxLeafCanonicalSurface composes production-bound tx-leaf/action equality admission with the canonical deployed verifier soundness boundary to derive the accepted transaction relation, authorized asset deltas, active input spend facts, total input-slot facts, and output slot facts bound to canonical statement vectors",
         "Native TxLeafCanonicalSurface now composes accepted native tx-leaf/action equality admission with the packaged deployed-verifier boundary facts theorem",
         "docs/crypto native backend assumption notes",
         "Native TxLeafCanonicalSurface now packages accepted tx-leaf/action equality admission, canonical deployed-verifier facts, total input-slot statement/proof-binding facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset delta, and native statement-artifact binding into one theorem target for future AIR/refinement work",
         "Native TxLeafCanonicalSurface now separates an assumption-free canonical statement/proof projection from the still-assumption-bound accepted-transaction relation, clarifying the exact future AIR/refinement target",
         "Native TxLeafCanonicalSurface now exposes an assumption-free full statement/artifact package tying the canonical surface to public shape, core/vector/input/output/value/stablecoin statement binding, tx-leaf/action preconditions, full tx-leaf equality facts, and native digest/backend gates before deployed verifier soundness is invoked",
+        "Native TxLeafCanonicalSurface now packages selected output slots with the full statement/artifact surface, output-slot facts, statement/proof-binding output rows, wrapper/public/statement facts, native commitment/ciphertext/output-count gates, and native artifact digest/backend gates",
         "Native TxLeafCanonicalSurface now exposes an active-input no-theft package from the native artifact boundary, carrying the exact wrapper, public-input, statement preimage, proof-binding message, statement/proof nullifier slots, and native proof/backend equality gates alongside spend facts",
         "ProofSystemBoundary now exposes packaged output-slot statement/proof-binding facts for future AIR/refinement work symmetrically with total input-slot authorization facts",
         "Native TxLeafCanonicalSurface now packages accepted transfer payload proof-key admission with canonical native tx-leaf artifact facts and active-input no-theft facts under the explicit deployed verifier soundness assumption",
@@ -357,7 +373,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 47,
+      "completion_percent": 49,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -378,6 +394,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now separates public metadata leakage from full observer leakage by excluding raw ciphertext bytes while retaining public inputs, parsed summaries, and placement",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve public metadata leakage even when raw ciphertext wires differ under the explicit wire-indistinguishability premise",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes active native tx-leaf output slots with the ciphertext privacy game, proving both worlds select the same public active-output rank/summary and the same statement/proof-bound commitment/ciphertext-hash metadata while preserving batch/timing leakage and leaving raw wire indistinguishability explicit",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes selected same-shape privacy-game output rows with fixed chain wire and projected DA-byte boundaries for both worlds while keeping ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability obligations explicit",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes the selected-row ciphertext privacy game with wallet decrypt-to-commitment binding, proving recipient-decrypted selected rows reconstruct the same plaintext-derived note commitment carried by public shape, statement preimage, and proof-binding rows while preserving explicit public metadata/batch leakage and raw-wire crypto obligations",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
@@ -393,7 +410,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 75,
+      "completion_percent": 77,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -411,6 +428,8 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts the selected active observer row to projected DA preimage bytes while carrying statement/proof-binding ciphertext-hash indices and native equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean packages active native output ciphertext boundary facts: selected parsed observer row, fixed chain wire shape, public/statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages selected same-shape privacy-game output rows with fixed chain wire length, projected DA bytes, public/statement/proof-binding ciphertext-hash rows, and native ciphertext-hash/payload-hash/output-count gates for both worlds",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now gives privacy/ciphertext follow-up proofs a selected-output full statement/artifact package carrying output-slot facts, statement/proof-binding rows, wrapper/public/statement facts, and native artifact digest/backend gates",
         "wallet note ciphertext wire vector gate checks expected projected DA bytes and production ciphertext_hash_bytes over wallet::NoteCiphertext::to_da_bytes",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates",
     "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean proves metadata-gated decrypt admission and crypto-failure boundary over an explicit crypto-authentication predicate",
@@ -469,6 +488,7 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now adds a raw decoded native replay block surface over projected replay, with accepted/stale raw examples and startup-equivalence inheritance",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves the raw projected ledger-state executor is extensionally equal to accepted replay over raw replay inputs",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded ledger/tree replay, exposing commitment-root progression, accepted ledger replay, replayed supply/leaf facts, raw tree carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
         "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
@@ -502,7 +522,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 73,
+      "completion_percent": 74,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -511,6 +531,7 @@
         "mineable-action admission gate",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, projected replay startup facts, and raw decoded projected replay startup facts",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now packages raw-ingress sidecar publication with raw-decoded ledger/tree replay, including sidecar availability/size agreement, DA-root/candidate/proven-batch/semantic binding, and tree/ledger replay facts",
         "node/src/native/mod.rs materialized-sidecar regressions require block artifact verification and canonical-index rebuild to reject sidecar size/hash drift before tx artifact construction or canonical row derivation"
       ],
       "missing_work": [
