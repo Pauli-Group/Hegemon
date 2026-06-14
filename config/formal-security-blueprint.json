@@ -5621,7 +5621,7 @@
       "claim_id": "native.block-artifact-binding-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native block-artifact binding transition, accepted tx-leaf/action pairs must agree on nullifiers, commitments, ciphertext hashes, input/output flag counts, version, fee, stablecoin public payload, balance-tag projection, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hashes; accepted candidate artifacts must agree with the block's computed DA root, tx statement commitment, and verified recursive state root.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions`, `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_stablecoin_payload_mismatch_rejects`, and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence including stablecoin-payload-before-balance-tag ordering. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, including `stablecoin_payload_mismatch`, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers called by native block artifact verification. Production now computes the tx-leaf/action input from decoded native artifact fields before building the tx validity artifact.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_action_accepts_iff_preconditions`, `Hegemon.Native.BlockArtifactBindingAdmission.tx_leaf_stablecoin_payload_mismatch_rejects`, and `Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions` prove the executable predicates. Companion theorems pin valid acceptance, every rejection label, and rejection precedence including stablecoin-payload-before-balance-tag ordering. `gen_block_artifact_binding_admission_vectors` emits Lean-derived tx-leaf/action and candidate-artifact binding examples, including `stablecoin_payload_mismatch`, and the formal-core gate checks them against `evaluate_native_tx_leaf_action_binding_admission` and `evaluate_native_candidate_artifact_binding_admission`, the helpers called by native block artifact verification. Production now materializes sidecar ciphertext bytes through `materialize_native_action_payloads` before constructing tx-leaf transactions for artifact verification, then computes the tx-leaf/action input from decoded native artifact fields before building the tx validity artifact.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -5722,8 +5722,13 @@
         },
         {
           "id": "native-block-artifact-binding-regressions",
-          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including input/output count, fee, stablecoin public payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and payload-hash mismatches in the specified order, plus candidate-artifact DA-root, statement-commitment, and recursive-state-root mismatches.",
+          "description": "Focused native tests must reject tx-leaf/action binding mismatches, including input/output count, fee, stablecoin public payload, balance-tag, receipt statement-hash, public-input digest, proof digest/backend, and payload-hash mismatches in the specified order, plus candidate-artifact DA-root, statement-commitment, recursive-state-root, and materialized sidecar size/hash mismatches.",
           "gate": "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-block-artifact-materialized-sidecar-regressions",
+          "description": "Native block artifact verification must reject sidecar ciphertext size or hash drift through canonical sidecar materialization before tx-leaf artifact construction or recursive proof verification.",
+          "gate": "cargo test -p hegemon-node block_artifact_binding_rejects_ --lib --no-default-features -- --nocapture"
         },
         {
           "id": "reorg-replay-artifact-regression",
@@ -5736,7 +5741,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application, and requires sidecar ciphertext bytes used for artifact tx construction to pass the same canonical materialization checks used by replay planning. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence."
     },
     {
       "id": "formal.native-tx-leaf-canonical-surface",
@@ -6090,7 +6095,9 @@
           "callee": "materialize_native_action_payloads",
           "required_callers": [
             "evaluate_native_block_replay_refinement_for_actions",
-            "plan_materialized_action_effects"
+            "plan_materialized_action_effects",
+            "plan_canonical_index_rebuild",
+            "verify_native_block_artifacts_locked"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
@@ -6105,6 +6112,22 @@
               "caller": "plan_materialized_action_effects",
               "callee_must_precede": [
                 "evaluate_native_action_stream_effect"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "plan_canonical_index_rebuild",
+              "callee_must_precede": [
+                "evaluate_native_action_stream_effect",
+                "admit_native_action_wire_replay_projection"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "verify_native_block_artifacts_locked",
+              "callee_must_precede": [
+                "consensus_tx_and_artifact_from_action",
+                "verify_block_with_backend"
               ],
               "must_dominate_successors": true
             }
@@ -6663,7 +6686,7 @@
             {
               "caller": "plan_canonical_index_rebuild",
               "callee_must_precede": [
-                "canonical_ciphertexts_for_action",
+                "materialize_native_action_payloads",
                 "evaluate_native_action_stream_effect"
               ]
             },
@@ -8072,7 +8095,7 @@
       "claim_id": "native.action-wire-replay-projection-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native action wire-replay projection predicate, accepted decoded PendingAction streams must have one planned effect per action, matching ciphertext hash/size/planned ciphertext counts, matching materialized ciphertext hashes and sizes, and matching inbound bridge replay-key projection before replay rows are derived.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.ActionWireReplayProjectionAdmission.accepts_iff_wire_replay_projection_preconditions` pins the executable predicate. Companion theorems cover valid mixed projection, empty projection, plan-length, ciphertext count/hash/size, replay-key rejection, and rejection precedence. `gen_action_wire_replay_projection_admission_vectors` emits Lean-derived examples checked against `evaluate_native_action_wire_replay_projection_admission`. Production calls `admit_native_action_wire_replay_projection` after ciphertext materialization and before materialized action planning returns, preview roots are derived, memory replay mutates state, or canonical-index rebuild emits canonical commitment, replay, ciphertext archive, or ciphertext index rows.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.ActionWireReplayProjectionAdmission.accepts_iff_wire_replay_projection_preconditions` pins the executable predicate. Companion theorems cover valid mixed projection, empty projection, plan-length, ciphertext count/hash/size, replay-key rejection, and rejection precedence. `gen_action_wire_replay_projection_admission_vectors` emits Lean-derived examples checked against `evaluate_native_action_wire_replay_projection_admission`. Production calls `admit_native_action_wire_replay_projection` after ciphertext materialization and before materialized action planning returns, preview roots are derived, memory replay mutates state, or canonical-index rebuild emits canonical commitment, replay, ciphertext archive, or ciphertext index rows. Canonical-index rebuild now obtains those planned ciphertext bytes through `materialize_native_action_payloads`, so its row derivation cannot use a weaker sidecar fetch path.",
       "depends_on": [
         "native.action-plan-application-admission",
         "native.action-stream-effect-planning",
@@ -8136,8 +8159,8 @@
         },
         {
           "id": "native-action-wire-replay-projection-regressions",
-          "description": "Native planned-action application must reject ciphertext hash projection drift or bridge replay-key projection drift before mutating commitment, ciphertext, or bridge-replay state.",
-          "gate": "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture"
+          "description": "Native planned-action application must reject ciphertext hash projection drift or bridge replay-key projection drift before mutating commitment, ciphertext, or bridge-replay state, and canonical-index rebuild must reject sidecar ciphertext hash drift through canonical materialization before deriving ciphertext archive/index rows.",
+          "gate": "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture && cargo test -p hegemon-node canonical_index_rebuild_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-action-wire-replay-projection-binding",

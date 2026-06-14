@@ -10130,25 +10130,26 @@ fn plan_canonical_index_rebuild(
 ) -> Result<NativeCanonicalIndexPlan> {
     let mut nullifier_state = NullifierState::default();
     let mut bridge_replay_state = InboundReplayState::default();
-    let mut planned_actions = Vec::new();
+    let mut decoded_actions = Vec::new();
     for meta in chain.iter().skip(1) {
         let actions = decode_block_actions(meta)?;
-        for action in actions {
-            let ciphertexts = canonical_ciphertexts_for_action(da_ciphertext_tree, &action)?;
-            let replay_key = bridge_inbound_replay_key_from_action(&action)?;
-            planned_actions.push((action, ciphertexts, replay_key));
-        }
+        decoded_actions.extend(actions);
     }
+    let materialized = materialize_native_action_payloads(da_ciphertext_tree, &decoded_actions)?;
+    let planned_actions = decoded_actions
+        .into_iter()
+        .zip(materialized)
+        .collect::<Vec<_>>();
 
     let stream = evaluate_native_action_stream_effect(
         0,
         planned_actions
             .iter()
-            .map(|(action, ciphertexts, replay_key)| NativeActionStreamStep {
+            .map(|(action, payload)| NativeActionStreamStep {
                 commitment_count: action.commitments.len(),
-                ciphertext_count: ciphertexts.len(),
+                ciphertext_count: payload.ciphertexts.len(),
                 nullifiers: action.nullifiers.as_slice(),
-                replay_key: *replay_key,
+                replay_key: payload.replay_key,
             }),
         &mut nullifier_state,
         &mut bridge_replay_state,
@@ -10156,7 +10157,7 @@ fn plan_canonical_index_rebuild(
     .map_err(native_action_state_effect_error)?;
     let rebuild_commitment_counts = planned_actions
         .iter()
-        .map(|(action, _, _)| action.commitments.len())
+        .map(|(action, _)| action.commitments.len())
         .collect::<Vec<_>>();
     evaluate_native_action_plan_application_admission(
         0,
@@ -10182,16 +10183,16 @@ fn plan_canonical_index_rebuild(
         .iter()
         .zip(stream.planned_starts.iter().copied())
         .map(
-            |((_, ciphertexts, replay_key), commitment_start)| NativePlannedActionEffect {
+            |((_, payload), commitment_start)| NativePlannedActionEffect {
                 commitment_start,
-                ciphertexts: ciphertexts.clone(),
-                replay_key: *replay_key,
+                ciphertexts: payload.ciphertexts.clone(),
+                replay_key: payload.replay_key,
             },
         )
         .collect::<Vec<_>>();
     let replay_projection_actions = planned_actions
         .iter()
-        .map(|(action, _, _)| action.clone())
+        .map(|(action, _)| action.clone())
         .collect::<Vec<_>>();
     admit_native_action_wire_replay_projection(
         "native canonical index rebuild wire replay projection",
@@ -10199,8 +10200,7 @@ fn plan_canonical_index_rebuild(
         &planned_effects,
     )?;
 
-    for ((action, ciphertexts, replay_key), effect) in
-        planned_actions.into_iter().zip(planned_effects.into_iter())
+    for ((action, payload), effect) in planned_actions.into_iter().zip(planned_effects.into_iter())
     {
         let commitment_start = effect.commitment_start;
         for (offset, commitment) in action.commitments.iter().enumerate() {
@@ -10211,7 +10211,7 @@ fn plan_canonical_index_rebuild(
                 .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
             plan.commitment_entries.push((index, *commitment));
         }
-        for (offset, bytes) in ciphertexts.into_iter().enumerate() {
+        for (offset, bytes) in payload.ciphertexts.into_iter().enumerate() {
             let offset =
                 u64::try_from(offset).map_err(|_| anyhow!("ciphertext archive offset overflow"))?;
             let index = commitment_start
@@ -10222,7 +10222,7 @@ fn plan_canonical_index_rebuild(
         for nullifier in &action.nullifiers {
             plan.nullifier_entries.push(*nullifier);
         }
-        if let Some(replay_key) = replay_key {
+        if let Some(replay_key) = payload.replay_key {
             plan.bridge_replay_entries.push(replay_key);
         }
         for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
@@ -10827,23 +10827,23 @@ fn verify_native_block_artifacts_locked(
     actions: &[PendingAction],
     meta: &NativeBlockMeta,
 ) -> Result<()> {
-    let transfers = actions
+    let transfer_count = actions
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
-        .collect::<Vec<_>>();
+        .count();
     let candidate_artifacts = actions
         .iter()
         .filter(|action| is_candidate_artifact_action(action))
         .filter_map(|action| action.candidate_artifact.as_ref())
         .collect::<Vec<_>>();
     let coupling_input =
-        native_candidate_artifact_coupling_admission_input(transfers.len(), &candidate_artifacts);
+        native_candidate_artifact_coupling_admission_input(transfer_count, &candidate_artifacts);
     if let Err(rejection) = evaluate_native_candidate_artifact_coupling_admission(coupling_input) {
         return Err(native_candidate_artifact_coupling_admission_error(
             rejection,
         ));
     }
-    if transfers.is_empty() {
+    if transfer_count == 0 {
         return Ok(());
     }
 
@@ -10852,14 +10852,24 @@ fn verify_native_block_artifacts_locked(
             "non-empty shielded block requires exactly one matching recursive candidate artifact"
         ));
     };
-    if artifact.tx_count as usize != transfers.len() {
+    if artifact.tx_count as usize != transfer_count {
         return Err(anyhow!("candidate artifact tx_count mismatch"));
     }
 
+    let materialized = materialize_native_action_payloads(&node.da_ciphertext_tree, actions)?;
+    let transfers = actions
+        .iter()
+        .zip(materialized.iter())
+        .filter(|(action, _)| is_shielded_transfer_action(action))
+        .collect::<Vec<_>>();
+    let transfer_actions = transfers
+        .iter()
+        .map(|(action, _)| *action)
+        .collect::<Vec<_>>();
     let mut transactions = Vec::with_capacity(transfers.len());
     let mut artifacts = Vec::with_capacity(transfers.len());
-    for action in &transfers {
-        let (tx, artifact) = consensus_tx_and_artifact_from_action(node, action)?;
+    for (action, payload) in &transfers {
+        let (tx, artifact) = consensus_tx_and_artifact_from_action(action, payload)?;
         transactions.push(tx);
         artifacts.push(artifact);
     }
@@ -10892,9 +10902,9 @@ fn verify_native_block_artifacts_locked(
         return Err(native_candidate_artifact_binding_admission_error(rejection));
     }
 
-    let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfers)?;
+    let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfer_actions)?;
     let mut expected_nullifiers = state.nullifiers.clone();
-    for action in &transfers {
+    for action in &transfer_actions {
         for nullifier in &action.nullifiers {
             expected_nullifiers.insert(*nullifier);
         }
@@ -10977,10 +10987,10 @@ fn verify_native_block_artifacts_locked(
 }
 
 fn consensus_tx_and_artifact_from_action(
-    node: &NativeNode,
     action: &PendingAction,
+    payload: &NativeMaterializedActionPayload,
 ) -> Result<(Transaction, TxValidityArtifact)> {
-    let (proof_bytes, ciphertexts) = transfer_proof_and_ciphertexts(node, action)?;
+    let proof_bytes = transfer_proof_from_action(action)?;
     let decoded = consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&proof_bytes)
         .map_err(|err| anyhow!("decode native tx-leaf artifact failed: {err}"))?;
     let action_version: consensus::VersionBinding = action.binding.into();
@@ -10989,7 +10999,7 @@ fn consensus_tx_and_artifact_from_action(
         action.commitments.clone(),
         decoded.tx.balance_tag,
         action_version,
-        ciphertexts,
+        payload.ciphertexts.clone(),
     );
     let admission_input = native_tx_leaf_action_binding_admission_input(&decoded, action, &tx);
     if let Err(rejection) = evaluate_native_tx_leaf_action_binding_admission(admission_input) {
@@ -11000,10 +11010,7 @@ fn consensus_tx_and_artifact_from_action(
     Ok((tx, artifact))
 }
 
-fn transfer_proof_and_ciphertexts(
-    node: &NativeNode,
-    action: &PendingAction,
-) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+fn transfer_proof_from_action(action: &PendingAction) -> Result<Vec<u8>> {
     if !is_shielded_transfer_action(action) {
         return Err(anyhow!("action is not a shielded transfer"));
     }
@@ -11011,31 +11018,12 @@ fn transfer_proof_and_ciphertexts(
         ACTION_SHIELDED_TRANSFER_INLINE => {
             let args: ShieldedTransferInlineArgs =
                 decode_scale_exact(&action.public_args, "shielded inline action args")?;
-            let ciphertexts = args
-                .ciphertexts
-                .iter()
-                .map(|note| {
-                    let mut bytes =
-                        Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
-                    bytes.extend_from_slice(&note.ciphertext);
-                    bytes.extend_from_slice(&note.kem_ciphertext);
-                    bytes
-                })
-                .collect();
-            Ok((args.proof, ciphertexts))
+            Ok(args.proof)
         }
         ACTION_SHIELDED_TRANSFER_SIDECAR => {
             let args: ShieldedTransferSidecarArgs =
                 decode_scale_exact(&action.public_args, "shielded sidecar action args")?;
-            let mut ciphertexts = Vec::with_capacity(args.ciphertext_hashes.len());
-            for hash in &args.ciphertext_hashes {
-                let bytes = node
-                    .da_ciphertext_tree
-                    .get(hash.as_slice())?
-                    .ok_or_else(|| anyhow!("missing DA ciphertext {}", hex48(hash)))?;
-                ciphertexts.push(bytes.to_vec());
-            }
-            Ok((args.proof, ciphertexts))
+            Ok(args.proof)
         }
         _ => Err(anyhow!("action is not a shielded transfer")),
     }
@@ -22120,6 +22108,62 @@ mod tests {
     }
 
     #[test]
+    fn block_artifact_binding_rejects_size_mismatched_materialized_sidecar_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut transfer = test_sidecar_transfer_action(anchor, [62u8; 48], [63u8; 48], 0);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &transfer);
+        transfer.ciphertext_sizes[0] = transfer.ciphertext_sizes[0].saturating_add(1);
+        let candidate = test_candidate_artifact_action(1, 64);
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+
+        let err =
+            verify_native_block_artifacts_locked(&node, &state, &[transfer, candidate], &meta)
+                .expect_err("artifact verification must canonicalize sidecar size metadata");
+
+        assert!(
+            err.to_string()
+                .contains("canonical DA ciphertext size mismatch"),
+            "unexpected artifact verification error: {err}"
+        );
+    }
+
+    #[test]
+    fn block_artifact_binding_rejects_hash_mismatched_materialized_sidecar_ciphertext() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [65u8; 48], [66u8; 48], 0);
+        let mut wrong_ciphertext = test_transfer_ciphertext_bytes();
+        wrong_ciphertext[0] ^= 0xff;
+        node.da_ciphertext_tree
+            .insert(transfer.ciphertext_hashes[0].as_slice(), wrong_ciphertext)
+            .expect("insert mismatched sidecar ciphertext");
+        node.da_ciphertext_tree
+            .flush()
+            .expect("flush mismatched sidecar ciphertext");
+        let candidate = test_candidate_artifact_action(1, 67);
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+
+        let err =
+            verify_native_block_artifacts_locked(&node, &state, &[transfer, candidate], &meta)
+                .expect_err("artifact verification must canonicalize sidecar hash binding");
+
+        assert!(
+            err.to_string()
+                .contains("canonical DA ciphertext hash mismatch"),
+            "unexpected artifact verification error: {err}"
+        );
+    }
+
+    #[test]
     fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -22195,6 +22239,36 @@ mod tests {
             ciphertext_archive_tree.len(),
             0,
             "failed rebuild must not partially write ciphertext archive entries"
+        );
+    }
+
+    #[test]
+    fn canonical_index_rebuild_rejects_hash_mismatched_materialized_sidecar_ciphertext() {
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let anchor = genesis.state_root;
+        let transfer = test_sidecar_transfer_action(anchor, [69u8; 48], [70u8; 48], 0);
+        let mut wrong_ciphertext = test_transfer_ciphertext_bytes();
+        wrong_ciphertext[0] ^= 0x7f;
+        da_ciphertext_tree
+            .insert(transfer.ciphertext_hashes[0].as_slice(), wrong_ciphertext)
+            .expect("insert mismatched sidecar ciphertext");
+        da_ciphertext_tree
+            .flush()
+            .expect("flush mismatched sidecar ciphertext");
+        let mut block = genesis.clone();
+        block.height = 1;
+        block.tx_count = 1;
+        block.action_bytes = vec![transfer.encode()];
+
+        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree)
+            .expect_err("canonical index rebuild must canonicalize sidecar hash binding");
+
+        assert!(
+            err.to_string()
+                .contains("canonical DA ciphertext hash mismatch"),
+            "unexpected canonical rebuild error: {err}"
         );
     }
 

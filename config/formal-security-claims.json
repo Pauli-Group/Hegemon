@@ -3116,7 +3116,7 @@
       "id": "native.block-artifact-binding-admission",
       "component": "native block artifact binding admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-artifact binding kernel proves the executable native equality gates that bind decoded tx-leaf public fields, input/output flag counts, balance tag projection, receipt statement hash, public-input digest, proof digest/backend profile, fee, stablecoin public payload, and ciphertext payload hashes to shielded transfer action metadata, and bind recursive candidate artifacts to the computed DA root, tx statement commitment, and verified recursive state root; generated Lean vectors are checked against the production helpers used by native block artifact verification, and the blueprint/regression gate now requires that verification before mined import commits, announced import persists or reorganizes, and canonical replay applies memory effects.",
+      "summary": "The Lean block-artifact binding kernel proves the executable native equality gates that bind decoded tx-leaf public fields, input/output flag counts, balance tag projection, receipt statement hash, public-input digest, proof digest/backend profile, fee, stablecoin public payload, and ciphertext payload hashes to shielded transfer action metadata, and bind recursive candidate artifacts to the computed DA root, tx statement commitment, and verified recursive state root; generated Lean vectors are checked against the production helpers used by native block artifact verification, and the blueprint/regression gate now requires that verification before mined import commits, announced import persists or reorganizes, and canonical replay applies memory effects. Native block artifact verification now builds tx-leaf transactions from the same canonical materialized sidecar ciphertext bytes used by replay planning.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3161,7 +3161,7 @@
       "assumptions": [
         "The Lean model treats decoded tx-leaf public fields, computed ciphertext hashes, computed DA roots, computed tx statement commitments, and verified recursive state roots as production-derived predicates. The hash functions and recursive verifier are covered by separate claims and residual assumptions.",
         "Generated Lean conformance vectors cover valid tx-leaf/action binding, nullifier/commitment/ciphertext-hash/input-count/output-count/version/fee/stablecoin-payload/balance-tag/receipt-statement-hash/public-inputs-digest/proof-digest/proof-backend/ciphertext-payload-hash mismatches, candidate DA-root mismatch, tx-statement commitment mismatch, recursive state-root mismatch, and rejection precedence.",
-        "The theorem covers only deterministic equality-gate admission after candidate-artifact coupling and tx-leaf decoding. The production helper is called by mined import, announced import, and canonical branch replay before artifact-bearing effects can be committed, persisted as winning branch state, or applied to replay memory. It does not prove recursive proof cryptographic soundness, native tx-leaf proof soundness, DA-root hash security/equivalence, statement-commitment hash security/equivalence, ciphertext hash security/equivalence, or complete native-node equivalence."
+        "The theorem covers only deterministic equality-gate admission after candidate-artifact coupling and tx-leaf decoding. The production helper is called by mined import, announced import, and canonical branch replay before artifact-bearing effects can be committed, persisted as winning branch state, or applied to replay memory. The artifact construction path is now bound to canonical sidecar materialization before tx-leaf transaction construction, so missing, oversized, size-drifted, or hash-drifted sidecar ciphertexts reject under the same materialization checks as replay planning. It does not prove recursive proof cryptographic soundness, native tx-leaf proof soundness, DA-root hash security/equivalence, statement-commitment hash security/equivalence, ciphertext hash security/equivalence, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockArtifactBindingAdmission.lean",
@@ -3174,6 +3174,8 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_artifact_binding_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_artifact_binding_rejects_size_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_artifact_binding_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -3498,7 +3500,7 @@
       "id": "native.action-wire-replay-projection-admission",
       "component": "native action wire replay projection",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action wire replay projection kernel proves executable admission for projecting decoded PendingAction ciphertext hash/size rows and inbound bridge replay keys onto planned native replay effects; generated Lean vectors are checked against the production helper called by materialized planning, root preview, memory application, and canonical-index rebuild before roots or canonical rows are derived.",
+      "summary": "The Lean action wire replay projection kernel proves executable admission for projecting decoded PendingAction ciphertext hash/size rows and inbound bridge replay keys onto planned native replay effects; generated Lean vectors are checked against the production helper called by materialized planning, root preview, memory application, and canonical-index rebuild before roots or canonical rows are derived. Canonical-index rebuild now obtains planned ciphertext bytes through the same canonical sidecar materialization helper as replay planning.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3518,7 +3520,7 @@
       "assumptions": [
         "The Lean model covers decoded PendingAction ciphertext hash counts, ciphertext size counts, materialized ciphertext counts, ciphertext hash equality, size equality, and inbound replay-key equality as production-derived predicates. It does not prove SCALE decoding, BLAKE3 ciphertext-hash security or implementation equivalence, bridge receipt soundness, or replay-key hash derivation.",
         "Generated Lean conformance vectors cover valid mixed transfer/bridge projection, empty projection, plan-length mismatch, ciphertext count/hash/size mismatches, replay-key mismatch, and rejection precedence.",
-        "Production planning calls the projection gate after sidecar/inline ciphertext materialization and before preview, in-memory application, materialized planning output, or canonical-index rebuild can append commitments, derive roots, publish replay keys, or derive ciphertext archive/index rows."
+        "Production planning calls the projection gate after sidecar/inline ciphertext materialization and before preview, in-memory application, materialized planning output, or canonical-index rebuild can append commitments, derive roots, publish replay keys, or derive ciphertext archive/index rows. Canonical-index rebuild is now explicitly bound to `materialize_native_action_payloads`, so it cannot use a weaker sidecar fetch path before row derivation."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
@@ -3531,6 +3533,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_wire_replay_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node canonical_index_rebuild_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh"
       ],

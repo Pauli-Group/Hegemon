@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 73.81,
+  "overall_completion_percent": 73.97,
   "last_full_formal_core": {
-    "commit": "working tree after proof-keyed native tx-leaf boundary package",
-    "status": "passed 2026-06-14T00:18Z",
+    "commit": "working tree after materialized sidecar artifact/rebuild binding package",
+    "status": "passed 2026-06-14T00:47Z",
     "claims": 98,
     "named_lean_theorems": 1348,
     "production_eligible_claims": 88,
-    "falsification_cases": 405,
+    "falsification_cases": 406,
     "implementation_bindings": 196
   },
   "last_coordinator_audit": {
@@ -28,7 +28,7 @@
     ]
   },
   "last_theorem_slice": {
-    "date": "2026-06-13",
+    "date": "2026-06-14",
     "summary": "Added a proof-keyed native tx-leaf boundary slice: accepted transfer payload admission now exposes binding-hash, proof-binding-hash, and fee facts; TxLeafCanonicalSurface composes those payload facts with the canonical native tx-leaf artifact boundary so active-input no-theft facts carry payload binding-hash agreement, decoded proof binding-hash agreement, wrapper/statement facts, and native proof/backend equality gates. New regressions reject sidecar value-balance proof aliases and inline/sidecar stablecoin proof-binding aliases.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
@@ -61,36 +61,45 @@
     ]
   },
   "last_production_binding_slice": {
-    "date": "2026-06-13",
-    "summary": "Added a native sync canonical body materialization package: non-genesis canonical rows served through sync now decode the committed native action bodies and verify the decoded action root before response publication. Blueprint bindings require load_canonical_sync_block_at_height to propagate verify_canonical_sync_block_body, decode_block_actions, and verify_decoded_action_root failures.",
+    "date": "2026-06-14",
+    "summary": "Bound native block artifact construction and canonical index rebuild to canonical sidecar materialization. Artifact verification now materializes sidecar ciphertext bytes with the same presence, size-cap, declared-size, and ciphertext-hash checks used by replay planning before tx-leaf transaction construction; canonical index rebuild decodes all block actions, materializes once, and derives replay/index rows only after that materialization gate. Blueprint bindings require materialize_native_action_payloads in artifact verification and canonical-index rebuild before tx artifact construction, recursive verification, action-stream planning, or wire-replay projection.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs NativeNode::load_canonical_sync_block_at_height",
-      "node/src/native/mod.rs verify_canonical_sync_block_body",
-      "node/src/native/mod.rs verify_decoded_action_root"
+      "node/src/native/mod.rs verify_native_block_artifacts_locked",
+      "node/src/native/mod.rs consensus_tx_and_artifact_from_action",
+      "node/src/native/mod.rs transfer_proof_from_action",
+      "node/src/native/mod.rs plan_canonical_index_rebuild",
+      "node/src/native/mod.rs materialize_native_action_payloads"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.SyncAdmission.*",
-      "Hegemon.Native.BlockCommitmentAdmission.*",
-      "Hegemon.Native.BlockActionValidation.*",
-      "Hegemon.Native.ActionRootTranscript.*"
+      "Hegemon.Native.BlockArtifactBindingAdmission.*",
+      "Hegemon.Native.ActionWireReplayProjectionAdmission.*",
+      "Hegemon.Native.BlockReplayRefinement.*",
+      "Hegemon.Native.DaSidecarReplayBinding.*"
     ],
     "validation": {
-      "targeted_rust": "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-13T23:22Z",
-      "claims": 97,
-      "named_lean_theorems": 1338,
+      "targeted_rust": [
+        "cargo test -p hegemon-node block_artifact_binding_rejects_size_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_artifact_binding_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node canonical_index_rebuild_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node materialized_sidecar --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture"
+      ],
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T00:47Z",
+      "claims": 98,
+      "named_lean_theorems": 1348,
       "production_eligible_claims": 88,
-      "falsification_cases": 400,
+      "falsification_cases": 406,
       "implementation_bindings": 196,
       "implementation_result_obligations": 154,
-      "implementation_dominance_constraints": 124,
-      "implementation_dominance_edges": 327,
-      "implementation_order_constraints": 135,
-      "implementation_order_edges": 356
+      "implementation_dominance_constraints": 126,
+      "implementation_dominance_edges": 331,
+      "implementation_order_constraints": 137,
+      "implementation_order_edges": 360
     },
     "known_limitations": [
-      "No new Lean theorem was added in this slice; it binds existing sync-admission and block-commitment theorem families to the canonical sync response path.",
-      "The focused regression covers corrupt canonical action-body materialization inside an otherwise admitted range, not full PoW/header validity beyond the existing metadata projection gate.",
+      "No new Lean theorem was added in this slice; it binds existing block-artifact, action-wire replay, block-replay, and DA/sidecar theorem families to stronger production materialization paths.",
+      "The focused regressions cover materialized sidecar size/hash drift in artifact verification and canonical-index rebuild, not hash-function collision resistance or DA retention.",
       "Complete native-node equivalence, proof-system soundness, and cryptographic hash/security assumptions remain separate open work."
     ]
   },
@@ -261,7 +270,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 89,
+      "completion_percent": 90,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -283,7 +292,8 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct statement and proof-binding vector indices for the active output commitment/ciphertext-hash fields selected by an observer chain-wire row",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes total input-slot statement/proof-binding facts from packaged native artifact boundary facts",
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean now exposes accepted payload binding-hash, proof-binding-hash, and fee facts for downstream statement/proof-key composition",
-        "node/src/native/mod.rs regressions reject sidecar value-balance and inline/sidecar stablecoin proof-binding aliases"
+        "node/src/native/mod.rs regressions reject sidecar value-balance and inline/sidecar stablecoin proof-binding aliases",
+        "node/src/native/mod.rs native block artifact verification now builds tx-leaf transactions from canonical materialized sidecar ciphertext bytes before tx validity artifact construction"
       ],
       "missing_work": [
         "Lift the canonical verifier-boundary theorem beyond modeled transaction fields to every consensus statement field.",
@@ -418,7 +428,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 96,
+      "completion_percent": 97,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -437,7 +447,8 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
-        "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication"
+        "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
+        "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows"
       ],
       "missing_work": [
         "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
@@ -465,7 +476,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 72,
+      "completion_percent": 73,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -473,7 +484,8 @@
         "staged ciphertext/proof reload gates",
         "mineable-action admission gate",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, projected replay startup facts, and raw decoded projected replay startup facts",
-        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts"
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts",
+        "node/src/native/mod.rs materialized-sidecar regressions require block artifact verification and canonical-index rebuild to reject sidecar size/hash drift before tx artifact construction or canonical row derivation"
       ],
       "missing_work": [
         "Lift the accepted-predicate ingress composition into a full arbitrary-byte SCALE/JSON parser refinement theorem for every PendingAction and sidecar field.",

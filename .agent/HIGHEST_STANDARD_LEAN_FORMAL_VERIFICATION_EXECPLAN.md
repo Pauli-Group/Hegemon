@@ -121,6 +121,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-13 23:22Z) Added native sync canonical row body/action-root materialization as a production-binding/refinement slice, not a new Lean theorem slice. Non-genesis canonical rows served through sync now decode the committed native action bodies and verify the decoded action root before response publication. The focused corrupt-canonical-action-body regression and `bash scripts/check_formal_core.sh` passed with 97 claims, 1338 named Lean theorem declarations, 88 production-eligible claims, 400 falsification cases, 196 implementation bindings, 154 result obligations, 124 dominance constraints / 327 dominance edges, and 135 order constraints / 356 order edges. Current tracked completion is 73.32%.
 - [x] (2026-06-13 23:49Z) Added a ciphertext privacy-game boundary theorem slice. `Hegemon.Privacy.CiphertextPrivacy` now packages two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit `wireIndistinguishable` cryptographic premise, then proves public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, and same allowed leakage are preserved at that boundary. Wallet regressions now check same-plaintext same-recipient encryption uses fresh KEM randomness and that decoded native tx-leaf ciphertext hashes are recomputed from decoded note DA bytes. `bash scripts/check_formal_core.sh` passed with 98 claims, 1344 named Lean theorem declarations, 88 production-eligible claims, 404 falsification cases, 196 implementation bindings, 154 result obligations, 124 dominance constraints / 327 dominance edges, and 135 order constraints / 356 order edges. Current tracked completion is 73.58%.
 - [x] (2026-06-14 00:18Z) Added a proof-keyed native tx-leaf boundary theorem slice: accepted transfer payload admission now exposes binding-hash/proof-binding-hash/fee facts, and `Hegemon.Native.TxLeafCanonicalSurface` composes them with canonical native artifact no-theft facts. New regressions reject sidecar value-balance and inline/sidecar stablecoin proof-binding aliases. `bash scripts/check_formal_core.sh` passed with 98 claims, 1348 named Lean theorem declarations, 88 production-eligible claims, 405 falsification cases, 196 implementation bindings, 154 result obligations, 124 dominance constraints / 327 dominance edges, and 135 order constraints / 356 order edges. Current tracked completion is 73.81%.
+- [x] (2026-06-14 00:47Z) Added materialized sidecar artifact/rebuild production-binding slice: native block artifact verification now builds tx-leaf transactions from canonical materialized sidecar ciphertext bytes, and canonical-index rebuild decodes all canonical block actions then materializes once before action-stream/wire-replay row derivation. Regressions reject sidecar size/hash drift in block artifact verification and hash drift in canonical-index rebuild. `bash scripts/check_formal_core.sh` passed with 98 claims, 1348 named Lean theorem declarations, 88 production-eligible claims, 406 falsification cases, 196 implementation bindings, 154 result obligations, 126 dominance constraints / 331 dominance edges, and 137 order constraints / 360 order edges. Current tracked completion is 73.97%.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -653,6 +654,14 @@ The latest full formal-core pass after the proof-keyed native tx-leaf boundary s
     named_lean_theorems=1348
     production_eligible_claims=88
     falsification_cases=405
+    implementation_bindings=196
+
+The latest full formal-core pass after the materialized sidecar artifact/rebuild binding slice reported:
+
+    claims=98
+    named_lean_theorems=1348
+    production_eligible_claims=88
+    falsification_cases=406
     implementation_bindings=196
 
 ## Interfaces and Dependencies
