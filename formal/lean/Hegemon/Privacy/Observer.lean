@@ -16,6 +16,13 @@ structure ObserverView where
   actionIndex : Nat
 deriving DecidableEq, Repr
 
+structure PublicMetadataView where
+  publicInputs : PublicInputShape
+  ciphertextSummaries : List NoteCiphertextSummary
+  blockHeight : Nat
+  actionIndex : Nat
+deriving DecidableEq, Repr
+
 structure PrivateWitness where
   spendSecretSeeds : List Nat
   inputNoteValues : List Nat
@@ -40,6 +47,13 @@ deriving DecidableEq, Repr
 def observerView (world : ShieldedTransactionWorld) : ObserverView :=
   { publicInputs := world.publicInputs
     ciphertextBytes := world.ciphertextBytes
+    ciphertextSummaries := world.ciphertextSummaries
+    blockHeight := world.blockHeight
+    actionIndex := world.actionIndex }
+
+def publicMetadataView
+    (world : ShieldedTransactionWorld) : PublicMetadataView :=
+  { publicInputs := world.publicInputs
     ciphertextSummaries := world.ciphertextSummaries
     blockHeight := world.blockHeight
     actionIndex := world.actionIndex }
@@ -188,6 +202,10 @@ def sameAllowedLeakage
     (left right : ShieldedTransactionWorld) : Prop :=
   observerView left = observerView right
 
+def samePublicMetadataLeakage
+    (left right : ShieldedTransactionWorld) : Prop :=
+  publicMetadataView left = publicMetadataView right
+
 def samePublicInputs
     (left right : ShieldedTransactionWorld) : Prop :=
   left.publicInputs = right.publicInputs
@@ -209,11 +227,25 @@ theorem observer_view_ignores_private_witness
       observerView world := by
   rfl
 
+theorem public_metadata_view_ignores_private_witness
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness) :
+    publicMetadataView { world with privateWitness := privateWitness } =
+      publicMetadataView world := by
+  rfl
+
 theorem observer_view_ignores_prover_randomness
     (world : ShieldedTransactionWorld)
     (proverRandomnessSeed : Nat) :
     observerView { world with proverRandomnessSeed := proverRandomnessSeed } =
       observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_prover_randomness
+    (world : ShieldedTransactionWorld)
+    (proverRandomnessSeed : Nat) :
+    publicMetadataView { world with proverRandomnessSeed := proverRandomnessSeed } =
+      publicMetadataView world := by
   rfl
 
 theorem observer_view_ignores_private_witness_and_randomness
@@ -226,6 +258,29 @@ theorem observer_view_ignores_private_witness_and_randomness
           proverRandomnessSeed := proverRandomnessSeed } =
       observerView world := by
   rfl
+
+theorem public_metadata_view_ignores_private_witness_and_randomness
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat) :
+    publicMetadataView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed } =
+      publicMetadataView world := by
+  rfl
+
+theorem same_public_metadata_leakage_of_public_summaries_and_placement
+    {left right : ShieldedTransactionWorld}
+    (publicInputs : samePublicInputs left right)
+    (summaries : left.ciphertextSummaries = right.ciphertextSummaries)
+    (placement : samePlacement left right) :
+    samePublicMetadataLeakage left right := by
+  cases left
+  cases right
+  simp [samePublicMetadataLeakage, publicMetadataView, samePublicInputs,
+    samePlacement] at publicInputs summaries placement ⊢
+  exact ⟨publicInputs, summaries, placement.left, placement.right⟩
 
 theorem same_allowed_leakage_of_public_wire_and_placement
     {left right : ShieldedTransactionWorld}

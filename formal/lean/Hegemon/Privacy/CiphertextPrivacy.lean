@@ -50,6 +50,16 @@ theorem ciphertext_privacy_game_summaries_have_chain_format
     ⟨valid_observer_chain_surface_summaries_have_chain_format game.leftValid,
       valid_observer_chain_surface_summaries_have_chain_format game.rightValid⟩
 
+theorem ciphertext_privacy_game_preserves_public_metadata_leakage
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right) :
+    samePublicMetadataLeakage left right := by
+  exact
+    same_public_metadata_leakage_of_public_summaries_and_placement
+      game.publicInputs
+      game.summaries
+      game.placement
+
 theorem ciphertext_privacy_game_only_open_crypto_obligation
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right) :

@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.74,
+  "overall_completion_percent": 74.82,
   "last_full_formal_core": {
     "commit": "c7fdad30f43f2626f249bd757c18d2c63d6e8d53",
     "status": "passed locally 2026-06-14T06:00:08Z",
@@ -44,27 +44,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a proof-keyed native tx-leaf active-input full-binding slice: accepted transfer payload admission and native artifact no-theft now compose into one theorem carrying active spend facts, payload binding-hash/proof-binding-hash/fee agreement, public-input binding, root/anchor binding, statement/proof nullifier-slot alignment, native fee/proof/backend/ciphertext-payload equality gates, and field-level tx-leaf binding facts.",
+    "summary": "Added a public-metadata privacy boundary slice: the observer model now separates full leakage, which includes raw ciphertext bytes, from public metadata leakage, which excludes raw ciphertext bytes while preserving public inputs, parsed ciphertext summaries, and placement; the ciphertext privacy game now proves public metadata leakage is preserved for same-shape worlds while leaving raw wire indistinguishability as the explicit crypto premise.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Privacy/Observer.lean",
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft_full_binding"
+      "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_metadata_leakage"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.TxLeafCanonicalSurface passed",
+      "lean_formal": "lake build Hegemon.Privacy.CiphertextPrivacy Hegemon.Privacy.Observer passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T06:00:08Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T06:26:47Z",
       "claims": 100,
-      "named_lean_theorems": 1394,
+      "named_lean_theorems": 1399,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem still depends on the explicit deployed verifier soundness boundary for the spend relation; it does not prove deployed AIR/STARK/SmallWood soundness, witness extraction, or verifier implementation equivalence.",
-      "The theorem composes decoded production-derived predicates; arbitrary byte parser refinement, hash collision resistance, and complete native-node equivalence remain separate obligations.",
-      "The production cost is zero on the hot path; this adds a Lean proof obligation and metadata only."
+      "The public metadata view intentionally excludes raw ciphertext bytes; ciphertext wire privacy remains the explicit `wireIndistinguishable` cryptographic premise.",
+      "The slice does not prove ML-KEM IND-CCA security, AEAD confidentiality, simulator zero-knowledge, proof-system privacy, wallet/network metadata privacy, timing privacy, or complete wallet/native-node equivalence.",
+      "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
   "last_production_binding_slice": {
@@ -347,7 +349,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 43,
+      "completion_percent": 44,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -365,6 +367,8 @@
         "note ciphertext wire grammar vectors",
         "public/private field separation in transaction statement docs",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean states the same-shape ciphertext privacy-game boundary and exposes `wireIndistinguishable` as the explicit cryptographic premise",
+        "formal/lean/Hegemon/Privacy/Observer.lean now separates public metadata leakage from full observer leakage by excluding raw ciphertext bytes while retaining public inputs, parsed summaries, and placement",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve public metadata leakage even when raw ciphertext wires differ under the explicit wire-indistinguishability premise",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
       ],
       "missing_work": [
