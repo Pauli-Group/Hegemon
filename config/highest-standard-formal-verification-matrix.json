@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.3,
+  "overall_completion_percent": 76.34,
   "last_full_formal_core": {
-    "commit": "worktree:raw-ingress-publication-facts",
-    "status": "passed locally 2026-06-14T22:32:20Z",
+    "commit": "worktree:bridge-raw-ingress-tree-replay-facts",
+    "status": "passed locally 2026-06-14T22:55:34Z",
     "claims": 100,
-    "named_lean_theorems": 1429,
+    "named_lean_theorems": 1430,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -47,27 +47,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened raw-ingress sidecar replay recoverability with a first-class `RawIngressLedgerTreePublicationFacts` package and `raw_ingress_publication_equivalent_to_raw_ledger_tree_replay`, turning the accepted raw-ingress sidecar ledger/tree replay conjunction into named production-reviewable fields for sidecar availability, size agreement, DA candidate/proven-batch/semantic binding, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness.",
+    "summary": "Strengthened bridge mint/replay safety with `accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe`, composing accepted inbound bridge payload authorization, payload-hash amount authorization, zero direct native mint delta, one-shot replay import, duplicate-replay rejection, accepted raw-ingress ledger/tree sidecar publication, commitment-root publication, and final ledger nullifier/bridge replay uniqueness in one production-reviewable theorem.",
     "lean_modules": [
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
       "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
     ],
     "top_level_theorems": [
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe",
       "Hegemon.Native.RawIngressSidecarReplayRecoverability.raw_ingress_publication_equivalent_to_raw_ledger_tree_replay"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean Hegemon/Native/RawIngressSidecarReplayRecoverability.lean passed locally 2026-06-14T22:15Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:32:20Z",
+      "lean_formal": "targeted lake env lean Hegemon/Native/BridgeMintSafety.lean passed locally 2026-06-14T22:39Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:55:34Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:32:20Z with 100 claims, 1429 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:55:34Z with 100 claims, 1430 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1429,
+      "named_lean_theorems": 1430,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "This is a composition over accepted production-bound predicates; it does not prove arbitrary-byte SCALE/JSON parser refinement for every PendingAction or sidecar field.",
-      "This does not prove DA availability or hot/cold retention, BLAKE3/DA-root security or implementation equivalence, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node equivalence.",
-      "The theorem names the raw-ingress publication facts for review; it does not add a new runtime check.",
+      "This is a composition over accepted predicates and raw decoded replay summaries; it does not prove arbitrary-byte SCALE/bincode/JSON parser refinement for every bridge action, PendingAction, or sidecar field.",
+      "This does not mechanize external-chain receipt soundness, the future PQ-clean bridge verifier, BLAKE3/payload-hash or DA-root security, DA availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node equivalence.",
+      "Bridge mint amount authorization remains at the decoded payload boundary until the production PQ-clean bridge mint grammar and decoder are enabled.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -536,7 +538,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 60,
+      "completion_percent": 61,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -546,7 +548,7 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, prior replay-key membership persistence through accepted ledger replay, fresh inbound replay-key survival through accepted raw-projected tails, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, prior replay-key membership persistence through accepted ledger replay, fresh inbound replay-key survival through accepted raw-projected tails, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, commitment-root publication through `RawIngressLedgerTreePublicationFacts`, and composed authorized-amount/fresh-replay/raw-ingress/ledger-tree replay theorems",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication"

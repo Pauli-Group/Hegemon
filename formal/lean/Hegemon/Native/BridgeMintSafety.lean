@@ -815,6 +815,83 @@ theorem accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_sa
       nextNodup,
       duplicateRejects⟩
 
+theorem accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe
+    {input : BridgePayloadInput}
+    {mintSurface : InboundBridgeMintAmountSurface}
+    {rawSurface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized mintSurface = true)
+    (rawIngress :
+      AcceptedRawIngressSidecarReplay
+        rawSurface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : rawSurface.transferState.sidecarRoute = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    RawIngressLedgerTreePublicationFacts
+        rawSurface
+        semanticFields
+        initial
+        final
+        blocks
+      ∧ InboundBridgePayloadAuthorizationFacts input
+      ∧ mintSurface.payloadHashMatches = true
+      ∧ mintSurface.decodedPayloadAmount =
+          mintSurface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0
+      ∧ replay ∈ next
+      ∧ imported = 1
+      ∧ next.Nodup
+      ∧ importBridgeReplay next (some replay) =
+          Except.error ActionStreamReject.bridgeReplayDuplicate
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  have publicationFacts :=
+    raw_ingress_publication_equivalent_to_raw_ledger_tree_replay
+      rawIngress
+      sidecarRoute
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  have bridgeFacts :=
+    accepted_inbound_payload_authorized_amount_fresh_replay_safe
+      inbound
+      acceptedPayload
+      authorized
+      consumedNodup
+      fresh
+  exact
+    ⟨publicationFacts,
+      bridgeFacts.left,
+      bridgeFacts.right.left,
+      bridgeFacts.right.right.left,
+      bridgeFacts.right.right.right.left,
+      bridgeFacts.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.left,
+      bridgeFacts.right.right.right.right.right.right.right,
+      publicationFacts.finalSpentNullifiersUnique,
+      publicationFacts.finalBridgeReplaysUnique⟩
+
 end BridgeMintSafety
 end Native
 end Hegemon
