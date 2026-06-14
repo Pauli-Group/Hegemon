@@ -720,6 +720,14 @@ The latest full formal-core pass after the batch/timing privacy-boundary slice r
 
 The `hegemon-dev` deployment of commit `f2e3cb58` fast-forwarded the VPS to the batch/timing privacy-boundary slice without restarting the service, reran targeted Lean and JSON validation, confirmed RPC smoke and wallet-send, confirmed mining active with NTP synchronized, and used the isolated single-node miner to prove block production because the live 20-second sample did not find a block at current difficulty.
 
+The latest full formal-core pass after the proof-keyed total input-slot authorization slice reported:
+
+    claims=100
+    named_lean_theorems=1405
+    production_eligible_claims=90
+    falsification_cases=413
+    implementation_bindings=200
+
 ## Interfaces and Dependencies
 
 The primary interface for progress tracking is `config/highest-standard-formal-verification-matrix.json`. The primary proof interface is Lean 4 under `formal/lean`. The primary production-binding interface is `config/formal-security-blueprint.json` plus the formal-core checker under `scripts/hegemon_formal_core`. The primary release gate is `scripts/check_formal_core.sh`.
