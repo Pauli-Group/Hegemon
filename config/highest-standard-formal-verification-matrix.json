@@ -15,20 +15,19 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-14T04:27:04Z",
-    "commit": "afbcacf248d4309f3208ea242b62103012d9fc06",
+    "date": "2026-06-14T05:00:33Z",
+    "commit": "2efb7c5d23699c51a2555b870b0c02b6a202f658",
     "status": "passed",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification",
-      "bash scripts/check_formal_core.sh passed on hegemon-dev with 100 theorem-backed claims, 1373 named Lean theorem declarations, 90 production-eligible claims, 413 falsification cases, and 200 implementation bindings",
-      "make node rebuilt target/release/hegemon-node",
-      "hegemon-node.service restarted and active",
-      "bash scripts/smoke-test.sh passed after RPC listener was ready; first immediate smoke attempt raced startup and hit connection refused",
-      "RPC health reported isSyncing=false with zero required peers",
-      "hegemon_miningStatus reported is_mining=true with one mining thread at height 10698",
-      "chain height advanced by 11 blocks over the 20-second liveness sample",
-      "bash scripts/test-node.sh wallet-send passed",
-      "timedatectl reported system clock synchronized and NTP active"
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 2efb7c5d23699c51a2555b870b0c02b6a202f658",
+      "lake build Hegemon.Privacy.NativeObserverSurface gen_note_ciphertext_wire_vectors passed on hegemon-dev",
+      "remote generated note-ciphertext wire vector schema_version=2 with chain-valid expected_wire_len=2149 and expected_da_len=2147",
+      "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=/tmp/hegemon_note_ciphertext_wire_vectors_remote.json cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture passed on hegemon-dev",
+      "hegemon-node.service remained active; no restart was needed because this slice changed Lean/tests/docs, not runtime node code",
+      "bash scripts/smoke-test.sh passed against RPC port 9944",
+      "hegemon_miningStatus reported is_mining=true with one mining thread at height 10854",
+      "chain height advanced from 0x2a66 to 0x2a69 over the 15-second liveness sample",
+      "bash scripts/test-node.sh wallet-send passed"
     ]
   },
   "last_coordinator_audit": {
