@@ -6,10 +6,10 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 74.91,
   "last_full_formal_core": {
-    "commit": "397ba7a6ac93e0e6edff691a9b476d69b09d754c",
-    "status": "passed locally 2026-06-14T05:28:44Z",
+    "commit": "c7fdad30f43f2626f249bd757c18d2c63d6e8d53",
+    "status": "passed locally 2026-06-14T06:00:08Z",
     "claims": 100,
-    "named_lean_theorems": 1393,
+    "named_lean_theorems": 1394,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -54,7 +54,7 @@
     "validation": {
       "lean_formal": "lake build Hegemon.Native.TxLeafCanonicalSurface passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T05:44Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T06:00:08Z",
       "claims": 100,
       "named_lean_theorems": 1394,
       "production_eligible_claims": 90,
