@@ -7,6 +7,7 @@ namespace BlockReplayInputProjection
 open Hegemon.Native.AcceptedChain
 open Hegemon.Native.ActionStreamEffect
 open Hegemon.Native.BlockReplayRefinement
+open Hegemon.Consensus.TreeTransition
 
 structure NativeBlockReplayProjection where
   carried : NativeLedgerReplayState
@@ -45,6 +46,16 @@ structure RawDecodedNativeReplayBlock where
   decodedMessageCountMatches : Bool
   decodedHeaderMmrRootMatches : Bool
   decodedHeaderMmrLenMatches : Bool
+deriving DecidableEq, Repr
+
+structure NativeLedgerTreeReplayProjection where
+  replay : NativeBlockReplayProjection
+  treeInput : TreeTransitionInput
+deriving DecidableEq, Repr
+
+structure RawDecodedNativeTreeReplayBlock where
+  decodedReplay : RawDecodedNativeReplayBlock
+  decodedTreeInput : TreeTransitionInput
 deriving DecidableEq, Repr
 
 def projectionFromRawDecodedBlock
@@ -181,6 +192,93 @@ def rawProjectedLedgerStateAfter
     (blocks : List RawDecodedNativeReplayBlock) :
       Option NativeLedgerReplayState :=
   projectedLedgerStateAfter state (rawNativeReplayProjections blocks)
+
+def treeReplayInputFromProjection
+    (projection : NativeLedgerTreeReplayProjection) :
+      BlockReplayInput × TreeTransitionInput :=
+  (replayInputFromProjection projection.replay, projection.treeInput)
+
+def projectedTreeReplayInputs :
+    List NativeLedgerTreeReplayProjection ->
+      List (BlockReplayInput × TreeTransitionInput)
+  | [] => []
+  | projection :: rest =>
+      treeReplayInputFromProjection projection ::
+        projectedTreeReplayInputs rest
+
+def replayProjectionsFromTreeReplay :
+    List NativeLedgerTreeReplayProjection -> List NativeBlockReplayProjection
+  | [] => []
+  | projection :: rest =>
+      projection.replay :: replayProjectionsFromTreeReplay rest
+
+def rawNativeTreeReplayProjections :
+    List RawDecodedNativeTreeReplayBlock ->
+      List NativeLedgerTreeReplayProjection
+  | [] => []
+  | block :: rest =>
+      {
+        replay := projectionFromRawDecodedBlock block.decodedReplay,
+        treeInput := block.decodedTreeInput
+      } :: rawNativeTreeReplayProjections rest
+
+def rawDecodedBlocksFromTreeReplay :
+    List RawDecodedNativeTreeReplayBlock -> List RawDecodedNativeReplayBlock
+  | [] => []
+  | block :: rest =>
+      block.decodedReplay :: rawDecodedBlocksFromTreeReplay rest
+
+def rawTreeReplayInputs
+    (blocks : List RawDecodedNativeTreeReplayBlock) :
+      List (BlockReplayInput × TreeTransitionInput) :=
+  projectedTreeReplayInputs (rawNativeTreeReplayProjections blocks)
+
+def projectedTreeCarriedStatePreconditions
+    (state : NativeLedgerTreeReplayState)
+    (projections : List NativeLedgerTreeReplayProjection) : Bool :=
+  projectedCarriedStatePreconditions
+    state.ledger
+    (replayProjectionsFromTreeReplay projections)
+
+def rawProjectedTreeCarriedStatePreconditions
+    (state : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) : Bool :=
+  projectedTreeCarriedStatePreconditions
+    state
+    (rawNativeTreeReplayProjections blocks)
+
+def projectedLedgerTreeStateAfter :
+    NativeLedgerTreeReplayState ->
+      List NativeLedgerTreeReplayProjection ->
+        Option NativeLedgerTreeReplayState
+  | state, [] => some state
+  | state, projection :: rest =>
+      if projectionCarriesState state.ledger projection.replay then
+        match evaluateBlockReplayRefinement
+            (replayInputFromProjection projection.replay) with
+        | Except.error _ => none
+        | Except.ok summary =>
+            if projection.treeInput.parentRoot = state.commitmentRoot then
+              if treeTransitionAccepts projection.treeInput then
+                projectedLedgerTreeStateAfter
+                  (nextLedgerTreeState
+                    state
+                    (replayInputFromProjection projection.replay)
+                    summary
+                    projection.treeInput)
+                  rest
+              else
+                none
+            else
+              none
+      else
+        none
+
+def rawProjectedLedgerTreeStateAfter
+    (state : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) :
+      Option NativeLedgerTreeReplayState :=
+  projectedLedgerTreeStateAfter state (rawNativeTreeReplayProjections blocks)
 
 theorem replayInputFromProjection_projects_carried_state
     (projection : NativeBlockReplayProjection) :
@@ -490,6 +588,270 @@ theorem accepted_raw_projected_ledger_state_after_startup_equivalence
     rawProjectedCarriedStatePreconditions
   ] using equivalence
 
+theorem treeReplayInputFromProjection_projects_carried_state
+    (projection : NativeLedgerTreeReplayProjection) :
+    (treeReplayInputFromProjection projection).fst.parentSupply =
+        projection.replay.carried.supply
+      ∧ (treeReplayInputFromProjection projection).fst.leafStart =
+        projection.replay.carried.leafCount
+      ∧ (treeReplayInputFromProjection projection).fst.spentNullifiers =
+        projection.replay.carried.spentNullifiers
+      ∧ (treeReplayInputFromProjection projection).fst.consumedBridgeReplays =
+        projection.replay.carried.consumedBridgeReplays
+      ∧ (treeReplayInputFromProjection projection).fst.actions =
+        projection.replay.actions
+      ∧ (treeReplayInputFromProjection projection).snd =
+        projection.treeInput := by
+  simp [treeReplayInputFromProjection, replayInputFromProjection]
+
+theorem ledgerBlocksFromProjectedTreeReplayInputs
+    (projections : List NativeLedgerTreeReplayProjection) :
+    ledgerBlocksFromTreeReplay (projectedTreeReplayInputs projections) =
+      projectedReplayInputs (replayProjectionsFromTreeReplay projections) := by
+  induction projections with
+  | nil =>
+      rfl
+  | cons projection rest ih =>
+      cases projection
+      simp [
+        projectedTreeReplayInputs,
+        treeReplayInputFromProjection,
+        projectedReplayInputs,
+        replayProjectionsFromTreeReplay
+      ]
+      simpa [ledgerBlocksFromTreeReplay] using ih
+
+theorem projectedLedgerTreeStateAfter_eq_validate_projected_tree_replay
+    (initial : NativeLedgerTreeReplayState)
+    (projections : List NativeLedgerTreeReplayProjection) :
+    projectedLedgerTreeStateAfter initial projections =
+      validateNativeLedgerTreeReplayChain
+        initial
+        (projectedTreeReplayInputs projections) := by
+  induction projections generalizing initial with
+  | nil =>
+      rfl
+  | cons projection rest ih =>
+      cases projection with
+      | mk replay treeInput =>
+          unfold projectedLedgerTreeStateAfter
+          unfold projectedTreeReplayInputs
+          unfold treeReplayInputFromProjection
+          unfold validateNativeLedgerTreeReplayChain
+          unfold projectionCarriesState
+          by_cases parentEq :
+              replay.carried.supply = initial.ledger.supply
+          · simp [replayInputFromProjection, parentEq]
+            by_cases leafEq :
+                replay.carried.leafCount = initial.ledger.leafCount
+            · simp [leafEq]
+              by_cases spentEq :
+                  replay.carried.spentNullifiers =
+                    initial.ledger.spentNullifiers
+              · simp [spentEq]
+                by_cases consumedEq :
+                    replay.carried.consumedBridgeReplays =
+                      initial.ledger.consumedBridgeReplays
+                · simp [consumedEq]
+                  split
+                  · simp_all
+                  · rename_i _ summary hEval
+                    by_cases rootEq :
+                        treeInput.parentRoot =
+                          initial.commitmentRoot
+                    · simp [rootEq]
+                      by_cases treeOk :
+                          treeTransitionAccepts treeInput = true
+                      · simp [treeOk]
+                        simpa [
+                          hEval,
+                          replayInputFromProjection,
+                          parentEq,
+                          leafEq,
+                          spentEq,
+                          consumedEq
+                        ] using
+                          ih
+                            (nextLedgerTreeState
+                              initial
+                              (replayInputFromProjection replay)
+                              summary
+                              treeInput)
+                      · simp [hEval, treeOk]
+                    · simp [hEval, rootEq]
+                · simp [consumedEq]
+              · simp [spentEq]
+            · simp [leafEq]
+          · simp [replayInputFromProjection, parentEq]
+
+theorem accepted_projected_ledger_tree_state_after_startup_equivalence
+    {initial final : NativeLedgerTreeReplayState}
+    {projections : List NativeLedgerTreeReplayProjection}
+    (initialNullifiersNodup : initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (accepted :
+      projectedLedgerTreeStateAfter initial projections = some final) :
+    validateNativeLedgerTreeReplayChain
+        initial
+        (projectedTreeReplayInputs projections) =
+        some final
+      ∧ expectedCommitmentRootAfter
+          initial.commitmentRoot
+          (projectedTreeReplayInputs projections) =
+        some final.commitmentRoot
+      ∧ validateNativeLedgerReplayChain
+          initial.ledger
+          (ledgerBlocksFromTreeReplay
+            (projectedTreeReplayInputs projections)) =
+        some final.ledger
+      ∧ expectedNativeSupplyAfter
+          initial.ledger.supply
+          (ledgerBlocksFromTreeReplay
+            (projectedTreeReplayInputs projections)) =
+        some final.ledger.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.ledger.leafCount
+          (ledgerBlocksFromTreeReplay
+            (projectedTreeReplayInputs projections)) =
+        some final.ledger.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial.ledger
+          (ledgerBlocksFromTreeReplay
+            (projectedTreeReplayInputs projections)) = true
+      ∧ projectedTreeCarriedStatePreconditions
+          initial
+          projections = true
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  have acceptedReplay := accepted
+  rw [
+    projectedLedgerTreeStateAfter_eq_validate_projected_tree_replay
+  ] at acceptedReplay
+  have integrity :=
+    accepted_native_ledger_tree_replay_chain_integrity_from
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  have projectedLedgerAccepted :
+      validateNativeLedgerReplayChain
+          initial.ledger
+          (projectedReplayInputs
+            (replayProjectionsFromTreeReplay projections)) =
+        some final.ledger := by
+    simpa [ledgerBlocksFromProjectedTreeReplayInputs] using
+      integrity.left
+  have carried :=
+    accepted_projected_native_ledger_replay_chain_carried_states
+      projectedLedgerAccepted
+  exact
+    ⟨acceptedReplay,
+      integrity.right.left,
+      integrity.left,
+      integrity.right.right.left,
+      integrity.right.right.right.left,
+      integrity.right.right.right.right.left,
+      by
+        simpa [projectedTreeCarriedStatePreconditions] using carried,
+      integrity.right.right.right.right.right.left,
+      integrity.right.right.right.right.right.right⟩
+
+theorem replayProjectionsFromRawTreeReplay
+    (blocks : List RawDecodedNativeTreeReplayBlock) :
+    replayProjectionsFromTreeReplay
+        (rawNativeTreeReplayProjections blocks) =
+      rawNativeReplayProjections (rawDecodedBlocksFromTreeReplay blocks) := by
+  induction blocks with
+  | nil =>
+      rfl
+  | cons block rest ih =>
+      simp [
+        rawNativeTreeReplayProjections,
+        replayProjectionsFromTreeReplay,
+        rawDecodedBlocksFromTreeReplay,
+        rawNativeReplayProjections,
+        ih
+      ]
+
+theorem ledgerBlocksFromRawTreeReplayInputs
+    (blocks : List RawDecodedNativeTreeReplayBlock) :
+    ledgerBlocksFromTreeReplay (rawTreeReplayInputs blocks) =
+      rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks) := by
+  simp [
+    rawTreeReplayInputs,
+    rawReplayInputs,
+    ledgerBlocksFromProjectedTreeReplayInputs,
+    replayProjectionsFromRawTreeReplay
+  ]
+
+theorem rawProjectedLedgerTreeStateAfter_eq_validate_raw_tree_replay
+    (initial : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) :
+    rawProjectedLedgerTreeStateAfter initial blocks =
+      validateNativeLedgerTreeReplayChain
+        initial
+        (rawTreeReplayInputs blocks) := by
+  simp [
+    rawProjectedLedgerTreeStateAfter,
+    rawTreeReplayInputs,
+    projectedLedgerTreeStateAfter_eq_validate_projected_tree_replay
+  ]
+
+theorem accepted_raw_projected_ledger_tree_state_after_startup_equivalence
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (initialNullifiersNodup : initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (accepted :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    validateNativeLedgerTreeReplayChain
+        initial
+        (rawTreeReplayInputs blocks) =
+        some final
+      ∧ expectedCommitmentRootAfter
+          initial.commitmentRoot
+          (rawTreeReplayInputs blocks) =
+        some final.commitmentRoot
+      ∧ validateNativeLedgerReplayChain
+          initial.ledger
+          (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger
+      ∧ expectedNativeSupplyAfter
+          initial.ledger.supply
+          (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.supply
+      ∧ expectedNativeLeafCountAfter
+          initial.ledger.leafCount
+          (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          initial.ledger
+          (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) = true
+      ∧ rawProjectedTreeCarriedStatePreconditions
+          initial
+          blocks = true
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  have acceptedProjected :
+      projectedLedgerTreeStateAfter
+          initial
+          (rawNativeTreeReplayProjections blocks) =
+        some final := by
+    simpa [rawProjectedLedgerTreeStateAfter] using accepted
+  have equivalence :=
+    accepted_projected_ledger_tree_state_after_startup_equivalence
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedProjected
+  simpa [
+    rawTreeReplayInputs,
+    rawProjectedTreeCarriedStatePreconditions,
+    rawReplayInputs,
+    ledgerBlocksFromProjectedTreeReplayInputs,
+    replayProjectionsFromRawTreeReplay
+  ] using equivalence
+
 def rawDecodedBlockFromProjection
     (projection : NativeBlockReplayProjection) :
       RawDecodedNativeReplayBlock :=
@@ -549,6 +911,54 @@ theorem raw_decoded_blocks_projection_round_trips
         raw_decoded_block_projection_round_trips,
         ih
       ]
+
+def rawDecodedTreeBlockFromProjection
+    (projection : NativeLedgerTreeReplayProjection) :
+      RawDecodedNativeTreeReplayBlock :=
+  {
+    decodedReplay := rawDecodedBlockFromProjection projection.replay,
+    decodedTreeInput := projection.treeInput
+  }
+
+def rawDecodedTreeBlocksFromProjections :
+    List NativeLedgerTreeReplayProjection ->
+      List RawDecodedNativeTreeReplayBlock
+  | [] => []
+  | projection :: rest =>
+      rawDecodedTreeBlockFromProjection projection ::
+        rawDecodedTreeBlocksFromProjections rest
+
+theorem raw_decoded_tree_block_projection_round_trips
+    (projection : NativeLedgerTreeReplayProjection) :
+    rawNativeTreeReplayProjections
+        [rawDecodedTreeBlockFromProjection projection] =
+      [projection] := by
+  cases projection with
+  | mk replay treeInput =>
+      simp [
+        rawNativeTreeReplayProjections,
+        rawDecodedTreeBlockFromProjection,
+        raw_decoded_block_projection_round_trips
+      ]
+
+theorem raw_decoded_tree_blocks_projection_round_trips
+    (projections : List NativeLedgerTreeReplayProjection) :
+    rawNativeTreeReplayProjections
+        (rawDecodedTreeBlocksFromProjections projections) =
+      projections := by
+  induction projections with
+  | nil =>
+      rfl
+  | cons projection rest ih =>
+      cases projection with
+      | mk replay treeInput =>
+          simp [
+            rawDecodedTreeBlocksFromProjections,
+            rawNativeTreeReplayProjections,
+            rawDecodedTreeBlockFromProjection,
+            raw_decoded_block_projection_round_trips,
+            ih
+          ]
 
 def validNativeReplayProjectionChain : List NativeBlockReplayProjection :=
   [
@@ -744,6 +1154,140 @@ theorem valid_raw_projected_ledger_state_after_startup_equivalence :
       (by simp [initialNativeLedgerState])
       (by simp [initialNativeLedgerState])
       accepted
+
+def acceptedTreeInputFromRoot (root : Nat) : TreeTransitionInput :=
+  {
+    parentRoot := root,
+    appliedRoot := root + 1,
+    proofStartingRoot := root,
+    proofEndingRoot := root + 1,
+    applyCommitmentsSucceeds := true
+  }
+
+def treeReplayProjectionsWithRoots :
+    Nat -> List NativeBlockReplayProjection ->
+      List NativeLedgerTreeReplayProjection
+  | _, [] => []
+  | root, projection :: rest =>
+      {
+        replay := projection,
+        treeInput := acceptedTreeInputFromRoot root
+      } :: treeReplayProjectionsWithRoots (root + 1) rest
+
+def validNativeLedgerTreeReplayProjectionChain :
+    List NativeLedgerTreeReplayProjection :=
+  treeReplayProjectionsWithRoots 50 validNativeReplayProjectionChain
+
+def validRawDecodedNativeLedgerTreeReplayChain :
+    List RawDecodedNativeTreeReplayBlock :=
+  rawDecodedTreeBlocksFromProjections
+    validNativeLedgerTreeReplayProjectionChain
+
+theorem valid_projected_ledger_tree_state_after_accepts :
+    projectedLedgerTreeStateAfter
+        (initialNativeLedgerTreeState 100 10 50)
+        validNativeLedgerTreeReplayProjectionChain =
+      some
+        {
+          ledger :=
+            {
+              supply := 100,
+              leafCount := 13,
+              spentNullifiers := [2, 1],
+              consumedBridgeReplays := [7]
+            },
+          commitmentRoot := 52
+        } := by
+  rfl
+
+theorem valid_raw_projected_ledger_tree_state_after_accepts :
+    rawProjectedLedgerTreeStateAfter
+        (initialNativeLedgerTreeState 100 10 50)
+        validRawDecodedNativeLedgerTreeReplayChain =
+      some
+        {
+          ledger :=
+            {
+              supply := 100,
+              leafCount := 13,
+              spentNullifiers := [2, 1],
+              consumedBridgeReplays := [7]
+            },
+          commitmentRoot := 52
+        } := by
+  rw [
+    rawProjectedLedgerTreeStateAfter,
+    validRawDecodedNativeLedgerTreeReplayChain,
+    raw_decoded_tree_blocks_projection_round_trips
+  ]
+  exact valid_projected_ledger_tree_state_after_accepts
+
+theorem valid_raw_projected_ledger_tree_state_after_startup_equivalence :
+    validateNativeLedgerTreeReplayChain
+        (initialNativeLedgerTreeState 100 10 50)
+        (rawTreeReplayInputs validRawDecodedNativeLedgerTreeReplayChain) =
+        some
+          {
+            ledger :=
+              {
+                supply := 100,
+                leafCount := 13,
+                spentNullifiers := [2, 1],
+                consumedBridgeReplays := [7]
+              },
+            commitmentRoot := 52
+          }
+      ∧ expectedCommitmentRootAfter
+          50
+          (rawTreeReplayInputs validRawDecodedNativeLedgerTreeReplayChain) =
+        some 52
+      ∧ validateNativeLedgerReplayChain
+          (initialNativeLedgerState 100 10)
+          (rawReplayInputs
+            (rawDecodedBlocksFromTreeReplay
+              validRawDecodedNativeLedgerTreeReplayChain)) =
+        some
+          {
+            supply := 100,
+            leafCount := 13,
+            spentNullifiers := [2, 1],
+            consumedBridgeReplays := [7]
+          }
+      ∧ expectedNativeSupplyAfter
+          100
+          (rawReplayInputs
+            (rawDecodedBlocksFromTreeReplay
+              validRawDecodedNativeLedgerTreeReplayChain)) =
+        some 100
+      ∧ expectedNativeLeafCountAfter
+          10
+          (rawReplayInputs
+            (rawDecodedBlocksFromTreeReplay
+              validRawDecodedNativeLedgerTreeReplayChain)) =
+        some 13
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          (initialNativeLedgerState 100 10)
+          (rawReplayInputs
+            (rawDecodedBlocksFromTreeReplay
+              validRawDecodedNativeLedgerTreeReplayChain)) = true
+      ∧ rawProjectedTreeCarriedStatePreconditions
+          (initialNativeLedgerTreeState 100 10 50)
+          validRawDecodedNativeLedgerTreeReplayChain = true
+      ∧ [2, 1].Nodup
+      ∧ [7].Nodup := by
+  have accepted := valid_raw_projected_ledger_tree_state_after_accepts
+  exact
+    accepted_raw_projected_ledger_tree_state_after_startup_equivalence
+      (by simp [initialNativeLedgerTreeState, initialNativeLedgerState])
+      (by simp [initialNativeLedgerTreeState, initialNativeLedgerState])
+      accepted
+
+theorem stale_raw_projected_ledger_tree_root_rejects :
+    rawProjectedLedgerTreeStateAfter
+        (initialNativeLedgerTreeState 100 10 49)
+        validRawDecodedNativeLedgerTreeReplayChain =
+      none := by
+  rfl
 
 def staleProjectedCarriedStateChain : List NativeBlockReplayProjection :=
   [

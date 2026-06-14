@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.55,
+  "overall_completion_percent": 74.67,
   "last_full_formal_core": {
     "commit": "cf27dc83966df29888c8378b742146cde99bed2c",
     "status": "passed locally 2026-06-14T04:56:12Z",
@@ -205,7 +205,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 72,
+      "completion_percent": 74,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -216,13 +216,14 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay leaf-cursor equality theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger replay canonical commitment-plan theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger/tree replay root-cursor integrity theorem",
-        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native ledger/tree replay blocks to accepted commitment-root progression, replayed supply, leaf-cursor, canonical commitment-plan, carried-state, nullifier, and bridge replay facts",
         "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean proves verifier-side anchors must be in the parent commitment-tree root history before same-block commitments are applied",
         "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition"
       ],
       "missing_work": [
         "Lift the abstract root-cursor theorem into a full Merkle-root/tree-content invariant with membership.",
-        "Bind the tree replay pair model to complete raw native import/reorg/startup paths.",
+        "Bind the raw ledger/tree replay projection theorem to complete native import/reorg/startup paths.",
         "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
       ],
       "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."
