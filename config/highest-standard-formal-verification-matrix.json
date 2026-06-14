@@ -15,8 +15,8 @@
     "implementation_bindings": 199
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-14T02:46Z",
-    "commit": "3cb933c5cfb53134e7bd8fcac835239331e2e1ac",
+    "date": "2026-06-14T03:39:58Z",
+    "commit": "bd851261ff07ccce6b78835d806b7fe0c37f97d8",
     "status": "passed",
     "checks": [
       "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification",
@@ -26,7 +26,7 @@
       "bash scripts/smoke-test.sh passed after RPC listener was ready",
       "RPC health reported isSyncing=false with zero required peers",
       "hegemon_miningStatus reported is_mining=true with one mining thread",
-      "chain height advanced by 14 blocks over the 20-second liveness sample",
+      "chain height advanced by 12 blocks over the 20-second liveness sample",
       "bash scripts/test-node.sh wallet-send passed",
       "timedatectl reported system clock synchronized and NTP active"
     ]
