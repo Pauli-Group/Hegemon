@@ -58,6 +58,21 @@ theorem sync_rejects_trailing_bytes
   unfold evaluateSyncDecodeRejection
   simp [wireAccepted, hasTrailing]
 
+theorem sync_decode_acceptance_excludes_malleability
+    {input : SyncDecodeInput}
+    (accepted : syncDecodeAccepts input = true) :
+    input.boundedWireDecodeAccepts = true ∧
+      input.consumedAllBytes = true := by
+  cases input with
+  | mk boundedWireDecodeAccepts consumedAllBytes legacyBincodePayload =>
+      cases boundedWireDecodeAccepts <;>
+        cases consumedAllBytes <;>
+        cases legacyBincodePayload <;>
+        simp [
+          syncDecodeAccepts,
+          evaluateSyncDecodeRejection
+        ] at accepted ⊢
+
 inductive ExactDecodeReject where
   | parserRejected
   | trailingBytes
@@ -127,6 +142,22 @@ theorem exact_rejects_noncanonical_encoding
   unfold evaluateExactDecodeRejection
   simp [parserAccepted, consumedAll, nonCanonical]
 
+theorem exact_decode_acceptance_excludes_malleability
+    {input : ExactDecodeInput}
+    (accepted : exactDecodeAccepts input = true) :
+    input.parserAccepts = true ∧
+      input.consumedAllBytes = true ∧
+      input.canonicalReencodeMatches = true := by
+  cases input with
+  | mk parserAccepts consumedAllBytes canonicalReencodeMatches =>
+      cases parserAccepts <;>
+        cases consumedAllBytes <;>
+        cases canonicalReencodeMatches <;>
+        simp [
+          exactDecodeAccepts,
+          evaluateExactDecodeRejection
+        ] at accepted ⊢
+
 inductive BlockActionDecodeReject where
   | actionCountMismatch
   | actionDecodeNotExact
@@ -188,6 +219,131 @@ theorem block_action_decode_rejects_nonexact_action
       some BlockActionDecodeReject.actionDecodeNotExact := by
   unfold evaluateBlockActionDecodeRejection
   simp [countMatches, nonExactAction]
+
+theorem block_action_decode_acceptance_excludes_malleability
+    {input : BlockActionDecodeInput}
+    (accepted : blockActionDecodeAccepts input = true) :
+    actionCountMatches input = true ∧
+      input.everyActionDecodesExactly = true := by
+  cases input with
+  | mk declaredTxCount actualActionPayloadCount everyActionDecodesExactly =>
+      cases h : (declaredTxCount == actualActionPayloadCount) <;>
+        cases everyActionDecodesExactly <;>
+        simp [
+          blockActionDecodeAccepts,
+          evaluateBlockActionDecodeRejection,
+          actionCountMatches,
+          h
+        ] at accepted ⊢
+
+structure CanonicalDecodeNonMalleabilityFacts
+    (syncInput : SyncDecodeInput)
+    (exactInput : ExactDecodeInput)
+    (actionInput : BlockActionDecodeInput) : Prop where
+  syncAcceptsIff :
+    syncDecodeAccepts syncInput = true ↔
+      syncDecodePreconditions syncInput = true
+  exactAcceptsIff :
+    exactDecodeAccepts exactInput = true ↔
+      exactDecodePreconditions exactInput = true
+  actionAcceptsIff :
+    blockActionDecodeAccepts actionInput = true ↔
+      blockActionDecodePreconditions actionInput = true
+  syncAcceptanceExcludesMalleability :
+    syncDecodeAccepts syncInput = true ->
+      syncInput.boundedWireDecodeAccepts = true ∧
+        syncInput.consumedAllBytes = true
+  exactAcceptanceExcludesMalleability :
+    exactDecodeAccepts exactInput = true ->
+      exactInput.parserAccepts = true ∧
+        exactInput.consumedAllBytes = true ∧
+        exactInput.canonicalReencodeMatches = true
+  actionAcceptanceExcludesMalleability :
+    blockActionDecodeAccepts actionInput = true ->
+      actionCountMatches actionInput = true ∧
+        actionInput.everyActionDecodesExactly = true
+  exactParserRejects :
+    exactInput.parserAccepts = false ->
+      evaluateExactDecodeRejection exactInput =
+        some ExactDecodeReject.parserRejected
+  exactTrailingRejects :
+    exactInput.parserAccepts = true ->
+      exactInput.consumedAllBytes = false ->
+        evaluateExactDecodeRejection exactInput =
+          some ExactDecodeReject.trailingBytes
+  exactNoncanonicalRejects :
+    exactInput.parserAccepts = true ->
+      exactInput.consumedAllBytes = true ->
+      exactInput.canonicalReencodeMatches = false ->
+        evaluateExactDecodeRejection exactInput =
+          some ExactDecodeReject.nonCanonicalEncoding
+  syncWireRejects :
+    syncInput.boundedWireDecodeAccepts = false ->
+      evaluateSyncDecodeRejection syncInput =
+        some SyncDecodeReject.wireDecodeRejected
+  syncTrailingRejects :
+    syncInput.boundedWireDecodeAccepts = true ->
+      syncInput.consumedAllBytes = false ->
+        evaluateSyncDecodeRejection syncInput =
+          some SyncDecodeReject.trailingBytes
+  actionCountMismatchRejects :
+    actionCountMatches actionInput = false ->
+      evaluateBlockActionDecodeRejection actionInput =
+        some BlockActionDecodeReject.actionCountMismatch
+  actionNonExactRejects :
+    actionCountMatches actionInput = true ->
+      actionInput.everyActionDecodesExactly = false ->
+        evaluateBlockActionDecodeRejection actionInput =
+          some BlockActionDecodeReject.actionDecodeNotExact
+
+theorem canonical_decode_non_malleability_facts
+    {syncInput : SyncDecodeInput}
+    {exactInput : ExactDecodeInput}
+    {actionInput : BlockActionDecodeInput} :
+    CanonicalDecodeNonMalleabilityFacts
+      syncInput
+      exactInput
+      actionInput := by
+  exact {
+    syncAcceptsIff := sync_accepts_iff_preconditions
+    exactAcceptsIff := exact_accepts_iff_preconditions
+    actionAcceptsIff := block_action_decode_accepts_iff_preconditions
+    syncAcceptanceExcludesMalleability :=
+      fun accepted =>
+        sync_decode_acceptance_excludes_malleability accepted
+    exactAcceptanceExcludesMalleability :=
+      fun accepted =>
+        exact_decode_acceptance_excludes_malleability accepted
+    actionAcceptanceExcludesMalleability :=
+      fun accepted =>
+        block_action_decode_acceptance_excludes_malleability accepted
+    exactParserRejects :=
+      fun parserRejected =>
+        exact_rejects_parser_failure parserRejected
+    exactTrailingRejects :=
+      fun parserAccepted hasTrailing =>
+        exact_rejects_trailing_bytes parserAccepted hasTrailing
+    exactNoncanonicalRejects :=
+      fun parserAccepted consumedAll nonCanonical =>
+        exact_rejects_noncanonical_encoding
+          parserAccepted
+          consumedAll
+          nonCanonical
+    syncWireRejects :=
+      fun wireRejected =>
+        sync_rejects_wire_decode_failure wireRejected
+    syncTrailingRejects :=
+      fun wireAccepted hasTrailing =>
+        sync_rejects_trailing_bytes wireAccepted hasTrailing
+    actionCountMismatchRejects :=
+      fun countMismatch =>
+        block_action_decode_rejects_count_mismatch countMismatch
+    actionNonExactRejects :=
+      fun countMatches nonExactAction =>
+        block_action_decode_rejects_nonexact_action
+          countMatches
+          nonExactAction
+  }
 
 def validSync : SyncDecodeInput :=
   {
