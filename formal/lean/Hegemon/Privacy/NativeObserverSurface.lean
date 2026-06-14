@@ -1,4 +1,5 @@
 import Hegemon.Native.TxLeafCanonicalSurface
+import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
 
 namespace Hegemon
@@ -7,10 +8,51 @@ namespace NativeObserverSurface
 
 open Hegemon.Native.BlockArtifactBindingAdmission
 open Hegemon.Native.TxLeafCanonicalSurface
+open Hegemon.Privacy.CiphertextPrivacy
 open Hegemon.Privacy.Observer
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
+
+def ActiveOutputPublicMetadataBoundary
+    (input : TxLeafActionBindingInput)
+    (shape : PublicInputShape)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (left right : ShieldedTransactionWorld)
+    (index : Nat)
+    (publicCommitment publicCiphertextHash : Digest) : Prop :=
+  ∃ leftWire rightWire summary,
+    left.ciphertextBytes[
+        activeFlagCountBefore shape.outputFlags index]? = some leftWire
+      ∧ right.ciphertextBytes[
+        activeFlagCountBefore shape.outputFlags index]? = some rightWire
+      ∧ left.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? = some summary
+      ∧ right.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? = some summary
+      ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+        leftWire = some summary
+      ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+        rightWire = some summary
+      ∧ summaryHasChainCiphertextFormat summary
+      ∧ samePublicMetadataLeakage left right
+      ∧ shape.outputFlags[index]? = some 1
+      ∧ shape.commitments[index]? = some publicCommitment
+      ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+      ∧ bound.outputFlags[index]? = some 1
+      ∧ statementFields.commitmentSeeds[index]? = some publicCommitment
+      ∧ statementFields.ciphertextHashSeeds[index]? =
+        some publicCiphertextHash
+      ∧ bindingFields.commitmentSeeds[index]? = some publicCommitment
+      ∧ bindingFields.ciphertextHashSeeds[index]? =
+        some publicCiphertextHash
+      ∧ input.ciphertextHashesMatch = true
+      ∧ input.ciphertextPayloadHashesMatch = true
+      ∧ input.outputCountMatches = true
+      ∧ OutputSlotFacts 1 publicCommitment publicCiphertextHash
+      ∧ TxLeafActionBindingFacts input
 
 theorem valid_observer_chain_surface_bound_to_shape
     {world : ShieldedTransactionWorld}
@@ -1004,6 +1046,311 @@ theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
       nativeFacts.right.right.right,
       leftObserver.right,
       rightObserver.right⟩
+
+theorem native_tx_leaf_active_output_public_metadata_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (leftValid : validObserverChainSurface left)
+    (rightValid : validObserverChainSurface right)
+    (leftShape : left.publicInputs = shape)
+    (rightShape : right.publicInputs = shape)
+    (metadata : samePublicMetadataLeakage left right) :
+    ActiveOutputPublicMetadataBoundary
+      input
+      shape
+      bound
+      statementFields
+      bindingFields
+      left
+      right
+      index
+      publicCommitment
+      publicCiphertextHash := by
+  rcases
+      native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire
+        bindingAccepted
+        surface
+        slot
+        leftValid
+        leftShape with
+    ⟨leftWire,
+      leftSummary,
+      leftWireAt,
+      leftSummaryAt,
+      leftParsed,
+      leftFormat,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      leftStatementFlag,
+      leftStatementCommitment,
+      leftStatementCiphertext,
+      _leftBindingFlag,
+      leftBindingCommitment,
+      leftBindingCiphertext,
+      leftOutputFacts,
+      leftBindingFacts⟩
+  rcases
+      native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire
+        bindingAccepted
+        surface
+        slot
+        rightValid
+        rightShape with
+    ⟨rightWire,
+      rightSummary,
+      rightWireAt,
+      rightSummaryAt,
+      rightParsed,
+      _rightFormat,
+      _rightShapeFlag,
+      _rightShapeCommitment,
+      _rightShapeCiphertext,
+      _rightStatementFlag,
+      _rightStatementCommitment,
+      _rightStatementCiphertext,
+      _rightBindingFlag,
+      _rightBindingCommitment,
+      _rightBindingCiphertext,
+      _rightOutputFacts,
+      _rightBindingFacts⟩
+  have summariesEq :
+      left.ciphertextSummaries = right.ciphertextSummaries :=
+    congrArg PublicMetadataView.ciphertextSummaries metadata
+  have summaryEq : leftSummary = rightSummary := by
+    have someEq : some leftSummary = some rightSummary := by
+      calc
+        some leftSummary =
+            left.ciphertextSummaries[
+              activeFlagCountBefore shape.outputFlags index]? :=
+          leftSummaryAt.symm
+        _ =
+            right.ciphertextSummaries[
+              activeFlagCountBefore shape.outputFlags index]? := by
+          rw [summariesEq]
+        _ = some rightSummary :=
+          rightSummaryAt
+    exact Option.some.inj someEq
+  subst rightSummary
+  rcases leftBindingFacts with
+    ⟨_hNullifiers,
+      _hCommitments,
+      hCiphertextHashes,
+      _hInputCount,
+      hOutputCount,
+      _hVersion,
+      _hFee,
+      _hStablecoinPayload,
+      _hBalanceTag,
+      _hReceiptStatementHash,
+      _hPublicInputsDigest,
+      _hProofDigest,
+      _hProofBackend,
+      hCiphertextPayloadHashes⟩
+  unfold ActiveOutputPublicMetadataBoundary
+  exact
+    ⟨leftWire,
+      rightWire,
+      leftSummary,
+      leftWireAt,
+      rightWireAt,
+      leftSummaryAt,
+      rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      leftFormat,
+      metadata,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      leftStatementFlag,
+      leftStatementCommitment,
+      leftStatementCiphertext,
+      leftBindingCommitment,
+      leftBindingCiphertext,
+      hCiphertextHashes,
+      hCiphertextPayloadHashes,
+      hOutputCount,
+      leftOutputFacts,
+      ⟨_hNullifiers,
+        _hCommitments,
+        hCiphertextHashes,
+        _hInputCount,
+        hOutputCount,
+        _hVersion,
+        _hFee,
+        _hStablecoinPayload,
+        _hBalanceTag,
+        _hReceiptStatementHash,
+        _hPublicInputsDigest,
+        _hProofDigest,
+        _hProofBackend,
+        hCiphertextPayloadHashes⟩⟩
+
+theorem native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (rightShape : right.publicInputs = shape) :
+    ActiveOutputPublicMetadataBoundary
+      input
+      shape
+      bound
+      statementFields
+      bindingFields
+      left
+      right
+      index
+      publicCommitment
+      publicCiphertextHash := by
+  exact
+    native_tx_leaf_active_output_public_metadata_boundary
+      bindingAccepted
+      surface
+      slot
+      game.leftValid
+      game.rightValid
+      leftShape
+      rightShape
+      (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+
+theorem native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape) :
+    samePublicMetadataLeakage left right
+      ∧ sameBatchTimingLeakage left right
+      ∧ game.wireIndistinguishable
+      ∧ ActiveOutputPublicMetadataBoundary
+        input
+        shape
+        bound
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash := by
+  have rightShape : right.publicInputs = shape := by
+    calc
+      right.publicInputs = left.publicInputs := game.publicInputs.symm
+      _ = shape := leftShape
+  exact
+    ⟨ciphertext_privacy_game_preserves_public_metadata_leakage game,
+      ciphertext_privacy_game_preserves_batch_timing_leakage game,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary
+        bindingAccepted
+        surface
+        slot
+        game
+        leftShape
+        rightShape⟩
 
 end NativeObserverSurface
 end Privacy

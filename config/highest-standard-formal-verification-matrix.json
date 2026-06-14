@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 75.11,
+  "overall_completion_percent": 75.19,
   "last_full_formal_core": {
     "commit": "56d9dfbecf31b8618f2c6921cd35e355cfb6b8f2",
     "status": "passed locally 2026-06-14T16:01:47Z",
@@ -47,28 +47,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a validated transfer total input-slot authorization boundary slice: accepted decoded transfer payload admission and singleton block-action validation acceptance, including payload-before-order and order-before-state precedence facts, now compose with accepted native tx-leaf/action binding and the canonical statement surface to expose authorization-or-inactive-zero full-binding before modeled transfer state mutation.",
+    "summary": "Added a native selected-row ciphertext privacy-game boundary slice: active native tx-leaf output slots inside a same-shape ciphertext privacy game now select public observer rows at the same active-output rank, parse to the same public summary, carry the same shape/statement/proof-bound commitment and ciphertext-hash metadata, preserve public metadata and batch/timing leakage, and expose the explicit wire-indistinguishability obligation for raw wire bytes.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
-      "formal/lean/Hegemon/Native/BlockActionValidation.lean"
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean",
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_input_slot_authorization_full_binding"
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.TransferNoTheftBoundary and bash scripts/check_lean_formal.sh passed",
+      "lean_formal": "lake build Hegemon.Privacy.NativeObserverSurface and bash scripts/check_lean_formal.sh passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T16:01:47Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T16:38:27Z",
       "claims": 100,
-      "named_lean_theorems": 1407,
+      "named_lean_theorems": 1409,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem packages the existing explicit `DeployedTxVerifierSoundnessAssumption`; it does not discharge deployed AIR/STARK/SmallWood soundness, witness extraction, or verifier implementation correctness.",
-      "The theorem is over decoded native tx-leaf/action, decoded transfer-payload, and modeled block-action validation predicates; arbitrary-byte parser refinement, hash security, tx-leaf parser completeness, and complete native-node equivalence remain open.",
+      "The theorem keeps `wireIndistinguishable` explicit; it does not prove ML-KEM IND-CCA security, AEAD confidentiality, KDF security, RNG quality, or simulator zero knowledge.",
+      "The selected-row composition inherits the native tx-leaf canonical-surface deployed-verifier boundary; it does not discharge proof-system privacy, ciphertext-hash security, or complete wallet/native-node equivalence.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -356,7 +357,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 45,
+      "completion_percent": 46,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -376,6 +377,7 @@
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean states the same-shape ciphertext privacy-game boundary and exposes `wireIndistinguishable` as the explicit cryptographic premise",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates public metadata leakage from full observer leakage by excluding raw ciphertext bytes while retaining public inputs, parsed summaries, and placement",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve public metadata leakage even when raw ciphertext wires differ under the explicit wire-indistinguishability premise",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes active native tx-leaf output slots with the ciphertext privacy game, proving both worlds select the same public active-output rank/summary and the same statement/proof-bound commitment/ciphertext-hash metadata while preserving batch/timing leakage and leaving raw wire indistinguishability explicit",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
