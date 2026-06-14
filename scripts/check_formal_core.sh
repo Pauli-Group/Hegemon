@@ -300,6 +300,7 @@ HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS="$LEAN_BLOCK_ACTION_VALIDATION_VECT
   cargo test -p hegemon-node lean_generated_block_action_validation_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS="$LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node submit_action_routes_bridge_payload_admission_before_staging --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS="$LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_witness_backscan_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS="$LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS" \

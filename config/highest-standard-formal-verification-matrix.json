@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.37,
+  "overall_completion_percent": 74.45,
   "last_full_formal_core": {
     "commit": "27124ca928d854d0d8375b5496d2d03456c7f8a5",
     "status": "passed locally 2026-06-14T03:22:41Z",
@@ -79,45 +79,38 @@
   },
   "last_production_binding_slice": {
     "date": "2026-06-14",
-    "summary": "Bound native block artifact construction and canonical index rebuild to canonical sidecar materialization. Artifact verification now materializes sidecar ciphertext bytes with the same presence, size-cap, declared-size, and ciphertext-hash checks used by replay planning before tx-leaf transaction construction; canonical index rebuild decodes all block actions, materializes once, and derives replay/index rows only after that materialization gate. Blueprint bindings require materialize_native_action_payloads in artifact verification and canonical-index rebuild before tx artifact construction, recursive verification, action-stream planning, or wire-replay projection.",
+    "summary": "Bound live hegemon_submitAction bridge ingress to the same Lean-backed bridge payload admission chain used by native block and action validation. Bridge RPC submissions now construct zero-delta pending actions, then run validate_action_state through validate_pending_action_against_mempool_state and validate_bridge_action_payload before action hashing, sled insertion, durability flush, or pending-map publication.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs verify_native_block_artifacts_locked",
-      "node/src/native/mod.rs consensus_tx_and_artifact_from_action",
-      "node/src/native/mod.rs transfer_proof_from_action",
-      "node/src/native/mod.rs plan_canonical_index_rebuild",
-      "node/src/native/mod.rs materialize_native_action_payloads"
+      "node/src/native/mod.rs NativeNode::validate_and_stage_action",
+      "node/src/native/mod.rs NativeNode::validate_action_state",
+      "node/src/native/mod.rs validate_pending_action_against_mempool_state",
+      "node/src/native/mod.rs validate_bridge_action_payload"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.BlockArtifactBindingAdmission.*",
-      "Hegemon.Native.ActionWireReplayProjectionAdmission.*",
-      "Hegemon.Native.BlockReplayRefinement.*",
-      "Hegemon.Native.DaSidecarReplayBinding.*"
+      "Hegemon.Native.BridgeActionPayloadAdmission.*",
+      "Hegemon.Native.BridgeMintSafety.*",
+      "Hegemon.Native.ActionRequestProjectionAdmission.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p hegemon-node block_artifact_binding_rejects_size_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node block_artifact_binding_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node canonical_index_rebuild_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node materialized_sidecar --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node submit_action_routes_bridge_payload_admission_before_staging --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T00:47Z",
-      "claims": 98,
-      "named_lean_theorems": 1348,
-      "production_eligible_claims": 88,
-      "falsification_cases": 406,
-      "implementation_bindings": 196,
-      "implementation_result_obligations": 154,
-      "implementation_dominance_constraints": 126,
-      "implementation_dominance_edges": 331,
-      "implementation_order_constraints": 137,
-      "implementation_order_edges": 360
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T04:09:30Z",
+      "claims": 100,
+      "named_lean_theorems": 1373,
+      "production_eligible_claims": 90,
+      "falsification_cases": 413,
+      "implementation_bindings": 200,
+      "implementation_result_obligations": 158,
+      "implementation_dominance_constraints": 128,
+      "implementation_dominance_edges": 339,
+      "implementation_order_constraints": 142,
+      "implementation_order_edges": 371
     },
     "known_limitations": [
-      "No new Lean theorem was added in this slice; it binds existing block-artifact, action-wire replay, block-replay, and DA/sidecar theorem families to stronger production materialization paths.",
-      "The focused regressions cover materialized sidecar size/hash drift in artifact verification and canonical-index rebuild, not hash-function collision resistance or DA retention.",
-      "Complete native-node equivalence, proof-system soundness, and cryptographic hash/security assumptions remain separate open work."
+      "No new Lean theorem was added in this slice; it binds the existing bridge action payload admission and bridge mint-safety theorem families to live RPC bridge ingress.",
+      "The focused regression covers empty outbound payload and empty inbound receipt rejection before staging; replay, destination, payload-hash, and receipt-output regressions remain covered by the existing bridge validation tests and vector gates.",
+      "External-chain proof soundness, the future PQ-clean bridge mint grammar, bridge payload-hash security, and complete raw-byte native-node equivalence remain separate open work."
     ]
   },
   "properties": [
@@ -518,7 +511,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 57,
+      "completion_percent": 59,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -530,7 +523,8 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
-        "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result"
+        "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
+        "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication"
       ],
       "missing_work": [
         "Replace the boundary-only decoded bridge mint amount surface with a live PQ-clean bridge mint payload grammar and production decoder when bridge minting is enabled.",

@@ -3880,83 +3880,24 @@ impl NativeNode {
 
         let received_ms = current_time_ms();
         let mut pending = match (request.family_id, request.action_id) {
-            (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => {
-                let args: OutboundBridgeArgsV1 =
-                    decode_scale_exact(&public_args, "outbound bridge action args")?;
-                if args.payload.is_empty() {
-                    return Err(anyhow!("outbound bridge payload must be non-empty"));
-                }
-                PendingAction {
-                    tx_hash: [0u8; 32],
-                    binding,
-                    family_id: request.family_id,
-                    action_id: request.action_id,
-                    anchor: [0u8; 48],
-                    nullifiers: Vec::new(),
-                    commitments: Vec::new(),
-                    ciphertext_hashes: Vec::new(),
-                    ciphertext_sizes: Vec::new(),
-                    public_args,
-                    fee: 0,
-                    candidate_artifact: None,
-                    received_ms,
-                }
-            }
-            (FAMILY_BRIDGE, ACTION_BRIDGE_INBOUND) => {
-                let args: InboundBridgeArgsV1 =
-                    decode_scale_exact(&public_args, "inbound bridge action args")?;
-                if args.proof_receipt.is_empty() {
-                    return Err(anyhow!("inbound bridge proof receipt must be non-empty"));
-                }
-                if args.message.source_chain_id != args.source_chain_id
-                    || args.message.message_nonce != args.source_message_nonce
-                {
-                    return Err(anyhow!("inbound bridge replay key does not match message"));
-                }
-                if args.message.destination_chain_id != HEGEMON_CHAIN_ID_V1 {
-                    return Err(anyhow!(
-                        "inbound bridge message is not addressed to Hegemon"
-                    ));
-                }
-                if args.message.payload_hash != bridge_payload_hash(&args.message.payload) {
-                    return Err(anyhow!("inbound bridge message payload hash mismatch"));
-                }
-                verify_inbound_bridge_receipt(&args)?;
-                PendingAction {
-                    tx_hash: [0u8; 32],
-                    binding,
-                    family_id: request.family_id,
-                    action_id: request.action_id,
-                    anchor: [0u8; 48],
-                    nullifiers: Vec::new(),
-                    commitments: Vec::new(),
-                    ciphertext_hashes: Vec::new(),
-                    ciphertext_sizes: Vec::new(),
-                    public_args,
-                    fee: 0,
-                    candidate_artifact: None,
-                    received_ms,
-                }
-            }
-            (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER) => {
-                let _: BridgeVerifierRegistrationV1 =
-                    decode_scale_exact(&public_args, "bridge verifier registration args")?;
-                PendingAction {
-                    tx_hash: [0u8; 32],
-                    binding,
-                    family_id: request.family_id,
-                    action_id: request.action_id,
-                    anchor: [0u8; 48],
-                    nullifiers: Vec::new(),
-                    commitments: Vec::new(),
-                    ciphertext_hashes: Vec::new(),
-                    ciphertext_sizes: Vec::new(),
-                    public_args,
-                    fee: 0,
-                    candidate_artifact: None,
-                    received_ms,
-                }
-            }
+            (
+                FAMILY_BRIDGE,
+                ACTION_BRIDGE_OUTBOUND | ACTION_BRIDGE_INBOUND | ACTION_REGISTER_BRIDGE_VERIFIER,
+            ) => PendingAction {
+                tx_hash: [0u8; 32],
+                binding,
+                family_id: request.family_id,
+                action_id: request.action_id,
+                anchor: [0u8; 48],
+                nullifiers: Vec::new(),
+                commitments: Vec::new(),
+                ciphertext_hashes: Vec::new(),
+                ciphertext_sizes: Vec::new(),
+                public_args,
+                fee: 0,
+                candidate_artifact: None,
+                received_ms,
+            },
             (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
                 let args: ShieldedTransferInlineArgs =
                     decode_scale_exact(&public_args, "shielded inline action args")?;
@@ -23247,6 +23188,47 @@ mod tests {
         let err = validate_bridge_action_payload(&action)
             .expect_err("wrong inbound bridge payload hash must be rejected before receipt verify");
         assert!(err.to_string().contains("payload hash mismatch"));
+    }
+
+    #[test]
+    fn submit_action_routes_bridge_payload_admission_before_staging() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let outbound = OutboundBridgeArgsV1 {
+            destination_chain_id: [41u8; 32],
+            app_family_id: 77,
+            payload: Vec::new(),
+        };
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(outbound.encode()),
+            }))
+            .expect_err("empty outbound bridge payload must reject before staging");
+        assert!(err.to_string().contains("payload must be non-empty"));
+        assert_eq!(node.state.read().pending_actions.len(), 0);
+
+        let mut inbound = test_disabled_risc0_bridge_inbound_args(b"bound bridge payload");
+        inbound.proof_receipt.clear();
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_INBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(inbound.encode()),
+            }))
+            .expect_err("empty inbound bridge receipt must reject before staging");
+        assert!(err.to_string().contains("proof receipt must be non-empty"));
+        assert_eq!(node.state.read().pending_actions.len(), 0);
     }
 
     #[test]
