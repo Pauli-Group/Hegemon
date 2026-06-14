@@ -15,18 +15,18 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-14T05:33:10Z",
-    "commit": "3c9de86dc788044c908587e39394797651ecf60c",
-    "status": "passed with mining active; no new block observed during the 90-second liveness sample at current difficulty",
+    "date": "2026-06-14T06:04:00Z",
+    "commit": "ed99ebe2f9186c594e1b9ee4634ab32002e4ea87",
+    "status": "passed with mining active; height advanced from 10952 to 10963 during the 20-second liveness sample",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 3c9de86dc788044c908587e39394797651ecf60c",
-      "lake build Hegemon.Native.BlockReplayInputProjection passed on hegemon-dev",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at ed99ebe2f9186c594e1b9ee4634ab32002e4ea87",
+      "lake build Hegemon.Native.TxLeafCanonicalSurface passed on hegemon-dev",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
       "hegemon-node.service remained active; no restart was needed because this slice changed Lean/docs/metadata, not runtime node code",
-      "bash scripts/smoke-test.sh passed against RPC port 9944",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 10951",
       "bash scripts/test-node.sh wallet-send passed",
-      "hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 28275 H/s, difficulty 520159231, and height 10902",
-      "chain height stayed at 0x2a96 during the 15-second and 75-second liveness samples, so block-production liveness was not re-proven by this slice"
+      "hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 28223 H/s, difficulty 520159231, blocks_found 278, and height 10951",
+      "chain height advanced from 0x2ac8 to 0x2ad3 during a 20-second liveness sample"
     ]
   },
   "last_coordinator_audit": {
