@@ -706,6 +706,14 @@ The latest full formal-core pass after the consensus statement-anchor admission 
 
 The `hegemon-dev` deployment of commit `3cb933c5` reran the full formal-core gate on the VPS, rebuilt the release node, restarted `hegemon-node.service`, confirmed RPC health after the listener came up, confirmed mining liveness with a 14-block height increase over 20 seconds, ran the wallet-send compatibility test, and confirmed NTP was active/synchronized.
 
+The latest full formal-core pass after the batch/timing privacy-boundary slice reported:
+
+    claims=100
+    named_lean_theorems=1404
+    production_eligible_claims=90
+    falsification_cases=413
+    implementation_bindings=200
+
 ## Interfaces and Dependencies
 
 The primary interface for progress tracking is `config/highest-standard-formal-verification-matrix.json`. The primary proof interface is Lean 4 under `formal/lean`. The primary production-binding interface is `config/formal-security-blueprint.json` plus the formal-core checker under `scripts/hegemon_formal_core`. The primary release gate is `scripts/check_formal_core.sh`.
