@@ -15,11 +15,88 @@ structure CiphertextPrivacyGame (left right : ShieldedTransactionWorld) where
   wireIndistinguishable : Prop
   wireIndistinguishableProof : wireIndistinguishable
 
+structure PrivacyBoundaryAssumptions where
+  proofSystemZeroKnowledge : Prop
+  walletMetadataHygiene : Prop
+  timingAndBatchingPolicy : Prop
+  networkMetadataPolicy : Prop
+
+structure PrivacyBoundaryAssumptionProofs
+    (assumptions : PrivacyBoundaryAssumptions) : Prop where
+  proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene : assumptions.walletMetadataHygiene
+  timingAndBatchingPolicy : assumptions.timingAndBatchingPolicy
+  networkMetadataPolicy : assumptions.networkMetadataPolicy
+
 def samePublicCiphertextShape
     (left right : ShieldedTransactionWorld) : Prop :=
   samePublicInputs left right
     ∧ left.ciphertextSummaries = right.ciphertextSummaries
     ∧ samePlacement left right
+
+structure CiphertextPrivacyBoundaryFacts
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (assumptions : PrivacyBoundaryAssumptions) : Prop where
+  publicCiphertextShape : samePublicCiphertextShape left right
+  activeOutputCountEq :
+    activeOutputCount left.publicInputs =
+      activeOutputCount right.publicInputs
+  ciphertextSummaryCountEq :
+    left.ciphertextSummaries.length =
+      right.ciphertextSummaries.length
+  summariesHaveChainFormat :
+    summariesHaveChainCiphertextFormat left.ciphertextSummaries
+      ∧ summariesHaveChainCiphertextFormat right.ciphertextSummaries
+  publicMetadataLeakage : samePublicMetadataLeakage left right
+  batchTimingLeakage : sameBatchTimingLeakage left right
+  rawWireIndistinguishable : wireIndistinguishable
+  proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene : assumptions.walletMetadataHygiene
+  timingAndBatchingPolicy : assumptions.timingAndBatchingPolicy
+  networkMetadataPolicy : assumptions.networkMetadataPolicy
+  leftObserverIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      observerView
+          { left with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        observerView left
+  rightObserverIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      observerView
+          { right with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        observerView right
+  leftPublicMetadataIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      publicMetadataView
+          { left with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        publicMetadataView left
+  rightPublicMetadataIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      publicMetadataView
+          { right with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        publicMetadataView right
+  leftBatchTimingIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      batchTimingView
+          { left with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        batchTimingView left
+  rightBatchTimingIgnoresSecrets :
+    ∀ privateWitness proverRandomnessSeed,
+      batchTimingView
+          { right with
+            privateWitness := privateWitness
+            proverRandomnessSeed := proverRandomnessSeed } =
+        batchTimingView right
 
 theorem ciphertext_privacy_game_preserves_public_ciphertext_shape
     {left right : ShieldedTransactionWorld}
@@ -76,6 +153,77 @@ theorem ciphertext_privacy_game_only_open_crypto_obligation
     (game : CiphertextPrivacyGame left right) :
     game.wireIndistinguishable := by
   exact game.wireIndistinguishableProof
+
+theorem ciphertext_privacy_game_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions) :
+    CiphertextPrivacyBoundaryFacts
+      left
+      right
+      game.wireIndistinguishable
+      assumptions := by
+  exact {
+    publicCiphertextShape :=
+      ciphertext_privacy_game_preserves_public_ciphertext_shape game
+    activeOutputCountEq :=
+      ciphertext_privacy_game_preserves_active_output_count game
+    ciphertextSummaryCountEq :=
+      ciphertext_privacy_game_preserves_ciphertext_summary_count game
+    summariesHaveChainFormat :=
+      ciphertext_privacy_game_summaries_have_chain_format game
+    publicMetadataLeakage :=
+      ciphertext_privacy_game_preserves_public_metadata_leakage game
+    batchTimingLeakage :=
+      ciphertext_privacy_game_preserves_batch_timing_leakage game
+    rawWireIndistinguishable :=
+      ciphertext_privacy_game_only_open_crypto_obligation game
+    proofSystemZeroKnowledge :=
+      assumptionProofs.proofSystemZeroKnowledge
+    walletMetadataHygiene :=
+      assumptionProofs.walletMetadataHygiene
+    timingAndBatchingPolicy :=
+      assumptionProofs.timingAndBatchingPolicy
+    networkMetadataPolicy :=
+      assumptionProofs.networkMetadataPolicy
+    leftObserverIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        observer_view_ignores_private_witness_and_randomness
+          left
+          privateWitness
+          proverRandomnessSeed
+    rightObserverIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        observer_view_ignores_private_witness_and_randomness
+          right
+          privateWitness
+          proverRandomnessSeed
+    leftPublicMetadataIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        public_metadata_view_ignores_private_witness_and_randomness
+          left
+          privateWitness
+          proverRandomnessSeed
+    rightPublicMetadataIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        public_metadata_view_ignores_private_witness_and_randomness
+          right
+          privateWitness
+          proverRandomnessSeed
+    leftBatchTimingIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        batch_timing_view_ignores_private_witness_and_randomness
+          left
+          privateWitness
+          proverRandomnessSeed
+    rightBatchTimingIgnoresSecrets :=
+      fun privateWitness proverRandomnessSeed =>
+        batch_timing_view_ignores_private_witness_and_randomness
+          right
+          privateWitness
+          proverRandomnessSeed
+  }
 
 def buildCiphertextPrivacyGame
     {left right : ShieldedTransactionWorld}

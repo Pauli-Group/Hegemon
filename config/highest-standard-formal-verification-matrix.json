@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.18,
+  "overall_completion_percent": 76.26,
   "last_full_formal_core": {
-    "commit": "worktree:codec-non-malleability-facts",
-    "status": "passed locally 2026-06-14T21:28:25Z",
+    "commit": "worktree:ciphertext-privacy-boundary-facts",
+    "status": "passed locally 2026-06-14T22:04:06Z",
     "claims": 100,
-    "named_lean_theorems": 1427,
+    "named_lean_theorems": 1428,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -47,30 +47,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened native codec implementation equivalence: accepted sync, exact-decode, and block-action codec surfaces now imply parser acceptance, full byte consumption, canonical exact re-encoding where applicable, and action-count agreement. The packaged theorem also carries the modeled rejection facts for wire/parser failure, trailing bytes, non-canonical exact decode bytes, count mismatch, and non-exact action payloads.",
+    "summary": "Strengthened the ciphertext privacy-game boundary with a packaged theorem that composes same-shape public ciphertext facts, public metadata equality, explicit batch/timing equality, raw-wire indistinguishability, and first-class proof-system zero-knowledge, wallet metadata, timing/batching, and network metadata assumptions. The theorem also proves observer, public metadata, and batch/timing projections ignore private witnesses and prover randomness once public wire data is fixed.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CodecAdmission.lean"
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CodecAdmission.sync_decode_acceptance_excludes_malleability",
-      "Hegemon.Native.CodecAdmission.exact_decode_acceptance_excludes_malleability",
-      "Hegemon.Native.CodecAdmission.block_action_decode_acceptance_excludes_malleability",
-      "Hegemon.Native.CodecAdmission.canonical_decode_non_malleability_facts"
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean and lake build passed for Hegemon.Native.CodecAdmission; bash scripts/check_lean_formal.sh passed 2026-06-14 with 1427 theorems, zero temporary axioms, and no unwaived axiom dependencies",
+      "lean_formal": "targeted lake build Hegemon.Privacy.CiphertextPrivacy passed locally 2026-06-14T21:42:41Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:04:06Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T21:28:25Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:04:06Z with 100 claims, 1428 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1427,
+      "named_lean_theorems": 1428,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem models parser acceptance and canonical re-encode predicates; it does not prove postcard, SCALE, or bincode implementation correctness.",
-      "The theorem covers native sync, exact decode, and block-action decode admission surfaces; complete byte-level grammar coverage for every consensus object remains separate.",
-      "This does not prove BLAKE3 action-hash security, full action payload semantic validation, storage durability, or complete native-node refinement.",
+      "The theorem packages proof-system ZK, wallet metadata hygiene, timing/batching, network metadata, and raw-wire indistinguishability as explicit assumptions; it does not discharge them.",
+      "Batch/timing facts are modeled as explicit leakage, not hidden data.",
+      "This does not prove ML-KEM/AEAD/KDF/RNG security, simulator zero knowledge, proof-system privacy, wallet/network metadata privacy, timing privacy, or complete wallet/native-node equivalence.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -366,7 +363,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 49,
+      "completion_percent": 50,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -391,10 +388,11 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes the selected-row ciphertext privacy game with wallet decrypt-to-commitment binding, proving recipient-decrypted selected rows reconstruct the same plaintext-derived note commitment carried by public shape, statement preimage, and proof-binding rows while preserving explicit public metadata/batch leakage and raw-wire crypto obligations",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy as first-class assumptions in the privacy-game boundary theorem",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
       ],
       "missing_work": [
-        "State ZK/privacy assumptions for the proof system, wallet metadata, timing, sidecars, and network surfaces.",
+        "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, and sidecar privacy assumptions.",
         "Add unlinkability tests for wallet metadata, proof wrappers, sidecars, batching, and timing surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
