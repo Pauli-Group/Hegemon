@@ -6,13 +6,29 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 74.09,
   "last_full_formal_core": {
-    "commit": "working tree after inbound bridge receipt-output admission slice",
-    "status": "passed 2026-06-14T01:28Z",
+    "commit": "02297e00c7dcabad824d9ce5fae840f7b06215e8",
+    "status": "passed locally 2026-06-14T01:28Z and on hegemon-dev 2026-06-14T01:47Z",
     "claims": 99,
     "named_lean_theorems": 1364,
     "production_eligible_claims": 89,
     "falsification_cases": 409,
     "implementation_bindings": 198
+  },
+  "last_hegemon_dev_validation": {
+    "date": "2026-06-14T01:49Z",
+    "commit": "02297e00c7dcabad824d9ce5fae840f7b06215e8",
+    "status": "passed",
+    "checks": [
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification",
+      "bash scripts/check_formal_core.sh passed on hegemon-dev",
+      "make node rebuilt target/release/hegemon-node",
+      "hegemon-node.service restarted and active",
+      "RPC health reported isSyncing=false",
+      "hegemon_miningStatus reported is_mining=true with one mining thread",
+      "chain height advanced by 10 blocks over the 20-second liveness sample",
+      "bash scripts/test-node.sh wallet-send passed",
+      "timedatectl reported system clock synchronized and NTP active"
+    ]
   },
   "last_coordinator_audit": {
     "date": "2026-06-14",
