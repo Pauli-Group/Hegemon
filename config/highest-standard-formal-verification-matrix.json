@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.45,
+  "overall_completion_percent": 74.55,
   "last_full_formal_core": {
-    "commit": "4c7a42d1e4672c470e5af1c2a89af99ddb12c087",
-    "status": "passed locally 2026-06-14T04:09:30Z",
+    "commit": "working-tree-precommit",
+    "status": "passed locally 2026-06-14T04:56:12Z",
     "claims": 100,
-    "named_lean_theorems": 1373,
+    "named_lean_theorems": 1379,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -46,35 +46,36 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a verifier-side statement-anchor admission slice: every nonempty consensus block must carry one transaction statement binding per transaction, and every binding anchor must be known in the parent commitment-tree root-history window before recursive semantic derivation, artifact verification, or final tree transition can run.",
+    "summary": "Added a wallet/native observer ciphertext preimage slice: accepted bounded chain note-ciphertext wires project to exact DA ciphertext-hash preimage bytes by deleting the canonical compact KEM-length bytes, and the selected active native observer row carries that projected DA preimage alongside statement/proof-binding ciphertext-hash indices and native equality gates.",
     "lean_modules": [
-      "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean",
-      "formal/lean/Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean"
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+      "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Consensus.StatementAnchorAdmission.accepts_iff_statement_anchor_preconditions",
-      "Hegemon.Consensus.StatementAnchorAdmission.valid_accepts",
-      "Hegemon.Consensus.StatementAnchorAdmission.binding_count_mismatch_rejects",
-      "Hegemon.Consensus.StatementAnchorAdmission.unknown_anchor_rejects",
-      "Hegemon.Consensus.StatementAnchorAdmission.same_block_anchor_rejects"
+      "Hegemon.Wallet.NoteCiphertextWire.valid_chain_da_projection",
+      "Hegemon.Wallet.NoteCiphertextWire.valid_chain_da_projection_length",
+      "Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_da_projection_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_da_projection_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_projected_da_bytes_of_bounded",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_has_projected_da_bytes"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Consensus.StatementAnchorAdmission gen_statement_anchor_admission_vectors && lake exe gen_statement_anchor_admission_vectors passed",
+      "lean_formal": "lake build Hegemon.Privacy.NativeObserverSurface gen_note_ciphertext_wire_vectors && lake exe gen_note_ciphertext_wire_vectors passed",
       "targeted_rust": [
-        "HEGEMON_LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS=/tmp/hegemon_statement_anchor_admission_vectors.json cargo test -p consensus lean_generated_statement_anchor_admission_vectors_match_production -- --nocapture",
-        "cargo test -p consensus statement_anchor_history -- --nocapture"
+        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=/tmp/hegemon_note_ciphertext_wire_vectors.json cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T02:20Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T04:56:12Z",
       "claims": 100,
-      "named_lean_theorems": 1373,
+      "named_lean_theorems": 1379,
       "production_eligible_claims": 90,
-      "falsification_cases": 412,
-      "implementation_bindings": 199
+      "falsification_cases": 413,
+      "implementation_bindings": 200
     },
     "known_limitations": [
-      "The slice proves deterministic statement-anchor admission against the bounded parent root-history window; it does not prove Merkle hash security, root-history durability, or full commitment-tree implementation equivalence.",
-      "Transaction proof soundness, native tx-leaf proof soundness, nullifier uniqueness, and note commitment correctness remain separate theorem families.",
-      "The production cost is one parent-history membership check per transaction before existing proof verification."
+      "The slice proves structural DA preimage projection for accepted bounded chain note-ciphertext wires; it does not prove BLAKE3 ciphertext-hash security/equality in Lean, full DA-root inclusion, DA availability, or retention.",
+      "The NativeObserverSurface lift carries the selected row's projected DA bytes with statement/proof-binding ciphertext-hash indices and native equality gates, but still relies on the explicit deployed verifier soundness boundary.",
+      "The production cost is zero on the hot path; this adds Lean proof obligations and generated-vector tests only."
     ]
   },
   "last_production_binding_slice": {
@@ -384,7 +385,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 72,
+      "completion_percent": 74,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -398,9 +399,11 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves the selected observer ciphertext wire at an active output rank parses to the selected summary",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct active output ciphertext-hash vector indices for the public shape, canonical statement, and proof-binding message that correspond to that selected observer row",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires consume exactly the fixed chain container, canonical compact ML-KEM length bytes, and ML-KEM ciphertext bytes",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires project to fixed DA preimage bytes by removing the canonical compact KEM-length bytes",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts the selected active observer row to projected DA preimage bytes while carrying statement/proof-binding ciphertext-hash indices and native equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean packages active native output ciphertext boundary facts: selected parsed observer row, fixed chain wire shape, public/statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates",
-        "wallet note ciphertext wire vector gate",
+        "wallet note ciphertext wire vector gate checks expected projected DA bytes and production ciphertext_hash_bytes over wallet::NoteCiphertext::to_da_bytes",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates",
     "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean proves metadata-gated decrypt admission and crypto-failure boundary over an explicit crypto-authentication predicate",
     "wallet/src/notes.rs decrypt fail-closed regressions for version, crypto-suite, diversifier, wrong root key, and KEM/note/memo payload malleation",

@@ -10,6 +10,9 @@ def chainCiphertextSize : Nat := 579
 def mlKemCiphertextLen : Nat := 1568
 def cryptoSuiteGamma : Nat := 3
 
+def chainCompactKemLen : List Byte :=
+  u16le (mlKemCiphertextLen * 4 + 1)
+
 structure NoteCiphertextSummary where
   version : Nat
   cryptoSuite : Nat
@@ -140,6 +143,12 @@ def parseChainNoteCiphertext (input : List Byte) : Option NoteCiphertextSummary 
   else
     none
 
+def projectChainDaBytes (input : List Byte) : Option (List Byte) := do
+  let _summary ← parseChainNoteCiphertext input
+  some
+    (input.take chainCiphertextSize
+      ++ input.drop (chainCiphertextSize + chainCompactKemLen.length))
+
 def bytesBounded (input : List Byte) : Prop :=
   ∀ byteValue, byteValue ∈ input -> byteValue < 256
 
@@ -161,6 +170,20 @@ theorem takeBytes_some_length
   · simp at h
     rcases h with ⟨_, restEq⟩
     rw [← restEq, List.length_drop]
+    omega
+  · cases h
+
+theorem takeBytes_some_taken_length
+    {count : Nat}
+    {input taken rest : List Byte}
+    (h : takeBytes count input = some (taken, rest)) :
+    taken.length = count := by
+  unfold takeBytes at h
+  split at h
+  · simp at h
+    rcases h with ⟨takenEq, _⟩
+    rw [← takenEq]
+    simp
     omega
   · cases h
 
@@ -249,11 +272,11 @@ def validChainContainer : List Byte :=
       ++ sampleMemoPayload;
   headBytes ++ List.replicate (chainCiphertextSize - headBytes.length) 0
 
-def chainCompactKemLen : List Byte :=
-  u16le (mlKemCiphertextLen * 4 + 1)
-
 def validChainWire : List Byte :=
   validChainContainer ++ chainCompactKemLen ++ sampleKemCiphertext
+
+def validChainDaBytes : List Byte :=
+  validChainContainer ++ sampleKemCiphertext
 
 def chainMemoOverrunContainer : List Byte :=
   let headBytes :=
@@ -322,6 +345,15 @@ theorem chain_valid_accepts :
       } := by
   decide
 
+theorem valid_chain_da_projection :
+    projectChainDaBytes validChainWire = some validChainDaBytes := by
+  decide
+
+theorem valid_chain_da_projection_length :
+    validChainDaBytes.length =
+      chainCiphertextSize + mlKemCiphertextLen := by
+  decide
+
 theorem chain_memo_overrun_rejects :
     parseChainNoteCiphertext chainMemoOverrunWire = none := by
   decide
@@ -336,6 +368,14 @@ theorem chain_noncanonical_compact_kem_length_rejects :
 
 theorem chain_trailing_byte_rejects :
     parseChainNoteCiphertext chainTrailingWire = none := by
+  decide
+
+theorem chain_noncanonical_compact_kem_length_da_projection_rejects :
+    projectChainDaBytes chainNoncanonicalCompactWire = none := by
+  decide
+
+theorem chain_trailing_byte_da_projection_rejects :
+    projectChainDaBytes chainTrailingWire = none := by
   decide
 
 theorem parsed_crypto_ciphertext_has_fixed_kem_len
@@ -604,6 +644,26 @@ theorem parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
                     | cons _ _ =>
                         simp at parsed
               · simp [kemMatches] at parsed
+
+theorem parsed_chain_ciphertext_has_projected_da_bytes_of_bounded
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (bounded : bytesBounded input)
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    ∃ daBytes,
+      projectChainDaBytes input = some daBytes
+        ∧ daBytes.length = chainCiphertextSize + mlKemCiphertextLen := by
+  unfold projectChainDaBytes
+  simp [parsed]
+  have wireLength :=
+    parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+      bounded
+      parsed
+  have compactBytes :
+      chainCompactKemLen.length = 2 := by
+    decide
+  rw [wireLength, compactBytes]
+  omega
 
 end NoteCiphertextWire
 end Wallet

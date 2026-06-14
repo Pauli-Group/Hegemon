@@ -20,22 +20,39 @@ def summaryFieldJson (summary : Option NoteCiphertextSummary) : String :=
   | none => "null"
   | some value => summaryJson value
 
+def bytesFieldJson (bytes : Option (List Byte)) : String :=
+  match bytes with
+  | none => "null"
+  | some value => "\"" ++ hexBytes value ++ "\""
+
+def natFieldJson (value : Option Nat) : String :=
+  match value with
+  | none => "null"
+  | some count => toString count
+
 def noteCiphertextCaseJson
     (name format : String)
     (wire : List Byte)
     (summary : Option NoteCiphertextSummary) : String :=
+  let projectedDaBytes :=
+    if format = "chain" then
+      projectChainDaBytes wire
+    else
+      none;
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"format\": \"" ++ format ++ "\",\n"
     ++ "      \"wire_hex\": \"" ++ hexBytes wire ++ "\",\n"
     ++ "      \"expected_wire_len\": " ++ toString wire.length ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson summary.isSome ++ ",\n"
-    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ "\n"
+    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ ",\n"
+    ++ "      \"expected_da_hex\": " ++ bytesFieldJson projectedDaBytes ++ ",\n"
+    ++ "      \"expected_da_len\": " ++ natFieldJson (projectedDaBytes.map List.length) ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"note_ciphertext_wire_cases\": [\n"
     ++ noteCiphertextCaseJson "crypto-valid" "crypto" validCryptoWire
       (parseCryptoNoteCiphertext validCryptoWire) ++ ",\n"
