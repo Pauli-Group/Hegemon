@@ -784,19 +784,23 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-  "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions and a public metadata view that excludes raw ciphertext bytes. It proves that changing private witnesses or prover randomness does not change either view; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
+  "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions, a public metadata view that excludes raw ciphertext bytes, and a batch/timing view that exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index. It proves that changing private witnesses or prover randomness does not change those projections; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; valid observer-chain worlds with equal public inputs and placement imply equal batch/timing leakage; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
       "lean_theorems": [
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness",
-        "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness",
-        "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
-        "Hegemon.Privacy.Observer.public_metadata_view_ignores_prover_randomness",
-        "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
-        "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_and_randomness",
-        "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
-        "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
+    "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness",
+    "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness",
+    "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
+    "Hegemon.Privacy.Observer.public_metadata_view_ignores_prover_randomness",
+    "Hegemon.Privacy.Observer.batch_timing_view_ignores_prover_randomness",
+    "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
+    "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_and_randomness",
+    "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_and_randomness",
+    "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
+    "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
+    "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summary_at_rank",
@@ -824,13 +828,13 @@
     "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage"
   ],
       "assumptions": [
-        "The full observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index. The public metadata view intentionally removes raw ciphertext bytes while keeping public inputs, parsed summaries, block height, and action index.",
+    "The full observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index. The public metadata view intentionally removes raw ciphertext bytes while keeping public inputs, parsed summaries, block height, and action index. The batch/timing view intentionally exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index so batching and timing leakage are explicit instead of hidden inside an informal privacy claim.",
         "Accepted parsed chain summaries are proved to carry the expected chain crypto suite and fixed ML-KEM ciphertext length before they enter the observer leakage model; byte-bounded accepted chain wires are additionally proved to have the fixed production chain ciphertext wire length.",
         "A valid observer-chain surface requires a valid public-input shape, parser-derived chain ciphertext summaries, and a public ciphertext-byte count equal to the active output count derived from public output flags.",
     "Active output-slot theorems prove that an active public output forces nonzero public active-output count, has an active-output rank below that count, selects an observer ciphertext wire row that parses to the same chain-format summary, exposes direct shape/statement/proof-binding vector indices for the selected commitment and ciphertext-hash fields, and under byte-bounded observer wires carries the fixed production chain ciphertext wire length plus fixed-length DA projection bytes. The packaged active-output ciphertext boundary additionally carries native ciphertext-hash, ciphertext-payload-hash, and output-count equality gates through the same selected row; this proves the selected row's structural DA preimage boundary, but still does not prove BLAKE3 security or in-Lean public ciphertext-hash equality for selected wire bytes.",
         "The native observer-surface theorem composes the observer boundary with accepted native tx-leaf/action output-slot binding and the canonical deployed verifier surface, but it inherits that surface's explicit `DeployedTxVerifierSoundnessAssumption` boundary.",
-        "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer projection.",
-        "This is a leakage-boundary theorem only. The public metadata view proves deterministic non-wire metadata preservation, but it does not prove simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
+    "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer, public-metadata, and batch/timing projections.",
+    "This is a leakage-boundary theorem only. The public metadata view proves deterministic non-wire metadata preservation, and the batch/timing view proves deterministic batch-count and placement preservation under valid same-public-input worlds, but neither proves simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Privacy/Observer.lean",
@@ -859,7 +863,7 @@
       "id": "formal.ciphertext-privacy-game-boundary",
       "component": "note ciphertext privacy game boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, and public metadata leakage even when raw ciphertext bytes are not equal, and that the only non-public cryptographic obligation carried by this boundary is the named wire-indistinguishability premise. A focused wallet regression checks that same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
+  "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, public metadata leakage, and explicit batch/timing leakage even when raw ciphertext bytes are not equal, and that the only non-public cryptographic obligation carried by this boundary is the named wire-indistinguishability premise. A focused wallet regression checks that same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_crypto_indistinguishability_assumption_and_rust_randomness_regression",
       "production_eligible": false,
@@ -867,13 +871,14 @@
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_ciphertext_shape",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_active_output_count",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_ciphertext_summary_count",
-        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
-        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_metadata_leakage",
-        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
+    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
+    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_metadata_leakage",
+    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_batch_timing_leakage",
+    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
         "Hegemon.Privacy.CiphertextPrivacy.same_wire_ciphertext_privacy_game_implies_same_allowed_leakage"
       ],
       "assumptions": [
-        "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, and active-output ciphertext counts are inherited from `formal.privacy-observer-boundary`.",
+    "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`.",
         "The cryptographic privacy step is the explicit `wireIndistinguishable` field. It stands for the ML-KEM encapsulation, AEAD confidentiality, KDF/domain separation, and RNG freshness assumptions needed to treat different same-shape ciphertext wires as computationally indistinguishable.",
         "The wallet regression proves production encryption is not accidentally deterministic for same plaintext and same recipient under distinct RNG streams. It is not a proof of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator-based zero knowledge."
       ],
@@ -899,7 +904,7 @@
         },
         {
           "id": "wallet-metadata-and-timing-privacy-not-covered",
-          "description": "The boundary covers observer chain wire shape and same-recipient re-encryption randomness, not wallet metadata, network metadata, mempool timing, batching, or amount-pattern privacy.",
+      "description": "The boundary now exposes batch/timing leakage as a first-class projection, but it does not hide wallet metadata, network metadata, mempool timing, batching patterns, or amount-pattern privacy.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

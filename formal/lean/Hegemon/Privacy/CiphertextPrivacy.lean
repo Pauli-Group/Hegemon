@@ -60,6 +60,17 @@ theorem ciphertext_privacy_game_preserves_public_metadata_leakage
       game.summaries
       game.placement
 
+theorem ciphertext_privacy_game_preserves_batch_timing_leakage
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right) :
+    sameBatchTimingLeakage left right := by
+  exact
+    same_batch_timing_leakage_of_valid_public_inputs_and_placement
+      game.leftValid
+      game.rightValid
+      game.publicInputs
+      game.placement
+
 theorem ciphertext_privacy_game_only_open_crypto_obligation
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right) :

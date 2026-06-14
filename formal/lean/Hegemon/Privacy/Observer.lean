@@ -23,6 +23,14 @@ structure PublicMetadataView where
   actionIndex : Nat
 deriving DecidableEq, Repr
 
+structure BatchTimingView where
+  activeOutputCount : Nat
+  ciphertextCount : Nat
+  summaryCount : Nat
+  blockHeight : Nat
+  actionIndex : Nat
+deriving DecidableEq, Repr
+
 structure PrivateWitness where
   spendSecretSeeds : List Nat
   inputNoteValues : List Nat
@@ -77,6 +85,14 @@ def activeFlagCount : List Nat -> Nat
 
 def activeOutputCount (shape : PublicInputShape) : Nat :=
   activeFlagCount shape.outputFlags
+
+def batchTimingView
+    (world : ShieldedTransactionWorld) : BatchTimingView :=
+  { activeOutputCount := activeOutputCount world.publicInputs
+    ciphertextCount := world.ciphertextBytes.length
+    summaryCount := world.ciphertextSummaries.length
+    blockHeight := world.blockHeight
+    actionIndex := world.actionIndex }
 
 def activeFlagCountBefore : List Nat -> Nat -> Nat
   | [], _ => 0
@@ -206,6 +222,10 @@ def samePublicMetadataLeakage
     (left right : ShieldedTransactionWorld) : Prop :=
   publicMetadataView left = publicMetadataView right
 
+def sameBatchTimingLeakage
+    (left right : ShieldedTransactionWorld) : Prop :=
+  batchTimingView left = batchTimingView right
+
 def samePublicInputs
     (left right : ShieldedTransactionWorld) : Prop :=
   left.publicInputs = right.publicInputs
@@ -234,6 +254,13 @@ theorem public_metadata_view_ignores_private_witness
       publicMetadataView world := by
   rfl
 
+theorem batch_timing_view_ignores_private_witness
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness) :
+    batchTimingView { world with privateWitness := privateWitness } =
+      batchTimingView world := by
+  rfl
+
 theorem observer_view_ignores_prover_randomness
     (world : ShieldedTransactionWorld)
     (proverRandomnessSeed : Nat) :
@@ -246,6 +273,13 @@ theorem public_metadata_view_ignores_prover_randomness
     (proverRandomnessSeed : Nat) :
     publicMetadataView { world with proverRandomnessSeed := proverRandomnessSeed } =
       publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_prover_randomness
+    (world : ShieldedTransactionWorld)
+    (proverRandomnessSeed : Nat) :
+    batchTimingView { world with proverRandomnessSeed := proverRandomnessSeed } =
+      batchTimingView world := by
   rfl
 
 theorem observer_view_ignores_private_witness_and_randomness
@@ -268,6 +302,17 @@ theorem public_metadata_view_ignores_private_witness_and_randomness
           privateWitness := privateWitness
           proverRandomnessSeed := proverRandomnessSeed } =
       publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_private_witness_and_randomness
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat) :
+    batchTimingView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed } =
+      batchTimingView world := by
   rfl
 
 theorem same_public_metadata_leakage_of_public_summaries_and_placement
@@ -466,6 +511,43 @@ theorem same_public_inputs_active_output_count
     activeOutputCount left.publicInputs =
       activeOutputCount right.publicInputs :=
   congrArg activeOutputCount publicInputs
+
+theorem same_batch_timing_leakage_of_valid_public_inputs_and_placement
+    {left right : ShieldedTransactionWorld}
+    (leftValid : validObserverChainSurface left)
+    (rightValid : validObserverChainSurface right)
+    (publicInputs : samePublicInputs left right)
+    (placement : samePlacement left right) :
+    sameBatchTimingLeakage left right := by
+  have activeEq :
+      activeOutputCount left.publicInputs =
+        activeOutputCount right.publicInputs :=
+    same_public_inputs_active_output_count publicInputs
+  have ciphertextCountEq :
+      left.ciphertextBytes.length = right.ciphertextBytes.length := by
+    calc
+      left.ciphertextBytes.length =
+          activeOutputCount left.publicInputs :=
+        leftValid.right.right
+      _ = activeOutputCount right.publicInputs :=
+        activeEq
+      _ = right.ciphertextBytes.length :=
+        rightValid.right.right.symm
+  have summaryCountEq :
+      left.ciphertextSummaries.length =
+        right.ciphertextSummaries.length := by
+    calc
+      left.ciphertextSummaries.length =
+          activeOutputCount left.publicInputs :=
+        valid_observer_chain_surface_ciphertext_count leftValid
+      _ = activeOutputCount right.publicInputs :=
+        activeEq
+      _ = right.ciphertextSummaries.length :=
+        (valid_observer_chain_surface_ciphertext_count rightValid).symm
+  cases placement with
+  | intro heightEq actionEq =>
+      unfold sameBatchTimingLeakage batchTimingView
+      simp [activeEq, ciphertextCountEq, summaryCountEq, heightEq, actionEq]
 
 theorem same_allowed_leakage_preserves_active_output_count
     {left right : ShieldedTransactionWorld}
