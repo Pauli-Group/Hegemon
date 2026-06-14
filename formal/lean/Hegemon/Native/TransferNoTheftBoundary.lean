@@ -191,6 +191,136 @@ structure ValidatedTransferPayloadNoTheftBoundaryFacts
       publicNullifier
       witness
 
+def InputSlotAuthorizationFullBinding
+    (payload : TransferPayloadInput)
+    (input : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (index activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness) :
+    Prop :=
+  Hegemon.Transaction.SpendAuthorization.InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness
+    ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+      shape.inputFlags
+      shape.nullifiers
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+    ∧ TransferPayloadBindingFacts payload
+    ∧ payload.bindingHashMatches = true
+    ∧ payload.proofBindingHashMatchesKey = true
+    ∧ payload.feeMatches = true
+    ∧ proofWrapperPreconditions wrapper = true
+    ∧ acceptedProofWrapperSurface wrapper
+    ∧ Hegemon.Transaction.PublicInputBinding.validBinding
+      publicFields
+      serializedFields = true
+    ∧ Hegemon.Transaction.StatementHash.statementPreimage
+      statementFields = some statementBytes
+    ∧ Hegemon.Transaction.ProofStatementBinding.bindingMessage
+      bindingFields = some bindingBytes
+    ∧ statementFields.merkleRootSeed = merkleRoot
+    ∧ bindingFields.anchorSeed = merkleRoot
+    ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+      bound.inputFlags
+      statementFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+    ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+      bound.inputFlags
+      bindingFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+    ∧ TxLeafActionBindingFacts input
+    ∧ input.nullifiersMatch = true
+    ∧ input.inputCountMatches = true
+    ∧ input.feeMatches = true
+    ∧ input.receiptStatementHashMatches = true
+    ∧ input.publicInputsDigestMatches = true
+    ∧ input.proofDigestMatches = true
+    ∧ input.proofBackendMatches = true
+    ∧ input.ciphertextPayloadHashesMatch = true
+
+structure ValidatedTransferPayloadInputSlotAuthorizationBoundaryFacts
+    (payload : TransferPayloadInput)
+    (transferKey : Nat)
+    (input : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (index activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness) :
+    Prop where
+  payloadBlockValidationAccepted :
+    evaluateBlockActionValidation
+        (singletonTransferPayloadValidation payload transferKey) =
+      Except.ok
+        { validatedActionCount := 1,
+          importedBridgeReplayCount := 0,
+          lastTransferKey := some transferKey }
+  payloadRejectionPrecedesTransferOrder :
+    evaluateBlockActionValidation transferPayloadPrecedesOrderValidation =
+      Except.error BlockActionReject.transferPayloadInvalid
+  transferOrderRejectionPrecedesState :
+    evaluateBlockActionValidation transferOrderPrecedesStateValidation =
+      Except.error BlockActionReject.transferOrderInvalid
+  inputSlotFullBinding :
+    InputSlotAuthorizationFullBinding
+      payload
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+
 theorem validated_transfer_payload_active_input_no_theft_full_binding
     {payload : TransferPayloadInput}
     {transferKey : Nat}
@@ -308,6 +438,122 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding
         transfer_order_precedes_state
       noTheftFullBinding :=
         ⟨noTheft.left, slot, noTheft.right⟩ }
+
+theorem validated_transfer_payload_input_slot_authorization_full_binding
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (payloadAccepted : transferPayloadAccepts payload = true)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    ValidatedTransferPayloadInputSlotAuthorizationBoundaryFacts
+      payload
+      transferKey
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness := by
+  have nativeFacts :=
+    proof_keyed_transfer_payload_canonical_artifact_boundary_facts
+      (payload := payload)
+      (input := input)
+      (wrapper := wrapper)
+      (shape := shape)
+      (publicFields := publicFields)
+      (serializedFields := serializedFields)
+      (bound := bound)
+      (statementFields := statementFields)
+      (statementBytes := statementBytes)
+      (bindingFields := bindingFields)
+      (bindingBytes := bindingBytes)
+      (merkleRoot := merkleRoot)
+      (spendWitnesses := spendWitnesses)
+      (balanceWitness := balanceWitness)
+      (slots := slots)
+      (assetId := assetId)
+      payloadAccepted
+      bindingAccepted
+      surface
+      sound
+  have inputSlot :=
+    proof_keyed_transfer_payload_input_slot_authorization_full_binding
+      nativeFacts
+      slot
+  exact
+    { payloadBlockValidationAccepted :=
+        singleton_transfer_payload_validation_accepts payloadAccepted
+      payloadRejectionPrecedesTransferOrder :=
+        transfer_payload_precedes_order
+      transferOrderRejectionPrecedesState :=
+        transfer_order_precedes_state
+      inputSlotFullBinding :=
+        ⟨inputSlot.left, slot, inputSlot.right⟩ }
 
 end TransferNoTheftBoundary
 end Native
