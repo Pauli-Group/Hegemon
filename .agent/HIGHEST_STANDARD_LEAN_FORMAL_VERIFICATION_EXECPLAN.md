@@ -737,6 +737,8 @@ The latest full formal-core pass after the batch/timing privacy-boundary slice r
     falsification_cases=413
     implementation_bindings=200
 
+The `hegemon-dev` deployment of commit `80d729a8` fast-forwarded `/home/ubuntu/hegemon-current-4c4ea6d3` without restarting the service, reran targeted Lean for `Hegemon.Transaction.ProofSystemBoundary`, `Hegemon.Native.TxLeafCanonicalSurface`, `Hegemon.Native.RawIngressSidecarReplayRecoverability`, and `Hegemon.Privacy.NativeObserverSurface`, validated JSON, confirmed RPC smoke, ran `wallet-send`, confirmed mining active with NTP synchronized, and used the isolated single-node miner to prove block production at height 12308. The live service stayed active at height 11214 with one mining thread around 27.18 kH/s; it did not find a new block during the 20-second sample.
+
 The `hegemon-dev` deployment of commit `f2e3cb58` fast-forwarded the VPS to the batch/timing privacy-boundary slice without restarting the service, reran targeted Lean and JSON validation, confirmed RPC smoke and wallet-send, confirmed mining active with NTP synchronized, and used the isolated single-node miner to prove block production because the live 20-second sample did not find a block at current difficulty.
 
 The latest full formal-core pass after the proof-keyed total input-slot authorization slice reported:
