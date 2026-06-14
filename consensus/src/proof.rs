@@ -2443,13 +2443,19 @@ impl ProofVerifier for ParallelProofVerifier {
             .as_deref()
             .map(tx_statement_bindings_from_claims)
             .transpose()?;
+        let statement_bindings = resolved_statement_bindings
+            .as_deref()
+            .ok_or(ProofError::MissingTransactionValidityClaims)?;
+        validate_statement_anchor_history(
+            parent_commitment_tree,
+            block.transactions.len(),
+            statement_bindings,
+        )?;
         let resolved_receipts = resolved_claims
             .as_deref()
             .map(tx_validity_receipts_from_claims);
-        let derived_statement_commitment = resolved_statement_bindings
-            .as_deref()
-            .map(commitment_from_statement_bindings)
-            .transpose()?;
+        let derived_statement_commitment =
+            Some(commitment_from_statement_bindings(statement_bindings)?);
         let expected_commitment =
             match (block.tx_statements_commitment, derived_statement_commitment) {
                 (Some(expected), Some(derived)) => {
@@ -2684,6 +2690,31 @@ fn apply_commitments(
         }
     }
     Ok(tree)
+}
+
+fn validate_statement_anchor_history(
+    parent_commitment_tree: &CommitmentTreeState,
+    tx_count: usize,
+    bindings: &[TxStatementBinding],
+) -> Result<(), ProofError> {
+    if bindings.len() != tx_count {
+        return Err(ProofError::CommitmentProofInputsMismatch(format!(
+            "statement binding count mismatch (expected {}, got {})",
+            tx_count,
+            bindings.len()
+        )));
+    }
+
+    for (index, binding) in bindings.iter().enumerate() {
+        if !parent_commitment_tree.contains_root(&binding.anchor) {
+            return Err(ProofError::InvalidAnchor {
+                index,
+                anchor: binding.anchor,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn commitment_from_statement_bindings(
@@ -3063,6 +3094,30 @@ mod tests {
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_result_root_source: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStatementAnchorAdmissionVectorFile {
+        schema_version: u32,
+        statement_anchor_admission_cases: Vec<LeanStatementAnchorAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStatementAnchorAdmissionCase {
+        name: String,
+        tree_depth: usize,
+        parent_leaf_seeds: Vec<u64>,
+        tx_commitment_seed_groups: Vec<Vec<u64>>,
+        tx_count: usize,
+        binding_count: usize,
+        anchor_sources: Vec<String>,
+        anchor_source_indexes: Vec<usize>,
+        anchor_seed_overrides: Vec<u64>,
+        anchor_known_checks: Vec<bool>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -3510,6 +3565,31 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_statement_anchor_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean statement-anchor admission vectors");
+        let vectors: LeanStatementAnchorAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean statement-anchor admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.statement_anchor_admission_cases.is_empty(),
+            "Lean statement-anchor admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.statement_anchor_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_statement_anchor_admission_case(case);
+        }
+    }
+
+    #[test]
     fn lean_generated_proven_batch_binding_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS") else {
             eprintln!(
@@ -3685,6 +3765,169 @@ mod tests {
             ProofError::CommitmentTree(_) => "apply_failed",
             ProofError::EndingRootMismatch { .. } => "ending_root_mismatch",
             other => panic!("unexpected tree-transition error for Lean vector: {other:?}"),
+        }
+    }
+
+    fn verify_lean_statement_anchor_admission_case(case: &LeanStatementAnchorAdmissionCase) {
+        let parent_tree = statement_anchor_parent_tree(case);
+        let transactions = statement_anchor_transactions_from_case(case);
+        assert_eq!(
+            transactions.len(),
+            case.tx_count,
+            "{} tx_count no longer matches generated transaction set",
+            case.name
+        );
+        assert_eq!(
+            case.anchor_known_checks.len(),
+            case.binding_count,
+            "{} anchor_known_checks must model every binding",
+            case.name
+        );
+        assert_eq!(
+            case.anchor_sources.len(),
+            case.binding_count,
+            "{} anchor_sources must model every binding",
+            case.name
+        );
+        assert_eq!(
+            case.anchor_source_indexes.len(),
+            case.binding_count,
+            "{} anchor_source_indexes must model every binding",
+            case.name
+        );
+        assert_eq!(
+            case.anchor_seed_overrides.len(),
+            case.binding_count,
+            "{} anchor_seed_overrides must model every binding",
+            case.name
+        );
+
+        let bindings = statement_anchor_bindings_from_case(case, &parent_tree, &transactions);
+        let result = validate_statement_anchor_history(&parent_tree, case.tx_count, &bindings);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} statement-anchor admission validity drifted from Lean spec: {result:?}",
+            case.name
+        );
+        let actual_rejection = result
+            .as_ref()
+            .err()
+            .map(statement_anchor_admission_error_label)
+            .map(str::to_string);
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_rejection.as_deref(),
+            "{} statement-anchor admission rejection label drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn statement_anchor_parent_tree(
+        case: &LeanStatementAnchorAdmissionCase,
+    ) -> CommitmentTreeState {
+        let mut tree = CommitmentTreeState::new_empty(
+            case.tree_depth,
+            crate::commitment_tree::DEFAULT_ROOT_HISTORY_LIMIT,
+        )
+        .expect("Lean statement-anchor depth is valid");
+        for seed in &case.parent_leaf_seeds {
+            tree.append(patterned_bytes48(*seed))
+                .expect("Lean parent leaf seed fits tree");
+        }
+        tree
+    }
+
+    fn statement_anchor_transactions_from_case(
+        case: &LeanStatementAnchorAdmissionCase,
+    ) -> Vec<crate::types::Transaction> {
+        case.tx_commitment_seed_groups
+            .iter()
+            .map(|group| {
+                let commitments = group
+                    .iter()
+                    .map(|seed| {
+                        if *seed == 0 {
+                            [0u8; 48]
+                        } else {
+                            patterned_bytes48(*seed)
+                        }
+                    })
+                    .collect();
+                tx_with_commitments(commitments)
+            })
+            .collect()
+    }
+
+    fn statement_anchor_bindings_from_case(
+        case: &LeanStatementAnchorAdmissionCase,
+        parent_tree: &CommitmentTreeState,
+        transactions: &[crate::types::Transaction],
+    ) -> Vec<TxStatementBinding> {
+        case.anchor_sources
+            .iter()
+            .enumerate()
+            .map(|(binding_index, source)| {
+                let anchor = statement_anchor_from_source(
+                    source,
+                    case.anchor_source_indexes[binding_index],
+                    case.anchor_seed_overrides[binding_index],
+                    parent_tree,
+                    transactions,
+                );
+                statement_anchor_binding(anchor)
+            })
+            .collect()
+    }
+
+    fn statement_anchor_from_source(
+        source: &str,
+        source_index: usize,
+        seed: u64,
+        parent_tree: &CommitmentTreeState,
+        transactions: &[crate::types::Transaction],
+    ) -> [u8; 48] {
+        match source {
+            "parent_tree_root" => parent_tree.root(),
+            "parent_history_index" => *parent_tree
+                .root_history()
+                .nth(source_index)
+                .expect("Lean vector requested existing parent history index"),
+            "after_tx_index" => {
+                let mut tree = parent_tree.clone();
+                for tx in transactions.iter().take(source_index + 1) {
+                    for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
+                        tree.append(commitment)
+                            .expect("Lean same-block transaction commitment fits tree");
+                    }
+                }
+                tree.root()
+            }
+            "patterned_seed" => patterned_bytes48(seed),
+            other => panic!("unknown Lean statement-anchor source {other}"),
+        }
+    }
+
+    fn statement_anchor_admission_error_label(error: &ProofError) -> &'static str {
+        match error {
+            ProofError::CommitmentProofInputsMismatch(message)
+                if message.contains("statement binding count mismatch") =>
+            {
+                "binding_count_mismatch"
+            }
+            ProofError::InvalidAnchor { .. } => "unknown_anchor",
+            other => {
+                panic!("unexpected statement-anchor admission error for Lean vector: {other:?}")
+            }
+        }
+    }
+
+    fn statement_anchor_binding(anchor: [u8; 48]) -> TxStatementBinding {
+        TxStatementBinding {
+            statement_hash: [11u8; 48],
+            anchor,
+            fee: 0,
+            circuit_version: 1,
         }
     }
 
@@ -4370,6 +4613,65 @@ mod tests {
         )
         .expect("valid transition");
         assert_eq!(updated.root(), expected.root());
+    }
+
+    #[test]
+    fn statement_anchor_history_accepts_parent_root_anchor() {
+        let parent_tree = CommitmentTreeState::default();
+        let bindings = vec![statement_anchor_binding(parent_tree.root())];
+        validate_statement_anchor_history(&parent_tree, 1, &bindings)
+            .expect("parent root is an admitted transaction anchor");
+    }
+
+    #[test]
+    fn statement_anchor_history_accepts_retained_parent_history_anchor() {
+        let mut parent_tree = CommitmentTreeState::default();
+        let historical_root = parent_tree.root();
+        parent_tree
+            .append([3u8; 48])
+            .expect("test commitment fits tree");
+        let bindings = vec![statement_anchor_binding(historical_root)];
+        validate_statement_anchor_history(&parent_tree, 1, &bindings)
+            .expect("retained parent root history is admitted");
+    }
+
+    #[test]
+    fn statement_anchor_history_rejects_unknown_anchor() {
+        let parent_tree = CommitmentTreeState::default();
+        let bindings = vec![statement_anchor_binding([7u8; 48])];
+        let err = validate_statement_anchor_history(&parent_tree, 1, &bindings)
+            .expect_err("unknown anchor must fail");
+        assert!(matches!(err, ProofError::InvalidAnchor { index: 0, .. }));
+    }
+
+    #[test]
+    fn statement_anchor_history_rejects_anchor_known_only_after_same_block_append() {
+        let parent_tree = CommitmentTreeState::default();
+        let txs = [
+            tx_with_commitments(vec![[1u8; 48]]),
+            tx_with_commitments(vec![[2u8; 48]]),
+        ];
+        let mut after_first_tx = parent_tree.clone();
+        after_first_tx
+            .append([1u8; 48])
+            .expect("test commitment fits tree");
+        let bindings = vec![
+            statement_anchor_binding(parent_tree.root()),
+            statement_anchor_binding(after_first_tx.root()),
+        ];
+
+        let err = validate_statement_anchor_history(&parent_tree, txs.len(), &bindings)
+            .expect_err("same-block anchor must not be admitted");
+        assert!(matches!(err, ProofError::InvalidAnchor { index: 1, .. }));
+    }
+
+    #[test]
+    fn statement_anchor_history_rejects_binding_count_mismatch_before_anchor_lookup() {
+        let parent_tree = CommitmentTreeState::default();
+        let bindings = vec![statement_anchor_binding([7u8; 48])];
+        let err = validate_statement_anchor_history(&parent_tree, 2, &bindings)
+            .expect_err("binding count mismatch must fail first");
+        assert!(matches!(err, ProofError::CommitmentProofInputsMismatch(_)));
     }
 
     #[test]

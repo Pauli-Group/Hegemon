@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.09,
+  "overall_completion_percent": 74.25,
   "last_full_formal_core": {
-    "commit": "02297e00c7dcabad824d9ce5fae840f7b06215e8",
-    "status": "passed locally 2026-06-14T01:28Z and on hegemon-dev 2026-06-14T01:47Z",
-    "claims": 99,
-    "named_lean_theorems": 1364,
-    "production_eligible_claims": 89,
-    "falsification_cases": 409,
-    "implementation_bindings": 198
+    "commit": "PENDING_LOCAL_COMMIT",
+    "status": "passed locally 2026-06-14T02:20Z",
+    "claims": 100,
+    "named_lean_theorems": 1373,
+    "production_eligible_claims": 90,
+    "falsification_cases": 412,
+    "implementation_bindings": 199
   },
   "last_hegemon_dev_validation": {
     "date": "2026-06-14T01:49Z",
@@ -45,34 +45,35 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a post-verifier inbound bridge receipt-output admission slice: decoded receipt outputs now pass through a Lean-conformance-checked helper that gates source-chain, light-client rules-hash, message nonce, message hash, tip/checkpoint arithmetic, confirmation overstatement, minimum confirmations, and rejection precedence before an inbound receipt can be accepted.",
+    "summary": "Added a verifier-side statement-anchor admission slice: every nonempty consensus block must carry one transaction statement binding per transaction, and every binding anchor must be known in the parent commitment-tree root-history window before recursive semantic derivation, artifact verification, or final tree transition can run.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean"
+      "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean",
+      "formal/lean/Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.InboundBridgeReceiptAdmission.accepts_iff_inbound_bridge_receipt_preconditions",
-      "Hegemon.Native.InboundBridgeReceiptAdmission.valid_accepts",
-      "Hegemon.Native.InboundBridgeReceiptAdmission.tip_before_message_rejects",
-      "Hegemon.Native.InboundBridgeReceiptAdmission.confirmations_overstated_rejects",
-      "Hegemon.Native.InboundBridgeReceiptAdmission.underconfirmed_rejects"
+      "Hegemon.Consensus.StatementAnchorAdmission.accepts_iff_statement_anchor_preconditions",
+      "Hegemon.Consensus.StatementAnchorAdmission.valid_accepts",
+      "Hegemon.Consensus.StatementAnchorAdmission.binding_count_mismatch_rejects",
+      "Hegemon.Consensus.StatementAnchorAdmission.unknown_anchor_rejects",
+      "Hegemon.Consensus.StatementAnchorAdmission.same_block_anchor_rejects"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.InboundBridgeReceiptAdmission Hegemon.Native.GenerateInboundBridgeReceiptAdmissionVectors && lake exe gen_inbound_bridge_receipt_admission_vectors passed",
+      "lean_formal": "lake build Hegemon.Consensus.StatementAnchorAdmission gen_statement_anchor_admission_vectors && lake exe gen_statement_anchor_admission_vectors passed",
       "targeted_rust": [
-        "HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS=/tmp/hegemon_inbound_bridge_receipt_vectors.json cargo test -p hegemon-node lean_generated_inbound_bridge_receipt_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        "HEGEMON_LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS=/tmp/hegemon_statement_anchor_admission_vectors.json cargo test -p consensus lean_generated_statement_anchor_admission_vectors_match_production -- --nocapture",
+        "cargo test -p consensus statement_anchor_history -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T01:28Z",
-      "claims": 99,
-      "named_lean_theorems": 1364,
-      "production_eligible_claims": 89,
-      "falsification_cases": 409,
-      "implementation_bindings": 198
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T02:20Z",
+      "claims": 100,
+      "named_lean_theorems": 1373,
+      "production_eligible_claims": 90,
+      "falsification_cases": 412,
+      "implementation_bindings": 199
     },
     "known_limitations": [
-      "The slice proves and production-binds deterministic decoded receipt-output admission only; it does not prove receipt cryptographic soundness or future PQ verifier soundness.",
-      "The release RISC Zero receipt verifier remains disabled/fail-closed.",
-      "The production change is a refactor of existing checks into a helper and generated-vector gate, so runtime cost is negligible."
+      "The slice proves deterministic statement-anchor admission against the bounded parent root-history window; it does not prove Merkle hash security, root-history durability, or full commitment-tree implementation equivalence.",
+      "Transaction proof soundness, native tx-leaf proof soundness, nullifier uniqueness, and note commitment correctness remain separate theorem families.",
+      "The production cost is one parent-history membership check per transaction before existing proof verification."
     ]
   },
   "last_production_binding_slice": {
@@ -210,7 +211,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 70,
+      "completion_percent": 72,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -221,7 +222,9 @@
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay leaf-cursor equality theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger replay canonical commitment-plan theorem",
         "formal/lean/Hegemon/Native/AcceptedChain.lean accepted ledger/tree replay root-cursor integrity theorem",
-        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions"
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions",
+        "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean proves verifier-side anchors must be in the parent commitment-tree root history before same-block commitments are applied",
+        "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition"
       ],
       "missing_work": [
         "Lift the abstract root-cursor theorem into a full Merkle-root/tree-content invariant with membership.",
@@ -475,10 +478,11 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
+        "consensus statement-anchor admission gate rejects binding-count mismatch, unknown parent-history anchors, and same-block-created anchors before expensive proof paths",
         "implementation order and dominance constraints in blueprint"
       ],
       "missing_work": [

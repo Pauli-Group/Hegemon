@@ -1937,6 +1937,46 @@
       "residual_risks": []
     },
     {
+      "id": "consensus.statement-anchor-admission",
+      "component": "consensus transaction statement-anchor admission",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean statement-anchor admission kernel proves the executable verifier-side predicate requiring one transaction statement binding per transaction and requiring every binding anchor to be known in the parent commitment-tree root history before same-block commitments are applied; generated Lean vectors are checked against the production consensus helper called before recursive semantic derivation, artifact verification, and final tree transition.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Consensus.StatementAnchorAdmission.accepted_implies_all_anchors_known",
+        "Hegemon.Consensus.StatementAnchorAdmission.accepted_implies_binding_count_matches",
+        "Hegemon.Consensus.StatementAnchorAdmission.accepts_iff_statement_anchor_preconditions",
+        "Hegemon.Consensus.StatementAnchorAdmission.binding_count_mismatch_precedes_unknown_anchor",
+        "Hegemon.Consensus.StatementAnchorAdmission.binding_count_mismatch_rejects",
+        "Hegemon.Consensus.StatementAnchorAdmission.empty_statement_anchor_admission_accepts",
+        "Hegemon.Consensus.StatementAnchorAdmission.same_block_anchor_rejects",
+        "Hegemon.Consensus.StatementAnchorAdmission.unknown_anchor_rejects",
+        "Hegemon.Consensus.StatementAnchorAdmission.valid_accepts"
+      ],
+      "assumptions": [
+        "The Lean model represents parent-history anchor membership as one Boolean check per statement binding and proves only the executable admission decision table and rejection precedence.",
+        "Generated Lean conformance vectors cover empty admission, latest parent-root acceptance, retained parent-history acceptance, binding-count mismatch, unknown anchor rejection, binding-count-before-unknown precedence, and rejection of an anchor produced only after an earlier same-block commitment append.",
+        "The theorem covers verifier-side statement-anchor admission only. It does not prove Merkle hash security or implementation equivalence, root-history durability, transaction proof cryptographic soundness, native tx-leaf proof soundness, nullifier uniqueness, note commitment correctness, or complete block proof validity."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean",
+        "consensus/src/proof.rs",
+        "consensus/src/commitment_tree.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_statement_anchor_admission_vectors_match_production -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "consensus.block-tree-transition",
       "component": "consensus commitment-tree state transition",
       "claim_class": "lean_theorem",

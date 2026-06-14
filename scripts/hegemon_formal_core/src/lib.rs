@@ -380,6 +380,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean",
         "formal/lean/Hegemon/Consensus/RecursiveSemanticInputs.lean",
         "formal/lean/Hegemon/Consensus/GenerateRecursiveSemanticInputVectors.lean",
+        "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean",
+        "formal/lean/Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",

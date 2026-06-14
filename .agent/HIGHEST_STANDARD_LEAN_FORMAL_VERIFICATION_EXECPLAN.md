@@ -124,6 +124,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-14 00:47Z) Added materialized sidecar artifact/rebuild production-binding slice: native block artifact verification now builds tx-leaf transactions from canonical materialized sidecar ciphertext bytes, and canonical-index rebuild decodes all canonical block actions then materializes once before action-stream/wire-replay row derivation. Regressions reject sidecar size/hash drift in block artifact verification and hash drift in canonical-index rebuild. `bash scripts/check_formal_core.sh` passed with 98 claims, 1348 named Lean theorem declarations, 88 production-eligible claims, 406 falsification cases, 196 implementation bindings, 154 result obligations, 126 dominance constraints / 331 dominance edges, and 137 order constraints / 360 order edges. Current tracked completion is 73.97%.
 - [x] (2026-06-14 01:28Z) Added the inbound bridge receipt-output admission theorem slice and production binding. `bash scripts/check_formal_core.sh` passed locally with 99 claims, 1364 named Lean theorem declarations, 89 production-eligible claims, 409 falsification cases, and 198 implementation bindings. Current tracked completion is 74.09%.
 - [x] (2026-06-14 01:49Z) Deployed commit `02297e00` to `hegemon-dev` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3`, rebuilding `target/release/hegemon-node` with `make node`, and restarting `hegemon-node.service`. Remote `bash scripts/check_formal_core.sh` passed, `bash scripts/test-node.sh wallet-send` passed, RPC reported `isSyncing=false`, mining reported `is_mining=true` with one thread, height advanced by 10 blocks over the liveness sample, and `timedatectl` reported NTP active/synchronized.
+- [x] (2026-06-14 02:20Z) Added the consensus statement-anchor admission theorem slice and production binding. `bash scripts/check_formal_core.sh` passed locally with 100 claims, 1373 named Lean theorem declarations, 90 production-eligible claims, 412 falsification cases, and 199 implementation bindings. Current tracked completion is 74.25%.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -677,6 +678,16 @@ The latest full formal-core pass after the inbound bridge receipt-output admissi
     implementation_bindings=198
 
 The `hegemon-dev` deployment of commit `02297e00` reran the same formal-core gate on the VPS, rebuilt the release node, restarted `hegemon-node.service`, confirmed RPC health, confirmed mining liveness, ran the wallet-send compatibility test, and confirmed NTP was active/synchronized.
+
+The consensus statement-anchor admission slice adds `formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean` and its generated vector emitter. The production `ParallelProofVerifier::verify_block_with_backend` path now routes resolved transaction statement bindings through `validate_statement_anchor_history` before recursive semantic derivation, receipt/recursive artifact verification, or final tree transition. This closes the same-block anchor class: a later transaction cannot anchor to a root created by an earlier transaction in the same block. Current tracked completion is 74.25%.
+
+The latest full formal-core pass after the consensus statement-anchor admission slice reported:
+
+    claims=100
+    named_lean_theorems=1373
+    production_eligible_claims=90
+    falsification_cases=412
+    implementation_bindings=199
 
 ## Interfaces and Dependencies
 

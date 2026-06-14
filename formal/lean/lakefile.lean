@@ -73,6 +73,9 @@ lean_exe gen_supply_vectors where
 lean_exe gen_supply_invariant_vectors where
   root := `Hegemon.Consensus.GenerateSupplyInvariantVectors
 
+lean_exe gen_statement_anchor_admission_vectors where
+  root := `Hegemon.Consensus.GenerateStatementAnchorAdmissionVectors
+
 lean_exe gen_tree_transition_vectors where
   root := `Hegemon.Consensus.GenerateTreeTransitionVectors
 
