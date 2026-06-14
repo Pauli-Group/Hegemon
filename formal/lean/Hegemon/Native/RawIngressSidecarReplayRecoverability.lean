@@ -52,6 +52,112 @@ structure AcceptedRawIngressSidecarReplay
       wireOutput
       semanticFields
 
+structure RawIngressLedgerTreePublicationFacts
+    (surface : RawIngressSidecarReplaySurface)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (initial final : AcceptedChain.NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) : Prop where
+  actionRequestOk :
+    actionRequestProjectionPreconditions surface.actionRequest = true
+  pendingReloadOk :
+    pendingActionReloadPreconditions surface.pendingReload = true
+  stagedCiphertextReloadOk :
+    stagedCiphertextReloadPreconditions
+      surface.stagedCiphertextReload = true
+  stagedProofReloadOk :
+    stagedProofReloadPreconditions surface.stagedProofReload = true
+  sidecarCiphertextsAvailable :
+    surface.transferState.sidecarCiphertextsAvailable = true
+  sidecarCiphertextSizesPresent :
+    surface.transferState.sidecarCiphertextSizesPresent = true
+  sidecarCiphertextSizesMatch :
+    surface.transferState.sidecarCiphertextSizesMatch = true
+  candidateDaRootMatches :
+    surface.daSidecarReplay.candidateBinding.daRootMatches = true
+  candidateTxStatementsCommitmentMatches :
+    surface.daSidecarReplay.candidateBinding.txStatementsCommitmentMatches =
+      true
+  candidateRecursiveStateRootMatches :
+    surface.daSidecarReplay.candidateBinding.recursiveStateRootMatches =
+      true
+  provenBatchDaRootMatches :
+    surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+  provenBatchHasChunks :
+    surface.daSidecarReplay.provenBatchBinding.daChunkCount ≠ 0
+  semanticDaRootBound :
+    semanticFields.daRoot =
+      surface.daSidecarReplay.recursiveSemanticSource.daRoot
+  candidateTxCountNonzero :
+    surface.daSidecarReplay.candidateArtifact.txCount ≠ 0
+  candidateDaChunkCountNonzero :
+    surface.daSidecarReplay.candidateArtifact.daChunkCount ≠ 0
+  actionStreamOk :
+    ActionStreamEffect.actionStreamPreconditions
+      surface.daSidecarReplay.actionStream = true
+  wireReplayProjectionOk :
+    actionWireReplayProjectionPreconditions
+      surface.daSidecarReplay.wireReplayProjection = true
+  wireReplayPlannedCount :
+    surface.daSidecarReplay.wireReplayProjection.actionCount =
+      surface.daSidecarReplay.wireReplayProjection.plannedCount
+  wireReplayActionCount :
+    surface.daSidecarReplay.wireReplayProjection.actionCount =
+      surface.daSidecarReplay.wireReplayProjection.actions.length
+  ciphertextRequestWithinBound :
+    ¬ surface.daSidecarReplay.ciphertextRequest.itemCount >
+      surface.daSidecarReplay.ciphertextRequest.maxItems
+  ciphertextCapacityOk :
+    SidecarUploadAdmission.capacityPreconditions
+      surface.daSidecarReplay.ciphertextCapacity = true
+  proofRequestWithinBound :
+    ¬ surface.daSidecarReplay.proofRequest.itemCount >
+      surface.daSidecarReplay.proofRequest.maxItems
+  proofCapacityOk :
+    SidecarUploadAdmission.capacityPreconditions
+      surface.daSidecarReplay.proofCapacity = true
+  proofMetadataOk :
+    SidecarUploadAdmission.proofMetadataPreconditions
+      surface.daSidecarReplay.proofMetadata = true
+  proofDecodedOk :
+    SidecarUploadAdmission.proofDecodedPreconditions
+      surface.daSidecarReplay.proofDecoded = true
+  acceptedLedgerTreeReplay :
+    AcceptedChain.validateNativeLedgerTreeReplayChain
+      initial
+      (rawTreeReplayInputs blocks) =
+      some final
+  commitmentRootPublication :
+    AcceptedChain.expectedCommitmentRootAfter
+      initial.commitmentRoot
+      (rawTreeReplayInputs blocks) =
+      some final.commitmentRoot
+  acceptedLedgerReplay :
+    AcceptedChain.validateNativeLedgerReplayChain
+      initial.ledger
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger
+  replayedSupply :
+    AcceptedChain.expectedNativeSupplyAfter
+      initial.ledger.supply
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.supply
+  replayedLeafCursor :
+    AcceptedChain.expectedNativeLeafCountAfter
+      initial.ledger.leafCount
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.leafCount
+  canonicalCommitmentPlan :
+    AcceptedChain.nativeLedgerReplayCommitmentPlanPreconditions
+      initial.ledger
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) = true
+  rawTreeCarriedState :
+    rawProjectedTreeCarriedStatePreconditions initial blocks = true
+  finalSpentNullifiersUnique :
+    final.ledger.spentNullifiers.Nodup
+  finalBridgeReplaysUnique :
+    final.ledger.consumedBridgeReplays.Nodup
+
 theorem accepted_action_request_projection_implies_preconditions
     {input : ActionRequestProjectionInput}
     (accepted : evaluateActionRequestProjectionRejection input = none) :
@@ -514,6 +620,114 @@ theorem accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
       carriedState,
       spentNodup,
       bridgeNodup⟩
+
+theorem raw_ingress_publication_equivalent_to_raw_ledger_tree_replay
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {initial final : AcceptedChain.NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (facts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedReplay :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    RawIngressLedgerTreePublicationFacts
+      surface
+      semanticFields
+      initial
+      final
+      blocks := by
+  have publicationFacts :=
+    accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
+      facts
+      sidecarRoute
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedReplay
+  rcases publicationFacts with
+    ⟨actionRequestOk,
+      pendingReloadOk,
+      stagedCiphertextReloadOk,
+      stagedProofReloadOk,
+      sidecarCiphertextsAvailable,
+      sidecarCiphertextSizesPresent,
+      sidecarCiphertextSizesMatch,
+      candidateDaRootMatches,
+      candidateTxStatementsCommitmentMatches,
+      candidateRecursiveStateRootMatches,
+      provenBatchDaRootMatches,
+      provenBatchHasChunks,
+      semanticDaRootBound,
+      candidateTxCountNonzero,
+      candidateDaChunkCountNonzero,
+      actionStreamOk,
+      wireReplayProjectionOk,
+      wireReplayPlannedCount,
+      wireReplayActionCount,
+      ciphertextRequestWithinBound,
+      ciphertextCapacityOk,
+      proofRequestWithinBound,
+      proofCapacityOk,
+      proofMetadataOk,
+      proofDecodedOk,
+      acceptedLedgerTreeReplay,
+      commitmentRootPublication,
+      acceptedLedgerReplay,
+      replayedSupply,
+      replayedLeafCursor,
+      canonicalCommitmentPlan,
+      rawTreeCarriedState,
+      finalSpentNullifiersUnique,
+      finalBridgeReplaysUnique⟩
+  exact
+    { actionRequestOk := actionRequestOk
+      pendingReloadOk := pendingReloadOk
+      stagedCiphertextReloadOk := stagedCiphertextReloadOk
+      stagedProofReloadOk := stagedProofReloadOk
+      sidecarCiphertextsAvailable := sidecarCiphertextsAvailable
+      sidecarCiphertextSizesPresent := sidecarCiphertextSizesPresent
+      sidecarCiphertextSizesMatch := sidecarCiphertextSizesMatch
+      candidateDaRootMatches := candidateDaRootMatches
+      candidateTxStatementsCommitmentMatches :=
+        candidateTxStatementsCommitmentMatches
+      candidateRecursiveStateRootMatches :=
+        candidateRecursiveStateRootMatches
+      provenBatchDaRootMatches := provenBatchDaRootMatches
+      provenBatchHasChunks := provenBatchHasChunks
+      semanticDaRootBound := semanticDaRootBound
+      candidateTxCountNonzero := candidateTxCountNonzero
+      candidateDaChunkCountNonzero := candidateDaChunkCountNonzero
+      actionStreamOk := actionStreamOk
+      wireReplayProjectionOk := wireReplayProjectionOk
+      wireReplayPlannedCount := wireReplayPlannedCount
+      wireReplayActionCount := wireReplayActionCount
+      ciphertextRequestWithinBound := ciphertextRequestWithinBound
+      ciphertextCapacityOk := ciphertextCapacityOk
+      proofRequestWithinBound := proofRequestWithinBound
+      proofCapacityOk := proofCapacityOk
+      proofMetadataOk := proofMetadataOk
+      proofDecodedOk := proofDecodedOk
+      acceptedLedgerTreeReplay := acceptedLedgerTreeReplay
+      commitmentRootPublication := commitmentRootPublication
+      acceptedLedgerReplay := acceptedLedgerReplay
+      replayedSupply := replayedSupply
+      replayedLeafCursor := replayedLeafCursor
+      canonicalCommitmentPlan := canonicalCommitmentPlan
+      rawTreeCarriedState := rawTreeCarriedState
+      finalSpentNullifiersUnique := finalSpentNullifiersUnique
+      finalBridgeReplaysUnique := finalBridgeReplaysUnique }
 
 end RawIngressSidecarReplayRecoverability
 end Native

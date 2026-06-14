@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.26,
+  "overall_completion_percent": 76.3,
   "last_full_formal_core": {
-    "commit": "worktree:ciphertext-privacy-boundary-facts",
-    "status": "passed locally 2026-06-14T22:04:06Z",
+    "commit": "worktree:raw-ingress-publication-facts",
+    "status": "passed locally 2026-06-14T22:32:20Z",
     "claims": 100,
-    "named_lean_theorems": 1428,
+    "named_lean_theorems": 1429,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -47,27 +47,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened the ciphertext privacy-game boundary with a packaged theorem that composes same-shape public ciphertext facts, public metadata equality, explicit batch/timing equality, raw-wire indistinguishability, and first-class proof-system zero-knowledge, wallet metadata, timing/batching, and network metadata assumptions. The theorem also proves observer, public metadata, and batch/timing projections ignore private witnesses and prover randomness once public wire data is fixed.",
+    "summary": "Strengthened raw-ingress sidecar replay recoverability with a first-class `RawIngressLedgerTreePublicationFacts` package and `raw_ingress_publication_equivalent_to_raw_ledger_tree_replay`, turning the accepted raw-ingress sidecar ledger/tree replay conjunction into named production-reviewable fields for sidecar availability, size agreement, DA candidate/proven-batch/semantic binding, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
+      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_boundary_facts"
+      "Hegemon.Native.RawIngressSidecarReplayRecoverability.raw_ingress_publication_equivalent_to_raw_ledger_tree_replay"
     ],
     "validation": {
-      "lean_formal": "targeted lake build Hegemon.Privacy.CiphertextPrivacy passed locally 2026-06-14T21:42:41Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:04:06Z",
+      "lean_formal": "targeted lake env lean Hegemon/Native/RawIngressSidecarReplayRecoverability.lean passed locally 2026-06-14T22:15Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:32:20Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:04:06Z with 100 claims, 1428 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:32:20Z with 100 claims, 1429 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1428,
+      "named_lean_theorems": 1429,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem packages proof-system ZK, wallet metadata hygiene, timing/batching, network metadata, and raw-wire indistinguishability as explicit assumptions; it does not discharge them.",
-      "Batch/timing facts are modeled as explicit leakage, not hidden data.",
-      "This does not prove ML-KEM/AEAD/KDF/RNG security, simulator zero knowledge, proof-system privacy, wallet/network metadata privacy, timing privacy, or complete wallet/native-node equivalence.",
+      "This is a composition over accepted production-bound predicates; it does not prove arbitrary-byte SCALE/JSON parser refinement for every PendingAction or sidecar field.",
+      "This does not prove DA availability or hot/cold retention, BLAKE3/DA-root security or implementation equivalence, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node equivalence.",
+      "The theorem names the raw-ingress publication facts for review; it does not add a new runtime check.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -514,7 +514,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -523,7 +523,7 @@
         "mineable-action admission gate",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean packages accepted candidate DA binding, proven-batch DA binding, recursive semantic DA sourcing, sidecar upload preconditions, wire replay projection counts, projected replay startup facts, and raw decoded projected replay startup facts",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean composes action-request projection, pending-action reload, staged ciphertext/proof reload, sidecar transfer-state materialization, DA/sidecar binding, projected replay startup facts, and raw-decoded projected replay startup facts",
-        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now packages raw-ingress sidecar publication with raw-decoded ledger/tree replay, including sidecar availability/size agreement, DA-root/candidate/proven-batch/semantic binding, and tree/ledger replay facts",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now packages raw-ingress sidecar publication with raw-decoded ledger/tree replay as `RawIngressLedgerTreePublicationFacts`, including sidecar availability/size agreement, DA-root/candidate/proven-batch/semantic binding, accepted ledger/tree replay, commitment-root publication, and replayed supply/leaf facts",
         "node/src/native/mod.rs materialized-sidecar regressions require block artifact verification and canonical-index rebuild to reject sidecar size/hash drift before tx artifact construction or canonical row derivation"
       ],
       "missing_work": [

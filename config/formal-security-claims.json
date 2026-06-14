@@ -3698,7 +3698,7 @@
       "id": "native.raw-ingress-sidecar-replay-recoverability",
       "component": "native raw ingress sidecar replay recoverability",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, projected replay startup equivalence, raw-decoded projected replay startup equivalence, and raw-decoded ledger/tree replay publication into one theorem surface.",
+      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, projected replay startup equivalence, raw-decoded projected replay startup equivalence, and raw-decoded ledger/tree replay publication into one theorem surface, with a first-class raw-ingress publication fact package for production review.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
@@ -3712,12 +3712,14 @@
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_sidecar_replay_exposes_preconditions",
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_projected_replay_binds_sidecar_rows",
         "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows",
-        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication"
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication",
+        "Hegemon.Native.RawIngressSidecarReplayRecoverability.raw_ingress_publication_equivalent_to_raw_ledger_tree_replay"
       ],
       "assumptions": [
         "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate action-request projection, pending-action reload, staged-ciphertext reload, staged-proof reload, transfer-state admission, DA/sidecar replay-binding, action-stream, wire-projection, and projected replay claims for executable predicate conformance.",
         "The theorem exposes that accepted raw ingress predicates satisfy request projection, pending reload, staged sidecar reload, staged proof reload, and transfer-state preconditions. When the accepted transfer uses the sidecar route, it proves sidecar ciphertext bytes are available, sidecar sizes are present, and sidecar sizes match before composing with DA-root and projected replay facts.",
         "The projected and raw-projected replay theorems compose those raw-ingress and sidecar-materialization facts with accepted DA/sidecar replay facts, preserving carried-state preconditions, replayed supply and leaf equality for the raw-decoded surface, and final nullifier/bridge-replay uniqueness for accepted projected replay.",
+        "The raw-ingress publication equivalence theorem exposes the same ledger/tree replay result as a named fact package, including sidecar availability and size agreement, DA candidate/proven-batch/semantic binding, accepted ledger-tree replay, commitment-root publication, accepted ledger replay, replayed supply and leaf cursor, commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness.",
         "The theorem does not prove full SCALE parser correctness, BLAKE3 hash security or implementation equivalence, DA erasure-code recoverability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
