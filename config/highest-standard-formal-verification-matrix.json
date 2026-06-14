@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 75.32,
+  "overall_completion_percent": 75.36,
   "last_full_formal_core": {
     "commit": "56ac28bba2f6e37736042222b95d6e60d781453b",
     "status": "passed locally 2026-06-14T17:10:35Z",
@@ -47,31 +47,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a native selected-row decrypt-to-commitment privacy slice: an active native tx-leaf output selected inside a same-shape ciphertext privacy game, when decrypted by recipient material through the modeled wallet decrypt boundary, reconstructs the exact plaintext-derived note commitment carried by the public shape, statement preimage, and proof-binding message while preserving public metadata, batch/timing leakage, and the explicit wire-indistinguishability obligation.",
+    "summary": "Strengthened native bridge mint/replay safety: prior consumed bridge replay-key membership now persists through modeled imported replay state and accepted ledger replay, and an accepted inbound payload with authorized decoded amount plus fresh replay import now carries that freshly imported key through accepted raw-projected replay tails into the final consumed-replay set while retaining replayed supply, leaf-cursor, commitment-plan, nullifier-uniqueness, and replay-uniqueness facts.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
-      "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
+      "formal/lean/Hegemon/Native/AcceptedChain.lean",
+      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment"
+      "Hegemon.Native.BridgeMintSafety.imported_bridge_replay_state_preserves_prior_membership",
+      "Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_preserves_prior_membership",
+      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Privacy.NativeObserverSurface and bash scripts/check_lean_formal.sh passed",
+      "lean_formal": "lake build Hegemon.Native.BridgeMintSafety and bash scripts/check_lean_formal.sh passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T17:10:35Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T17:51:20Z",
       "claims": 100,
-      "named_lean_theorems": 1410,
+      "named_lean_theorems": 1413,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem keeps wallet decrypt success behind the explicit crypto-authentication predicate and keeps `wireIndistinguishable` explicit; it does not prove ML-KEM IND-CCA security, AEAD confidentiality, KDF security, RNG quality, or simulator zero knowledge.",
-      "The selected-row composition inherits the native tx-leaf canonical-surface deployed-verifier boundary; it does not discharge proof-system privacy, ciphertext-hash security, or complete wallet/native-node equivalence.",
+      "The theorem works over modeled decoded replay and raw-projected replay inputs; it does not prove arbitrary SCALE/JSON parser refinement or full native-node byte-to-state equivalence.",
+      "External bridge receipt soundness, future PQ bridge verifier soundness, payload-hash cryptographic security, and the future decoded bridge-mint payload grammar remain explicit assumptions.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -525,7 +526,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 59,
+      "completion_percent": 60,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -535,7 +536,7 @@
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, prior replay-key membership persistence through accepted ledger replay, fresh inbound replay-key survival through accepted raw-projected tails, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication"

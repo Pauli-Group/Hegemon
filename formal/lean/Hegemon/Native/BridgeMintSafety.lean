@@ -262,6 +262,91 @@ theorem accepted_native_ledger_bridge_replay_supply_coupling
       initialBridgeReplaysNodup
       accepted⟩
 
+theorem imported_bridge_replay_state_preserves_prior_membership
+    {replay : Nat}
+    {consumed : List Nat}
+    {actions : List StreamAction}
+    (present : replay ∈ consumed) :
+    replay ∈ importedBridgeReplayStateFrom consumed actions := by
+  induction actions generalizing consumed with
+  | nil =>
+      simpa [importedBridgeReplayStateFrom] using present
+  | cons action rest ih =>
+      unfold importedBridgeReplayStateFrom
+      cases imported :
+          importBridgeReplay consumed action.bridgeReplayKey with
+      | error rejection =>
+          simpa [imported] using present
+      | ok pair =>
+          cases pair with
+          | mk next importedCount =>
+              have presentNext : replay ∈ next := by
+                cases key : action.bridgeReplayKey with
+                | none =>
+                    simp [importBridgeReplay, key] at imported
+                    rcases imported with ⟨nextEq, _importedEq⟩
+                    subst next
+                    exact present
+                | some importedReplay =>
+                    unfold importBridgeReplay at imported
+                    cases already :
+                        containsNat importedReplay consumed with
+                    | true =>
+                        simp [key, already] at imported
+                    | false =>
+                        simp [key, already] at imported
+                        rcases imported with ⟨nextEq, _importedEq⟩
+                        subst next
+                        exact List.mem_cons_of_mem importedReplay present
+              simpa [imported] using ih presentNext
+
+theorem accepted_native_ledger_bridge_replay_preserves_prior_membership
+    {initial final : NativeLedgerReplayState}
+    {blocks : List BlockReplayInput}
+    {replay : Nat}
+    (present : replay ∈ initial.consumedBridgeReplays)
+    (accepted :
+      validateNativeLedgerReplayChain initial blocks = some final) :
+    replay ∈ final.consumedBridgeReplays := by
+  induction blocks generalizing initial with
+  | nil =>
+      simp [validateNativeLedgerReplayChain] at accepted
+      subst final
+      exact present
+  | cons block rest ih =>
+      unfold validateNativeLedgerReplayChain at accepted
+      by_cases parentEq : block.parentSupply = initial.supply
+      · simp [parentEq] at accepted
+        by_cases leafEq : block.leafStart = initial.leafCount
+        · simp [leafEq] at accepted
+          by_cases spentEq :
+              block.spentNullifiers = initial.spentNullifiers
+          · simp [spentEq] at accepted
+            by_cases consumedEq :
+                block.consumedBridgeReplays =
+                  initial.consumedBridgeReplays
+            · simp [consumedEq] at accepted
+              cases replayResult : evaluateBlockReplayRefinement block with
+              | error rejection =>
+                  simp [replayResult] at accepted
+              | ok summary =>
+                  have presentNext :
+                      replay ∈
+                        importedBridgeReplayStateFrom
+                          initial.consumedBridgeReplays
+                          block.actions :=
+                    imported_bridge_replay_state_preserves_prior_membership
+                      present
+                  simp [replayResult] at accepted
+                  exact ih
+                    (by
+                      simpa [nextLedgerState] using presentNext)
+                    accepted
+            · simp [consumedEq] at accepted
+          · simp [spentEq] at accepted
+        · simp [leafEq] at accepted
+      · simp [parentEq] at accepted
+
 theorem accepted_inbound_payload_authorized_amount_ledger_replay_safe
     {input : BridgePayloadInput}
     {surface : InboundBridgeMintAmountSurface}
@@ -468,6 +553,92 @@ theorem accepted_inbound_payload_authorized_amount_raw_projected_replay_safe
       bridgeFacts.right.right.right.right.right.left,
       bridgeFacts.right.right.right.right.right.right.left,
       bridgeFacts.right.right.right.right.right.right.right⟩
+
+theorem accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail
+    {input : BridgePayloadInput}
+    {surface : InboundBridgeMintAmountSurface}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {tailInitial final : NativeLedgerReplayState}
+    {blocks : List RawDecodedNativeReplayBlock}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized surface = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (tailConsumedEq :
+      tailInitial.consumedBridgeReplays = next)
+    (tailNullifiersNodup :
+      tailInitial.spentNullifiers.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerStateAfter tailInitial blocks = some final) :
+    validateNativeLedgerReplayChain
+        tailInitial
+        (rawReplayInputs blocks) =
+        some final
+      ∧ expectedNativeSupplyAfter
+          tailInitial.supply
+          (rawReplayInputs blocks) =
+          some final.supply
+      ∧ expectedNativeLeafCountAfter
+          tailInitial.leafCount
+          (rawReplayInputs blocks) =
+          some final.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+          tailInitial
+          (rawReplayInputs blocks) = true
+      ∧ rawProjectedCarriedStatePreconditions tailInitial blocks = true
+      ∧ final.spentNullifiers.Nodup
+      ∧ final.consumedBridgeReplays.Nodup
+      ∧ replay ∈ final.consumedBridgeReplays
+      ∧ InboundBridgePayloadAuthorizationFacts input
+      ∧ surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount
+      ∧ inboundBridgeDirectMintDelta input = 0
+      ∧ imported = 1
+      ∧ importBridgeReplay next (some replay) =
+          Except.error ActionStreamReject.bridgeReplayDuplicate := by
+  have replayFacts :=
+    fresh_bridge_replay_import_consumes_once consumedNodup fresh
+  have tailBridgeReplaysNodup :
+      tailInitial.consumedBridgeReplays.Nodup := by
+    simpa [tailConsumedEq] using replayFacts.right.right.left
+  have rawFacts :=
+    accepted_raw_projected_ledger_state_after_startup_equivalence
+      tailNullifiersNodup
+      tailBridgeReplaysNodup
+      acceptedRaw
+  have replayPresentAtTail :
+      replay ∈ tailInitial.consumedBridgeReplays := by
+    simpa [tailConsumedEq] using replayFacts.left
+  have replaySurvives :
+      replay ∈ final.consumedBridgeReplays :=
+    accepted_native_ledger_bridge_replay_preserves_prior_membership
+      replayPresentAtTail
+      rawFacts.left
+  have bridgeFacts :=
+    accepted_inbound_decoded_mint_amount_bound
+      inbound
+      acceptedPayload
+      authorized
+  exact
+    ⟨rawFacts.left,
+      rawFacts.right.left,
+      rawFacts.right.right.left,
+      rawFacts.right.right.right.left,
+      rawFacts.right.right.right.right.left,
+      rawFacts.right.right.right.right.right.left,
+      rawFacts.right.right.right.right.right.right,
+      replaySurvives,
+      bridgeFacts.left,
+      bridgeFacts.right.left,
+      bridgeFacts.right.right.left,
+      bridgeFacts.right.right.right,
+      replayFacts.right.left,
+      replayFacts.right.right.right⟩
 
 theorem accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe
     {input : BridgePayloadInput}
