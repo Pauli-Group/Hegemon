@@ -1492,6 +1492,139 @@ theorem proof_keyed_transfer_payload_active_input_no_theft_full_binding
       proofBackend,
       hCiphertextPayloadHashes⟩
 
+theorem proof_keyed_transfer_payload_input_slot_authorization_full_binding
+    {payload : TransferPayloadInput}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (facts :
+      ProofKeyedNativeTxLeafCanonicalArtifactBoundaryFacts
+        payload
+        input
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    Hegemon.Transaction.SpendAuthorization.InputSlotAuthorizationFacts
+        merkleRoot
+        activeFlag
+        publicNullifier
+        witness
+      ∧ TransferPayloadBindingFacts payload
+      ∧ payload.bindingHashMatches = true
+      ∧ payload.proofBindingHashMatchesKey = true
+      ∧ payload.feeMatches = true
+      ∧ proofWrapperPreconditions wrapper = true
+      ∧ acceptedProofWrapperSurface wrapper
+      ∧ Hegemon.Transaction.PublicInputBinding.validBinding
+        publicFields
+        serializedFields = true
+      ∧ Hegemon.Transaction.StatementHash.statementPreimage
+        statementFields = some statementBytes
+      ∧ Hegemon.Transaction.ProofStatementBinding.bindingMessage
+        bindingFields = some bindingBytes
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ TxLeafActionBindingFacts input
+      ∧ input.nullifiersMatch = true
+      ∧ input.inputCountMatches = true
+      ∧ input.feeMatches = true
+      ∧ input.receiptStatementHashMatches = true
+      ∧ input.publicInputsDigestMatches = true
+      ∧ input.proofDigestMatches = true
+      ∧ input.proofBackendMatches = true
+      ∧ input.ciphertextPayloadHashesMatch = true := by
+  have slotFacts :=
+    native_tx_leaf_canonical_artifact_boundary_input_slot_facts
+      facts.nativeArtifactBoundary
+      slot
+  rcases slotFacts with
+    ⟨inputSlotFacts, statementRoot, bindingRoot, statementSlot,
+      bindingSlot, txLeafFacts⟩
+  rcases facts.transferPayloadBindingFacts with
+    ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
+  rcases txLeafFacts with
+    ⟨hNullifiers, _hCommitments, _hCiphertextHashes, hInputCount,
+      _hOutputCount, _hVersion, hFee, _hStablecoinPayload, _hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    ⟨inputSlotFacts,
+      facts.transferPayloadBindingFacts,
+      payloadBindingHash,
+      proofBindingHash,
+      payloadFee,
+      facts.nativeArtifactBoundary.canonicalBoundaryFacts.wrapperPreconditions,
+      facts.nativeArtifactBoundary.wrapperSurface,
+      facts.nativeArtifactBoundary.canonicalBoundaryFacts.publicBindingValid,
+      facts.nativeArtifactBoundary.canonicalBoundaryFacts.statementPreimage,
+      facts.nativeArtifactBoundary.canonicalBoundaryFacts.bindingMessage,
+      statementRoot,
+      bindingRoot,
+      statementSlot,
+      bindingSlot,
+      facts.nativeArtifactBoundary.txLeafActionBindingFacts,
+      hNullifiers,
+      hInputCount,
+      hFee,
+      hReceiptStatementHash,
+      hPublicInputsDigest,
+      hProofDigest,
+      hProofBackend,
+      hCiphertextPayloadHashes⟩
+
 theorem native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

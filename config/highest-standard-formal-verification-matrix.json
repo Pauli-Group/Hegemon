@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.9,
+  "overall_completion_percent": 74.97,
   "last_full_formal_core": {
     "commit": "878df51e2a06d65cb6c436f5892957851f6c8e77",
     "status": "passed locally 2026-06-14T07:06:47Z",
@@ -47,28 +47,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added an explicit batch/timing privacy-boundary slice: the observer model now separates full observer leakage, public metadata leakage, and batch/timing leakage; valid same-public-input same-placement worlds preserve active-output count, public ciphertext count, parsed-summary count, block height, and action index, and the ciphertext privacy game lifts that fact while still treating raw wire bytes and true timing privacy as separate assumptions.",
+    "summary": "Added a proof-keyed native tx-leaf total-input authorization slice: every indexed proof-keyed input slot now carries authorization-or-inactive-zero facts together with transfer payload binding-hash agreement, decoded proof binding-hash agreement, payload/native fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_batch_timing_leakage"
+      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_input_slot_authorization_full_binding"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Privacy.CiphertextPrivacy Hegemon.Privacy.Observer passed",
+      "lean_formal": "lake build Hegemon.Native.TxLeafCanonicalSurface passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T07:06:47Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T07:35:54Z",
       "claims": 100,
-      "named_lean_theorems": 1404,
+      "named_lean_theorems": 1405,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The batch/timing view intentionally exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index; this theorem makes timing and batching leakage explicit rather than hiding it.",
-      "The slice does not prove ML-KEM IND-CCA security, AEAD confidentiality, simulator zero-knowledge, proof-system privacy, wallet/network metadata privacy, timing privacy, raw-wire indistinguishability, or complete wallet/native-node equivalence.",
+      "The theorem packages the existing explicit `DeployedTxVerifierSoundnessAssumption`; it does not discharge deployed AIR/STARK/SmallWood soundness, witness extraction, or verifier implementation correctness.",
+      "The theorem is over decoded native tx-leaf/action and transfer-payload predicates; arbitrary-byte parser refinement, hash security, tx-leaf parser completeness, and complete native-node equivalence remain open.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -167,7 +165,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 63,
+      "completion_percent": 64,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -190,7 +188,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes total input-slot authorization facts directly from packaged native tx-leaf artifact boundary facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages active native artifact input slots into no-theft facts with wrapper preconditions, wrapper surface facts, public-input binding, statement/proof-binding messages, root/anchor binding, and native artifact equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now composes accepted transfer payload proof-key admission with native artifact active-input no-theft facts, carrying payload binding-hash and decoded proof-binding-hash agreement to the no-theft boundary",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now strengthens the proof-keyed active-input no-theft boundary with a full binding package carrying payload fee agreement, public-input binding, root/anchor binding, statement/proof nullifier-slot alignment, native fee/proof/backend/ciphertext-payload equality gates, and field-level tx-leaf binding facts"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now strengthens the proof-keyed active-input no-theft boundary with a full binding package carrying payload fee agreement, public-input binding, root/anchor binding, statement/proof nullifier-slot alignment, native fee/proof/backend/ciphertext-payload equality gates, and field-level tx-leaf binding facts",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -339,7 +338,8 @@
         "Native TxLeafCanonicalSurface now exposes an active-input no-theft package from the native artifact boundary, carrying the exact wrapper, public-input, statement preimage, proof-binding message, statement/proof nullifier slots, and native proof/backend equality gates alongside spend facts",
         "ProofSystemBoundary now exposes packaged output-slot statement/proof-binding facts for future AIR/refinement work symmetrically with total input-slot authorization facts",
         "Native TxLeafCanonicalSurface now packages accepted transfer payload proof-key admission with canonical native tx-leaf artifact facts and active-input no-theft facts under the explicit deployed verifier soundness assumption",
-        "Native TxLeafCanonicalSurface now exposes a proof-keyed active-input no-theft full-binding theorem that keeps payload fee agreement, public-input validity, root/anchor binding, statement/proof nullifier-slot alignment, and native fee/proof/backend/ciphertext-payload equality gates in one future verifier/AIR refinement target"
+        "Native TxLeafCanonicalSurface now exposes a proof-keyed active-input no-theft full-binding theorem that keeps payload fee agreement, public-input validity, root/anchor binding, statement/proof nullifier-slot alignment, and native fee/proof/backend/ciphertext-payload equality gates in one future verifier/AIR refinement target",
+        "Native TxLeafCanonicalSurface now exposes a proof-keyed total input-slot authorization full-binding theorem, so future AIR/refinement work can target both active spends and inactive-zero padding slots through the same native tx-leaf/payload/statement/proof binding package"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction of it.",
