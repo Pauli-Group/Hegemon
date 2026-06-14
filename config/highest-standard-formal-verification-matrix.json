@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 75.36,
+  "overall_completion_percent": 75.43,
   "last_full_formal_core": {
     "commit": "ea30acb8694da3b04a698d75db172cd454e87d27",
     "status": "passed locally 2026-06-14T17:51:20Z",
@@ -47,32 +47,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened native bridge mint/replay safety: prior consumed bridge replay-key membership now persists through modeled imported replay state and accepted ledger replay, and an accepted inbound payload with authorized decoded amount plus fresh replay import now carries that freshly imported key through accepted raw-projected replay tails into the final consumed-replay set while retaining replayed supply, leaf-cursor, commitment-plan, nullifier-uniqueness, and replay-uniqueness facts.",
+    "summary": "Strengthened the spend-authorization/no-theft boundary with witness/public-input vector length alignment: accepted authorization over the public input flags and nullifiers now proves the private spend-witness vector has matching length before indexed slot authorization facts are used.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
-      "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
-      "formal/lean/Hegemon/Native/AcceptedChain.lean",
-      "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
-      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
+      "formal/lean/Hegemon/Transaction/SpendAuthorization.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BridgeMintSafety.imported_bridge_replay_state_preserves_prior_membership",
-      "Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_preserves_prior_membership",
-      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail"
+      "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_lengths_match",
+      "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_witnesses_align_with_public_inputs"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.BridgeMintSafety and bash scripts/check_lean_formal.sh passed",
+      "lean_formal": "lake build Hegemon.Transaction.SpendAuthorization and bash scripts/check_lean_formal.sh passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T17:51:20Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T18:23:40Z",
       "claims": 100,
-      "named_lean_theorems": 1413,
+      "named_lean_theorems": 1415,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem works over modeled decoded replay and raw-projected replay inputs; it does not prove arbitrary SCALE/JSON parser refinement or full native-node byte-to-state equivalence.",
-      "External bridge receipt soundness, future PQ bridge verifier soundness, payload-hash cryptographic security, and the future decoded bridge-mint payload grammar remain explicit assumptions.",
+      "The theorem proves list-length alignment inside the modeled spend-authorization relation; it does not discharge deployed verifier/AIR or SmallWood soundness.",
+      "Witness extraction, wallet key custody, hash security, and complete native-node refinement remain explicit open assumptions.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -171,7 +166,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 66,
+      "completion_percent": 67,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -182,6 +177,7 @@
         "transaction-circuit and disclosure-circuit regressions require Plonky3, SmallWood, and disclosure preimage builders to use the shared core note_commitment_inputs helper",
         "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves authorized public flag/nullifier vectors and private spend-witness vectors have matching lengths before indexed authorization facts are consumed",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed input slot is either inactive with zero nullifier or active with full spend facts",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean packages accepted transaction relation and active-input facts",
@@ -333,6 +329,7 @@
         "CanonicalVerifierBoundary collapses balance and spend assumptions into one canonical deployed transaction verifier soundness assumption over the exact statement surface modeled in Lean",
         "CanonicalVerifierBoundary now binds nullifier, commitment, and ciphertext-hash vectors across public shape, statement preimage, and proof-binding message before deriving indexed active-input facts",
         "CanonicalVerifierBoundary now binds value-balance, stablecoin policy/oracle/attestation/issuance payloads, and active spend facts to the same canonical statement surface",
+        "SpendAuthorization now proves successful authorization cannot be established over mismatched public flag/nullifier vectors or mismatched private witness vectors",
         "SpendAuthorization, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total input-slot facts so future AIR soundness can target inactive-zero and active-spend cases uniformly",
         "PublicInputs, AcceptedTransactionSoundness, and CanonicalVerifierBoundary now expose total output-slot facts so future AIR soundness can target active-output and inactive-padding cases uniformly",
         "NoteCommitmentInputs now pins the exact deployed note-commitment preimage vector and asset-id field-domain policy that future AIR/refinement work must target",

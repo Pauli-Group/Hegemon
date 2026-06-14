@@ -412,7 +412,7 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "component": "transaction spend authorization boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption.",
+      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumption",
       "production_eligible": false,
@@ -424,6 +424,8 @@
         "Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_membership",
         "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_implies_public_shape_valid",
         "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_implies_slots_authorized",
+        "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_lengths_match",
+        "Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_witnesses_align_with_public_inputs",
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_authorized",
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts",
         "Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_inactive_public_nullifier_zero",
@@ -441,6 +443,7 @@
       "assumptions": [
         "The executable Lean model uses abstract digest arithmetic for note commitments, spend-authority keys, nullifiers, and Merkle nodes. It proves relation plumbing, not hash security or implementation equivalence.",
         "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
+        "`authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful authorization cannot be derived over mismatched public flag/nullifier vectors or mismatched private witness vectors.",
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
         "`authorizeInputSlots_input_slot_facts_at` covers every indexed input slot: inactive slots must have zero public nullifiers and active slots must expose the full spend facts.",
         "This claim does not prove the deployed STARK/AIR or SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."

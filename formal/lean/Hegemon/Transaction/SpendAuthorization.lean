@@ -226,6 +226,52 @@ theorem transactionSpendAuthorized_implies_slots_authorized
   simp at authorized
   exact authorized.right
 
+theorem authorizeInputSlots_lengths_match
+    {merkleRoot : Digest}
+    {flags : List Nat}
+    {nullifiers : List Digest}
+    {witnesses : List InputSpendWitness}
+    (authorized :
+      authorizeInputSlots merkleRoot flags nullifiers witnesses = true) :
+    flags.length = nullifiers.length ∧ flags.length = witnesses.length := by
+  induction flags generalizing nullifiers witnesses with
+  | nil =>
+      cases nullifiers <;> cases witnesses <;>
+        simp [authorizeInputSlots] at authorized ⊢
+  | cons flag flags ih =>
+      cases nullifiers with
+      | nil =>
+          cases witnesses <;> simp [authorizeInputSlots] at authorized
+      | cons nullifier nullifiers =>
+          cases witnesses with
+          | nil =>
+              simp [authorizeInputSlots] at authorized
+          | cons witness witnesses =>
+              unfold authorizeInputSlots at authorized
+              by_cases inactive : flag = 0
+              · simp [inactive] at authorized
+                have tailLengths := ih authorized.right
+                exact
+                  ⟨by simp [tailLengths.left],
+                    by simp [tailLengths.right]⟩
+              · by_cases active : flag = 1
+                · simp [active] at authorized
+                  have tailLengths := ih authorized.right
+                  exact
+                    ⟨by simp [tailLengths.left],
+                      by simp [tailLengths.right]⟩
+                · simp [inactive, active] at authorized
+
+theorem transactionSpendAuthorized_witnesses_align_with_public_inputs
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {witnesses : List InputSpendWitness}
+    (authorized : transactionSpendAuthorized shape merkleRoot witnesses = true) :
+    shape.inputFlags.length = shape.nullifiers.length
+      ∧ shape.inputFlags.length = witnesses.length :=
+  authorizeInputSlots_lengths_match
+    (transactionSpendAuthorized_implies_slots_authorized authorized)
+
 theorem authorizeInputSlots_head_active_authorized
     {merkleRoot flag publicNullifier : Digest}
     {flags : List Nat}
