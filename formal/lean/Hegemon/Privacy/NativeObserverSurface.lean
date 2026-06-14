@@ -951,6 +951,149 @@ theorem native_tx_leaf_active_output_ciphertext_boundary_has_projected_da_bytes
       outputFacts,
       bindingFacts⟩
 
+theorem native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {world : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (observerValid : validObserverChainSurface world)
+    (shapeEq : world.publicInputs = shape)
+    (observerBytesBounded :
+      ∀ wire,
+        wire ∈ world.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (ciphertextHashMatches : List Byte → Digest → Prop)
+    (ciphertextHashPreimage :
+      ∀ {wire summary daBytes},
+        world.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) :
+    ∃ wire summary daBytes,
+      world.ciphertextBytes[
+          activeFlagCountBefore shape.outputFlags index]? = some wire
+        ∧ world.ciphertextSummaries[
+          activeFlagCountBefore shape.outputFlags index]? = some summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+          wire = some summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+          wire = some daBytes
+        ∧ ciphertextHashMatches daBytes publicCiphertextHash
+        ∧ daBytes.length =
+          Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+            + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+        ∧ summaryHasChainCiphertextFormat summary
+        ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire
+        ∧ wire.length =
+          Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+            + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+            + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+        ∧ shape.outputFlags[index]? = some 1
+        ∧ shape.commitments[index]? = some publicCommitment
+        ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+        ∧ statementFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ bindingFields.ciphertextHashSeeds[index]? =
+          some publicCiphertextHash
+        ∧ input.ciphertextHashesMatch = true
+        ∧ input.ciphertextPayloadHashesMatch = true
+        ∧ input.outputCountMatches = true
+        ∧ OutputSlotFacts
+          1
+          publicCommitment
+          publicCiphertextHash
+        ∧ TxLeafActionBindingFacts input := by
+  rcases
+      native_tx_leaf_active_output_ciphertext_boundary_has_projected_da_bytes
+        bindingAccepted
+        surface
+        slot
+        observerValid
+        shapeEq
+        observerBytesBounded with
+    ⟨wire,
+      summary,
+      daBytes,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      daProjection,
+      daLength,
+      format,
+      wireBounded,
+      wireLength,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementCiphertext,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+  have projectedHash :
+      ciphertextHashMatches daBytes publicCiphertextHash :=
+    ciphertextHashPreimage wireAt parsedSummary daProjection
+  exact
+    ⟨wire,
+      summary,
+      daBytes,
+      wireAt,
+      summaryAt,
+      parsedSummary,
+      daProjection,
+      projectedHash,
+      daLength,
+      format,
+      wireBounded,
+      wireLength,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      statementCiphertext,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+
 theorem native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

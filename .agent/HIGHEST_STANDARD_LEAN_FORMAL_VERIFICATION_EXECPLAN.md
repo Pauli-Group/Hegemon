@@ -149,6 +149,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-14 18:27Z) Updated `hegemon-dev` to `df0dd303` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3` with no service restart. Remote JSON validation and targeted Lean for `Hegemon.Transaction.SpendAuthorization` passed; `hegemon-node.service` stayed active, `bash scripts/smoke-test.sh` passed at height 11189, and `bash scripts/test-node.sh wallet-send` passed. Live mining reported `is_mining=true`, one thread, about 27.3 kH/s, difficulty 520159231, blocks_found 516, and height 11189; the live 20-second sample stayed at height 11189, so isolated `bash scripts/test-node.sh single-node` confirmed block production at height 11177. NTP was active and synchronized.
 - [x] (2026-06-14 19:10Z) Strengthened `Hegemon.Native.TxLeafCanonicalSurface` with `native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_facts`: accepted native tx-leaf/action binding plus the canonical statement surface now assumption-free exposes public-shape validity, core/vector/input/output/value/stablecoin statement binding, tx-leaf/action preconditions, full tx-leaf equality facts, and native digest/backend gates before deployed verifier soundness is invoked. `lake build Hegemon.Native.TxLeafCanonicalSurface`, `bash scripts/check_lean_formal.sh`, and `bash scripts/check_formal_core.sh` passed; formal-core reported 100 claims, 1416 named Lean theorem declarations, 90 production-eligible claims, 413 falsification cases, and 200 implementation bindings. Current tracked completion is 75.49%.
 - [x] (2026-06-14 19:12Z) Updated `hegemon-dev` to `ab237f13` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3` with no service restart. Remote JSON validation and targeted Lean for `Hegemon.Native.TxLeafCanonicalSurface` passed; `hegemon-node.service` stayed active, `bash scripts/smoke-test.sh` passed at height 11193, `bash scripts/test-node.sh wallet-send` passed, and isolated `bash scripts/test-node.sh single-node` confirmed block production at height 11646. Live mining reported `is_mining=true`, one thread, about 27.2 kH/s, difficulty 520159231, blocks_found 520, and height 11193; the live 20-second sample stayed at height 11193. NTP was active and synchronized.
+- [x] (2026-06-14 20:40Z) Strengthened `Hegemon.Privacy.NativeObserverSurface` with `native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash`: selected active native observer rows now bind projected DA ciphertext-hash preimage bytes to the public ciphertext-hash row through an explicit hash-match predicate while preserving fixed chain-wire shape, statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates. This is an implementation-equivalence boundary, not a BLAKE3/hash-security proof. Targeted `lake env lean Hegemon/Privacy/NativeObserverSurface.lean`, `bash scripts/check_lean_formal.sh`, and `bash scripts/check_formal_core.sh` passed; formal-core reported 100 claims, 1423 named Lean theorem declarations, 90 production-eligible claims, 413 falsification cases, and 200 implementation bindings. Current tracked completion is 76.13%.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -759,6 +760,16 @@ The latest full formal-core pass after the canonical proof/output, raw-ingress t
 
     claims=100
     named_lean_theorems=1422
+    production_eligible_claims=90
+    falsification_cases=413
+    implementation_bindings=200
+
+The selected active-output ciphertext-hash boundary slice adds `Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash`. It composes the existing selected active observer row and projected-DA proof with an explicit hash-match predicate to tie projected DA bytes to the public ciphertext-hash row while keeping BLAKE3/hash security and implementation equivalence outside Lean. Current tracked completion is 76.13%.
+
+The latest full formal-core pass after the selected active-output ciphertext-hash boundary slice reported:
+
+    claims=100
+    named_lean_theorems=1423
     production_eligible_claims=90
     falsification_cases=413
     implementation_bindings=200

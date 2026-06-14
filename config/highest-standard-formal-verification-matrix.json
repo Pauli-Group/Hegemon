@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.08,
+  "overall_completion_percent": 76.13,
   "last_full_formal_core": {
-    "commit": "229544a5edcb8dc10cef5402f060e5dbdf477e83",
-    "status": "passed locally 2026-06-14T20:21:51Z",
+    "commit": "worktree:selected-active-output-ciphertext-hash-boundary",
+    "status": "passed locally 2026-06-14T20:56:49Z",
     "claims": 100,
-    "named_lean_theorems": 1422,
+    "named_lean_theorems": 1423,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -48,37 +48,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened implementation equivalence across the canonical proof-system boundary, native output artifacts, raw-ingress sidecar/tree replay publication, and selected-output privacy wire/DA boundaries: packaged deployed-verifier boundary facts now directly expose native and per-asset authorized-delta projections; selected native tx-leaf output slots carry the full statement/artifact surface; raw ingress sidecar facts lift through raw decoded ledger/tree replay with commitment-root progression; and selected privacy-game output rows carry fixed wire/DA projections while keeping crypto assumptions explicit.",
+    "summary": "Strengthened selected-output ciphertext implementation equivalence: active native tx-leaf observer rows now bind projected DA ciphertext-hash preimage bytes to the public ciphertext-hash row through an explicit hash-match predicate while carrying fixed chain-wire shape, statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates. The theorem keeps BLAKE3/hash security and implementation equivalence outside Lean rather than overclaiming them.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
-      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
       "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_full_statement_artifact_output_slot_full_binding",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary"
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean passed for Hegemon.Transaction.ProofSystemBoundary, Hegemon.Native.TxLeafCanonicalSurface, Hegemon.Native.RawIngressSidecarReplayRecoverability, and Hegemon.Privacy.NativeObserverSurface; bash scripts/check_lean_formal.sh passed 2026-06-14T20:08:04Z with 1422 theorems, zero temporary axioms, and no unwaived axiom dependencies",
+      "lean_formal": "targeted lake env lean passed for Hegemon.Privacy.NativeObserverSurface; bash scripts/check_lean_formal.sh passed 2026-06-14 with 1423 theorems, zero temporary axioms, and no unwaived axiom dependencies",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T20:21:51Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T20:56:49Z",
       "claims": 100,
-      "named_lean_theorems": 1422,
+      "named_lean_theorems": 1423,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The output-slot theorem is assumption-free over the full statement/artifact facts, canonical statement surface, and accepted native tx-leaf/action equality gate, while the asset-delta projections still depend on packaged deployed-verifier boundary facts and therefore on the explicit deployed verifier soundness assumption.",
-      "The raw-ingress sidecar/tree replay theorem is over modeled accepted raw-decoded replay blocks and admitted predicates; it does not prove arbitrary SCALE/JSON byte parsing, DA retention, storage durability, or complete native-node refinement.",
-      "The selected-output privacy wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions; it does not prove cryptographic confidentiality or simulator zero knowledge.",
-      "This does not discharge deployed verifier/AIR, SmallWood, recursive proof, witness extraction, or native tx-leaf proof soundness.",
-      "Hash security, digest implementation equivalence, SCALE decoding correctness, and complete native-node refinement remain explicit open assumptions.",
+      "The selected-row hash predicate is an explicit boundary over projected DA bytes and the public ciphertext-hash row; it does not prove BLAKE3 collision resistance, preimage resistance, or implementation equivalence.",
+      "The theorem is over a modeled accepted native tx-leaf/output-slot and valid observer-chain surface; arbitrary raw byte decoding, DA-root inclusion, storage durability, and complete native-node refinement remain separate.",
+      "This does not discharge deployed verifier/AIR, SmallWood, recursive proof, witness extraction, ML-KEM/AEAD confidentiality, simulator zero knowledge, or native tx-leaf proof soundness.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -411,7 +401,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -428,6 +418,7 @@
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires project to fixed DA preimage bytes by removing the canonical compact KEM-length bytes",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts the selected active observer row to projected DA preimage bytes while carrying statement/proof-binding ciphertext-hash indices and native equality gates",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean binds selected projected DA preimage bytes to the public ciphertext-hash row under an explicit hash-match predicate while preserving statement/proof-binding ciphertext-hash indices and native equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean packages active native output ciphertext boundary facts: selected parsed observer row, fixed chain wire shape, public/statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages selected same-shape privacy-game output rows with fixed chain wire length, projected DA bytes, public/statement/proof-binding ciphertext-hash rows, and native ciphertext-hash/payload-hash/output-count gates for both worlds",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now gives privacy/ciphertext follow-up proofs a selected-output full statement/artifact package carrying output-slot facts, statement/proof-binding rows, wrapper/public/statement facts, and native artifact digest/backend gates",
