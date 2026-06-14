@@ -1,4 +1,5 @@
 import Hegemon.Native.BlockArtifactBindingAdmission
+import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.CanonicalVerifierBoundary
 import Hegemon.Transaction.ProofSystemBoundary
@@ -8,6 +9,7 @@ namespace Native
 namespace TxLeafCanonicalSurface
 
 open Hegemon.Native.BlockArtifactBindingAdmission
+open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Transaction.AcceptedProofArtifact
 open Hegemon.Transaction.AcceptedTransactionSoundness
 open Hegemon.Transaction.AssetIsolation
@@ -195,6 +197,48 @@ structure NativeTxLeafAcceptedArtifactStatementBoundaryFacts
   txLeafActionPreconditions :
     txLeafActionBindingPreconditions input = true
   txLeafActionBindingFacts : TxLeafActionBindingFacts input
+
+structure ProofKeyedNativeTxLeafCanonicalArtifactBoundaryFacts
+    (payload : TransferPayloadInput)
+    (input : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (balanceWitness : Hegemon.Transaction.BalanceWitness)
+    (slots : List Hegemon.Transaction.BalanceSlot)
+    (assetId : Nat) : Prop where
+  transferPayloadPreconditions :
+    transferPayloadPreconditions payload = true
+  transferPayloadBindingFacts : TransferPayloadBindingFacts payload
+  proofKeyedPayload : payload.proofBindingHashMatchesKey = true
+  payloadBindingHashMatches : payload.bindingHashMatches = true
+  nativeArtifactBoundary :
+    NativeTxLeafCanonicalArtifactBoundaryFacts
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId
 
 theorem tx_leaf_action_accepts_implies_preconditions
     {input : TxLeafActionBindingInput}
@@ -630,6 +674,89 @@ theorem native_tx_leaf_canonical_artifact_boundary_facts
       nativeStatementArtifactBinding :=
         ⟨hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
           hProofBackend, hCiphertextPayloadHashes⟩ }
+
+theorem proof_keyed_transfer_payload_canonical_artifact_boundary_facts
+    {payload : TransferPayloadInput}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId : Nat}
+    (payloadAccepted : transferPayloadAccepts payload = true)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    ProofKeyedNativeTxLeafCanonicalArtifactBoundaryFacts
+      payload
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId := by
+  have payloadPreconditions :=
+    transfer_payload_accepts_implies_preconditions payloadAccepted
+  have payloadBindingFacts :=
+    transfer_payload_accepts_implies_binding_facts payloadAccepted
+  have nativeArtifactFacts :=
+    native_tx_leaf_canonical_artifact_boundary_facts
+      (assetId := assetId)
+      bindingAccepted
+      surface
+      sound
+  exact
+    { transferPayloadPreconditions := payloadPreconditions
+      transferPayloadBindingFacts := payloadBindingFacts
+      proofKeyedPayload := payloadBindingFacts.right.left
+      payloadBindingHashMatches := payloadBindingFacts.left
+      nativeArtifactBoundary := nativeArtifactFacts }
 
 theorem native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta
     {input : TxLeafActionBindingInput}
@@ -1138,6 +1265,95 @@ theorem native_tx_leaf_canonical_artifact_boundary_active_input_no_theft
       hPublicInputsDigest,
       hProofDigest,
       hProofBackend⟩
+
+theorem proof_keyed_transfer_payload_active_input_no_theft
+    {payload : TransferPayloadInput}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (facts :
+      ProofKeyedNativeTxLeafCanonicalArtifactBoundaryFacts
+        payload
+        input
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    Hegemon.Transaction.SpendAuthorization.InputSpendFacts
+        merkleRoot
+        publicNullifier
+        witness
+      ∧ payload.bindingHashMatches = true
+      ∧ payload.proofBindingHashMatchesKey = true
+      ∧ proofWrapperPreconditions wrapper = true
+      ∧ acceptedProofWrapperSurface wrapper
+      ∧ Hegemon.Transaction.StatementHash.statementPreimage
+        statementFields = some statementBytes
+      ∧ Hegemon.Transaction.ProofStatementBinding.bindingMessage
+        bindingFields = some bindingBytes
+      ∧ input.receiptStatementHashMatches = true
+      ∧ input.publicInputsDigestMatches = true
+      ∧ input.proofDigestMatches = true
+      ∧ input.proofBackendMatches = true := by
+  have noTheft :=
+    native_tx_leaf_canonical_artifact_boundary_active_input_no_theft
+      facts.nativeArtifactBoundary
+      slot
+      active
+  rcases noTheft with
+    ⟨spendFacts, wrapperPreconditions, wrapperSurface, _publicBindingValid,
+      statementPreimage, bindingMessage, _statementRoot, _bindingRoot,
+      _statementSlot, _bindingSlot, _nullifiers, _inputCount,
+      receiptStatementHash, publicInputsDigest, proofDigest, proofBackend⟩
+  exact
+    ⟨spendFacts,
+      facts.payloadBindingHashMatches,
+      facts.proofKeyedPayload,
+      wrapperPreconditions,
+      wrapperSurface,
+      statementPreimage,
+      bindingMessage,
+      receiptStatementHash,
+      publicInputsDigest,
+      proofDigest,
+      proofBackend⟩
 
 theorem native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement
     {input : TxLeafActionBindingInput}

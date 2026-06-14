@@ -114,7 +114,40 @@ theorem accepts_iff_payload_preconditions (input : TransferPayloadInput) :
           · cases anchorMatches <;> cases commitmentsMatch <;> cases ciphertextHashesMatch <;>
               cases ciphertextSizesMatch <;> cases bindingHashMatches <;>
               cases proofBindingHashMatchesKey <;> cases feeMatches <;>
-              simp [noProof, proofOversized, ciphertextOversized]
+      simp [noProof, proofOversized, ciphertextOversized]
+
+def TransferPayloadBindingFacts
+    (input : TransferPayloadInput) : Prop :=
+  input.bindingHashMatches = true
+    ∧ input.proofBindingHashMatchesKey = true
+    ∧ input.feeMatches = true
+
+theorem transfer_payload_accepts_implies_preconditions
+    {input : TransferPayloadInput}
+    (accepted : transferPayloadAccepts input = true) :
+    transferPayloadPreconditions input = true := by
+  rw [← accepts_iff_payload_preconditions input]
+  exact accepted
+
+theorem transfer_payload_accepts_implies_binding_facts
+    {input : TransferPayloadInput}
+    (accepted : transferPayloadAccepts input = true) :
+    TransferPayloadBindingFacts input := by
+  have preconditions :=
+    transfer_payload_accepts_implies_preconditions accepted
+  cases input with
+  | mk proofBytes maxProofBytes anchorMatches commitmentsMatch inlineCiphertextBytes
+      maxCiphertextBytes ciphertextHashesMatch ciphertextSizesMatch bindingHashMatches
+      proofBindingHashMatchesKey feeMatches =>
+      simp [
+        TransferPayloadBindingFacts,
+        transferPayloadPreconditions
+      ] at preconditions ⊢
+      rcases preconditions with
+        ⟨_present, _proofInBounds, _anchor, _commitments,
+          _ciphertextInBounds, _hashes, _sizes, binding,
+          proofBinding, fee⟩
+      exact ⟨binding, proofBinding, fee⟩
 
 def validTransferPayload : TransferPayloadInput :=
   {

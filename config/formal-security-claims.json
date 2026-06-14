@@ -3183,7 +3183,7 @@
       "id": "formal.native-tx-leaf-canonical-surface",
       "component": "native tx-leaf canonical verifier surface composition",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary. Assumption-free projection now proves that an accepted production-bound tx-leaf/action equality gate plus a canonical statement surface exposes statement preimage success and length, proof binding-message success, public-input binding validity, proof-wrapper preconditions and surface facts, and receipt/public-input/proof/backend/ciphertext-payload equality gates. With the explicit deployed verifier soundness assumption, the boundary also implies the accepted transaction relation, every modeled asset delta is authorized by the modeled balance/stablecoin policy, active and inactive input-slot authorization facts are bound to the statement and proof-binding vectors, output commitment/ciphertext slots are bound to those same vectors, and the packaged native artifact boundary exposes canonical deployed-verifier facts, total input-slot statement/proof-binding facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance facts, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding in one theorem. The no-theft package now turns an active native artifact input slot into spend facts plus wrapper, public-input, statement, proof-binding, root/anchor, statement/proof nullifier-vector, and native proof/backend equality gates. The theorem set also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
+      "summary": "The Lean native tx-leaf canonical-surface module composes accepted native tx-leaf/action binding with the canonical deployed transaction verifier boundary. Assumption-free projection now proves that an accepted production-bound tx-leaf/action equality gate plus a canonical statement surface exposes statement preimage success and length, proof binding-message success, public-input binding validity, proof-wrapper preconditions and surface facts, and receipt/public-input/proof/backend/ciphertext-payload equality gates. With the explicit deployed verifier soundness assumption, the boundary also implies the accepted transaction relation, every modeled asset delta is authorized by the modeled balance/stablecoin policy, active and inactive input-slot authorization facts are bound to the statement and proof-binding vectors, output commitment/ciphertext slots are bound to those same vectors, and the packaged native artifact boundary exposes canonical deployed-verifier facts, total input-slot statement/proof-binding facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance facts, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding in one theorem. The proof-keyed transfer payload package composes accepted transfer payload admission with the canonical artifact boundary, so active-input no-theft facts carry both payload binding-hash agreement and decoded proof binding-hash agreement. The theorem set also exposes field-level tx-leaf binding facts for nullifiers, commitments, ciphertext hashes, input/output counts, version, fee, stablecoin payload, balance tag, receipt statement hash, public-input digest, proof digest/backend profile, and ciphertext payload hash.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_cross_boundary_composition_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -3201,12 +3201,14 @@
       "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts",
       "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_input_slot_facts",
       "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_active_input_no_theft",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts"
+      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts",
+      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_canonical_artifact_boundary_facts",
+      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft"
     ],
     "assumptions": [
       "The statement/proof-facts theorem is assumption-free over the accepted native tx-leaf/action equality gate and canonical statement surface; the accepted transaction relation and asset authorization still depend on `DeployedTxVerifierSoundnessAssumption`.",
       "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
-      "The theorem set narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical statement/proof facts, deployed-verifier facts, total input-slot statement/proof-binding facts, active input no-theft facts, wrapper-surface facts, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
+      "The theorem set narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical statement/proof facts, deployed-verifier facts, total input-slot statement/proof-binding facts, active input no-theft facts, proof-keyed transfer payload facts, wrapper-surface facts, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
     ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
@@ -4137,7 +4139,7 @@
       "id": "native.transfer-action-payload-admission",
       "component": "native decoded shielded transfer payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean transfer-payload admission kernel proves the executable decoded shielded-transfer table for proof presence and size caps, anchor agreement, commitment agreement, inline ciphertext byte caps, ciphertext hash/size metadata agreement, binding-hash agreement, decoded proof binding-hash equality, and fee agreement; generated Lean vectors are checked against the production native helper used by mempool and block validation.",
+      "summary": "The Lean transfer-payload admission kernel proves the executable decoded shielded-transfer table for proof presence and size caps, anchor agreement, commitment agreement, inline ciphertext byte caps, ciphertext hash/size metadata agreement, binding-hash agreement, decoded proof binding-hash equality, and fee agreement; accepted payloads now expose binding-hash, proof-binding-hash, and fee facts for downstream composition, and generated Lean vectors are checked against the production native helper used by mempool and block validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4155,11 +4157,13 @@
         "Hegemon.Native.TransferActionPayloadAdmission.proof_missing_precedes_anchor_validation",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_missing_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_too_large_rejects",
+        "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_binding_facts",
+        "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_preconditions",
         "Hegemon.Native.TransferActionPayloadAdmission.valid_transfer_payload_accepts"
       ],
       "assumptions": [
         "The Lean model treats SCALE decoding, ciphertext hash derivation, and binding-hash computation as production-derived predicates; it proves the decoded admission table and rejection precedence.",
-        "Generated Lean conformance vectors cover valid payloads, exact proof-limit acceptance, missing and oversized proofs, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash and size mismatches, binding-hash mismatch, proof binding-hash mismatch, fee mismatch, proof-binding-hash-before-fee precedence, and proof-missing-before-anchor precedence.",
+        "Generated Lean conformance vectors cover valid payloads, exact proof-limit acceptance, missing and oversized proofs, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash and size mismatches, binding-hash mismatch, proof binding-hash mismatch, fee mismatch, proof-binding-hash-before-fee precedence, and proof-missing-before-anchor precedence. Focused regressions also cover proof-binding alias attempts for inline and sidecar payloads, including sidecar value-balance aliasing.",
         "The theorem covers executable decoded native transfer payload admission only. It does not prove SCALE decoder correctness, ciphertext hash cryptographic security or implementation equivalence, StarkVerifier binding-hash cryptographic assumptions, nullifier replay, DA sidecar availability, tx leaf proof soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -4173,6 +4177,9 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node transfer_action_rejects_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_action_rejects_sidecar_value_balance_binding_alias --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_action_rejects_inline_stablecoin_proof_binding_alias --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node transfer_action_rejects_sidecar_stablecoin_proof_binding_alias --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node imported_block_actions_recompute_binding_hash --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],

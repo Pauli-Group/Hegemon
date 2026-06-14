@@ -21755,6 +21755,98 @@ mod tests {
     }
 
     #[test]
+    fn transfer_action_rejects_sidecar_value_balance_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_sidecar_transfer_action(anchor, [37u8; 48], [137u8; 48], 0);
+        let mut args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_transfer_proof_artifact_with_value_balance(
+            anchor,
+            &action.nullifiers,
+            &action.commitments,
+            &action.ciphertext_hashes,
+            args.balance_slot_asset_ids,
+            args.fee,
+            29,
+            args.stablecoin.clone(),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("sidecar proof with aliased value balance must fail payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_inline_stablecoin_proof_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [38u8; 48],
+            [138u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+        let mut args = ShieldedTransferInlineArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_transfer_proof_artifact(
+            anchor,
+            &action.nullifiers,
+            &action.commitments,
+            &action.ciphertext_hashes,
+            args.balance_slot_asset_ids,
+            args.fee,
+            Some(test_stablecoin_policy_binding(11)),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("inline proof with aliased stablecoin payload must fail payload admission");
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_sidecar_stablecoin_proof_binding_alias() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut action = test_sidecar_transfer_action_with_stablecoin(
+            anchor,
+            [39u8; 48],
+            [139u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+        let mut args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+            .expect("decode test args");
+        args.proof = test_transfer_proof_artifact(
+            anchor,
+            &action.nullifiers,
+            &action.commitments,
+            &action.ciphertext_hashes,
+            args.balance_slot_asset_ids,
+            args.fee,
+            Some(test_stablecoin_policy_binding(11)),
+            action.binding,
+        );
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action]).expect_err(
+            "sidecar proof with aliased stablecoin payload must fail payload admission",
+        );
+        assert!(err.to_string().contains("proof binding hash mismatch"));
+    }
+
+    #[test]
     fn transfer_action_accepts_stablecoin_bound_inline_proof() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -24188,7 +24280,19 @@ mod tests {
         commitment: [u8; 48],
         fee: u64,
     ) -> PendingAction {
-        let inline = test_inline_transfer_action(anchor, nullifier, commitment, fee);
+        test_sidecar_transfer_action_with_stablecoin(anchor, nullifier, commitment, fee, None)
+    }
+
+    fn test_sidecar_transfer_action_with_stablecoin(
+        anchor: [u8; 48],
+        nullifier: [u8; 48],
+        commitment: [u8; 48],
+        fee: u64,
+        stablecoin: Option<StablecoinPolicyBinding>,
+    ) -> PendingAction {
+        let inline = test_inline_transfer_action_with_stablecoin(
+            anchor, nullifier, commitment, fee, stablecoin,
+        );
         let inline_args: ShieldedTransferInlineArgs =
             decode_scale_exact(&inline.public_args, "test inline transfer args")
                 .expect("decode inline args");
