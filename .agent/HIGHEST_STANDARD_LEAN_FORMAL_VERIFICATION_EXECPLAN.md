@@ -664,6 +664,16 @@ The latest full formal-core pass after the materialized sidecar artifact/rebuild
     falsification_cases=406
     implementation_bindings=196
 
+The inbound bridge receipt-output admission slice adds `formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean` and its generated vector emitter. The production `verify_inbound_bridge_receipt` path now routes decoded verifier outputs through a Lean-conformance-checked helper for source-chain, rules-hash, message-nonce, message-hash, tip/checkpoint arithmetic, confirmation overstatement, and minimum-confirmation admission. Current tracked completion is 74.09%.
+
+The latest full formal-core pass after the inbound bridge receipt-output admission slice reported:
+
+    claims=99
+    named_lean_theorems=1364
+    production_eligible_claims=89
+    falsification_cases=409
+    implementation_bindings=198
+
 ## Interfaces and Dependencies
 
 The primary interface for progress tracking is `config/highest-standard-formal-verification-matrix.json`. The primary proof interface is Lean 4 under `formal/lean`. The primary production-binding interface is `config/formal-security-blueprint.json` plus the formal-core checker under `scripts/hegemon_formal_core`. The primary release gate is `scripts/check_formal_core.sh`.

@@ -7193,6 +7193,78 @@
       "scope_boundary": "This node proves and vector-checks decoded bridge action payload admission plus modeled bridge replay/supply coupling, and composes that package with accepted raw-ingress sidecar materialization and wire-replay count facts. It does not prove SCALE decoder correctness, bridge payload-hash security or implementation equivalence, exact external message amount authorization beyond payload-hash binding, RISC Zero or future PQ bridge receipt soundness, bridge light-client soundness, arbitrary raw-byte parser refinement, or complete native-node equivalence."
     },
     {
+      "id": "native.inbound-bridge-receipt-admission",
+      "claim_id": "native.inbound-bridge-receipt-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean inbound bridge receipt-admission transition, an accepted decoded receipt output must match the inbound action's source chain, the registered Hegemon light-client rules hash, source message nonce, and source message hash; the canonical tip height must not precede the checkpoint/message height; the receipt must not overstate confirmations; and the checked confirmation count must meet the native minimum confirmation policy. Rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.InboundBridgeReceiptAdmission.accepts_iff_inbound_bridge_receipt_preconditions` proves the post-verifier admission predicate, with concrete theorems for valid receipts, same-height one-confirmation receipts, source-chain mismatch, rules-hash mismatch, nonce mismatch, message-hash mismatch, tip-before-message, confirmation overstatement, underconfirmation, and precedence among those failures. `gen_inbound_bridge_receipt_admission_vectors` emits Lean-derived examples, and the formal-core gate checks those vectors against the production `evaluate_native_inbound_bridge_receipt_admission` helper. `verify_inbound_bridge_receipt` now routes decoded verifier outputs through that helper immediately after `verify_risc0_bridge_receipt`; `validate_bridge_action_payload` must propagate the receipt verification result before inbound replay keys can be imported.",
+      "depends_on": [
+        "native.bridge-action-payload-admission",
+        "bridge.checkpoint-output-binding",
+        "bridge.long-range-proof-shape",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_inbound_bridge_receipt_admission",
+          "required_callers": [
+            "verify_inbound_bridge_receipt"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "verify_inbound_bridge_receipt",
+          "required_callers": [
+            "validate_bridge_action_payload"
+          ],
+          "result_obligation": "must_propagate_result"
+        }
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "DESIGN.md",
+        "METHODS.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-14",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for deterministic post-verifier bridge receipt output admission. Scope is the decoded output gate, not receipt cryptographic soundness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-inbound-bridge-receipt-admission-theorem",
+          "description": "Removing or weakening the inbound bridge receipt-admission theorems or their proofs must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-generated-inbound-bridge-receipt-admission-conformance",
+          "description": "Changing the production inbound bridge receipt output-admission table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_inbound_bridge_receipt_admission_vectors_match_production --lib --no-default-features"
+        },
+        {
+          "id": "inbound-bridge-message-binding-tamper-regression",
+          "description": "Inbound bridge message-binding tampering must be rejected by node tests before staging.",
+          "gate": "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --lib --no-default-features"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks deterministic post-verifier output admission only. It does not prove SCALE/postcard decoder correctness, RISC Zero receipt soundness, future PQ-clean bridge receipt soundness, bridge payload-hash security, probabilistic light-client soundness, arbitrary raw-byte parser refinement, or complete native-node equivalence."
+    },
+    {
       "id": "native.bridge-witness-backscan",
       "claim_id": "native.bridge-witness-backscan",
       "kind": "target_claim",
@@ -8765,7 +8837,8 @@
         "release.pq-binary",
         "bridge.message-root-replay",
         "bridge.inbound-replay-state",
-        "native.bridge-action-payload-admission"
+        "native.bridge-action-payload-admission",
+        "native.inbound-bridge-receipt-admission"
       ],
       "implementation_paths": [
         "node/src/native/mod.rs"

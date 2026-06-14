@@ -136,6 +136,9 @@ lean_exe gen_bridge_witness_backscan_vectors where
 lean_exe gen_bridge_witness_export_admission_vectors where
   root := `Hegemon.Native.GenerateBridgeWitnessExportAdmissionVectors
 
+lean_exe gen_inbound_bridge_receipt_admission_vectors where
+  root := `Hegemon.Native.GenerateInboundBridgeReceiptAdmissionVectors
+
 lean_exe gen_risc0_release_verifier_vectors where
   root := `Hegemon.Native.GenerateRisc0ReleaseVerifierVectors
 

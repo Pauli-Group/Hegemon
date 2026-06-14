@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 73.97,
+  "overall_completion_percent": 74.09,
   "last_full_formal_core": {
-    "commit": "working tree after materialized sidecar artifact/rebuild binding package",
-    "status": "passed 2026-06-14T00:47Z",
-    "claims": 98,
-    "named_lean_theorems": 1348,
-    "production_eligible_claims": 88,
-    "falsification_cases": 406,
-    "implementation_bindings": 196
+    "commit": "working tree after inbound bridge receipt-output admission slice",
+    "status": "passed 2026-06-14T01:28Z",
+    "claims": 99,
+    "named_lean_theorems": 1364,
+    "production_eligible_claims": 89,
+    "falsification_cases": 409,
+    "implementation_bindings": 198
   },
   "last_coordinator_audit": {
     "date": "2026-06-14",
@@ -29,35 +29,34 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a proof-keyed native tx-leaf boundary slice: accepted transfer payload admission now exposes binding-hash, proof-binding-hash, and fee facts; TxLeafCanonicalSurface composes those payload facts with the canonical native tx-leaf artifact boundary so active-input no-theft facts carry payload binding-hash agreement, decoded proof binding-hash agreement, wrapper/statement facts, and native proof/backend equality gates. New regressions reject sidecar value-balance proof aliases and inline/sidecar stablecoin proof-binding aliases.",
+    "summary": "Added a post-verifier inbound bridge receipt-output admission slice: decoded receipt outputs now pass through a Lean-conformance-checked helper that gates source-chain, light-client rules-hash, message nonce, message hash, tip/checkpoint arithmetic, confirmation overstatement, minimum confirmations, and rejection precedence before an inbound receipt can be accepted.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
+      "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_preconditions",
-      "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_binding_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_canonical_artifact_boundary_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft"
+      "Hegemon.Native.InboundBridgeReceiptAdmission.accepts_iff_inbound_bridge_receipt_preconditions",
+      "Hegemon.Native.InboundBridgeReceiptAdmission.valid_accepts",
+      "Hegemon.Native.InboundBridgeReceiptAdmission.tip_before_message_rejects",
+      "Hegemon.Native.InboundBridgeReceiptAdmission.confirmations_overstated_rejects",
+      "Hegemon.Native.InboundBridgeReceiptAdmission.underconfirmed_rejects"
     ],
     "validation": {
-      "lean_formal": "lake env lean Hegemon/Native/TransferActionPayloadAdmission.lean && lake env lean Hegemon/Native/TxLeafCanonicalSurface.lean passed",
+      "lean_formal": "lake build Hegemon.Native.InboundBridgeReceiptAdmission Hegemon.Native.GenerateInboundBridgeReceiptAdmissionVectors && lake exe gen_inbound_bridge_receipt_admission_vectors passed",
       "targeted_rust": [
-        "cargo test -p hegemon-node transfer_action_rejects_sidecar_value_balance_binding_alias --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node transfer_action_rejects_inline_stablecoin_proof_binding_alias --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node transfer_action_rejects_sidecar_stablecoin_proof_binding_alias --lib --no-default-features -- --nocapture"
+        "HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS=/tmp/hegemon_inbound_bridge_receipt_vectors.json cargo test -p hegemon-node lean_generated_inbound_bridge_receipt_admission_vectors_match_production --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T00:18Z",
-      "claims": 98,
-      "named_lean_theorems": 1348,
-      "production_eligible_claims": 88,
-      "falsification_cases": 405,
-      "implementation_bindings": 196
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T01:28Z",
+      "claims": 99,
+      "named_lean_theorems": 1364,
+      "production_eligible_claims": 89,
+      "falsification_cases": 409,
+      "implementation_bindings": 198
     },
     "known_limitations": [
-      "The slice proves proof-keyed boundary composition over decoded admission predicates; it does not prove tx-leaf parser completeness, SCALE/postcard decoder correctness, hash collision resistance, or deployed STARK/AIR/SmallWood soundness.",
-      "The accepted transaction relation remains conditional on `DeployedTxVerifierSoundnessAssumption`.",
-      "The production changes are regression/gate-only and add no runtime verification or prover cost."
+      "The slice proves and production-binds deterministic decoded receipt-output admission only; it does not prove receipt cryptographic soundness or future PQ verifier soundness.",
+      "The release RISC Zero receipt verifier remains disabled/fail-closed.",
+      "The production change is a refactor of existing checks into a helper and generated-vector gate, so runtime cost is negligible."
     ]
   },
   "last_production_binding_slice": {
@@ -497,22 +496,25 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 54,
+      "completion_percent": 57,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
         "long-range proof-shape gates",
         "bridge payload admission gates",
+        "post-verifier inbound receipt output admission gate",
         "RISC Zero release verifier fail-closed gate",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean accepted stream imports preserve bridge replay Nodup",
         "formal/lean/Hegemon/Native/AcceptedChain.lean carried ledger replay preserves consumed bridge replay-key uniqueness",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound payload authorization, fresh replay-key one-shot consumption, replay/supply coupling across accepted block, ledger, projected, raw-projected, and accepted raw-ingress sidecar replay, zero direct native mint delta for current state-delta-free inbound actions, decoded mint amount equality under payload-hash binding, carried-state preconditions, final nullifier uniqueness, wire-replay row-count equality, and composed authorized-amount/fresh-replay/raw-ingress/projected-replay theorems",
-        "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys"
+        "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
+        "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result"
       ],
       "missing_work": [
         "Replace the boundary-only decoded bridge mint amount surface with a live PQ-clean bridge mint payload grammar and production decoder when bridge minting is enabled.",
         "Mechanize or parameterize external-chain proof soundness.",
-        "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths."
+        "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths.",
+        "Replace the disabled experimental RISC Zero envelope with a production PQ-clean receipt verifier and bind its soundness to the decoded output-admission table."
       ],
       "performance_constraint": "Keep release verifier fail-closed until a PQ-clean verifier exists; avoid classical verifier runtime costs."
     },

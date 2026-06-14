@@ -114,6 +114,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateBridgeWitnessBackscanVectors.lean
   lake env lean Hegemon/Native/BridgeWitnessExportAdmission.lean
   lake env lean Hegemon/Native/GenerateBridgeWitnessExportAdmissionVectors.lean
+  lake env lean Hegemon/Native/InboundBridgeReceiptAdmission.lean
+  lake env lean Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean
   lake env lean Hegemon/Native/NativeBackendReviewPolicy.lean
   lake env lean Hegemon/Native/GenerateNativeBackendReviewPolicyVectors.lean
   lake env lean Hegemon/Native/NativeBackendReleasePosture.lean

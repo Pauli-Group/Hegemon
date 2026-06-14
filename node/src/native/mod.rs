@@ -1006,6 +1006,18 @@ struct NativeBridgeWitnessExportAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeInboundBridgeReceiptAdmissionInput {
+    source_chain_matches: bool,
+    rules_hash_matches: bool,
+    message_nonce_matches: bool,
+    message_hash_matches: bool,
+    checkpoint_height: u64,
+    canonical_tip_height: u64,
+    confirmations_checked: u32,
+    min_confirmations: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeWitnessBackscanEntry {
     height: u64,
     canonical_hash_present: bool,
@@ -1063,6 +1075,17 @@ enum NativeBridgeWitnessExportAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeInboundBridgeReceiptAdmissionRejection {
+    SourceChainMismatch,
+    RulesHashMismatch,
+    MessageNonceMismatch,
+    MessageHashMismatch,
+    TipBeforeMessage,
+    ConfirmationsOverstated,
+    Underconfirmed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBridgeWitnessBackscanRejection {
     BlockActionsDecodeFailed,
     NoBridgeMessageInBackscan,
@@ -1079,6 +1102,21 @@ impl NativeBridgeWitnessExportAdmissionRejection {
             Self::MessageIndexOutOfBounds => "message_index_out_of_bounds",
             Self::MissingParent => "missing_parent",
             Self::TipBeforeMessage => "tip_before_message",
+        }
+    }
+}
+
+impl NativeInboundBridgeReceiptAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::SourceChainMismatch => "source_chain_mismatch",
+            Self::RulesHashMismatch => "rules_hash_mismatch",
+            Self::MessageNonceMismatch => "message_nonce_mismatch",
+            Self::MessageHashMismatch => "message_hash_mismatch",
+            Self::TipBeforeMessage => "tip_before_message",
+            Self::ConfirmationsOverstated => "confirmations_overstated",
+            Self::Underconfirmed => "underconfirmed",
         }
     }
 }
@@ -8478,6 +8516,41 @@ fn evaluate_native_bridge_witness_export_admission(
     }
 }
 
+fn native_inbound_bridge_receipt_height_confirmations(
+    canonical_tip_height: u64,
+    checkpoint_height: u64,
+) -> Option<u32> {
+    let delta = canonical_tip_height.checked_sub(checkpoint_height)?;
+    Some(delta.saturating_add(1).min(u32::MAX as u64) as u32)
+}
+
+fn evaluate_native_inbound_bridge_receipt_admission(
+    input: NativeInboundBridgeReceiptAdmissionInput,
+) -> Result<u32, NativeInboundBridgeReceiptAdmissionRejection> {
+    if !input.source_chain_matches {
+        Err(NativeInboundBridgeReceiptAdmissionRejection::SourceChainMismatch)
+    } else if !input.rules_hash_matches {
+        Err(NativeInboundBridgeReceiptAdmissionRejection::RulesHashMismatch)
+    } else if !input.message_nonce_matches {
+        Err(NativeInboundBridgeReceiptAdmissionRejection::MessageNonceMismatch)
+    } else if !input.message_hash_matches {
+        Err(NativeInboundBridgeReceiptAdmissionRejection::MessageHashMismatch)
+    } else {
+        let height_confirmations = native_inbound_bridge_receipt_height_confirmations(
+            input.canonical_tip_height,
+            input.checkpoint_height,
+        )
+        .ok_or(NativeInboundBridgeReceiptAdmissionRejection::TipBeforeMessage)?;
+        if height_confirmations < input.confirmations_checked {
+            Err(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverstated)
+        } else if input.confirmations_checked < input.min_confirmations {
+            Err(NativeInboundBridgeReceiptAdmissionRejection::Underconfirmed)
+        } else {
+            Ok(height_confirmations)
+        }
+    }
+}
+
 fn evaluate_native_bridge_witness_backscan(
     entries: &[NativeBridgeWitnessBackscanEntry],
 ) -> Result<u64, NativeBridgeWitnessBackscanRejection> {
@@ -8535,6 +8608,31 @@ fn native_bridge_witness_export_admission_error(
     }
 }
 
+fn native_inbound_bridge_receipt_admission_error(
+    input: NativeInboundBridgeReceiptAdmissionInput,
+    rejection: NativeInboundBridgeReceiptAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeInboundBridgeReceiptAdmissionRejection::SourceChainMismatch
+        | NativeInboundBridgeReceiptAdmissionRejection::RulesHashMismatch
+        | NativeInboundBridgeReceiptAdmissionRejection::MessageNonceMismatch
+        | NativeInboundBridgeReceiptAdmissionRejection::MessageHashMismatch => {
+            anyhow!("Hegemon light-client bridge receipt output mismatch")
+        }
+        NativeInboundBridgeReceiptAdmissionRejection::TipBeforeMessage => {
+            anyhow!("Hegemon light-client bridge receipt tip precedes message")
+        }
+        NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverstated => {
+            anyhow!("Hegemon light-client bridge receipt overstates confirmations")
+        }
+        NativeInboundBridgeReceiptAdmissionRejection::Underconfirmed => anyhow!(
+            "Hegemon light-client bridge receipt underconfirmed: {} < {}",
+            input.confirmations_checked,
+            input.min_confirmations
+        ),
+    }
+}
+
 fn evaluate_native_risc0_release_verifier(
     input: NativeRisc0ReleaseVerifierInput,
 ) -> Result<(), NativeRisc0ReleaseVerifierRejection> {
@@ -8577,32 +8675,19 @@ fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
         return Err(anyhow!("unregistered Hegemon RISC Zero bridge verifier"));
     }
     let output = verify_risc0_bridge_receipt(&receipt, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1)?;
-    if output.source_chain_id != args.source_chain_id
-        || output.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
-        || output.message_nonce != args.source_message_nonce
-        || output.message_hash != args.message.message_hash()
-    {
-        return Err(anyhow!(
-            "Hegemon light-client bridge receipt output mismatch"
-        ));
-    }
-    let height_confirmations = output
-        .canonical_tip_height
-        .checked_sub(output.checkpoint_height)
-        .map(|delta| delta.saturating_add(1).min(u32::MAX as u64) as u32)
-        .ok_or_else(|| anyhow!("Hegemon light-client bridge receipt tip precedes message"))?;
-    if output.confirmations_checked > height_confirmations {
-        return Err(anyhow!(
-            "Hegemon light-client bridge receipt overstates confirmations"
-        ));
-    }
-    if output.confirmations_checked < MIN_INBOUND_BRIDGE_CONFIRMATIONS {
-        return Err(anyhow!(
-            "Hegemon light-client bridge receipt underconfirmed: {} < {}",
-            output.confirmations_checked,
-            MIN_INBOUND_BRIDGE_CONFIRMATIONS
-        ));
-    }
+    let admission_input = NativeInboundBridgeReceiptAdmissionInput {
+        source_chain_matches: output.source_chain_id == args.source_chain_id,
+        rules_hash_matches: output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        message_nonce_matches: output.message_nonce == args.source_message_nonce,
+        message_hash_matches: output.message_hash == args.message.message_hash(),
+        checkpoint_height: output.checkpoint_height,
+        canonical_tip_height: output.canonical_tip_height,
+        confirmations_checked: output.confirmations_checked,
+        min_confirmations: MIN_INBOUND_BRIDGE_CONFIRMATIONS,
+    };
+    evaluate_native_inbound_bridge_receipt_admission(admission_input).map_err(|rejection| {
+        native_inbound_bridge_receipt_admission_error(admission_input, rejection)
+    })?;
     Ok(())
 }
 
@@ -12569,6 +12654,30 @@ mod tests {
         message_height: u64,
         expected_valid: bool,
         expected_confirmations_checked: Option<u32>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanInboundBridgeReceiptAdmissionVectorFile {
+        schema_version: u32,
+        inbound_bridge_receipt_admission_cases: Vec<LeanInboundBridgeReceiptAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanInboundBridgeReceiptAdmissionCase {
+        name: String,
+        source_chain_matches: bool,
+        rules_hash_matches: bool,
+        message_nonce_matches: bool,
+        message_hash_matches: bool,
+        checkpoint_height: u64,
+        canonical_tip_height: u64,
+        confirmations_checked: u32,
+        min_confirmations: u32,
+        expected_valid: bool,
+        expected_height_confirmations: Option<u32>,
         expected_rejection: Option<String>,
     }
 
@@ -16851,6 +16960,69 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native bridge witness export admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_inbound_bridge_receipt_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean inbound bridge receipt admission vectors");
+        let vectors: LeanInboundBridgeReceiptAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean inbound bridge receipt admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.inbound_bridge_receipt_admission_cases.is_empty(),
+            "Lean inbound bridge receipt admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.inbound_bridge_receipt_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_inbound_bridge_receipt_admission_case(case);
+        }
+    }
+
+    fn verify_lean_inbound_bridge_receipt_admission_case(
+        case: &LeanInboundBridgeReceiptAdmissionCase,
+    ) {
+        let input = NativeInboundBridgeReceiptAdmissionInput {
+            source_chain_matches: case.source_chain_matches,
+            rules_hash_matches: case.rules_hash_matches,
+            message_nonce_matches: case.message_nonce_matches,
+            message_hash_matches: case.message_hash_matches,
+            checkpoint_height: case.checkpoint_height,
+            canonical_tip_height: case.canonical_tip_height,
+            confirmations_checked: case.confirmations_checked,
+            min_confirmations: case.min_confirmations,
+        };
+        let actual = evaluate_native_inbound_bridge_receipt_admission(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native inbound bridge receipt admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual.ok(),
+            case.expected_height_confirmations,
+            "{} native inbound bridge receipt height-confirmation count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native inbound bridge receipt admission rejection drifted from Lean spec",
             case.name
         );
     }
