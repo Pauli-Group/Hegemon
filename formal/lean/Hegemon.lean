@@ -76,6 +76,7 @@ import Hegemon.Native.StagedProofReload
 import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
+import Hegemon.Native.TransferNoTheftBoundary
 import Hegemon.Native.TransferStateAdmission
 import Hegemon.Native.TxLeafCanonicalSurface
 import Hegemon.Native.TxLeafArtifact

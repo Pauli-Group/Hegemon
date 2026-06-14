@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 74.97,
+  "overall_completion_percent": 75.04,
   "last_full_formal_core": {
     "commit": "813833fe0e7c563bad8e35ee5b98fa1394cafdd2",
     "status": "passed locally 2026-06-14T07:35:54Z",
@@ -165,7 +165,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 64,
+      "completion_percent": 65,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -189,7 +189,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages active native artifact input slots into no-theft facts with wrapper preconditions, wrapper surface facts, public-input binding, statement/proof-binding messages, root/anchor binding, and native artifact equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now composes accepted transfer payload proof-key admission with native artifact active-input no-theft facts, carrying payload binding-hash and decoded proof-binding-hash agreement to the no-theft boundary",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now strengthens the proof-keyed active-input no-theft boundary with a full binding package carrying payload fee agreement, public-input binding, root/anchor binding, statement/proof nullifier-slot alignment, native fee/proof/backend/ciphertext-payload equality gates, and field-level tx-leaf binding facts",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now composes accepted decoded transfer payload admission and singleton block-action validation acceptance, including payload-before-order and order-before-state precedence, with accepted native tx-leaf/action binding and canonical statement facts to expose active-input no-theft full-binding before modeled transfer state mutation"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
