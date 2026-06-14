@@ -6,7 +6,7 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 74.55,
   "last_full_formal_core": {
-    "commit": "working-tree-precommit",
+    "commit": "cf27dc83966df29888c8378b742146cde99bed2c",
     "status": "passed locally 2026-06-14T04:56:12Z",
     "claims": 100,
     "named_lean_theorems": 1379,
