@@ -15,20 +15,20 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-14T21:31:50Z",
-    "commit": "4bc06b2eb5825ca5e4abb680a9540e5fa4f1db14",
+    "date": "2026-06-14T22:07:26Z",
+    "commit": "34ff224cdb2232d6c85cfcd0f06c4e551b301f62",
     "status": "passed with live mining active, wallet-send passing, and isolated single-node mining proving block production; the live service did not find a block during the 20-second sample at current difficulty",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 4bc06b2eb5825ca5e4abb680a9540e5fa4f1db14",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 34ff224cdb2232d6c85cfcd0f06c4e551b301f62",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/CodecAdmission.lean passed from formal/lean on hegemon-dev",
+      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Privacy/CiphertextPrivacy.lean passed from formal/lean on hegemon-dev",
       "hegemon-node.service remained active; no restart was needed because this slice changed Lean/docs/metadata, not runtime node code",
-      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11218",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11221",
       "bash scripts/test-node.sh wallet-send passed",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 12903",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 27103 H/s, difficulty 520159231, blocks_found 545, and height 11218 before and after the 20-second sample",
-      "live consensus status reported syncing=false, peers=0, best_hash 0x000070da4eaf910e75bcc4732340b37e35b9c880ad502bc2b761df01bac7b384, state_root 0xf4c9299a06cc0c98b2b079d238b2cb4d0667b9e9333286b7db48ec9fcf535c71e5f619b57f4805a6ea8cdd34925978dd, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3048016547969",
-      "live service height stayed at 11218 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 13221",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 27084 H/s, difficulty 520159231, blocks_found 548, and height 11221 before and after the 20-second sample",
+      "live consensus status reported syncing=false, peers=0, best_hash 0x00008650dc22d38e2a53ba55033876d30d46a29abbb0f2d40932e73db5ffb6b2, state_root 0x0ab4702bca3758c5813128fad2e8c2953ba1c1db11e6a9ff7dc296644254bde296c8899418a502c1004ca394eeb903d9, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3049514835638",
+      "live service height stayed at 11221 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
       "timedatectl reported NTP=yes and NTPSynchronized=yes"
     ]
   },
