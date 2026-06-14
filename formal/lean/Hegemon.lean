@@ -70,6 +70,7 @@ import Hegemon.Native.Risc0ReleaseVerifier
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.DaSidecarReplayBinding
 import Hegemon.Native.RawIngressSidecarReplayRecoverability
+import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload

@@ -4478,7 +4478,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, and now adds a raw-decoded native replay block surface: decoded block fields project into the carried-state replay input, raw-projected accepted replay inherits the same startup equivalence, and valid/stale raw-decoded examples pin acceptance and carried-state rejection.",
+      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4537,16 +4537,20 @@
         "Hegemon.Native.BlockReplayInputProjection.raw_decoded_blocks_projection_round_trips",
         "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_state_after_accepts",
         "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_state_after_startup_equivalence",
-        "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_carried_state_rejects"
+        "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_carried_state_rejects",
+        "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
+        "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay"
       ],
       "assumptions": [
-        "The theorem binds decoded native replay fields to the projected replay model; arbitrary raw SCALE/bincode decoding, hash implementation/security, sled/fs durability, proof soundness, and complete native-node equivalence remain separate obligations.",
-        "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, `accepted_trace_is_canonical` pins the accepted-stage order, and the ledger-chain theorems pin stale leaf/bridge replay carried-state rejection at the chain level."
+        "The theorem binds decoded native replay fields to the projected replay model; arbitrary raw SCALE/bincode decoding, hash implementation/security, sled/fs durability below the accepted durability predicate, proof soundness, and complete native-node equivalence remain separate obligations.",
+        "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, `accepted_trace_is_canonical` pins the accepted-stage order, and the ledger-chain theorems pin stale leaf/bridge replay carried-state rejection at the chain level.",
+        "The canonical publication refinement theorem is a zero-runtime-cost composition over existing production-bound reload, reorg-chain, atomic commit, durability, and ledger/tree replay predicates; it does not add a new Rust vector beyond the existing gates for those predicates."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
@@ -4836,7 +4840,7 @@
       "id": "formal.native-commitment-tree-refinement",
       "component": "native commitment-tree refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, and that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts.",
+      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, and that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_nonproduction_refinement",
       "production_eligible": false,
@@ -4864,18 +4868,21 @@
         "Hegemon.Native.BlockReplayInputProjection.valid_projected_ledger_tree_state_after_accepts",
         "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_tree_state_after_accepts",
         "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_tree_state_after_startup_equivalence",
-        "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_ledger_tree_root_rejects"
+        "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_ledger_tree_root_rejects",
+        "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
+        "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay"
       ],
       "assumptions": [
         "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
         "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; this new slice does not add a separate Rust conformance vector or implementation binding.",
-        "The accepted ledger/tree replay theorem proves root-cursor agreement across the modeled accepted chain, packages that with accepted ledger replay, supply replay, leaf-cursor replay, canonical commitment-plan preconditions, nullifier uniqueness, and bridge replay uniqueness, and the raw projection theorem now proves raw-decoded replay/tree inputs inherit those same facts.",
+        "The accepted ledger/tree replay theorem proves root-cursor agreement across the modeled accepted chain, packages that with accepted ledger replay, supply replay, leaf-cursor replay, canonical commitment-plan preconditions, nullifier uniqueness, and bridge replay uniqueness, and the raw projection theorem now proves raw-decoded replay/tree inputs inherit those same facts. The canonical publication theorem composes those replay facts with accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, and storage durability admission.",
         "This slice does not prove commitment-tree hash security, Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
         "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
         "formal/lean/Hegemon/Consensus/TreeTransition.lean",

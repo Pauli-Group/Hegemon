@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.34,
+  "overall_completion_percent": 76.49,
   "last_full_formal_core": {
-    "commit": "worktree:bridge-raw-ingress-tree-replay-facts",
-    "status": "passed locally 2026-06-14T22:55:34Z",
+    "commit": "worktree:canonical-publication-refinement",
+    "status": "passed locally 2026-06-14T23:44:13Z",
     "claims": 100,
-    "named_lean_theorems": 1430,
+    "named_lean_theorems": 1432,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -48,29 +48,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened bridge mint/replay safety with `accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe`, composing accepted inbound bridge payload authorization, payload-hash amount authorization, zero direct native mint delta, one-shot replay import, duplicate-replay rejection, accepted raw-ingress ledger/tree sidecar publication, commitment-root publication, and final ledger nullifier/bridge replay uniqueness in one production-reviewable theorem.",
+    "summary": "Strengthened canonical publication/replay refinement with `CanonicalPublicationReplayFacts`, `accepted_canonical_publication_refines_ledger_tree_replay`, and `accepted_raw_canonical_publication_refines_ledger_tree_replay`, composing accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and ledger/tree replay into one publication fact package carrying replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
-      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean"
+      "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe",
-      "Hegemon.Native.RawIngressSidecarReplayRecoverability.raw_ingress_publication_equivalent_to_raw_ledger_tree_replay"
+      "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
+      "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean Hegemon/Native/BridgeMintSafety.lean passed locally 2026-06-14T22:39Z; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T22:55:34Z",
+      "lean_formal": "targeted lake env lean Hegemon/Native/CanonicalPublicationRefinement.lean and lake build Hegemon.Native.CanonicalPublicationRefinement Hegemon passed locally; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T23:44:13Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T22:55:34Z with 100 claims, 1430 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T23:44:13Z with 100 claims, 1432 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1430,
+      "named_lean_theorems": 1432,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "This is a composition over accepted predicates and raw decoded replay summaries; it does not prove arbitrary-byte SCALE/bincode/JSON parser refinement for every bridge action, PendingAction, or sidecar field.",
-      "This does not mechanize external-chain receipt soundness, the future PQ-clean bridge verifier, BLAKE3/payload-hash or DA-root security, DA availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node equivalence.",
-      "Bridge mint amount authorization remains at the decoded payload boundary until the production PQ-clean bridge mint grammar and decoder are enabled.",
+      "This is a zero-runtime-cost composition over accepted predicates and raw decoded ledger/tree replay summaries; it does not prove arbitrary raw SCALE/bincode/PendingAction byte field projection.",
+      "This does not mechanize sled or filesystem durability below the accepted durability predicate, hash/security/proof soundness, DA availability, external-chain bridge receipt soundness, or complete native-node equivalence.",
+      "The canonical publication package still assumes the decoded replay, reload, reorg, atomic commit, and durability predicates are the correct production-bound abstractions.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -114,7 +113,7 @@
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -129,10 +128,11 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor is extensionally equal to accepted replay and preserves replayed supply equality",
         "node/src/native/mod.rs native_block_replay_refinement_input_from_state helper is called by mined import, announced import, and canonical replay",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now maps raw decoded native block fields into projected replay and lifts accepted raw-projected replay to replayed supply equality",
-        "formal/lean/Hegemon/Native/BridgeMintSafety.lean now composes bridge amount/replay safety with projected and raw-projected replayed supply equality"
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean now composes bridge amount/replay safety with projected and raw-projected replayed supply equality",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and accepted ledger/tree replay into a canonical publication fact package carrying replayed supply equality"
       ],
       "missing_work": [
-        "Bind remaining sync, startup-repair, canonical publication, and raw decoded block input paths to the stronger ledger-state transition.",
+        "Bind remaining sync and arbitrary raw-byte action decode paths to the stronger ledger-state transition.",
         "State cryptographic and proof-system assumptions explicitly as theorem parameters."
       ],
       "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
@@ -207,7 +207,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 75,
+      "completion_percent": 76,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -221,13 +221,14 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean lifts raw decoded native replay blocks through projected replay to leaf-cursor equality and canonical commitment-plan preconditions",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now lifts raw decoded native ledger/tree replay blocks to accepted commitment-root progression, replayed supply, leaf-cursor, canonical commitment-plan, carried-state, nullifier, and bridge replay facts",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now lifts raw ingress sidecar publication through raw decoded ledger/tree replay, exposing validateNativeLedgerTreeReplayChain and expectedCommitmentRootAfter alongside sidecar publication facts",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now packages accepted publication/reload/commit/durability predicates with accepted ledger/tree replay so canonical publication carries commitment-root progression and final replay-set uniqueness",
         "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean proves verifier-side anchors must be in the parent commitment-tree root history before same-block commitments are applied",
         "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition"
       ],
       "missing_work": [
         "Lift the abstract root-cursor theorem into a full Merkle-root/tree-content invariant with membership.",
-        "Bind the raw ledger/tree replay projection theorem to complete native import/reorg/startup paths.",
-        "Prove reorg replay and startup repair preserve the same canonical commitment tree as genesis replay."
+        "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
+        "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],
       "performance_constraint": "Do not add duplicate tree recomputation on hot import except in existing replay/repair paths."
     },
@@ -485,14 +486,14 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded projected replay, exposing accepted ledger replay, replayed supply equality, leaf-cursor equality, canonical commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded ledger/tree replay, exposing commitment-root progression, accepted ledger replay, replayed supply/leaf facts, raw tree carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and accepted ledger/tree replay into a canonical publication fact package",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
         "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
         "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows",
         "node/src/native/mod.rs load_staged_sizes_with_limits, load_staged_proofs_with_limits, and build_validated_startup_state_with_limits now route startup staged-sidecar repair and pending-action quarantine cleanup through the same formal storage-durability barrier before returning repaired startup state"
       ],
       "missing_work": [
-        "Extend the ledger-state chain lift from leaf cursor/replay-key state to full commitment roots, sidecars, storage reload, and raw decoded action equivalence.",
-        "Bind any remaining startup publication and repair paths to that transition.",
+        "Bind arbitrary raw PendingAction bytes to the decoded replay, sidecar, action-hash, bridge replay-key, and tx-leaf artifact fields used by import/replay/startup.",
         "Add remaining restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
