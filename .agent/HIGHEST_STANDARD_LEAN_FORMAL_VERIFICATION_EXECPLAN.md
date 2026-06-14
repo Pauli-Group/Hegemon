@@ -125,6 +125,7 @@ The coordinator thread owns this plan, the theorem matrix in `config/highest-sta
 - [x] (2026-06-14 01:28Z) Added the inbound bridge receipt-output admission theorem slice and production binding. `bash scripts/check_formal_core.sh` passed locally with 99 claims, 1364 named Lean theorem declarations, 89 production-eligible claims, 409 falsification cases, and 198 implementation bindings. Current tracked completion is 74.09%.
 - [x] (2026-06-14 01:49Z) Deployed commit `02297e00` to `hegemon-dev` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3`, rebuilding `target/release/hegemon-node` with `make node`, and restarting `hegemon-node.service`. Remote `bash scripts/check_formal_core.sh` passed, `bash scripts/test-node.sh wallet-send` passed, RPC reported `isSyncing=false`, mining reported `is_mining=true` with one thread, height advanced by 10 blocks over the liveness sample, and `timedatectl` reported NTP active/synchronized.
 - [x] (2026-06-14 02:20Z) Added the consensus statement-anchor admission theorem slice and production binding. `bash scripts/check_formal_core.sh` passed locally with 100 claims, 1373 named Lean theorem declarations, 90 production-eligible claims, 412 falsification cases, and 199 implementation bindings. Current tracked completion is 74.25%.
+- [x] (2026-06-14 02:46Z) Deployed commit `3cb933c5` to `hegemon-dev` by fast-forwarding `/home/ubuntu/hegemon-current-4c4ea6d3`, running remote `bash scripts/check_formal_core.sh`, rebuilding `target/release/hegemon-node` with `make node`, restarting `hegemon-node.service`, rerunning `bash scripts/smoke-test.sh` after the RPC listener was ready, confirming mining advanced from height 10173 to 10187 over 20 seconds with `is_mining=true`, running `bash scripts/test-node.sh wallet-send`, and confirming NTP active/synchronized.
 - [ ] Add or strengthen production bindings for every native import/replay/startup path that can publish accepted state.
 - [ ] Repeat `bash scripts/check_formal_core.sh` after each future theorem slice and deploy runtime-affecting validated heads to `hegemon-dev` for mining/transaction smoke.
 
@@ -688,6 +689,8 @@ The latest full formal-core pass after the consensus statement-anchor admission 
     production_eligible_claims=90
     falsification_cases=412
     implementation_bindings=199
+
+The `hegemon-dev` deployment of commit `3cb933c5` reran the full formal-core gate on the VPS, rebuilt the release node, restarted `hegemon-node.service`, confirmed RPC health after the listener came up, confirmed mining liveness with a 14-block height increase over 20 seconds, ran the wallet-send compatibility test, and confirmed NTP was active/synchronized.
 
 ## Interfaces and Dependencies
 
