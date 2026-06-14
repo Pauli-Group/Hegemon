@@ -15,19 +15,18 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-14T05:00:33Z",
-    "commit": "2efb7c5d23699c51a2555b870b0c02b6a202f658",
-    "status": "passed",
+    "date": "2026-06-14T05:33:10Z",
+    "commit": "3c9de86dc788044c908587e39394797651ecf60c",
+    "status": "passed with mining active; no new block observed during the 90-second liveness sample at current difficulty",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 2efb7c5d23699c51a2555b870b0c02b6a202f658",
-      "lake build Hegemon.Privacy.NativeObserverSurface gen_note_ciphertext_wire_vectors passed on hegemon-dev",
-      "remote generated note-ciphertext wire vector schema_version=2 with chain-valid expected_wire_len=2149 and expected_da_len=2147",
-      "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=/tmp/hegemon_note_ciphertext_wire_vectors_remote.json cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture passed on hegemon-dev",
-      "hegemon-node.service remained active; no restart was needed because this slice changed Lean/tests/docs, not runtime node code",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 3c9de86dc788044c908587e39394797651ecf60c",
+      "lake build Hegemon.Native.BlockReplayInputProjection passed on hegemon-dev",
+      "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
+      "hegemon-node.service remained active; no restart was needed because this slice changed Lean/docs/metadata, not runtime node code",
       "bash scripts/smoke-test.sh passed against RPC port 9944",
-      "hegemon_miningStatus reported is_mining=true with one mining thread at height 10854",
-      "chain height advanced from 0x2a66 to 0x2a69 over the 15-second liveness sample",
-      "bash scripts/test-node.sh wallet-send passed"
+      "bash scripts/test-node.sh wallet-send passed",
+      "hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 28275 H/s, difficulty 520159231, and height 10902",
+      "chain height stayed at 0x2a96 during the 15-second and 75-second liveness samples, so block-production liveness was not re-proven by this slice"
     ]
   },
   "last_coordinator_audit": {
