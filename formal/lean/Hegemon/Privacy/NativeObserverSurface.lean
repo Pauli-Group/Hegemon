@@ -1,6 +1,7 @@
 import Hegemon.Native.TxLeafCanonicalSurface
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
+import Hegemon.Wallet.NotePlaintextCommitment
 
 namespace Hegemon
 namespace Privacy
@@ -13,6 +14,8 @@ open Hegemon.Privacy.Observer
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
+open Hegemon.Wallet.NoteCiphertextDecrypt
+open Hegemon.Wallet.NotePlaintextCommitment
 
 def ActiveOutputPublicMetadataBoundary
     (input : TxLeafActionBindingInput)
@@ -1351,6 +1354,194 @@ theorem native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_p
         game
         leftShape
         rightShape⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    {attempt : DecryptAttempt}
+    {plaintext : NotePlaintextSummary}
+    {material : WalletRecipientMaterial}
+    {data : ExportedNoteData}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (selectedAttempt :
+      left.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? =
+          some attempt.ciphertext)
+    (decryptAccepted : evaluateDecrypt attempt = none)
+    (exported : data = exportNoteData plaintext material)
+    (published : publicCommitment = commitmentFromNoteData data) :
+    samePublicMetadataLeakage left right
+      ∧ sameBatchTimingLeakage left right
+      ∧ game.wireIndistinguishable
+      ∧ attempt.ciphertext.version = attempt.material.version
+      ∧ attempt.ciphertext.cryptoSuite = attempt.material.cryptoSuite
+      ∧ attempt.ciphertext.diversifierIndex =
+        attempt.material.diversifierIndex
+      ∧ attempt.cryptoAuthenticates = true
+      ∧ publicCommitment = commitmentFromPlaintext plaintext material
+      ∧ shape.commitments[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ statementFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ bindingFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ ∃ leftWire rightWire,
+        left.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? =
+          some leftWire
+          ∧ right.ciphertextBytes[
+              activeFlagCountBefore shape.outputFlags index]? =
+            some rightWire
+          ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            leftWire = some attempt.ciphertext
+          ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            rightWire = some attempt.ciphertext
+          ∧ summaryHasChainCiphertextFormat attempt.ciphertext
+          ∧ ActiveOutputPublicMetadataBoundary
+            input
+            shape
+            bound
+            statementFields
+            bindingFields
+            left
+            right
+            index
+            publicCommitment
+            publicCiphertextHash := by
+  have rightShape : right.publicInputs = shape := by
+    calc
+      right.publicInputs = left.publicInputs := game.publicInputs.symm
+      _ = shape := leftShape
+  have privacyBoundary :
+      ActiveOutputPublicMetadataBoundary
+        input
+        shape
+        bound
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash :=
+    native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary
+      bindingAccepted
+      surface
+      slot
+      game
+      leftShape
+      rightShape
+  have privacyBoundaryCopy := privacyBoundary
+  rcases privacyBoundary with
+    ⟨leftWire,
+      rightWire,
+      summary,
+      leftWireAt,
+      rightWireAt,
+      leftSummaryAt,
+      _rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      summaryFormat,
+      _metadata,
+      _shapeFlag,
+      shapeCommitment,
+      _shapeCiphertext,
+      _boundFlag,
+      statementCommitment,
+      _statementCiphertext,
+      bindingCommitment,
+      _bindingCiphertext,
+      _ciphertextHashes,
+      _ciphertextPayloadHashes,
+      _outputCount,
+      _outputFacts,
+      _bindingFacts⟩
+  have selectedSummary : summary = attempt.ciphertext := by
+    have someEq : some summary = some attempt.ciphertext := by
+      calc
+        some summary =
+            left.ciphertextSummaries[
+              activeFlagCountBefore shape.outputFlags index]? :=
+          leftSummaryAt.symm
+        _ = some attempt.ciphertext := selectedAttempt
+    exact Option.some.inj someEq
+  subst summary
+  have decryptBoundary :=
+    decrypt_success_plaintext_to_commitment_boundary
+      decryptAccepted
+      exported
+      published
+  have commitmentAt :
+      shape.commitments[index]? =
+        some (commitmentFromPlaintext plaintext material) := by
+    rw [← decryptBoundary.right.right.right.right]
+    exact shapeCommitment
+  have statementCommitmentAt :
+      statementFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material) := by
+    rw [← decryptBoundary.right.right.right.right]
+    exact statementCommitment
+  have bindingCommitmentAt :
+      bindingFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material) := by
+    rw [← decryptBoundary.right.right.right.right]
+    exact bindingCommitment
+  exact
+    ⟨ciphertext_privacy_game_preserves_public_metadata_leakage game,
+      ciphertext_privacy_game_preserves_batch_timing_leakage game,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      decryptBoundary.left,
+      decryptBoundary.right.left,
+      decryptBoundary.right.right.left,
+      decryptBoundary.right.right.right.left,
+      decryptBoundary.right.right.right.right,
+      commitmentAt,
+      statementCommitmentAt,
+      bindingCommitmentAt,
+      ⟨leftWire,
+        rightWire,
+        leftWireAt,
+        rightWireAt,
+        leftParsed,
+        rightParsed,
+        summaryFormat,
+        privacyBoundaryCopy⟩⟩
 
 end NativeObserverSurface
 end Privacy

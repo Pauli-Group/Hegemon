@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 75.19,
+  "overall_completion_percent": 75.32,
   "last_full_formal_core": {
     "commit": "f712235956663b97631491cd12cba9b8a70e9d7b",
     "status": "passed locally 2026-06-14T16:38:27Z",
@@ -47,28 +47,30 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Added a native selected-row ciphertext privacy-game boundary slice: active native tx-leaf output slots inside a same-shape ciphertext privacy game now select public observer rows at the same active-output rank, parse to the same public summary, carry the same shape/statement/proof-bound commitment and ciphertext-hash metadata, preserve public metadata and batch/timing leakage, and expose the explicit wire-indistinguishability obligation for raw wire bytes.",
+    "summary": "Added a native selected-row decrypt-to-commitment privacy slice: an active native tx-leaf output selected inside a same-shape ciphertext privacy game, when decrypted by recipient material through the modeled wallet decrypt boundary, reconstructs the exact plaintext-derived note commitment carried by the public shape, statement preimage, and proof-binding message while preserving public metadata, batch/timing leakage, and the explicit wire-indistinguishability obligation.",
     "lean_modules": [
       "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
       "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
       "formal/lean/Hegemon/Privacy/Observer.lean",
+      "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
+      "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
       "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary"
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment"
     ],
     "validation": {
       "lean_formal": "lake build Hegemon.Privacy.NativeObserverSurface and bash scripts/check_lean_formal.sh passed",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T16:38:27Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T17:10:35Z",
       "claims": 100,
-      "named_lean_theorems": 1409,
+      "named_lean_theorems": 1410,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem keeps `wireIndistinguishable` explicit; it does not prove ML-KEM IND-CCA security, AEAD confidentiality, KDF security, RNG quality, or simulator zero knowledge.",
+      "The theorem keeps wallet decrypt success behind the explicit crypto-authentication predicate and keeps `wireIndistinguishable` explicit; it does not prove ML-KEM IND-CCA security, AEAD confidentiality, KDF security, RNG quality, or simulator zero knowledge.",
       "The selected-row composition inherits the native tx-leaf canonical-surface deployed-verifier boundary; it does not discharge proof-system privacy, ciphertext-hash security, or complete wallet/native-node equivalence.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
@@ -357,7 +359,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 46,
+      "completion_percent": 47,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -378,6 +380,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now separates public metadata leakage from full observer leakage by excluding raw ciphertext bytes while retaining public inputs, parsed summaries, and placement",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve public metadata leakage even when raw ciphertext wires differ under the explicit wire-indistinguishability premise",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes active native tx-leaf output slots with the ciphertext privacy game, proving both worlds select the same public active-output rank/summary and the same statement/proof-bound commitment/ciphertext-hash metadata while preserving batch/timing leakage and leaving raw wire indistinguishability explicit",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes the selected-row ciphertext privacy game with wallet decrypt-to-commitment binding, proving recipient-decrypted selected rows reconstruct the same plaintext-derived note commitment carried by public shape, statement preimage, and proof-binding rows while preserving explicit public metadata/batch leakage and raw-wire crypto obligations",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
@@ -392,7 +395,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -416,6 +419,7 @@
     "wallet/src/notes.rs decrypt fail-closed regressions for version, crypto-suite, diversifier, wrong root key, and KEM/note/memo payload malleation",
     "crypto/src/note_encryption.rs decrypt fail-closed regressions for wrong recipient, wrong secret key, version tamper, and KEM/note/memo payload malleation",
     "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean proves decrypted plaintext plus recipient material exports the same abstract note commitment relation used by spend authorization and active public output slots",
+    "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes selected native tx-leaf observer rows, same-shape ciphertext privacy games, wallet decrypt success, and plaintext-to-commitment binding so recipient-decrypted selected output rows reconstruct the exact statement/proof-bound output commitment",
     "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean and generated Rust conformance vectors bind that abstract note commitment relation to the deployed input order and byte-limb grammar",
     "wallet/src/viewing.rs full-view decrypt regression proves recovered NoteData, input witness, output witness, and plaintext-derived commitment agree",
         "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, decoded native tx-leaf ciphertext hashes recomputed from decoded note DA bytes, and a verifying native tx-leaf artifact",
