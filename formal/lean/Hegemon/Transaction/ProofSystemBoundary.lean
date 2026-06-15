@@ -1360,6 +1360,53 @@ theorem deployed_soundness_canonical_surface_exposes_spend_and_balance
       surface
       sound)
 
+theorem deployed_soundness_canonical_surface_public_input_p3_binding_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (_sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    PublicInputBinding.PublicInputP3BindingFacts
+      publicFields
+      serializedFields
+      bound :=
+  canonical_statement_surface_p3_public_input_binding_facts surface
+
 theorem balance_public_soundness_canonical_surface_authorized_public_delta_value
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

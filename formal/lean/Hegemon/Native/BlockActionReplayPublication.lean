@@ -1,3 +1,4 @@
+import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.BlockActionValidation
 import Hegemon.Native.BlockReplayRefinement
 
@@ -5,6 +6,7 @@ namespace Hegemon
 namespace Native
 namespace BlockActionReplayPublication
 
+open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.ActionHashAdmission
 open Hegemon.Native.ActionScopeAdmission
 open Hegemon.Native.ActionStreamEffect
@@ -292,6 +294,112 @@ theorem accepted_block_action_validation_and_replay_publish_consensus_facts
       replayStateRootMatches :=
         accepted_forbids_counterfeit_state_root acceptedReplay
     }
+
+theorem accepted_block_action_validation_derives_replay_row_count
+    {validation : BlockActionValidationInput}
+    {replay : BlockReplayInput}
+    {validationSummary : BlockActionValidationSummary}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    (acceptedValidation :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (acceptedWireProjection :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (wireActionCountMatchesValidation :
+      wireProjection.actionCount =
+        validation.actions.length)
+    (wireProjectedActionCountMatchesReplay :
+      wireOutput.projectedActionCount =
+        replay.actions.length) :
+    validationSummary.validatedActionCount =
+      replay.actions.length := by
+  have validationConsumesRows :=
+    accepted_block_action_validation_counts_all_rows
+      acceptedValidation
+  have wireProjectedRows :=
+    accepted_wire_replay_projection_projected_action_count
+      acceptedWireProjection
+  calc
+    validationSummary.validatedActionCount =
+        validation.actions.length :=
+      validationConsumesRows
+    _ = wireProjection.actionCount :=
+      Eq.symm wireActionCountMatchesValidation
+    _ = wireOutput.projectedActionCount :=
+      Eq.symm wireProjectedRows
+    _ = replay.actions.length :=
+      wireProjectedActionCountMatchesReplay
+
+theorem accepted_block_action_validation_derives_bridge_replay_count
+    {validationSummary : BlockActionValidationSummary}
+    {replaySummary : BlockReplaySummary}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    (validationBridgeRowsMatchWire :
+      validationSummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount)
+    (replayBridgeRowsMatchWire :
+      replaySummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount) :
+    validationSummary.importedBridgeReplayCount =
+      replaySummary.importedBridgeReplayCount := by
+  calc
+    validationSummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount :=
+      validationBridgeRowsMatchWire
+    _ = replaySummary.importedBridgeReplayCount :=
+      Eq.symm replayBridgeRowsMatchWire
+
+theorem accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions
+    {validation : BlockActionValidationInput}
+    {replay : BlockReplayInput}
+    {validationSummary : BlockActionValidationSummary}
+    {replaySummary : BlockReplaySummary}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    (acceptedValidation :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (acceptedReplay :
+      evaluateBlockReplayRefinement replay =
+        Except.ok replaySummary)
+    (acceptedWireProjection :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (wireActionCountMatchesValidation :
+      wireProjection.actionCount =
+        validation.actions.length)
+    (wireProjectedActionCountMatchesReplay :
+      wireOutput.projectedActionCount =
+        replay.actions.length)
+    (validationBridgeRowsMatchWire :
+      validationSummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount)
+    (replayBridgeRowsMatchWire :
+      replaySummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount) :
+    AcceptedBlockActionReplayPublicationFacts
+      validation
+      replay
+      validationSummary
+      replaySummary := by
+  have rowCountAgreement :=
+    accepted_block_action_validation_derives_replay_row_count
+      acceptedValidation
+      acceptedWireProjection
+      wireActionCountMatchesValidation
+      wireProjectedActionCountMatchesReplay
+  have bridgeReplayCountAgreement :=
+    accepted_block_action_validation_derives_bridge_replay_count
+      validationBridgeRowsMatchWire
+      replayBridgeRowsMatchWire
+  exact
+    accepted_block_action_validation_and_replay_publish_consensus_facts
+      acceptedValidation
+      acceptedReplay
+      rowCountAgreement
+      bridgeReplayCountAgreement
 
 end BlockActionReplayPublication
 end Native

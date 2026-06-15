@@ -416,6 +416,36 @@ theorem canonical_statement_surface_public_binding_valid
   unfold PublicInputBinding.validBinding
   rw [surface.publicBinding]
 
+theorem canonical_statement_surface_p3_public_input_binding_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    PublicInputBinding.PublicInputP3BindingFacts
+      publicFields
+      serializedFields
+      bound :=
+  PublicInputBinding.bindPublicInputs_some_implies_p3_binding_facts
+    surface.publicBinding
+
 theorem canonical_statement_surface_statement_length
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

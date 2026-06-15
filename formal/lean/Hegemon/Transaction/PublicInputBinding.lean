@@ -95,6 +95,37 @@ def stablecoinBindingMatches (pubFields : PublicFields) (serialized : Serialized
     && pubFields.stablecoinOracleCommitment = serialized.stablecoinOracleCommitment
     && pubFields.stablecoinAttestationCommitment = serialized.stablecoinAttestationCommitment
 
+theorem stablecoinBindingMatches_true_fields
+    {pubFields : PublicFields}
+    {serialized : SerializedFields}
+    (h : stablecoinBindingMatches pubFields serialized = true) :
+    pubFields.stablecoinEnabled = serialized.stablecoinEnabled
+      ∧ pubFields.stablecoinAsset = serialized.stablecoinAsset
+      ∧ pubFields.stablecoinPolicyVersion =
+        serialized.stablecoinPolicyVersion
+      ∧ signedMagnitudeMatches
+        pubFields.stablecoinIssuanceDelta
+        serialized.stablecoinIssuanceSign
+        serialized.stablecoinIssuanceMagnitude = true
+      ∧ pubFields.stablecoinPolicyHash = serialized.stablecoinPolicyHash
+      ∧ pubFields.stablecoinOracleCommitment =
+        serialized.stablecoinOracleCommitment
+      ∧ pubFields.stablecoinAttestationCommitment =
+        serialized.stablecoinAttestationCommitment := by
+  unfold stablecoinBindingMatches at h
+  simp at h
+  rcases h with
+    ⟨⟨⟨⟨⟨⟨hEnabled, hAsset⟩, hPolicyVersion⟩, hIssuance⟩,
+      hPolicyHash⟩, hOracle⟩, hAttestation⟩
+  exact
+    ⟨hEnabled,
+      hAsset,
+      hPolicyVersion,
+      hIssuance,
+      hPolicyHash,
+      hOracle,
+      hAttestation⟩
+
 def bindPublicInputs (pubFields : PublicFields) (serialized : SerializedFields) :
     Option BoundPublicInputs :=
   match selectedBalanceSlotAssets pubFields serialized with
@@ -130,6 +161,106 @@ def validBinding (pubFields : PublicFields) (serialized : SerializedFields) : Bo
   match bindPublicInputs pubFields serialized with
   | some _ => true
   | none => false
+
+structure PublicInputP3BindingFacts
+    (pubFields : PublicFields)
+    (serialized : SerializedFields)
+    (bound : BoundPublicInputs) : Prop where
+  publicMerkleRootMatches :
+    pubFields.merkleRoot = serialized.merkleRoot
+  publicFeeMatches :
+    pubFields.nativeFee = serialized.fee
+  publicValueBalanceMatches :
+    signedMagnitudeMatches
+      pubFields.valueBalance
+      serialized.valueBalanceSign
+      serialized.valueBalanceMagnitude = true
+  publicBalanceSlotAssetsMatch :
+    pubFields.balanceSlotAssets = bound.balanceSlotAssets
+  publicStablecoinBindingMatches :
+    stablecoinBindingMatches pubFields serialized = true
+  boundInputFlags :
+    bound.inputFlags = serialized.inputFlags
+  boundOutputFlags :
+    bound.outputFlags = serialized.outputFlags
+  boundFee :
+    bound.fee = serialized.fee
+  boundValueBalanceSign :
+    bound.valueBalanceSign = serialized.valueBalanceSign
+  boundValueBalanceMagnitude :
+    bound.valueBalanceMagnitude = serialized.valueBalanceMagnitude
+  boundMerkleRoot :
+    bound.merkleRoot = serialized.merkleRoot
+  boundStablecoinEnabled :
+    bound.stablecoinEnabled = serialized.stablecoinEnabled
+  boundStablecoinAsset :
+    bound.stablecoinAsset = serialized.stablecoinAsset
+  boundStablecoinPolicyVersion :
+    bound.stablecoinPolicyVersion = serialized.stablecoinPolicyVersion
+  boundStablecoinIssuanceSign :
+    bound.stablecoinIssuanceSign = serialized.stablecoinIssuanceSign
+  boundStablecoinIssuanceMagnitude :
+    bound.stablecoinIssuanceMagnitude =
+      serialized.stablecoinIssuanceMagnitude
+  boundStablecoinPolicyHash :
+    bound.stablecoinPolicyHash = serialized.stablecoinPolicyHash
+  boundStablecoinOracleCommitment :
+    bound.stablecoinOracleCommitment =
+      serialized.stablecoinOracleCommitment
+  boundStablecoinAttestationCommitment :
+    bound.stablecoinAttestationCommitment =
+      serialized.stablecoinAttestationCommitment
+
+theorem bindPublicInputs_some_implies_p3_binding_facts
+    {pubFields : PublicFields}
+    {serialized : SerializedFields}
+    {bound : BoundPublicInputs}
+    (h : bindPublicInputs pubFields serialized = some bound) :
+    PublicInputP3BindingFacts pubFields serialized bound := by
+  unfold bindPublicInputs at h
+  split at h
+  · contradiction
+  next assets hAssets =>
+    split at h
+    · rename_i hMatches
+      injection h with hBound
+      subst bound
+      simp [balanceSlotAssetsMatch] at hMatches
+      rcases hMatches with
+        ⟨⟨⟨⟨hMerkle, hFee⟩, hValueBalance⟩, hBalanceAssets⟩,
+          hStablecoin⟩
+      exact
+        { publicMerkleRootMatches := hMerkle
+          publicFeeMatches := hFee
+          publicValueBalanceMatches := hValueBalance
+          publicBalanceSlotAssetsMatch := hBalanceAssets
+          publicStablecoinBindingMatches := hStablecoin
+          boundInputFlags := rfl
+          boundOutputFlags := rfl
+          boundFee := rfl
+          boundValueBalanceSign := rfl
+          boundValueBalanceMagnitude := rfl
+          boundMerkleRoot := rfl
+          boundStablecoinEnabled := rfl
+          boundStablecoinAsset := rfl
+          boundStablecoinPolicyVersion := rfl
+          boundStablecoinIssuanceSign := rfl
+          boundStablecoinIssuanceMagnitude := rfl
+          boundStablecoinPolicyHash := rfl
+          boundStablecoinOracleCommitment := rfl
+          boundStablecoinAttestationCommitment := rfl }
+    · contradiction
+
+theorem validBinding_true_has_p3_binding_facts
+    {pubFields : PublicFields}
+    {serialized : SerializedFields}
+    (h : validBinding pubFields serialized = true) :
+    ∃ bound, PublicInputP3BindingFacts pubFields serialized bound := by
+  unfold validBinding at h
+  split at h
+  · rename_i bound hBound
+    exact ⟨bound, bindPublicInputs_some_implies_p3_binding_facts hBound⟩
+  · contradiction
 
 def validPublicFields : PublicFields :=
   { merkleRoot := 101

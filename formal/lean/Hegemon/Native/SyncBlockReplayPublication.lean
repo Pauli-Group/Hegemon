@@ -1,3 +1,4 @@
+import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.SyncAdmission
@@ -6,6 +7,7 @@ namespace Hegemon
 namespace Native
 namespace SyncBlockReplayPublication
 
+open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.AcceptedChain
 open Hegemon.Native.AtomicCommitManifestAdmission
 open Hegemon.Native.BlockIndexReload
@@ -165,6 +167,119 @@ theorem accepted_sync_block_response_binds_raw_canonical_publication
       canonicalPublicationFacts := canonicalFacts.left,
       rawTreeCarriedStatePreconditions := canonicalFacts.right
     }
+
+theorem accepted_sync_block_response_derives_decoded_rows_match_raw_replay
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (wireProjectionAccepted :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (wireProjectedActionCountMatchesRawReplay :
+      wireOutput.projectedActionCount =
+        rawDecodedTreeReplayActionCount blocks) :
+    blockActionDecode.actualActionPayloadCount =
+      rawDecodedTreeReplayActionCount blocks := by
+  have declaredRowsMatch :=
+    block_action_decode_acceptance_binds_declared_count
+      blockActionDecodeAccepted
+  have projectedRowsMatch :=
+    accepted_wire_replay_projection_projected_action_count
+      wireProjectionAccepted
+  calc
+    blockActionDecode.actualActionPayloadCount =
+        blockActionDecode.declaredTxCount :=
+      Eq.symm declaredRowsMatch
+    _ = wireProjection.actionCount :=
+      Eq.symm wireActionCountMatchesDeclared
+    _ = wireOutput.projectedActionCount :=
+      Eq.symm projectedRowsMatch
+    _ = rawDecodedTreeReplayActionCount blocks :=
+      wireProjectedActionCountMatchesRawReplay
+
+theorem accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows
+    {syncDecode : SyncDecodeInput}
+    {responseCount : SyncResponseCountInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    (syncAccepted : syncDecodeAccepts syncDecode = true)
+    (responseCountAccepted :
+      responseCountAccepts responseCount = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (wireProjectionAccepted :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (syncBlockCountMatches :
+      blocks.length = responseCount.blockCount)
+    (wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (wireProjectedActionCountMatchesRawReplay :
+      wireOutput.projectedActionCount =
+        rawDecodedTreeReplayActionCount blocks)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    SyncBlockReplayPublicationFacts
+      syncDecode
+      responseCount
+      blockActionDecode
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks := by
+  have decodedRowsMatchRawReplay :=
+    accepted_sync_block_response_derives_decoded_rows_match_raw_replay
+      blockActionDecodeAccepted
+      wireProjectionAccepted
+      wireActionCountMatchesDeclared
+      wireProjectedActionCountMatchesRawReplay
+  exact
+    accepted_sync_block_response_binds_raw_canonical_publication
+      syncAccepted
+      responseCountAccepted
+      blockActionDecodeAccepted
+      syncBlockCountMatches
+      decodedRowsMatchRawReplay
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
 
 end SyncBlockReplayPublication
 end Native

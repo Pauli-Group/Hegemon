@@ -322,14 +322,17 @@
       "id": "formal.transaction-public-input-binding",
       "component": "transaction public/serialized input binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean public-input binding kernel proves executable accept/reject facts for the verifier seam that combines TransactionPublicInputs with SerializedStarkInputs before constructing TransactionPublicInputsP3, and generated Lean vectors are checked against production transaction_public_inputs_p3_from_parts.",
+      "summary": "The Lean public-input binding kernel proves executable accept/reject facts for the verifier seam that combines TransactionPublicInputs with SerializedStarkInputs before constructing TransactionPublicInputsP3. Successful binding now exposes theorem-level P3 public-input field facts for merkle root, fee, signed value balance, balance-slot assets, input/output flags, and stablecoin payload fields, and generated Lean vectors are checked against production transaction_public_inputs_p3_from_parts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Transaction.PublicInputBinding.bindPublicInputs_accepts_valid",
+        "Hegemon.Transaction.PublicInputBinding.bindPublicInputs_some_implies_p3_binding_facts",
+        "Hegemon.Transaction.PublicInputBinding.stablecoinBindingMatches_true_fields",
         "Hegemon.Transaction.PublicInputBinding.validBinding_accepts_omitted_balance_assets",
         "Hegemon.Transaction.PublicInputBinding.validBinding_accepts_stablecoin",
+        "Hegemon.Transaction.PublicInputBinding.validBinding_true_has_p3_binding_facts",
         "Hegemon.Transaction.PublicInputBinding.validBinding_rejects_bad_balance_slot_count",
         "Hegemon.Transaction.PublicInputBinding.validBinding_rejects_balance_slot_asset_mismatch",
         "Hegemon.Transaction.PublicInputBinding.validBinding_rejects_fee_mismatch",
@@ -347,7 +350,7 @@
       ],
       "assumptions": [
         "The Lean model treats 48-byte commitments as abstract digest identifiers; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
-        "Generated Lean conformance vectors cover merkle-root, fee, signed value-balance, balance-slot asset list, stablecoin enable/asset/version/issuance/hash/oracle/attestation binding, and the legacy empty serialized balance-slot fallback.",
+        "Generated Lean conformance vectors cover merkle-root, fee, signed value-balance, balance-slot asset list, stablecoin enable/asset/version/issuance/hash/oracle/attestation binding, and the legacy empty serialized balance-slot fallback. The additional successful-binding theorem package exposes the exact field equalities that the Rust `transaction_public_inputs_p3_from_parts` helper uses before constructing `TransactionPublicInputsP3`.",
         "The theorem covers the public/serialized binding predicate used before verifier public-input construction, not transaction statement-hash preimage binding, which is covered separately by formal.transaction-statement-hash-binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
       "evidence_paths": [
@@ -525,12 +528,13 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot and public-delta consequences from those split assumptions, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot and public-delta consequences from those split assumptions, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
       "lean_theorems": [
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_public_binding_valid",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_p3_public_input_binding_facts",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_length",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_wrapper_preconditions",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_statement_surface",
@@ -560,6 +564,7 @@
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_input_slot_bound_to_statement",
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_output_slot_bound_to_statement",
         "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_exposes_spend_and_balance",
+        "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_public_input_p3_binding_facts",
         "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_input_slot_boundary_facts",
         "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_output_slot_boundary_facts",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts",
@@ -582,7 +587,7 @@
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
-        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target. `CanonicalDeployedVerifierInputSlotBoundaryFacts` and `CanonicalDeployedVerifierOutputSlotBoundaryFacts` expose the same input/output slot packages directly from the canonical surface plus the explicit deployed-verifier soundness assumption.",
+        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target. `canonical_statement_surface_p3_public_input_binding_facts` and `deployed_soundness_canonical_surface_public_input_p3_binding_facts` additionally expose the successful-binding P3 public-input field package from the same canonical surface. `CanonicalDeployedVerifierInputSlotBoundaryFacts` and `CanonicalDeployedVerifierOutputSlotBoundaryFacts` expose the same input/output slot packages directly from the canonical surface plus the explicit deployed-verifier soundness assumption.",
         "`Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` composes those packaged proof-system boundary facts with accepted native tx-leaf/action equality admission, while `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` packages an active artifact input slot into spend facts and `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with statement/proof-binding vector facts, wrapper/public/statement facts, native output equality gates, and artifact digest/backend gates. Both still inherit the explicit deployed verifier soundness assumption where they derive accepted-relation facts.",
         "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, total input-slot facts across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement.",
@@ -4816,7 +4821,7 @@
       "id": "native.block-action-replay-publication",
       "component": "native block-action validation to replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-action replay publication theorem composes accepted decoded block-action validation with accepted block replay/accounting. It packages action hash preconditions, proof that every decoded validation row was consumed, explicit row-count equality to replay rows, imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe.",
+      "summary": "The Lean block-action replay publication theorems compose accepted decoded block-action validation with accepted block replay/accounting and accepted wire replay projection. They package action hash preconditions, proof that every decoded validation row was consumed, wire-projection-derived row-count equality to replay rows, wire-projection-derived imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -4824,11 +4829,14 @@
         "Hegemon.Native.BlockActionReplayPublication.accepted_actions_from_counts_rows",
         "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_hash_preconditions",
         "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_counts_all_rows",
-        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts"
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts",
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_replay_row_count",
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_bridge_replay_count",
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions"
       ],
       "assumptions": [
         "The theorem composes accepted decoded block-action validation and accepted block replay predicates; it does not add a new runtime helper.",
-        "The row-count and imported bridge replay-count equalities between validation and replay summaries are explicit theorem premises because the production Rust projection from decoded actions to replay actions remains a separate implementation-equivalence binding.",
+        "The direct row-count and imported bridge replay-count equalities are now derived by the shared-actions theorem from accepted wire replay projection plus explicit production construction equalities tying that projection to validation rows, replay rows, and bridge replay rows.",
         "SCALE parser correctness, BLAKE3/BLAKE2/hash security and implementation equivalence, tx-leaf and recursive proof soundness, storage durability, PoW threshold validity, and complete native-node refinement remain outside this theorem."
       ],
       "evidence_paths": [
@@ -4849,7 +4857,7 @@
       "residual_risks": [
         {
           "id": "native-block-action-replay-row-projection-premise-open",
-          "description": "The production projection proving validation rows and replay rows are derived from the same decoded action list is still premise-level, not fully mechanized from arbitrary raw bytes.",
+          "description": "The accepted wire replay projection now derives validation/replay row agreement, but production construction of that projection from arbitrary raw decoded bytes remains premise-level.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },
@@ -4865,16 +4873,18 @@
       "id": "native.sync-block-replay-publication",
       "component": "native sync response to raw replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean sync block replay publication theorem composes accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, and raw canonical publication. It packages exact sync-wire preconditions, response block-count bounds, decoded action-row equality to raw replay rows, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches.",
+      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication"
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication",
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_derives_decoded_rows_match_raw_replay",
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows"
       ],
       "assumptions": [
         "The theorem composes accepted sync decode/count, block-action decode, and raw canonical publication predicates; it does not introduce runtime work.",
-        "The equality between decoded block-action payload rows and raw replay action rows remains an explicit implementation-equivalence premise until arbitrary sync/block bytes are fully refined into replay rows.",
+        "The equality between decoded block-action payload rows and raw replay action rows is now derived from accepted wire replay projection plus explicit production construction equalities tying the projection to declared decoded action rows and raw replay rows.",
         "Sync wire parser internals, SCALE/bounded codec implementation correctness, hash security and implementation equivalence, proof-system soundness, storage durability, peer honesty, network liveness, and complete native-node refinement remain outside this theorem."
       ],
       "evidence_paths": [
@@ -4896,7 +4906,7 @@
       "residual_risks": [
         {
           "id": "native-sync-block-replay-row-projection-premise-open",
-          "description": "The production projection from decoded sync/block bytes to raw replay action rows is still premise-level and not fully mechanized for arbitrary bytes.",
+          "description": "Accepted wire replay projection now derives decoded-row/raw-replay row agreement, but production construction of that projection from arbitrary sync/block bytes remains premise-level.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },
