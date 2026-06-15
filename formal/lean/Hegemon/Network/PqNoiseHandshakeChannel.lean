@@ -60,6 +60,15 @@ def pqChannelStateFromHandshake
     PqNoise.ChannelState :=
   PqNoise.initialState surface.role
 
+def peerRole : PqNoise.Role -> PqNoise.Role
+  | PqNoise.Role.initiator => PqNoise.Role.responder
+  | PqNoise.Role.responder => PqNoise.Role.initiator
+
+def peerPqChannelStateFromHandshake
+    (surface : HandshakeChannelSurface) :
+    PqNoise.ChannelState :=
+  PqNoise.initialState (peerRole surface.role)
+
 theorem pq_send_slot_maps_to_secure_send
     {role : PqNoise.Role} :
     secureSlot (PqNoise.sendSlot role) =
@@ -79,6 +88,16 @@ theorem pq_send_recv_infos_distinct
   cases role
   · exact PqNoise.hkdf_infos_distinct
   · exact Ne.symm PqNoise.hkdf_infos_distinct
+
+theorem pq_send_slot_matches_peer_recv
+    {role : PqNoise.Role} :
+    PqNoise.sendSlot role = PqNoise.recvSlot (peerRole role) := by
+  cases role <;> rfl
+
+theorem pq_recv_slot_matches_peer_send
+    {role : PqNoise.Role} :
+    PqNoise.recvSlot role = PqNoise.sendSlot (peerRole role) := by
+  cases role <;> rfl
 
 theorem secure_send_recv_labels_distinct
     {role : SecureChannel.Role} :
@@ -355,6 +374,48 @@ structure InitialPqProtectOpenTransitionFacts
   protectOpenSlotsDistinct :
     protectedSlot ≠ openedSlot
 
+structure InitialPqPeerFrameAdmissionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState) : Prop where
+  established :
+    EstablishedPqChannelFacts surface crypto (pqChannelStateFromHandshake surface)
+  localProtectSlotIsSend :
+    protectedSlot = PqNoise.sendSlot surface.role
+  localProtectSlotNotRecv :
+    protectedSlot ≠ PqNoise.recvSlot surface.role
+  peerOpenSlotIsRecv :
+    peerOpenedSlot = PqNoise.recvSlot (peerRole surface.role)
+  peerOpenSlotNotSend :
+    peerOpenedSlot ≠ PqNoise.sendSlot (peerRole surface.role)
+  protectedSlotAdmittedByPeer :
+    protectedSlot = peerOpenedSlot
+  protectedNonceAdmittedByPeer :
+    protectedNonce = peerOpenedNonce
+  frameAadDistinctFromDirectionalKeyInfo :
+    PqNoise.sessionAadInfo ≠ PqNoise.expandInfo protectedSlot
+  protectedNonceZero :
+    protectedNonce = PqNoise.nonceFromCounter 0
+  peerOpenedNonceZero :
+    peerOpenedNonce = PqNoise.nonceFromCounter 0
+  protectedNextRole :
+    protectedNext.role = surface.role
+  protectedNextSendCounter :
+    protectedNext.sendCounter = 1
+  protectedNextRecvCounter :
+    protectedNext.recvCounter = 0
+  peerOpenedNextRole :
+    peerOpenedNext.role = peerRole surface.role
+  peerOpenedNextSendCounter :
+    peerOpenedNext.sendCounter = 0
+  peerOpenedNextRecvCounter :
+    peerOpenedNext.recvCounter = 1
+
 theorem accepted_authenticated_pq_handshake_initial_pq_protect_open_facts
     {surface : HandshakeChannelSurface}
     {crypto : CryptoAssumptions surface}
@@ -443,6 +504,98 @@ theorem accepted_authenticated_pq_handshake_initial_pq_protect_open_facts
         protectedSlot ≠ PqNoise.recvSlot surface.role := by
       simpa [pqChannelStateFromHandshake] using hProtectNotRecv
     exact protectedNotRecv protectedIsRecv
+
+theorem accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    {protectedSlot : PqNoise.KeySlot}
+    {protectedNonce : List Byte}
+    {protectedNext : PqNoise.ChannelState}
+    {peerOpenedSlot : PqNoise.KeySlot}
+    {peerOpenedNonce : List Byte}
+    {peerOpenedNext : PqNoise.ChannelState}
+    (protectAccepted :
+      PqNoise.protectFrame (pqChannelStateFromHandshake surface) =
+        some (protectedSlot, protectedNonce, protectedNext))
+    (peerOpenAccepted :
+      PqNoise.openFrame (peerPqChannelStateFromHandshake surface) =
+        some (peerOpenedSlot, peerOpenedNonce, peerOpenedNext)) :
+    InitialPqPeerFrameAdmissionFacts
+      surface
+      crypto
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext := by
+  rcases PqNoise.protectFrame_direction_and_counter protectAccepted with
+    ⟨hProtectSlot,
+      hProtectNotRecv,
+      hProtectNonce,
+      hProtectRole,
+      hProtectSend,
+      hProtectRecv⟩
+  rcases PqNoise.openFrame_direction_and_counter peerOpenAccepted with
+    ⟨hPeerOpenSlot,
+      hPeerOpenNotSend,
+      hPeerOpenNonce,
+      hPeerOpenRole,
+      hPeerOpenSend,
+      hPeerOpenRecv⟩
+  have hProtectedSlotSend :
+      protectedSlot = PqNoise.sendSlot surface.role := by
+    simpa [pqChannelStateFromHandshake] using hProtectSlot
+  have hPeerOpenedSlotRecv :
+      peerOpenedSlot = PqNoise.recvSlot (peerRole surface.role) := by
+    simpa [peerPqChannelStateFromHandshake] using hPeerOpenSlot
+  have hProtectedNonceZero :
+      protectedNonce = PqNoise.nonceFromCounter 0 := by
+    simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
+      hProtectNonce
+  have hPeerOpenedNonceZero :
+      peerOpenedNonce = PqNoise.nonceFromCounter 0 := by
+    simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
+      hPeerOpenNonce
+  refine
+    { established :=
+        accepted_authenticated_pq_handshake_establishes_pq_channel_facts handshake
+      localProtectSlotIsSend := hProtectedSlotSend
+      localProtectSlotNotRecv := ?_
+      peerOpenSlotIsRecv := hPeerOpenedSlotRecv
+      peerOpenSlotNotSend := ?_
+      protectedSlotAdmittedByPeer := ?_
+      protectedNonceAdmittedByPeer := ?_
+      frameAadDistinctFromDirectionalKeyInfo := ?_
+      protectedNonceZero := hProtectedNonceZero
+      peerOpenedNonceZero := hPeerOpenedNonceZero
+      protectedNextRole := ?_
+      protectedNextSendCounter := ?_
+      protectedNextRecvCounter := ?_
+      peerOpenedNextRole := ?_
+      peerOpenedNextSendCounter := ?_
+      peerOpenedNextRecvCounter := ?_ }
+  · simpa [pqChannelStateFromHandshake] using hProtectNotRecv
+  · simpa [peerPqChannelStateFromHandshake] using hPeerOpenNotSend
+  · calc
+      protectedSlot = PqNoise.sendSlot surface.role := hProtectedSlotSend
+      _ = PqNoise.recvSlot (peerRole surface.role) :=
+        pq_send_slot_matches_peer_recv
+      _ = peerOpenedSlot := hPeerOpenedSlotRecv.symm
+  · exact hProtectedNonceZero.trans hPeerOpenedNonceZero.symm
+  · rw [hProtectedSlotSend]
+    exact PqNoise.aad_info_distinct_from_send
+  · simpa [pqChannelStateFromHandshake] using hProtectRole
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
+      hProtectSend
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
+      hProtectRecv
+  · simpa [peerPqChannelStateFromHandshake] using hPeerOpenRole
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
+      hPeerOpenSend
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
+      hPeerOpenRecv
 
 theorem accepted_authenticated_pq_handshake_initial_protect_open_facts
     {surface : HandshakeChannelSurface}

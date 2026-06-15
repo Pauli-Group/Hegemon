@@ -535,7 +535,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot and public-delta consequences from those split assumptions, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -581,6 +581,8 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_active_input_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.balance_public_field_facts_authorized_asset_delta_value",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_authorized_asset_delta_value",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.stablecoin_mint_exception_authorized_payload_bound_to_statement",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_input_slot_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_field_facts",
         "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_implies_spend_boundary_facts",
@@ -598,7 +600,8 @@
         "`Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` composes those packaged proof-system boundary facts with accepted native tx-leaf/action equality admission, while `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` packages an active artifact input slot into spend facts and `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with statement/proof-binding vector facts, wrapper/public/statement facts, native output equality gates, and artifact digest/backend gates. Both still inherit the explicit deployed verifier soundness assumption where they derive accepted-relation facts.",
         "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, total input-slot facts across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement.",
-        "The split spend and balance/public-field assumptions are still assumptions about accepted deployed verifier evidence; they narrow the future AIR/Rust-refinement target without claiming deployed STARK/AIR, SmallWood, witness extraction, or verifier implementation soundness."
+        "The split spend and balance/public-field assumptions are still assumptions about accepted deployed verifier evidence; they narrow the future AIR/Rust-refinement target without claiming deployed STARK/AIR, SmallWood, witness extraction, or verifier implementation soundness.",
+        "`LiveStablecoinPolicyAuthorizes` is an explicit authorization predicate carried through the canonical surface; this theorem binds any provided live-policy authorization to the exact public, statement, and proof-binding stablecoin payload but does not prove the production policy/oracle/attestation lookup itself."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
@@ -632,7 +635,7 @@
       "id": "formal.transaction-asset-isolation-boundary",
       "component": "transaction asset isolation and authorized mint boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a first-class stablecoin mint exception surface binding asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, and proof-binding fields. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
+      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a first-class stablecoin mint exception surface binding asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, proof-binding fields, and any explicit live-policy authorization predicate supplied for that exact payload. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -648,6 +651,8 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_stablecoin_mint_exception_surface",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.stablecoin_mint_exception_authorized_payload_bound_to_statement",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface",
         "Hegemon.Transaction.AssetIsolation.accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero",
         "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta_value",
         "Hegemon.Transaction.AssetIsolation.accepted_transition_delta_authorized",
@@ -657,7 +662,7 @@
       ],
       "assumptions": [
         "The theorem depends on the accepted transaction relation introduced by `AcceptedTransactionSoundness`; that relation is still conditional on explicit balance and spend proof-system soundness assumptions.",
-        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas; the canonical public-field theorem binds the stablecoin exception payload to statement/proof-binding fields but does not prove policy/oracle/attestation validity against external state.",
+        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas; the canonical public-field theorem binds the stablecoin exception payload and any explicit authorization predicate to statement/proof-binding fields but does not prove policy/oracle/attestation validity against external state.",
         "The theorem does not prove chain-level bridge mint authorization, deployed verifier soundness, hash security, proof-system soundness, or complete Rust/native-node refinement.",
         "Bridge mint/burn authorization remains a separate exception predicate and production binding target."
       ],
@@ -680,7 +685,7 @@
       "residual_risks": [
         {
           "id": "asset-isolation-exceptions-not-production-bound",
-          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences and the canonical stablecoin mint exception surface, but stablecoin policy/oracle/attestation validity, bridge mint exceptions, and complete native-node refinement still need stronger production admission bindings.",
+          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences, the canonical stablecoin mint exception surface, and an explicit live-policy authorization predicate for that payload, but production stablecoin policy/oracle/attestation validity, bridge mint exceptions, and complete native-node refinement still need stronger admission bindings.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -2644,7 +2649,7 @@
       "id": "network.pq-noise-key-schedule",
       "component": "PQ Noise handshake and session channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, and retain the legacy secure-channel comparison surface. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, prove the first local protected frame is admitted by the peer receive path under the matching directional slot and nonce, and retain the legacy secure-channel comparison surface. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2684,6 +2689,9 @@
         "Hegemon.Network.PqNoiseHandshakeChannel.secure_send_recv_labels_distinct",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_pq_channel_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_pq_protect_open_facts",
+        "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_slot_matches_peer_recv",
+        "Hegemon.Network.PqNoiseHandshakeChannel.pq_recv_slot_matches_peer_send",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_channel_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_protect_open_facts"
       ],
@@ -2691,7 +2699,7 @@
         "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
         "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, and InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; they do not require new runtime work.",
         "The PQ-native and legacy-comparison handshake-to-channel theorems carry transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
-        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, and send/receive channel-counter state transitions only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
+        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, send/receive channel-counter state transitions, and the first peer frame slot/nonce admission relation only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full transport/session implementation equivalence, full network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/PqNoise.lean",
@@ -5796,7 +5804,7 @@
       "id": "native.materialized-transfer-no-theft-publication",
       "component": "native materialized transfer no-theft publication",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, the public non-native nonzero stablecoin-exception consequence, the full stablecoin mint exception surface, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
+      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, the public non-native nonzero stablecoin-exception consequence, the full stablecoin mint exception surface, explicit live-policy authorization for that exact payload when supplied, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_materialized_da_and_transfer_no_theft_surfaces",
       "production_eligible": true,
@@ -5806,11 +5814,12 @@
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_authorized_asset_delta_value",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_stablecoin_mint_exception_surface",
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_authorized_stablecoin_mint_exception_surface",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition over accepted materialized DA publication, accepted transfer payload admission, accepted tx-leaf/action binding, canonical transaction statement facts, and the existing explicit deployed verifier soundness assumptions.",
-        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while exposing authorized per-asset delta values and output-slot statement/proof artifact rows at the materialized publication boundary; the no-theft/input-slot variant narrows this to `DeployedTxVerifierSpendSoundnessAssumption`, and the public stablecoin-exception theorem pairs spend-only no-theft publication with `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`. It does not claim deployed STARK/AIR, SmallWood, native tx-leaf proof, witness extraction, wallet custody, or recursive proof soundness.",
+        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while exposing authorized per-asset delta values and output-slot statement/proof artifact rows at the materialized publication boundary; the no-theft/input-slot variant narrows this to `DeployedTxVerifierSpendSoundnessAssumption`, and the public stablecoin-exception theorem pairs spend-only no-theft publication with `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`. The authorized stablecoin theorem additionally carries an explicit live-policy authorization predicate for the exact bound payload, but it does not claim deployed STARK/AIR, SmallWood, native tx-leaf proof, witness extraction, wallet custody, recursive proof soundness, or production live-policy lookup validity.",
         "The theorem inherits the materialized sidecar assumptions: row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof-system soundness, storage durability, and complete native-node equivalence remain explicit work."
       ],
       "evidence_paths": [
