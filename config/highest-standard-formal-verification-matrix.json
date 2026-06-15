@@ -6,10 +6,10 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 80.46,
   "last_full_formal_core": {
-    "commit": "40544069e6c5a50dcf95fad54d5395927d56c958",
-    "status": "passed locally 2026-06-15T09:01:58Z",
+    "commit": "1187af69085367278739a9d53cd38db14e2cfe13",
+    "status": "passed locally 2026-06-15T09:33:24Z",
     "claims": 115,
-    "named_lean_theorems": 1515,
+    "named_lean_theorems": 1519,
     "production_eligible_claims": 105,
     "blueprint_edges": 480,
     "falsification_cases": 446,
@@ -50,31 +50,33 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Integrated three zero-runtime-cost theorem strengthenings: an open-assumption package for the ciphertext privacy game, an authorized per-asset delta value theorem for accepted materialized transfer publication, and selected output-slot statement/proof artifact projection from materialized transfer publication. These raise privacy/unlinkability and asset-isolation coverage while keeping ML-KEM/AEAD/RNG/simulator privacy, deployed proof-system soundness, witness extraction, DA availability/hash security, materialized-row-to-transaction equivalence, storage durability, and complete native-node equivalence explicit.",
+    "summary": "Split transfer no-theft publication from the full deployed verifier soundness assumption where balance/public-field facts are not needed. Validated transfer, raw-ingress transfer publication, and materialized transfer publication now have spend-only variants that carry the same active no-theft and total input-slot authorization packages from `DeployedTxVerifierSpendSoundnessAssumption`; asset-delta and balance/public-field conclusions remain on the full soundness path.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+      "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
       "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_authorized_asset_delta_value",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts"
+      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding_from_spend_soundness",
+      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_input_slot_authorization_full_binding_from_spend_soundness",
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness",
+      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_from_spend_soundness"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for CiphertextPrivacy, MaterializedTransferNoTheftPublication, and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for TransferNoTheftBoundary, RawIngressTransferNoTheftPublication, MaterializedTransferNoTheftPublication, and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T09:01:58Z with 115 theorem-backed claims, 1515 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T09:33:24Z with 115 theorem-backed claims, 1519 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1515,
+      "named_lean_theorems": 1519,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The privacy theorem packages the deterministic leakage boundary and open assumptions; it does not hide batch/timing leakage or mechanize ML-KEM, AEAD, RNG, or simulator zero knowledge.",
-      "The materialized transfer authorized-delta theorem depends on the explicit deployed-verifier soundness assumption and does not prove proof-system/AIR/SmallWood soundness, witness extraction, or wallet custody.",
-      "The materialized output-slot projection theorem exposes statement/proof artifact rows from the publication record; DA availability, hash/security equivalence, materialized-row-to-transaction equivalence, storage durability, and complete native-node equivalence remain explicit assumptions."
+      "The spend-only variants still depend on `DeployedTxVerifierSpendSoundnessAssumption`; they do not mechanize deployed AIR/STARK/SmallWood soundness, witness extraction, or Rust verifier refinement.",
+      "Balance/public-field soundness remains necessary for authorized asset-delta and accounting conclusions.",
+      "Raw-ingress and materialized publication still leave parser internals, hash/security equivalence, DA availability, storage durability, materialized-row-to-transaction equivalence, and complete native-node equivalence explicit."
     ]
   },
   "last_production_binding_slice": {
