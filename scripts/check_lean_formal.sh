@@ -49,6 +49,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Bridge/GenerateHeaderMmrVectors.lean
   lake env lean Hegemon/Bridge/GenerateHeaderMmrTranscriptVectors.lean
   lake env lean Hegemon/Bridge/GenerateFlyClientVectors.lean
+  lake env lean Hegemon/Bridge/MintReplayPolicy.lean
+  lake env lean Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean
   lake env lean Hegemon/Bridge/GenerateCheckpointOutputVectors.lean
   lake env lean Hegemon/Bridge/GenerateLongRangeVectors.lean
   lake env lean Hegemon/Bridge/GenerateVectors.lean
@@ -160,6 +162,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateRecursiveArtifactContextAdmissionVectors.lean
   lake env lean Hegemon/Native/ResourceBudgetAdmission.lean
   lake env lean Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean
+  lake env lean Hegemon/Resource/BoundedRequestAdmission.lean
+  lake env lean Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean
   lake env lean Hegemon/Native/RpcAdmission.lean
   lake env lean Hegemon/Native/GenerateRpcAdmissionVectors.lean
   lake env lean Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean
@@ -199,6 +203,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Wallet/NotePlaintextCommitment.lean
   lake env lean Hegemon/Wallet/NoteCiphertextWire.lean
   lake env lean Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean
+  lake env lean Hegemon/Release/CiReleaseGate.lean
+  lake env lean Hegemon/Release/GenerateCiReleaseGateVectors.lean
   lake env lean Hegemon/Release/DependencyAuditPolicy.lean
   lake env lean Hegemon/Release/GenerateDependencyAuditPolicyVectors.lean
   lake env lean Hegemon/Release/PqBinaryPolicy.lean

@@ -41,6 +41,54 @@
       "residual_risks": []
     },
     {
+      "id": "release.ci-release-gate",
+      "component": "GitHub CI and tag-release gate wiring",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean CI release-gate policy proves release-build acceptance requires dependency audit, formal-core, a release-build job, release-build dependency on the security gates, and a release binary audit step; generated vectors plus a workflow checker bind that policy to the checked-in PR/main and tag-release workflows.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_workflow_wiring_checker",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.CiReleaseGate.accepts_iff_ci_release_gate_preconditions",
+        "Hegemon.Release.CiReleaseGate.complete_ci_release_gate_accepts",
+        "Hegemon.Release.CiReleaseGate.dependency_audit_missing_rejects",
+        "Hegemon.Release.CiReleaseGate.dependency_audit_precedes_all_missing",
+        "Hegemon.Release.CiReleaseGate.formal_core_missing_rejects_after_dependency_audit",
+        "Hegemon.Release.CiReleaseGate.release_binary_audit_missing_rejects_after_security_jobs",
+        "Hegemon.Release.CiReleaseGate.release_build_dependency_missing_rejects_after_jobs",
+        "Hegemon.Release.CiReleaseGate.release_build_missing_rejects_after_security_jobs"
+      ],
+      "assumptions": [
+        "GitHub branch protection or merge policy marks the checked workflow jobs as required for protected release branches.",
+        "The workflow checker validates the checked-in workflow text; GitHub-hosted runner integrity and repository settings remain external operational controls.",
+        "The actual binary scanner semantics are the release.pq-binary claim; this claim binds that scanner into CI/release workflow wiring."
+      ],
+      "evidence_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+        "formal/lean/Hegemon/Release/GenerateCiReleaseGateVectors.lean",
+        "scripts/check_ci_release_gate_policy.py",
+        "scripts/check_formal_core.sh",
+        "DESIGN.md",
+        "METHODS.md"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake exe gen_ci_release_gate_vectors > <generated-json>",
+        "python3 scripts/check_ci_release_gate_policy.py <generated-json> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "ci-branch-protection-settings-external",
+          "description": "Repository-local workflow proof does not itself enforce GitHub branch-protection settings; repository administrators must require the CI jobs on protected branches.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "release.dependency-waivers",
       "component": "cargo dependency graph and formal-core checker toolchain",
       "claim_class": "lean_theorem",
@@ -3110,7 +3158,7 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, and receipt-root artifact schedule facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, tx-leaf parser shape bounds, and receipt-root leaf/fold schedule bounds before expensive proof, recursive verification, receipt-root folding, or mining work.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, receipt-root artifact schedule facts, and the reusable bounded-request table into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, tx-leaf parser shape bounds, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, or mining work.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -3120,12 +3168,29 @@
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.transfer_payload_accepts_implies_preheavy_bounds",
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.candidate_artifact_accepts_implies_preheavy_bounds",
         "Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts",
-        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths",
+        "Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions",
+        "Hegemon.Resource.BoundedRequestAdmission.complete_bounded_request_accepts",
+        "Hegemon.Resource.BoundedRequestAdmission.accepted_bounded_request_exposes_all_caps",
+        "Hegemon.Resource.BoundedRequestAdmission.raw_bytes_over_cap_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.decoded_bytes_over_cap_rejects_after_raw_ok",
+        "Hegemon.Resource.BoundedRequestAdmission.item_count_over_cap_rejects_after_byte_ok",
+        "Hegemon.Resource.BoundedRequestAdmission.item_bytes_over_cap_rejects_after_count_ok",
+        "Hegemon.Resource.BoundedRequestAdmission.aggregate_bytes_over_cap_rejects_after_item_ok",
+        "Hegemon.Resource.BoundedRequestAdmission.work_units_over_cap_rejects_after_aggregate_ok",
+        "Hegemon.Resource.BoundedRequestAdmission.rejected_bounded_request_not_accepted",
+        "Hegemon.Resource.BoundedRequestAdmission.exact_limit_request_accepts",
+        "Hegemon.Resource.BoundedRequestAdmission.raw_bytes_over_limit_request_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.decoded_bytes_over_limit_request_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.item_count_over_limit_request_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.item_bytes_over_limit_request_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.aggregate_bytes_over_limit_request_rejects",
+        "Hegemon.Resource.BoundedRequestAdmission.work_units_over_limit_request_rejects"
       ],
       "assumptions": [
         "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, native tx-leaf artifact parsing, and native receipt-root artifact schedule parsing; it inherits production conformance from those gates and adds no new runtime helper.",
         "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, strict action-request JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, tx-leaf artifact byte-shape bounds, and receipt-root nonzero expected leaves, leaf/fold-count agreement, and exact fold-shape schedule facts.",
-        "Parser correctness and benchmark-cap coverage are explicit assumptions on the verification-path surface; the theorem does not silently prove parser internals or cost-model completeness.",
+        "Parser correctness, per-family bounded-request production binding, and benchmark-cap coverage are explicit assumptions on the verification-path surface; the theorem does not silently prove parser internals or cost-model completeness.",
         "The theorem covers decision-table composition only. It does not prove JSON parser correctness, RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness beyond cap behavior, DA availability, sled durability, proof-system soundness, mining liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -3138,6 +3203,8 @@
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",
+        "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
+        "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -3146,6 +3213,7 @@
         "bash scripts/check_lean_formal.sh",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "cd formal/lean && lake exe gen_bounded_request_admission_vectors | python3 -m json.tool >/dev/null",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -4560,7 +4628,7 @@
       "id": "native.bridge-action-payload-admission",
       "component": "native decoded bridge action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply, proves prior replay-key membership persists through accepted ledger replay, proves a freshly imported inbound replay key survives accepted raw-projected replay tails, proves accepted inbound bridge actions carry zero direct native mint delta in the current state-delta-free production surface, defines a first-class decoded mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality, composes accepted inbound authorization, decoded amount authorization, fresh replay one-shot import, projected and raw-projected ledger replay supply equality, carried-state preconditions, final nullifier uniqueness, and final replay-key uniqueness, lifts the same package through accepted raw-ingress sidecar materialization and wire-replay row count facts, and now lifts it through raw-ingress ledger/tree publication facts including commitment-root publication; generated Lean vectors are checked against the production native helper used by bridge action validation, block validation is bound to run bridge payload admission before deriving inbound bridge replay keys, and live submit-action bridge staging is routed through the same state-validation chain before pending-action insertion.",
+      "summary": "The Lean bridge-payload admission kernel proves the executable decoded bridge action table for bridge-family routing, no shielded state-delta smuggling, supported bridge action IDs, nonempty outbound payloads, inbound proof-receipt presence, inbound replay-key/message binding, Hegemon destination binding, inbound payload-hash binding, and rejection precedence; BridgeMintSafety packages accepted inbound payload authorization with fresh replay import so the replay key is consumed once and immediate reimport rejects, couples accepted block/ledger replay to both bridge replay-key uniqueness and claimed supply, proves prior replay-key membership persists through accepted ledger replay, proves a freshly imported inbound replay key survives accepted raw-projected replay tails, proves accepted inbound bridge actions carry zero direct native mint delta in the current state-delta-free production surface, defines a first-class decoded mint-amount authorization surface requiring payload-hash binding plus decoded/external amount equality, composes accepted inbound authorization, decoded amount authorization, fresh replay one-shot import, projected and raw-projected ledger replay supply equality, carried-state preconditions, final nullifier uniqueness, and final replay-key uniqueness, lifts the same package through accepted raw-ingress sidecar materialization and wire-replay row count facts, and now lifts it through raw-ingress ledger/tree publication facts including commitment-root publication. The abstract MintReplayPolicy table separately proves verified receipt, payload match, fresh replay import, mint authorization, amount equality, and amount-bound ordering for a future PQ-clean bridge mint decoder. Generated Lean vectors are checked or parsed by formal-core, block validation is bound to run bridge payload admission before deriving inbound bridge replay keys, and live submit-action bridge staging is routed through the same state-validation chain before pending-action insertion.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4594,17 +4662,33 @@
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_projected_replay_safe",
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail",
         "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe",
-        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe"
+        "Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe",
+        "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
+        "Hegemon.Bridge.MintReplayPolicy.receipt_not_verified_rejects_before_replay_or_mint",
+        "Hegemon.Bridge.MintReplayPolicy.receipt_payload_mismatch_rejects_before_replay",
+        "Hegemon.Bridge.MintReplayPolicy.consumed_replay_key_rejects",
+        "Hegemon.Bridge.MintReplayPolicy.consumed_replay_key_precedes_mint_authorization",
+        "Hegemon.Bridge.MintReplayPolicy.mint_not_authorized_rejects_after_verified_fresh_replay",
+        "Hegemon.Bridge.MintReplayPolicy.amount_mismatch_rejects_after_authorization",
+        "Hegemon.Bridge.MintReplayPolicy.amount_out_of_bounds_rejects_after_amount_match",
+        "Hegemon.Bridge.MintReplayPolicy.accepted_implies_receipt_mint_replay_facts",
+        "Hegemon.Bridge.MintReplayPolicy.accepted_imports_replay_key",
+        "Hegemon.Bridge.MintReplayPolicy.accepted_prevents_replay_again",
+        "Hegemon.Bridge.MintReplayPolicy.valid_input_accepts",
+        "Hegemon.Bridge.MintReplayPolicy.unverified_input_rejects",
+        "Hegemon.Bridge.MintReplayPolicy.replayed_input_rejects"
       ],
       "assumptions": [
         "The Lean model treats SCALE decoding, bridge_payload_hash computation, route identity, and state-delta scanning as production-derived predicates; it proves the decoded pre-receipt admission table and rejection precedence.",
         "Generated Lean conformance vectors cover valid outbound, inbound, and verifier-registration payloads; non-bridge actions; state-delta smuggling; unsupported bridge actions; empty outbound payloads; empty inbound proof receipts; inbound replay-key, destination, and payload-hash mismatches; and not-bridge/state-delta/inbound-precondition precedence. Runtime regressions now cover both block/action validation and live submit-action staging before pending-action insertion.",
-        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, replay/supply coupling across accepted block, accepted ledger replay, replay-key membership persistence through accepted ledger replay, production-style projected replay, raw-decoded projected replay, accepted raw-ingress sidecar materialization with wire-replay row count facts, and accepted raw-ingress ledger/tree replay publication facts including commitment-root publication, the current production invariant that accepted inbound bridge actions are state-delta-free and therefore have zero direct native mint delta, a first-class decoded mint-amount authorization surface that requires payload-hash binding plus decoded/external amount equality, and the composed accepted inbound amount/fresh-replay/raw-ingress/projected-replay safety package. It does not prove arbitrary raw SCALE/bincode decoding, bridge payload hash cryptographic security or implementation equivalence, the future decoded bridge-mint payload grammar, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
+        "The theorem covers executable decoded native bridge payload admission, modeled fresh replay import consumption, replay/supply coupling across accepted block, accepted ledger replay, replay-key membership persistence through accepted ledger replay, production-style projected replay, raw-decoded projected replay, accepted raw-ingress sidecar materialization with wire-replay row count facts, and accepted raw-ingress ledger/tree replay publication facts including commitment-root publication, the current production invariant that accepted inbound bridge actions are state-delta-free and therefore have zero direct native mint delta, a first-class decoded mint-amount authorization surface that requires payload-hash binding plus decoded/external amount equality, the composed accepted inbound amount/fresh-replay/raw-ingress/projected-replay safety package, and a reusable abstract receipt-mint decision table. It does not prove arbitrary raw SCALE/bincode decoding, bridge payload hash cryptographic security or implementation equivalence, production binding for the future decoded bridge-mint payload grammar, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean",
+        "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
@@ -4615,6 +4699,7 @@
         "HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node submit_action_routes_bridge_payload_admission_before_staging --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node bridge_ --lib --no-default-features -- --nocapture",
+        "cd formal/lean && lake exe gen_bridge_mint_replay_policy_vectors | python3 -m json.tool >/dev/null",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

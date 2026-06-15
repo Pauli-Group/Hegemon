@@ -25,6 +25,9 @@ lean_exe gen_bridge_header_mmr_transcript_vectors where
 lean_exe gen_bridge_flyclient_vectors where
   root := `Hegemon.Bridge.GenerateFlyClientVectors
 
+lean_exe gen_bridge_mint_replay_policy_vectors where
+  root := `Hegemon.Bridge.GenerateMintReplayPolicyVectors
+
 lean_exe gen_aggregation_v5_vectors where
   root := `Hegemon.Consensus.GenerateAggregationV5Vectors
 
@@ -157,6 +160,9 @@ lean_exe gen_native_backend_release_posture_vectors where
 lean_exe gen_release_pq_binary_policy_vectors where
   root := `Hegemon.Release.GeneratePqBinaryPolicyVectors
 
+lean_exe gen_ci_release_gate_vectors where
+  root := `Hegemon.Release.GenerateCiReleaseGateVectors
+
 lean_exe gen_dependency_audit_policy_vectors where
   root := `Hegemon.Release.GenerateDependencyAuditPolicyVectors
 
@@ -210,6 +216,9 @@ lean_exe gen_recursive_artifact_context_admission_vectors where
 
 lean_exe gen_resource_budget_admission_vectors where
   root := `Hegemon.Native.GenerateResourceBudgetAdmissionVectors
+
+lean_exe gen_bounded_request_admission_vectors where
+  root := `Hegemon.Resource.GenerateBoundedRequestAdmissionVectors
 
 lean_exe gen_rpc_admission_vectors where
   root := `Hegemon.Native.GenerateRpcAdmissionVectors

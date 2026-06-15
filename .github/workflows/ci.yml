@@ -198,3 +198,6 @@ jobs:
           shared-key: "core-rust"
       - name: Release node build
         run: ./scripts/check-core.sh build
+
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node

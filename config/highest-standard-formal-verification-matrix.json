@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 83.19,
+  "overall_completion_percent": 83.37,
   "last_full_formal_core": {
-    "date": "2026-06-15T20:31:42Z",
-    "commit": "2a02f9c2+worktree",
-    "status": "passed locally after native stablecoin authorization admission and decoded block-action binding",
+    "date": "2026-06-15T21:43:02Z",
+    "commit": "2c742201+worktree",
+    "status": "passed locally after release CI gate, abstract bridge mint/replay policy, and reusable bounded-request resource admission integration",
     "command": "bash scripts/check_formal_core.sh",
-    "claims": 116,
-    "named_lean_theorems": 1615,
-    "axiom_free_theorems": 754,
-    "axiom_dependent_theorems": 861,
+    "claims": 117,
+    "named_lean_theorems": 1654,
+    "axiom_free_theorems": 764,
+    "axiom_dependent_theorems": 890,
     "temporary_axiom_theorems": 0,
-    "production_eligible_claims": 106,
-    "residual_risks": 44,
-    "blueprint_edges": 486,
-    "falsification_cases": 459,
+    "production_eligible_claims": 107,
+    "residual_risks": 45,
+    "blueprint_edges": 488,
+    "falsification_cases": 464,
     "implementation_bindings": 205,
     "implementation_result_obligations": 161,
     "implementation_order_constraints": 143,
@@ -65,30 +65,46 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Bound native import-time stablecoin authorization into the Lean transfer-state and decoded block-action admission tables. Enabled stablecoin transfer payloads now fail closed unless the exact StablecoinPolicyBinding payload is present in native authorization state before mempool or decoded-block acceptance; Lean vectors check unauthorized-policy rejection and precedence against production Rust.",
+    "summary": "Bound release CI workflow wiring, abstract bridge mint/replay admission, and reusable bounded-request resource admission into Lean-backed formal-core gates. PR/main release-build now depends on dependency-audit and formal-core and runs the required release binary PQ audit; bridge mint/replay acceptance now has a receipt/payload/replay/authorization decision table; bounded requests now have a generic raw/decoded/item/aggregate/work cap table for pre-heavy admission reuse.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
-      "formal/lean/Hegemon/Native/BlockActionValidation.lean"
+      "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+      "formal/lean/Hegemon/Release/GenerateCiReleaseGateVectors.lean",
+      "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean",
+      "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean",
+      "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
+      "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TransferStateAdmission.accepts_iff_state_preconditions",
-      "Hegemon.Native.TransferStateAdmission.stablecoin_policy_unauthorized_rejects",
-      "Hegemon.Native.TransferStateAdmission.commitment_zero_precedes_stablecoin_policy",
-      "Hegemon.Native.TransferStateAdmission.stablecoin_policy_precedes_sidecar_materialization",
-      "Hegemon.Native.BlockActionValidation.transfer_state_stablecoin_policy_rejects"
+      "Hegemon.Release.CiReleaseGate.accepts_iff_ci_release_gate_preconditions",
+      "Hegemon.Release.CiReleaseGate.complete_ci_release_gate_accepts",
+      "Hegemon.Release.CiReleaseGate.dependency_audit_missing_rejects",
+      "Hegemon.Release.CiReleaseGate.formal_core_missing_rejects_after_dependency_audit",
+      "Hegemon.Release.CiReleaseGate.release_build_missing_rejects_after_security_jobs",
+      "Hegemon.Release.CiReleaseGate.release_build_dependency_missing_rejects_after_jobs",
+      "Hegemon.Release.CiReleaseGate.release_binary_audit_missing_rejects_after_security_jobs",
+      "Hegemon.Release.CiReleaseGate.dependency_audit_precedes_all_missing",
+      "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
+      "Hegemon.Bridge.MintReplayPolicy.consumed_replay_key_precedes_mint_authorization",
+      "Hegemon.Bridge.MintReplayPolicy.accepted_imports_replay_key",
+      "Hegemon.Bridge.MintReplayPolicy.accepted_prevents_replay_again",
+      "Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions",
+      "Hegemon.Resource.BoundedRequestAdmission.accepted_bounded_request_exposes_all_caps",
+      "Hegemon.Resource.BoundedRequestAdmission.work_units_over_cap_rejects_after_aggregate_ok"
     ],
     "validation": {
-      "lean_formal": "lake env lean Hegemon/Native/TransferStateAdmission.lean, Hegemon/Native/BlockActionValidation.lean, Hegemon/Native/GenerateTransferStateAdmissionVectors.lean, and Hegemon/Native/GenerateBlockActionValidationVectors.lean passed locally",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T20:31:42Z after native stablecoin authorization integration and portable Lean block-action pattern rebuild",
-      "claims": 116,
-      "named_lean_theorems": 1615,
-      "axiom_free_theorems": 754,
-      "axiom_dependent_theorems": 861,
+      "lean_formal": "bash scripts/check_lean_formal.sh passed locally with 1654 claimed theorem declarations, 764 axiom-free theorem declarations, 890 theorem declarations depending only on allowed kernel axioms, and zero temporary/unwaived axioms",
+      "workflow_gate": "python3 scripts/check_ci_release_gate_policy.py <generated-json> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml passed locally",
+      "vector_json": "lake exe gen_bridge_mint_replay_policy_vectors and lake exe gen_bounded_request_admission_vectors both emitted parseable JSON locally",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T21:43:02Z with release CI gate, abstract bridge mint/replay policy, and reusable bounded-request resource admission integrated",
+      "claims": 117,
+      "named_lean_theorems": 1654,
+      "axiom_free_theorems": 764,
+      "axiom_dependent_theorems": 890,
       "temporary_axiom_theorems": 0,
-      "production_eligible_claims": 106,
-      "residual_risks": 44,
-      "blueprint_edges": 486,
-      "falsification_cases": 459,
+      "production_eligible_claims": 107,
+      "residual_risks": 45,
+      "blueprint_edges": 488,
+      "falsification_cases": 464,
       "implementation_bindings": 205,
       "implementation_result_obligations": 161,
       "implementation_order_constraints": 143,
@@ -98,9 +114,10 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "The native gate enforces exact stablecoin authorization-state membership; the production policy-state writer and oracle freshness source remain to be bound.",
-      "LiveStablecoinPolicyAuthorizes remains a theorem predicate above the exact native authorization bit until policy/oracle/attestation state publication is fully modeled.",
-      "Deployed proof-system soundness, cryptographic primitive security/equivalence, storage durability below accepted predicates, DA availability, and complete native-node equivalence remain explicit assumptions."
+      "Repository-local workflow verification does not itself enforce GitHub branch-protection settings; protected branches must require the checked jobs.",
+      "The CI release-gate theorem binds workflow wiring, not scanner-pattern completeness, GitHub runner integrity, or future advisory database quality.",
+      "Bridge mint/replay policy is an abstract accepted-output decision table; the production PQ-clean bridge mint decoder/verifier remains disabled until soundness and byte-path binding exist.",
+      "BoundedRequestAdmission is a reusable cap table; remaining parser families still need production bindings to this generic table."
     ]
   },
   "last_production_binding_slice": {
@@ -683,7 +700,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 70,
+      "completion_percent": 72,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -700,10 +717,12 @@
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication",
-        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_safe`, packaging Hegemon-side bridge payload, decoded amount, raw pending-action publication, canonical publication, commitment-root, raw/canonical supply replay, and replay uniqueness facts without external receipt-soundness assumptions"
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_safe`, packaging Hegemon-side bridge payload, decoded amount, raw pending-action publication, canonical publication, commitment-root, raw/canonical supply replay, and replay uniqueness facts without external receipt-soundness assumptions",
+        "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean proves an abstract accepted receipt-mint replay decision table: receipt verification and payload equality precede replay-key import, consumed replay keys reject before mint authorization, mint authorization and exact amount/range checks are required, accepted imports the replay key, and immediate replay rejects",
+        "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits parse-checked acceptance/rejection vectors for the abstract bridge mint/replay decision table"
       ],
       "missing_work": [
-        "Replace the boundary-only decoded bridge mint amount surface with a live PQ-clean bridge mint payload grammar and production decoder when bridge minting is enabled.",
+        "Bind the abstract bridge mint/replay decision table to the production PQ-clean bridge mint payload grammar and decoder when bridge minting is enabled.",
         "Mechanize or parameterize external-chain proof soundness.",
         "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths.",
         "Replace the disabled experimental RISC Zero envelope with a production PQ-clean receipt verifier and bind its soundness to the decoded output-admission table."
@@ -740,7 +759,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 75,
+      "completion_percent": 77,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -752,31 +771,37 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean proves accepted sync response counts bound synced raw block batches before raw replay publication",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now composes transfer-payload caps, candidate-artifact recursive proof caps, and tx-leaf artifact parser shape facts with the pre-heavy-work resource surface while carrying parser/cost assumptions explicitly",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now proves `action_request_projection_accepts_implies_preheavy_bounds`, deriving strict submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates from accepted action-request projection before heavy work",
-        "formal/lean/Hegemon/Native/ReceiptRoot.lean now proves `receipt_root_schedule_accepts_implies_facts`, and PreHeavyWorkResourceBoundSurface carries receipt-root nonzero expected-leaf, exact leaf/fold-count, and fold-shape schedule facts before receipt-root folding"
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean now proves `receipt_root_schedule_accepts_implies_facts`, and PreHeavyWorkResourceBoundSurface carries receipt-root nonzero expected-leaf, exact leaf/fold-count, and fold-shape schedule facts before receipt-root folding",
+        "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean proves a reusable raw-bytes, decoded-bytes, item-count, item-bytes, aggregate-bytes, and work-unit cap table with exact-limit acceptance and fail-closed rejection precedence before aggregate/work-heavy paths",
+        "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean emits parse-checked acceptance/rejection examples for the reusable bounded-request table"
       ],
       "missing_work": [
-        "Extend pre-heavy-work and sidecar proof-byte bounds to the remaining consensus-facing parser families not yet represented in the composed verification-path surface.",
+        "Bind the remaining consensus-facing parser families to the reusable bounded-request admission table.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],
       "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work."
     },
     {
-      "id": "release.dependency-posture",
-      "weight": 2,
-      "completion_percent": 80,
-      "top_level_theorem_target": "Release artifacts are accepted only when source, dependency, binary, and native-backend posture policies are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
-      "current_evidence": [
-        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
-        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
-        "native backend review-policy and release-posture gates",
-        "formal-core dependency and release posture checks"
-      ],
-      "missing_work": [
-        "Move remaining advisory/waiver drift into mandatory CI if not already enforced for all release workflows.",
-        "Add binary scanner completeness review and accepted external-review artifact requirements.",
-        "Tie release branch protection to formal-core results."
-      ],
+    "id": "release.dependency-posture",
+    "weight": 2,
+    "completion_percent": 83,
+    "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
+    "current_evidence": [
+      ".github/workflows/ci.yml release-build security dependencies and binary audit",
+      ".github/workflows/release.yml security-gates and per-platform binary audits",
+      "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+      "scripts/check_ci_release_gate_policy.py",
+      "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+      "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+      "native backend review-policy and release-posture gates",
+      "formal-core dependency and release posture checks"
+    ],
+    "missing_work": [
+      "Move any remaining advisory/waiver drift that is outside cargo-audit visibility into mandatory CI evidence.",
+      "Add binary scanner completeness review and accepted external-review artifact requirements.",
+      "Make repository-admin branch protection/ruleset evidence require formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
+    ],
       "performance_constraint": "Release-time only; no production runtime overhead."
     }
   ]

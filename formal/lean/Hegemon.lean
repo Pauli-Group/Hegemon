@@ -6,6 +6,7 @@ import Hegemon.Bridge.HeaderMmr
 import Hegemon.Bridge.HeaderMmrTranscript
 import Hegemon.Bridge.LongRange
 import Hegemon.Bridge.MessageRoot
+import Hegemon.Bridge.MintReplayPolicy
 import Hegemon.Bridge.Replay
 import Hegemon.Consensus.AggregationV5
 import Hegemon.Consensus.DaRoot
@@ -107,6 +108,8 @@ import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
 import Hegemon.Privacy.NativeObserverSurface
+import Hegemon.Resource.BoundedRequestAdmission
+import Hegemon.Release.CiReleaseGate
 import Hegemon.Release.DependencyAuditPolicy
 import Hegemon.Release.PqBinaryPolicy
 import Hegemon.Shielded.Nullifier
