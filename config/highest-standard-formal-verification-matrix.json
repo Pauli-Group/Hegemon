@@ -6,33 +6,32 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 80.95,
   "last_full_formal_core": {
-    "commit": "1187af69085367278739a9d53cd38db14e2cfe13",
-    "status": "passed locally 2026-06-15T09:33:24Z",
+    "commit": "0c4b8cad126282e877ef9fd23bdcb7322688e545",
+    "status": "passed locally 2026-06-15T10:18:06Z",
     "claims": 115,
-    "named_lean_theorems": 1519,
+    "named_lean_theorems": 1523,
     "production_eligible_claims": 105,
     "blueprint_edges": 480,
     "falsification_cases": 446,
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T09:37:13Z",
-    "commit": "462a4e6daf50fedd8937057f4fa65544349fe7e3",
-    "status": "passed with claims/blueprint gates, targeted Lean for spend-only no-theft publication modules, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production; the live service did not find a block during the 20-second sample at current difficulty",
+    "date": "2026-06-15T10:18:06Z",
+    "commit": "0c4b8cad126282e877ef9fd23bdcb7322688e545",
+    "status": "passed with claims/blueprint gates, targeted Lean for RawIngressBridgePendingActionPublication, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 462a4e6daf50fedd8937057f4fa65544349fe7e3",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 0c4b8cad126282e877ef9fd23bdcb7322688e545",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1519 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1523 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 115 nodes, 480 edges, 446 falsification cases, and 200 implementation bindings",
-      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.TransferNoTheftBoundary Hegemon.Native.RawIngressTransferNoTheftPublication Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
+      "$HOME/.elan/bin/lake build Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
       "hegemon-node.service remained active with NRestarts=0; no restart was needed for the live service during this validation pass",
       "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11335",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26972 H/s, difficulty 520159231, blocks_found 662, and block_height 11335 before and after the 20-second sample",
-      "live hegemon_consensusStatus reported syncing=false, peers=0, best_hash 0x00006850a82f3faeec35ed00305e806ad3d49d16e3f75ccb1aceef60d7f192bf, state_root 0x46209973f42822a7a3c15742fbccd1e2c659365e6640e45cfe41d33ac8c06aeb6f86b6615adf14580b61b5c0d40ae74a, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3106449767060",
-      "live service block_height stayed at 11335 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 18548",
-      "timedatectl reported NTPSynchronized=yes and NTP=yes"
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26964 H/s, difficulty 520159231, blocks_found 662, and block_height 11335",
+      "live chain_getHeader reported number 0x2c47, headerMmrLen 11335, powBits 520159231, and stateRoot 0x154b27f7b6f84e45749230199d2c56cfe6ad7d013abcc9ee340aa8f0000cac2e",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 18829",
+      "timedatectl reported NTPSynchronized=yes"
     ]
   },
   "last_coordinator_audit": {
@@ -50,33 +49,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Split transfer no-theft publication from the full deployed verifier soundness assumption where balance/public-field facts are not needed. Validated transfer, raw-ingress transfer publication, and materialized transfer publication now have spend-only variants that carry the same active no-theft and total input-slot authorization packages from `DeployedTxVerifierSpendSoundnessAssumption`; asset-delta and balance/public-field conclusions remain on the full soundness path.",
+    "summary": "Proved the final bridge replay publication boundary for raw-ingress bridge pending-action publication. The new theorem binds the freshly imported replay set to the canonical replay witness, proves the exact inbound replay key remains present in the final published canonical replay set, and proves final-state reimport rejects with `bridgeReplayDuplicate`.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
-      "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
-      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
+      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding_from_spend_soundness",
-      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_input_slot_authorization_full_binding_from_spend_soundness",
-      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_from_spend_soundness"
+      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_final_replay_safe"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for TransferNoTheftBoundary, RawIngressTransferNoTheftPublication, MaterializedTransferNoTheftPublication, and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for RawIngressBridgePendingActionPublication and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T09:33:24Z with 115 theorem-backed claims, 1519 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T10:18:06Z with 115 theorem-backed claims, 1523 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1519,
+      "named_lean_theorems": 1523,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The spend-only variants still depend on `DeployedTxVerifierSpendSoundnessAssumption`; they do not mechanize deployed AIR/STARK/SmallWood soundness, witness extraction, or Rust verifier refinement.",
-      "Balance/public-field soundness remains necessary for authorized asset-delta and accounting conclusions.",
-      "Raw-ingress and materialized publication still leave parser internals, hash/security equivalence, DA availability, storage durability, materialized-row-to-transaction equivalence, and complete native-node equivalence explicit."
+      "The final replay theorem requires the explicit equality `initial.ledger.consumedBridgeReplays = next` to connect fresh import output to the canonical replay witness.",
+      "External receipt soundness, future PQ-clean receipt-verifier soundness, arbitrary-byte parser internals, hash security, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions.",
+      "No runtime path changed in this slice; the improvement is a zero-cost Lean composition and production-bound claim/matrix update."
     ]
   },
   "last_production_binding_slice": {
