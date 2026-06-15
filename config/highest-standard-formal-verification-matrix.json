@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 82.5,
+  "overall_completion_percent": 82.56,
   "last_full_formal_core": {
     "commit": "working-tree-pre-commit",
-    "status": "passed locally 2026-06-15T16:26:57Z",
-    "claims": 115,
-    "named_lean_theorems": 1580,
-    "production_eligible_claims": 105,
-    "blueprint_edges": 482,
-    "falsification_cases": 455,
+    "status": "passed locally for the commitment-tree membership handoff slice",
+    "claims": 116,
+    "named_lean_theorems": 1588,
+    "production_eligible_claims": 106,
+    "blueprint_edges": 486,
+    "falsification_cases": 458,
     "implementation_bindings": 204
   },
   "last_hegemon_dev_validation": {
@@ -48,97 +48,62 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved and production-bound three implementation-equivalence slices and one zero-runtime-cost pre-heavy resource tightening: recursive_block_v2 pre-proof verifier-surface admission before cryptographic recursive child verification, packed SmallWood active spend-auth key binding, strict wallet DA note-ciphertext parsing, and receipt-root schedule facts carried by the pre-heavy verification-path surface. The Lean models cover recursive public/header/proof-width/projection/crypto-boundary checks, SmallWood active auth-link equality to the PRF-derived spend-auth limbs, chain/DA note-ciphertext parser accept/reject facts, and receipt-root nonzero expected leaves plus leaf/fold schedule agreement before receipt-root folding.",
+    "summary": "Proved and production-bound the commitment-tree membership handoff surface. The Lean model packages consensus-root/state-root/provided-root agreement, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. The corrected same-root changed-leaf/prior-root theorem proves the root/export checks still hold while the Merkle path itself rejects, avoiding a false root-mismatch proof. The formal-core Rust regression checks finite production conformance between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node under the real merkle_node combiner.",
     "lean_modules": [
-      "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean",
-      "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockV2VerifierSurfaceVectors.lean",
-      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
-      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
-      "formal/lean/Hegemon/Native/ReceiptRoot.lean",
-      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean"
+      "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
+      "formal/lean/Hegemon/Transaction/MerklePath.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.surface_accepts_iff_preconditions",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_verifier_accepts_iff_surface_and_crypto",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_accepts_implies_surface_accepts",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.public_mismatch_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_width_mismatch_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.unsupported_tx_count_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.header_mismatch_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_decode_failed_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_canonical_encoding_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_padding_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projection_failed_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projected_width_mismatch_rejects",
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.crypto_verification_failed_is_after_surface_boundary",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_pk_auth_eq_derived",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wrong_secret_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.da_valid_accepts",
-      "Hegemon.Wallet.NoteCiphertextWire.da_memo_overrun_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.da_nonzero_padding_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.da_truncated_kem_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.da_trailing_byte_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_da_ciphertext_has_gamma_suite_and_fixed_kem",
-      "Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.membership_handoff_accepts_implies_facts",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.prior_leaf_membership_path_verifies",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.consensus_state_root_mismatch_rejects",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.state_path_missing_rejects",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.wrong_leaf_membership_rejects",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_prior_root_keeps_root_and_export_checks",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_prior_root_merkle_path_rejects",
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_not_member_of_prior_root"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Consensus.RecursiveBlockV2VerifierSurface Hegemon.Consensus.GenerateRecursiveBlockV2VerifierSurfaceVectors Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Wallet.NoteCiphertextWire Hegemon.Wallet.GenerateNoteCiphertextWireVectors Hegemon.Native.ReceiptRoot Hegemon.Native.PreHeavyWorkResourceBoundSurface Hegemon passed locally",
+      "lean_formal": "lake build Hegemon.Native.CommitmentTreeMembershipRefinement Hegemon passed locally",
       "targeted_rust": [
-        "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture passed locally",
-        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture passed locally",
-        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture passed locally",
-        "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture passed locally",
-        "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture passed locally"
+        "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T16:26:57Z with 115 claims, 1580 named Lean theorem declarations, 105 production-eligible claims, 482 blueprint edges, 455 falsification cases, and 204 implementation bindings",
-      "claims": 115,
-      "named_lean_theorems": 1580,
-      "production_eligible_claims": 105,
-      "blueprint_edges": 482,
-      "falsification_cases": 455,
+      "formal_core": "bash scripts/check_formal_core.sh passed locally with the commitment-tree membership handoff gate and inventory requirement enabled",
+      "claims": 116,
+      "named_lean_theorems": 1588,
+      "production_eligible_claims": 106,
+      "blueprint_edges": 486,
+      "falsification_cases": 458,
       "implementation_bindings": 204
     },
     "known_limitations": [
-      "This slice proves and checks recursive_block_v2 pre-proof verifier-surface admission; it does not prove recursive proof cryptographic soundness.",
-      "The crypto child proof verifier remains represented by the explicit crypto verification boundary theorem and existing proof-system assumptions.",
-      "Hash security, proof-system soundness, parser internals below accepted canonical bytes, and complete native-node equivalence remain explicit assumptions."
+      "The Lean handoff model uses abstract digests and the existing abstract transaction Merkle-path kernel.",
+      "The Rust gate is finite production conformance evidence across the consensus, state-merkle, and transaction Merkle-path implementations; it is not a proof of full production implementation equivalence.",
+      "Poseidon2 hash security, note commitment correctness, arbitrary raw-byte action decoding, proof-system soundness, storage durability, and complete native-node equivalence remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-15",
-    "summary": "Bound recursive_block_v2 pre-proof verifier-surface admission, packed SmallWood active spend-auth linkage, and wallet DA note-ciphertext parsing into production gates. Production now factors the recursive cheap surface into verify_block_recursive_v2_surface before verify_tree_child_v2, enforces active SmallWood pk_auth linkage before proof verification, and decodes node/archive DA ciphertext rows through NoteCiphertext::from_da_bytes.",
+    "summary": "Bound commitment-tree membership handoff evidence into the formal-core release gate. The production regression checks consensus CommitmentTreeState append roots, state-merkle append roots and authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node agree under the real merkle_node combiner, with representative wrong-leaf, wrong-position, pre-append-root, and unavailable-future-leaf rejection cases.",
     "changed_runtime_paths": [
-      "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2_surface",
-      "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2",
-      "circuits/block-recursion/src/lib.rs recursive_block_v2 verifier-surface exports",
-      "circuits/block-recursion/src/tests.rs lean_generated_recursive_block_v2_verifier_surface_vectors_match_production",
-      "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints",
-      "wallet/src/notes.rs NoteCiphertext::from_da_bytes",
-      "wallet/src/node_rpc.rs decode_ciphertext_entries",
-      "wallet/tests/note_ciphertext_wire_vectors.rs DA vector conformance",
-      "scripts/check_formal_core.sh recursive_block_v2, SmallWood auth-link, and wallet DA parser gates"
+      "consensus/src/commitment_tree.rs commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify",
+      "scripts/check_formal_core.sh commitment-tree membership handoff regression",
+      "scripts/check_lean_formal.sh explicit CommitmentTreeMembershipRefinement.lean check",
+      "scripts/hegemon_formal_core/src/lib.rs formal inventory requires CommitmentTreeMembershipRefinement.lean"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.*",
-      "Hegemon.Consensus.RecursiveBlockAdmission.*",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.*",
-      "Hegemon.Wallet.NoteCiphertextWire.*"
+      "Hegemon.Native.CommitmentTreeMembershipRefinement.*",
+      "Hegemon.Transaction.MerklePath.*"
     ],
     "validation": {
       "targeted_rust": [
-        "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture",
-        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture",
-        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture",
-        "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture",
-        "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture"
+        "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T15:51:17Z with recursive_block_v2 verifier-surface, SmallWood auth-link, and wallet DA parser gates enabled",
-      "claims": 115,
-      "named_lean_theorems": 1580,
-      "production_eligible_claims": 105,
-      "falsification_cases": 455,
+      "formal_core": "bash scripts/check_formal_core.sh passed locally with the commitment-tree membership handoff regression enabled",
+      "claims": 116,
+      "named_lean_theorems": 1588,
+      "production_eligible_claims": 106,
+      "falsification_cases": 458,
       "implementation_bindings": 204,
       "implementation_result_obligations": 161,
       "implementation_dominance_constraints": 129,
@@ -147,9 +112,9 @@
       "implementation_order_edges": 371
     },
     "known_limitations": [
-      "The production helper is a pre-crypto verifier-surface gate; it does not discharge recursive proof cryptographic soundness.",
-      "The Lean-generated vectors cover representative accept/reject rows for the surface, not every possible proof-byte parser internal trace.",
-      "Complete recursive proof-system soundness, hash security, and native-node equivalence remain separate open work."
+      "This binding adds no release-runtime work beyond a test/formal-core gate.",
+      "The Rust regression covers representative finite cases, not exhaustive production implementation equivalence.",
+      "Merkle hash security, storage durability, proof soundness, raw parser equivalence, and complete native-node equivalence remain separate open work."
     ]
   },
   "properties": [
@@ -265,7 +230,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 80,
+      "completion_percent": 81,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -282,10 +247,12 @@
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now packages accepted publication/reload/commit/durability predicates with accepted ledger/tree replay so canonical publication carries commitment-root progression and final replay-set uniqueness",
         "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean proves verifier-side anchors must be in the parent commitment-tree root history before same-block commitments are applied",
         "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition",
-        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean carries synced raw block batches through raw canonical publication to accepted ledger/tree replay and commitment-root publication facts"
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean carries synced raw block batches through raw canonical publication to accepted ledger/tree replay and commitment-root publication facts",
+        "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean packages consensus-root/state-root/provided-root agreement, root-history membership, state path export, and transaction Merkle-path verifier acceptance into one membership handoff fact surface, including same-root changed-leaf rejection by the Merkle path rather than by root mismatch",
+        "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner"
       ],
       "missing_work": [
-        "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant with membership and hash implementation equivalence.",
+        "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant beyond the now production-bound append-root and membership-path handoff.",
         "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
         "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],

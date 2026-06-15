@@ -5377,6 +5377,52 @@
       ]
     },
     {
+      "id": "consensus.commitment-tree-membership-handoff",
+      "component": "consensus commitment-tree membership handoff",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean commitment-tree membership handoff package proves that accepted handoff facts require consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. A formal-core Rust regression gives finite production conformance evidence for the real Poseidon2 hash handoff between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node, including wrong-leaf, wrong-position, pre-append-root, and later-leaf rejection cases.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_plus_rust_conformance_regression",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.membership_handoff_accepts_implies_facts",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.prior_leaf_membership_path_verifies",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.consensus_state_root_mismatch_rejects",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.state_path_missing_rejects",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.wrong_leaf_membership_rejects",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_prior_root_keeps_root_and_export_checks",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_prior_root_merkle_path_rejects",
+        "Hegemon.Native.CommitmentTreeMembershipRefinement.post_append_leaf_not_member_of_prior_root"
+      ],
+      "assumptions": [
+        "The Lean theorem models the membership handoff predicate over abstract digests using the existing transaction Merkle-path kernel; the production Rust regression checks the real consensus/state-merkle/transaction hash implementations against each other.",
+        "The Rust regression intentionally uses raw tree append APIs where a zero commitment is a real leaf; block-level zero-commitment filtering remains covered by the separate tree-transition and block-action admission paths.",
+        "This claim provides Lean handoff facts plus a finite production conformance regression for append-root and membership-path interoperability. It does not prove full production implementation equivalence, Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, complete block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "consensus/src/commitment_tree.rs",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "cd formal/lean && lake build Hegemon.Native.CommitmentTreeMembershipRefinement Hegemon",
+        "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "complete-commitment-tree-refinement-open",
+          "description": "This claim binds the append-root and membership-path handoff, but complete raw-byte native-node replay/reorg/startup commitment-tree equivalence, hash security, and proof soundness remain open.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "formal.native-commitment-tree-refinement",
       "component": "native commitment-tree refinement boundary",
       "claim_class": "lean_theorem",

@@ -239,3 +239,129 @@ fn compute_default_nodes(depth: usize) -> Result<Vec<Commitment>, CommitmentTree
     }
     Ok(default_nodes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use state_merkle::CommitmentTree as StateCommitmentTree;
+    use transaction_circuit::{
+        hashing_pq::{bytes48_to_felts, merkle_node},
+        note::MerklePath,
+    };
+
+    fn commitment_from_seed(seed: u64) -> Commitment {
+        let mut commitment = [0u8; 48];
+        commitment[40..48].copy_from_slice(&seed.to_be_bytes());
+        commitment
+    }
+
+    #[test]
+    fn commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify() {
+        let depth = 4;
+        let leaves = (1..=6).map(commitment_from_seed).collect::<Vec<_>>();
+        let mut consensus_tree = CommitmentTreeState::new_empty(depth, 64).expect("consensus tree");
+        let mut state_tree = StateCommitmentTree::new(depth).expect("state merkle tree");
+        let mut roots_before_append = Vec::new();
+        let mut snapshots = Vec::new();
+        let mut roots_after_append = Vec::new();
+
+        for (index, leaf) in leaves.iter().enumerate() {
+            roots_before_append.push(consensus_tree.root());
+            let (state_index, state_root) = state_tree.append(*leaf).expect("state append");
+            let consensus_root = consensus_tree.append(*leaf).expect("consensus append");
+
+            assert_eq!(state_index, index);
+            assert_eq!(
+                consensus_root, state_root,
+                "consensus append root must match state-merkle root at index {index}"
+            );
+            assert!(
+                consensus_tree.contains_root(&state_root),
+                "consensus root history must retain the state-merkle root at index {index}"
+            );
+            assert_eq!(
+                consensus_tree.root_history().last().copied(),
+                Some(state_root),
+                "latest consensus root history entry must be the applied state root"
+            );
+
+            roots_after_append.push(state_root);
+            snapshots.push(state_tree.clone());
+        }
+
+        for (last_index, snapshot) in snapshots.iter().enumerate() {
+            let root = roots_after_append[last_index];
+            let root_felts = bytes48_to_felts(&root).expect("canonical root");
+            let prior_root_felts =
+                bytes48_to_felts(&roots_before_append[last_index]).expect("canonical prior root");
+
+            for (leaf_index, leaf) in leaves.iter().take(last_index + 1).enumerate() {
+                let path = MerklePath {
+                    siblings: snapshot
+                        .authentication_path(leaf_index)
+                        .expect("membership path")
+                        .iter()
+                        .map(|sibling| bytes48_to_felts(sibling).expect("canonical sibling"))
+                        .collect(),
+                };
+                let leaf_felts = bytes48_to_felts(leaf).expect("canonical leaf");
+                assert!(
+                    path.verify_with_depth_and_node(
+                        depth,
+                        leaf_felts,
+                        leaf_index as u64,
+                        root_felts,
+                        merkle_node,
+                    ),
+                    "state-merkle path for leaf {leaf_index} must verify in transaction Merkle verifier at root {last_index}"
+                );
+
+                let wrong_leaf =
+                    bytes48_to_felts(&commitment_from_seed(10_000 + leaf_index as u64))
+                        .expect("canonical wrong leaf");
+                assert!(
+                    !path.verify_with_depth_and_node(
+                        depth,
+                        wrong_leaf,
+                        leaf_index as u64,
+                        root_felts,
+                        merkle_node,
+                    ),
+                    "wrong leaf must not verify against exported path"
+                );
+
+                if last_index > 0 {
+                    let wrong_position = ((leaf_index + 1) % (last_index + 1)) as u64;
+                    assert!(
+                        !path.verify_with_depth_and_node(
+                            depth,
+                            leaf_felts,
+                            wrong_position,
+                            root_felts,
+                            merkle_node,
+                        ),
+                        "wrong position must not verify against exported path"
+                    );
+                }
+
+                assert!(
+                    !path.verify_with_depth_and_node(
+                        depth,
+                        leaf_felts,
+                        leaf_index as u64,
+                        prior_root_felts,
+                        merkle_node,
+                    ),
+                    "leaf {leaf_index} must not verify against the pre-append root for snapshot {last_index}"
+                );
+            }
+
+            if last_index + 1 < leaves.len() {
+                assert!(
+                    snapshot.authentication_path(last_index + 1).is_err(),
+                    "snapshot before a later leaf is appended must not export that later leaf path"
+                );
+            }
+        }
+    }
+}

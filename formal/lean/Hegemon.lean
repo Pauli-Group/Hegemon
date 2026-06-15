@@ -58,6 +58,7 @@ import Hegemon.Native.CanonicalReorgChainAdmission
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
+import Hegemon.Native.CommitmentTreeMembershipRefinement
 import Hegemon.Native.CommitmentTreeRefinement
 import Hegemon.Native.InboundBridgeReceiptAdmission
 import Hegemon.Native.MineableActionAdmission

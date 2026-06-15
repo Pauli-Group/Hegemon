@@ -146,6 +146,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateCoinbaseAccountingAdmissionVectors.lean
   lake env lean Hegemon/Native/CoinbaseActionPayloadAdmission.lean
   lake env lean Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean
+  lake env lean Hegemon/Native/CommitmentTreeMembershipRefinement.lean
   lake env lean Hegemon/Native/MineableActionAdmission.lean
   lake env lean Hegemon/Native/GenerateMineableActionAdmissionVectors.lean
   lake env lean Hegemon/Native/MinerIdentity.lean

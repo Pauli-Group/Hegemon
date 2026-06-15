@@ -9620,12 +9620,69 @@
       "scope_boundary": "This node proves and vector-checks the fail-closed release decision table only. It explicitly does not permit inbound RISC Zero receipt acceptance on the release node and does not prove future PQ bridge receipt soundness."
     },
     {
+      "id": "consensus.commitment-tree-membership-handoff",
+      "claim_id": "consensus.commitment-tree-membership-handoff",
+      "kind": "target_claim",
+      "formal_statement": "Accepted commitment-tree membership handoff requires consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle authentication-path export, and transaction Merkle-path verifier acceptance. The release gate also gives finite production conformance evidence for the real handoff: consensus CommitmentTreeState append roots equal state-merkle append roots, state-merkle authentication paths verify in transaction-circuit MerklePath::verify_with_depth_and_node under the real Poseidon2 merkle_node combiner, and wrong leaf, wrong position, pre-append root, or unavailable future leaf paths reject.",
+      "informal_argument": "`Hegemon.Native.CommitmentTreeMembershipRefinement.membership_handoff_accepts_implies_facts` packages the abstract handoff predicate into named facts over the existing transaction Merkle-path kernel. The companion theorems prove the valid handoff and representative root mismatch, missing path, wrong leaf, and same-root changed-leaf/prior-root rejection cases; the latter also proves root/export checks still hold and the Merkle path itself rejects. The formal-core Rust regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` then checks the production implementations against each other: consensus `CommitmentTreeState::append`, state-merkle `CommitmentTree::append` and `authentication_path`, and transaction-circuit `MerklePath::verify_with_depth_and_node` using the real `merkle_node` combiner.",
+      "depends_on": [
+        "formal.transaction-merkle-membership",
+        "consensus.block-tree-transition",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "consensus/src/commitment_tree.rs",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
+        "formal/lean/Hegemon/Transaction/MerklePath.lean",
+        "consensus/src/commitment_tree.rs",
+        "formal/lean/Hegemon.lean",
+        "config/highest-standard-formal-verification-matrix.json",
+        ".agent/HIGHEST_STANDARD_LEAN_FORMAL_VERIFICATION_EXECPLAN.md",
+        "scripts/check_formal_core.sh",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as production-bound conformance evidence for commitment-tree append roots and membership-path handoff. Scope is the finite consensus/state-merkle/transaction Merkle-path interoperability regression plus Lean handoff predicate facts, not complete implementation equivalence, Merkle hash security, or complete native-node refinement."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-commitment-tree-membership-handoff-theorem",
+          "description": "Removing or weakening the membership handoff theorem or rejection theorems must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "rust-commitment-tree-membership-handoff-regression",
+          "description": "Drift between consensus append roots, state-merkle path export, or transaction Merkle-path verification must fail the production conformance regression.",
+          "gate": "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture"
+        },
+        {
+          "id": "formal-core-commitment-tree-membership-handoff-gate",
+          "description": "The release formal-core wrapper must run the commitment-tree membership handoff regression.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and checks append-root and membership-path handoff equivalence across the production consensus, state-merkle, and transaction Merkle verifier implementations. It does not prove Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, full block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
+    },
+    {
       "id": "formal.native-commitment-tree-refinement",
       "claim_id": "formal.native-commitment-tree-refinement",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native action stream, acceptance determines the same planned commitment-start sequence and next leaf cursor accepted by the canonical action-plan application model, and an accepted consensus tree transition exposes the applied commitment-tree root. Accepted ledger/tree replay chains additionally thread the commitment-root cursor in lockstep with accepted ledger replay, so the final root is exactly the result of the accepted tree-transition chain while the corresponding ledger replay still proves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. Raw-decoded native ledger/tree replay projections are proved extensionally equal to accepted tree replay over the projected inputs and inherit the same root-cursor, replay, carried-state, nullifier, and bridge replay facts. Accepted canonical publication additionally carries those ledger/tree replay facts across accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, and storage durability admission.",
       "informal_argument": "`Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from` proves that accepted action-stream replay determines a commitment-start schedule. `commitment_starts_plan_application_accepts` and `accepted_stream_canonical_plan_accepts` prove that replaying those counts and starts through the action-plan admission model accepts with the same next leaf cursor. `accepted_stream_tree_transition_refines_applied_root` then composes that plan fact with `Hegemon.Consensus.TreeTransition.accepted_transition_returns_applied_root` so an accepted tree transition publishes the applied root. `Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity` lifts that boundary to accepted ledger/tree replay chains: the modeled root cursor follows accepted tree transitions, the projected ledger replay is accepted, and the existing accepted-ledger replay theorem still gives supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. `Hegemon.Native.BlockReplayInputProjection.accepted_raw_projected_ledger_tree_state_after_startup_equivalence` adds the raw-decoded native tree replay surface: decoded replay fields and decoded tree-transition inputs project into the ledger/tree replay model, the raw projected executor is tied to accepted tree replay, and accepted raw-projected tree replay exposes commitment-root progression, accepted ledger replay, supply equality, leaf-cursor equality, canonical commitment-plan preconditions, raw tree carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. `Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay` composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and ledger/tree replay into one publication package carrying replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness. `accepted_raw_canonical_publication_refines_ledger_tree_replay` lifts the same package through raw decoded ledger/tree replay while preserving raw carried-state preconditions. The valid raw tree example pins the root cursor at `50 -> 52`, and the stale raw root example rejects.",
       "depends_on": [
+        "consensus.commitment-tree-membership-handoff",
         "native.action-stream-effect-planning",
         "native.action-plan-application-admission",
         "consensus.block-tree-transition",
