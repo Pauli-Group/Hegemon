@@ -22363,6 +22363,132 @@ mod tests {
     }
 
     #[test]
+    fn materialized_sidecar_transfer_payload_builds_consensus_da_blob() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let binding = KernelVersionBinding {
+            circuit: protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+            crypto: protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+        };
+        let nullifiers = vec![[71u8; 48]];
+        let commitments = vec![[72u8; 48], [73u8; 48]];
+
+        let first_ciphertext = test_transfer_ciphertext_bytes();
+        let mut second_note = test_transfer_encrypted_note();
+        second_note.ciphertext[0] ^= 0x5a;
+        second_note.kem_ciphertext[0] ^= 0xa5;
+        let second_ciphertext =
+            encrypted_note_da_bytes(&second_note).expect("second ciphertext bytes");
+        let ciphertexts = vec![first_ciphertext, second_ciphertext];
+        let ciphertext_hashes = ciphertexts
+            .iter()
+            .map(|ciphertext| ciphertext_hash_bytes(ciphertext))
+            .collect::<Vec<_>>();
+        let ciphertext_sizes = ciphertexts
+            .iter()
+            .map(|ciphertext| u32::try_from(ciphertext.len()).expect("ciphertext size"))
+            .collect::<Vec<_>>();
+        let balance_slot_asset_ids = [0, u64::MAX, u64::MAX, u64::MAX];
+        let fee = 0;
+        let inputs = ShieldedTransferInputs {
+            anchor,
+            nullifiers: nullifiers.clone(),
+            commitments: commitments.clone(),
+            ciphertext_hashes: ciphertext_hashes.clone(),
+            balance_slot_asset_ids,
+            fee,
+            value_balance: 0,
+            stablecoin: None,
+        };
+        let binding_hash = StarkVerifier::compute_binding_hash(&inputs).data;
+        let proof = test_transfer_proof_artifact(
+            anchor,
+            &nullifiers,
+            &commitments,
+            &ciphertext_hashes,
+            balance_slot_asset_ids,
+            fee,
+            None,
+            binding,
+        );
+        let args = ShieldedTransferSidecarArgs {
+            proof,
+            commitments: commitments.clone(),
+            ciphertext_hashes: ciphertext_hashes.clone(),
+            ciphertext_sizes: ciphertext_sizes.clone(),
+            anchor,
+            balance_slot_asset_ids,
+            binding_hash,
+            stablecoin: None,
+            fee,
+        };
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding,
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_SHIELDED_TRANSFER_SIDECAR,
+            anchor,
+            nullifiers,
+            commitments,
+            ciphertext_hashes: ciphertext_hashes.clone(),
+            ciphertext_sizes,
+            public_args: args.encode(),
+            fee,
+            candidate_artifact: None,
+            received_ms: 0,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        validate_transfer_action_payload(&action).expect("valid sidecar transfer payload");
+
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        for (hash, ciphertext) in action.ciphertext_hashes.iter().zip(ciphertexts.iter()) {
+            da_ciphertext_tree
+                .insert(hash.as_slice(), ciphertext.as_slice())
+                .expect("insert sidecar ciphertext");
+        }
+        da_ciphertext_tree
+            .flush()
+            .expect("flush sidecar ciphertexts");
+
+        let materialized =
+            materialize_native_action_payloads(&da_ciphertext_tree, std::slice::from_ref(&action))
+                .expect("materialize sidecar payload");
+        let payload = materialized
+            .first()
+            .expect("one materialized sidecar payload");
+        assert_eq!(payload.ciphertexts, ciphertexts);
+        assert_eq!(payload.replay_key, None);
+
+        let (tx, _artifact) = consensus_tx_and_artifact_from_action(&action, payload)
+            .expect("build consensus transaction from materialized payload");
+        assert_eq!(tx.nullifiers, action.nullifiers);
+        assert_eq!(tx.commitments, action.commitments);
+        assert_eq!(tx.version, action.binding.into());
+        assert_eq!(tx.ciphertexts, ciphertexts);
+        assert_eq!(tx.ciphertext_hashes, action.ciphertext_hashes);
+        assert_eq!(tx.hash(), tx.id);
+
+        let mut expected_blob = Vec::new();
+        expected_blob.extend_from_slice(&1u32.to_le_bytes());
+        expected_blob.extend_from_slice(&2u32.to_le_bytes());
+        for ciphertext in &ciphertexts {
+            let len = u32::try_from(ciphertext.len()).expect("ciphertext len");
+            expected_blob.extend_from_slice(&len.to_le_bytes());
+            expected_blob.extend_from_slice(ciphertext);
+        }
+        assert_eq!(
+            consensus::types::build_da_blob(std::slice::from_ref(&tx)),
+            expected_blob
+        );
+        assert_eq!(
+            consensus::types::da_root(std::slice::from_ref(&tx), native_da_params())
+                .expect("consensus DA root"),
+            state_da::da_root(&expected_blob, native_da_params()).expect("expected DA root")
+        );
+    }
+
+    #[test]
     fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;

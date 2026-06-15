@@ -60,6 +60,15 @@ def signedMagnitudeMatches (value : Int) (sign magnitude : Nat) : Bool :=
   let expectedSign := if value < 0 then 1 else 0
   expectedSign = sign && Int.natAbs value = magnitude
 
+theorem signedMagnitudeMatches_true_eq
+    {value : Int} {sign magnitude : Nat}
+    (h : signedMagnitudeMatches value sign magnitude = true) :
+    sign = (if value < 0 then 1 else 0)
+      ∧ magnitude = Int.natAbs value := by
+  unfold signedMagnitudeMatches at h
+  simp at h
+  exact ⟨h.left.symm, h.right.symm⟩
+
 def selectedBalanceSlotAssets (pubFields : PublicFields) (serialized : SerializedFields) :
     Option (List Nat) :=
   if serialized.balanceSlotAssets = [] then

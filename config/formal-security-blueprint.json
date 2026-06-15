@@ -724,8 +724,8 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "claim_id": "formal.transaction-canonical-verifier-boundary",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean canonical transaction verifier boundary, one canonical statement surface containing accepted wrapper admission, public/serialized input binding, statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance agreement, stablecoin payload agreement, active spend binding to the exact anchor/nullifier statement surface, field agreement, and balance-slot asset agreement is sufficient to derive deployed relation facts, native and per-asset authorized-delta projections, and the existing accepted transaction relation under one explicit deployed verifier soundness assumption; accepted native tx-leaf/action equality admission composes with that packaged boundary, and the native artifact package exposes active-input no-theft and selected output-binding facts with the exact statement/proof/native equality gates.",
-      "informal_argument": "`Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption` collapses the older independent balance and spend assumptions into `DeployedTxVerifierSoundnessAssumption` over `CanonicalTxStatementSurface`. `accepted_wrapper_and_canonical_statement_implies_transaction_relation` then reuses the accepted-transaction theorem, while companion theorems expose public binding validity, statement-preimage length, wrapper preconditions, public shape validity, shape/statement/binding vector agreement for nullifiers, commitments, and ciphertext hashes, input-flag/nullifier vector agreement across public shape, bound inputs, statement preimage, and proof binding message, output-flag/commitment/ciphertext-hash slot facts bound across public shape, statement preimage, and proof binding message, a single `Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_core_binding` package for the merkle-root anchor, fee, balance-slot assets/count, value-balance fields, and stablecoin identity/payload fields across public inputs, statement hash, and proof binding message, active and total input-slot facts bound to the exact statement and binding nullifier vectors, native-delta conservation, and indexed input/output-slot facts from the same canonical surface. `Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_implies_boundary_facts` packages those surface facts with `DeployedTxRelationFacts`, `AcceptedTransactionRelation`, and the core statement/input/output-vector binding into one target for future AIR/refinement work; `Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_core_statement_binding`, `canonical_boundary_facts_native_delta`, `canonical_boundary_facts_authorized_asset_delta`, `canonical_boundary_facts_authorized_asset_delta_value`, `canonical_boundary_facts_input_slot_bound_to_statement`, `canonical_boundary_facts_output_slot_bound_to_statement`, and `deployed_soundness_canonical_surface_exposes_spend_and_balance` expose the exact core binding, native/per-asset authorized-delta facts, total input-slot statement/proof-binding facts, output-slot statement/proof-binding facts, balance-slot, valid-balance, and spend-authorization facts carried by that target. `deployed_soundness_canonical_surface_input_slot_boundary_facts` and `deployed_soundness_canonical_surface_output_slot_boundary_facts` now package those input/output slot projections directly from the canonical surface plus the explicit deployed-verifier soundness assumption for downstream proof/AIR refinement work. `Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` then composes the packaged boundary with accepted native tx-leaf/action equality admission, `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with the assumption-free full statement/artifact facts, and `native_tx_leaf_canonical_artifact_boundary_facts` packages the deployed-verifier boundary together with native artifact equality facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding. `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` exposes active artifact input spend facts with wrapper preconditions, wrapper surface facts, public-input binding, statement preimage, proof binding message, root/anchor binding, statement/proof nullifier-slot alignment, and native receipt/public-input/proof/backend equality gates.",
+      "formal_statement": "For the executable Lean canonical transaction verifier boundary, one canonical statement surface containing accepted wrapper admission, public/serialized input binding, statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance agreement, stablecoin payload agreement, active spend binding to the exact anchor/nullifier statement surface, field agreement, and balance-slot asset agreement is sufficient to derive deployed relation facts, native and per-asset authorized-delta projections, and the existing accepted transaction relation under explicit deployed verifier soundness. The boundary now also states spend-only and balance/public-field-only deployed soundness assumptions plus a compatibility theorem back to the monolithic assumption.",
+      "informal_argument": "`Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_implies_accepted_transaction_soundness_assumption` collapses the older independent balance and spend assumptions into `DeployedTxVerifierSoundnessAssumption` over `CanonicalTxStatementSurface`. `accepted_wrapper_and_canonical_statement_implies_transaction_relation` then reuses the accepted-transaction theorem, while companion theorems expose public binding validity, statement-preimage length, wrapper preconditions, public shape validity, shape/statement/binding vector agreement for nullifiers, commitments, and ciphertext hashes, input-flag/nullifier vector agreement across public shape, bound inputs, statement preimage, and proof binding message, output-flag/commitment/ciphertext-hash slot facts bound across public shape, statement preimage, and proof binding message, a single `Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_core_binding` package for the merkle-root anchor, fee, balance-slot assets/count, value-balance fields, and stablecoin identity/payload fields across public inputs, statement hash, and proof binding message, active and total input-slot facts bound to the exact statement and binding nullifier vectors, native-delta conservation, and indexed input/output-slot facts from the same canonical surface. `Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_implies_boundary_facts` packages those surface facts with `DeployedTxRelationFacts`, `AcceptedTransactionRelation`, and the core statement/input/output-vector binding into one target for future AIR/refinement work; `Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_core_statement_binding`, `canonical_boundary_facts_native_delta`, `canonical_boundary_facts_authorized_asset_delta`, `canonical_boundary_facts_authorized_asset_delta_value`, `canonical_boundary_facts_input_slot_bound_to_statement`, `canonical_boundary_facts_output_slot_bound_to_statement`, and `deployed_soundness_canonical_surface_exposes_spend_and_balance` expose the exact core binding, native/per-asset authorized-delta facts, total input-slot statement/proof-binding facts, output-slot statement/proof-binding facts, balance-slot, valid-balance, and spend-authorization facts carried by that target. `deployed_soundness_canonical_surface_input_slot_boundary_facts` and `deployed_soundness_canonical_surface_output_slot_boundary_facts` now package those input/output slot projections directly from the canonical surface plus the explicit deployed-verifier soundness assumption for downstream proof/AIR refinement work. `Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` then composes the packaged boundary with accepted native tx-leaf/action equality admission, `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with the assumption-free full statement/artifact facts, and `native_tx_leaf_canonical_artifact_boundary_facts` packages the deployed-verifier boundary together with native artifact equality facts, wrapper surface facts, root/fee/balance-slot/stablecoin identity bindings, spend/balance exposure, authorized asset deltas, and receipt/public-input/proof/backend/ciphertext-payload binding. `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` exposes active artifact input spend facts with wrapper preconditions, wrapper surface facts, public-input binding, statement preimage, proof binding message, root/anchor binding, statement/proof nullifier-slot alignment, and native receipt/public-input/proof/backend equality gates. The split-soundness extension adds `Hegemon.Transaction.PublicInputBinding.signedMagnitudeMatches_true_eq`, `Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_active_input_bound_to_statement`, `balance_public_field_facts_authorized_asset_delta_value`, `canonical_statement_balance_soundness_public_authorized_asset_delta_value`, and `deployed_soundness_parts_imply_deployed_tx_verifier_soundness_assumption`, making spend authorization and public balance conservation separate future AIR/refinement targets instead of one oversized assumption.",
       "depends_on": [
         "formal.transaction-balance",
         "formal.transaction-proof-wrapper-admission",
@@ -776,7 +776,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves an assumption-sharpening canonical statement boundary only, including modeled vector agreement, packaged input/output vector agreement, indexed output-slot facts across public shape, statement preimage, and proof binding message, packaged core root/fee/balance-slot/stablecoin statement binding, packaged deployed relation facts, native/per-asset authorized-delta projections, and native tx-leaf/action admission composition. It does not prove deployed STARK/AIR or SmallWood soundness, verifier implementation correctness, witness extraction, hash collision resistance, bincode/postcard implementation correctness, stablecoin policy/oracle validity, bridge mint authorization, note encryption correctness, recipient ownership, proof privacy, or complete Rust/native-node refinement."
+      "scope_boundary": "This node proves an assumption-sharpening canonical statement boundary only, including modeled vector agreement, packaged input/output vector agreement, indexed output-slot facts across public shape, statement preimage, and proof binding message, packaged core root/fee/balance-slot/stablecoin statement binding, split spend-only and balance/public-field soundness assumptions, a compatibility theorem back to the monolithic deployed-verifier assumption, native/per-asset authorized-delta projections, and native tx-leaf/action admission composition. It does not prove deployed STARK/AIR or SmallWood soundness, verifier implementation correctness, witness extraction, hash collision resistance, bincode/postcard implementation correctness, stablecoin policy/oracle validity, bridge mint authorization, note encryption correctness, recipient ownership, proof privacy, or complete Rust/native-node refinement."
     },
     {
       "id": "formal.transaction-asset-isolation-boundary",
@@ -9814,7 +9814,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication and tx-leaf ciphertext binding facts. DA availability, DA-root hash/security equivalence, row-to-Transaction::new equivalence, proof soundness, and complete native-node refinement remain explicit assumptions."
+        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication and tx-leaf ciphertext binding facts. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions."
       },
       "falsification_cases": [
         {
@@ -9828,7 +9828,70 @@
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         }
       ],
-      "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. It does not prove arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, or complete native-node refinement."
+      "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. Its successor materialized consensus DA-blob refinement concretizes Transaction::new and DA-blob relations for the transfer sidecar path, but arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, and complete native-node refinement remain explicit."
+    },
+    {
+      "id": "native.materialized-consensus-da-blob-refinement",
+      "claim_id": "native.materialized-consensus-da-blob-refinement",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean materialized consensus DA-blob refinement surface, accepted materialized sidecar DA publication whose explicit row/transaction propositions are instantiated with `MaterializedRowsFeedTransactionNew` and `TransactionNewFeedsConsensusDaBlob` implies one record carrying ordered action/payload/transaction binding, consensus DA payload binding, exact `Consensus.DaRoot.daBlob` bytes, explicit u32 length bounds, sidecar materialization facts, wire replay DA-row binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash and payload-hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
+      "informal_argument": "`Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_transaction_new_da_blob` consumes `MaterializedSidecarDaBlobPublicationFacts` instantiated with concrete row and DA-blob relations. Helper theorems expose indexed row binding and prove that a bound transaction DA payload has the same byte grammar as `Consensus.DaRoot.transactionBytes` and that the assembled blob bytes equal `Consensus.DaRoot.daBlob`. The companion Rust test `native::tests::materialized_sidecar_transfer_payload_builds_consensus_da_blob` builds a sidecar transfer, stages canonical ciphertext bytes, materializes the payload, constructs the production consensus transaction, checks the transaction fields/ciphertext hashes, checks exact DA blob bytes, and checks the DA root against `state_da::da_root`.",
+      "depends_on": [
+        "native.materialized-sidecar-da-blob-publication",
+        "consensus.da-root-byte-binding",
+        "formal.native-tx-leaf-canonical-surface",
+        "native.block-artifact-binding-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Consensus/DaRoot.lean",
+        "node/src/native/mod.rs",
+        "consensus/src/types.rs",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh",
+        "scripts/check_formal_core.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Consensus/DaRoot.lean",
+        "node/src/native/mod.rs",
+        "consensus/src/types.rs",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh",
+        "scripts/check_formal_core.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean refinement plus targeted Rust conformance test over the materialized sidecar transfer-to-consensus DA path. DA availability, DA-root hash/security, proof soundness, parser internals, storage durability, and complete native-node refinement remain explicit."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-materialized-consensus-da-blob-refinement-theorem",
+          "description": "Removing or weakening the materialized consensus DA-blob refinement theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "rust-materialized-sidecar-transfer-consensus-da-blob-test",
+          "description": "Changing sidecar materialization, consensus transaction construction, DA blob byte order, or DA-root sourcing so the production path no longer matches the expected bytes must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node materialized_sidecar_transfer_payload_builds_consensus_da_blob --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "formal-core-materialized-consensus-da-blob-refinement-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node specializes materialized sidecar rows into concrete consensus transaction and DA-blob relations and checks the production sidecar transfer path with a Rust conformance test. It does not prove arbitrary-byte parser internals, DA availability/retention, Reed-Solomon network behavior, DA-root hash/security equivalence, deployed proof-system soundness, witness extraction, stablecoin policy/oracle validity, sled durability, or complete native-node refinement."
     },
     {
       "id": "native.materialized-transfer-no-theft-publication",
