@@ -175,10 +175,12 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/StagedProofReload.lean
   lake env lean Hegemon/Native/GenerateStagedProofReloadVectors.lean
   lake env lean Hegemon/Native/SyncAdmission.lean
+  lake env lean Hegemon/Native/SyncBlockReplayPublication.lean
   lake env lean Hegemon/Native/GenerateSyncAdmissionVectors.lean
   lake env lean Hegemon/Network/SecureChannel.lean
   lake env lean Hegemon/Network/GenerateSecureChannelVectors.lean
   lake env lean Hegemon/Network/PqNoise.lean
+  lake env lean Hegemon/Network/PqNoiseHandshakeChannel.lean
   lake env lean Hegemon/Network/GeneratePqNoiseVectors.lean
   lake env lean Hegemon/Privacy/CiphertextPrivacy.lean
   lake env lean Hegemon/Privacy/Observer.lean

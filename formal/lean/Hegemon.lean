@@ -84,6 +84,7 @@ import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload
 import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
+import Hegemon.Native.SyncBlockReplayPublication
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferNoTheftBoundary
 import Hegemon.Native.TransferStateAdmission
@@ -92,6 +93,7 @@ import Hegemon.Native.TxLeafCanonicalSurface
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
+import Hegemon.Network.PqNoiseHandshakeChannel
 import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer

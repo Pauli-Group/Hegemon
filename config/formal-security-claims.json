@@ -2572,7 +2572,7 @@
       "id": "network.pq-noise-key-schedule",
       "component": "PQ Noise handshake and session channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, and explicit session channel-state send/receive transitions: successful protect uses the role send slot and send counter nonce while incrementing only send, successful open uses the role receive slot and receive counter nonce while incrementing only receive, and each side rejects at its own counter overflow. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and an assumption-explicit handshake-to-channel composition surface: accepted authenticated PQ handshakes establish direction-separated channel facts and initial protect/open transitions use role-correct send/receive slots and counters. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2603,15 +2603,23 @@
         "Hegemon.Network.PqNoise.protectFrame_rejects_send_overflow",
         "Hegemon.Network.PqNoise.openFrame_rejects_recv_overflow",
         "Hegemon.Network.PqNoise.protectFrame_direction_and_counter",
-        "Hegemon.Network.PqNoise.openFrame_direction_and_counter"
+        "Hegemon.Network.PqNoise.openFrame_direction_and_counter",
+        "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_slot_maps_to_secure_send",
+        "Hegemon.Network.PqNoiseHandshakeChannel.pq_recv_slot_maps_to_secure_recv",
+        "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_recv_infos_distinct",
+        "Hegemon.Network.PqNoiseHandshakeChannel.secure_send_recv_labels_distinct",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_channel_facts",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_protect_open_facts"
       ],
       "assumptions": [
         "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
         "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, and InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; they do not require new runtime work.",
+        "The handshake-to-channel theorem carries transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
         "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, and send/receive channel-counter state transitions only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/PqNoise.lean",
+        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean",
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
         "pq-noise/src/types.rs",
         "pq-noise/src/noise.rs",
@@ -2621,6 +2629,7 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Network/PqNoiseHandshakeChannel.lean",
         "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture",
         "cargo test -p pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture",
         "bash scripts/check_formal_core.sh"
@@ -2988,16 +2997,20 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, and mineable-action admission facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, sidecar proof preconditions, and block-template sidecar/candidate preconditions before expensive proof or mining work.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, transfer-payload admission, candidate-artifact admission, and tx-leaf artifact byte-shape facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, and tx-leaf parser shape bounds before expensive proof, recursive verification, or mining work.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_resource_bound_surface_exposes_bounds"
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_resource_bound_surface_exposes_bounds",
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.transfer_payload_accepts_implies_preheavy_bounds",
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.candidate_artifact_accepts_implies_preheavy_bounds",
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
       ],
       "assumptions": [
-        "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, and native.mineable-action-admission; it inherits production conformance from those generated-vector gates and adds no new runtime helper.",
-        "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, sidecar request/capacity/proof metadata/proof-byte preconditions, and mineable-action candidate/sidecar preconditions.",
+        "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, and native tx-leaf artifact parsing; it inherits production conformance from those gates and adds no new runtime helper.",
+        "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, and tx-leaf artifact byte-shape bounds.",
+        "Parser correctness and benchmark-cap coverage are explicit assumptions on the verification-path surface; the theorem does not silently prove parser internals or cost-model completeness.",
         "The theorem covers decision-table composition only. It does not prove JSON parser correctness, RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness beyond cap behavior, DA availability, sled durability, proof-system soundness, mining liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -3006,6 +3019,9 @@
         "formal/lean/Hegemon/Native/RpcAdmission.lean",
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -4020,16 +4036,18 @@
       "id": "native.raw-ingress-bridge-pending-action-publication",
       "component": "native raw ingress bridge pending-action publication refinement",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress bridge pending-action publication refinement composes accepted inbound bridge payload authorization and decoded amount authorization with accepted raw-ingress pending-action publication over the same raw ledger/tree replay witness. The resulting theorem packages replayed supply, commitment-root publication, pending-action parser row-count agreement, zero direct native mint delta, one-shot bridge replay import, duplicate replay rejection, final nullifier uniqueness, and final bridge replay-key uniqueness on the same raw ingress and pending-action byte-publication surface.",
+      "summary": "The Lean raw-ingress bridge pending-action publication refinement composes accepted inbound bridge payload authorization and decoded amount authorization with accepted raw-ingress pending-action publication over the same raw ledger/tree replay witness, and now also packages canonical publication, inbound receipt admission, native backend review posture, and explicit external PQ receipt verifier soundness as one bridge replay surface. The resulting theorem packages replayed supply, commitment-root publication, pending-action parser row-count agreement, zero direct native mint delta, one-shot bridge replay import, duplicate replay rejection, final nullifier uniqueness, and final bridge replay-key uniqueness on the same raw ingress and pending-action byte-publication surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_pending_action_publication_safe"
+        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_pending_action_publication_safe",
+        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe"
       ],
       "assumptions": [
         "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate bridge payload/mint safety, raw-ingress pending-action publication, DA/sidecar binding, pending-action parser/publication, canonical publication, and replay-refinement claims for executable predicate conformance.",
         "The theorem uses the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness as the raw-ingress pending-action publication theorem, so bridge replay one-shot consumption, zero direct native mint delta, replayed supply, commitment-root publication, parser row-count agreement, final nullifier uniqueness, and final bridge replay-key uniqueness are reviewable as one surface.",
+        "The canonical replay theorem carries accepted inbound receipt admission, native backend review preconditions, and an explicit external receipt/PQ verifier soundness proposition; it does not claim that the disabled or future verifier is already proved sound.",
         "The theorem does not prove external bridge receipt validity, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, bridge payload hash security or implementation equivalence, DA availability, recursive proof soundness, native tx-leaf proof soundness, arbitrary raw byte parser internals, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
@@ -4037,6 +4055,9 @@
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
+        "formal/lean/Hegemon/Native/NativeBackendReviewPolicy.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
@@ -4791,6 +4812,53 @@
         {
           "id": "native-block-action-replay-proof-system-and-node-refinement-open",
           "description": "The theorem packages accepted replay and validation facts; it does not discharge proof-system soundness or complete native-node equivalence.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "native.sync-block-replay-publication",
+      "component": "native sync response to raw replay publication boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean sync block replay publication theorem composes accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, and raw canonical publication. It packages exact sync-wire preconditions, response block-count bounds, decoded action-row equality to raw replay rows, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication"
+      ],
+      "assumptions": [
+        "The theorem composes accepted sync decode/count, block-action decode, and raw canonical publication predicates; it does not introduce runtime work.",
+        "The equality between decoded block-action payload rows and raw replay action rows remains an explicit implementation-equivalence premise until arbitrary sync/block bytes are fully refined into replay rows.",
+        "Sync wire parser internals, SCALE/bounded codec implementation correctness, hash security and implementation equivalence, proof-system soundness, storage durability, peer honesty, network liveness, and complete native-node refinement remain outside this theorem."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
+        "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.SyncBlockReplayPublication Hegemon",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/SyncBlockReplayPublication.lean",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-sync-block-replay-row-projection-premise-open",
+          "description": "The production projection from decoded sync/block bytes to raw replay action rows is still premise-level and not fully mechanized for arbitrary bytes.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-sync-block-replay-network-and-node-refinement-open",
+          "description": "The theorem packages accepted local replay-publication facts for synced batches; it does not prove peer honesty, network liveness, storage durability, proof-system soundness, or complete native-node equivalence.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

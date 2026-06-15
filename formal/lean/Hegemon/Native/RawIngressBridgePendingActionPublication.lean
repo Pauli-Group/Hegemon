@@ -1,4 +1,7 @@
 import Hegemon.Native.BridgeMintSafety
+import Hegemon.Native.CanonicalPublicationRefinement
+import Hegemon.Native.InboundBridgeReceiptAdmission
+import Hegemon.Native.NativeBackendReviewPolicy
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 
 namespace Hegemon
@@ -13,9 +16,12 @@ open Hegemon.Native.BlockIndexReload
 open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.BridgeActionPayloadAdmission
 open Hegemon.Native.BridgeMintSafety
+open Hegemon.Native.CanonicalPublicationRefinement
 open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
+open Hegemon.Native.InboundBridgeReceiptAdmission
+open Hegemon.Native.NativeBackendReviewPolicy
 open Hegemon.Native.PendingActionReload
 open Hegemon.Native.RawIngressPendingActionPublicationRefinement
 open Hegemon.Native.RawIngressSidecarReplayRecoverability
@@ -93,6 +99,121 @@ structure RawIngressBridgePendingActionPublicationFacts
     expectedNativeSupplyAfter
       initial.ledger.supply
       (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.supply
+  finalSpentNullifiersUnique :
+    final.ledger.spentNullifiers.Nodup
+  finalBridgeReplaysUnique :
+    final.ledger.consumedBridgeReplays.Nodup
+
+structure RawIngressBridgeCanonicalPublicationReplayFacts
+    (input : BridgePayloadInput)
+    (mintSurface : InboundBridgeMintAmountSurface)
+    (surface : RawIngressSidecarReplaySurface)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (actionHash : AdmissionInput)
+    (wireOutput : ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (receipt : InboundBridgeReceiptInput)
+    (backendReview : NativeBackendReviewInput)
+    (consumed next : List Nat)
+    (replay imported : Nat)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (externalReceiptPqVerifierSoundness : Prop) : Prop where
+  externalReceiptPqVerifierSound :
+    externalReceiptPqVerifierSoundness
+  receiptAccepted :
+    inboundBridgeReceiptAccepts receipt = true
+  receiptPreconditions :
+    inboundBridgeReceiptPreconditions receipt = true
+  backendReviewAccepted :
+    nativeBackendReviewAccepts backendReview = true
+  backendReviewPreconditions :
+    nativeBackendReviewPreconditions backendReview = true
+  bridgePendingActionPublicationFacts :
+    RawIngressBridgePendingActionPublicationFacts
+      input
+      mintSurface
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      consumed
+      next
+      replay
+      imported
+      initial
+      final
+      blocks
+  rawBytePublication :
+    RawIngressPendingActionPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+  canonicalPublicationFacts :
+    CanonicalPublicationReplayFacts
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      (rawTreeReplayInputs blocks)
+  rawTreeCarriedStatePreconditions :
+    rawProjectedTreeCarriedStatePreconditions initial blocks = true
+  inboundPayloadAuthorizationFacts :
+    InboundBridgePayloadAuthorizationFacts input
+  mintPayloadHashMatches :
+    mintSurface.payloadHashMatches = true
+  mintAmountBound :
+    mintSurface.decodedPayloadAmount =
+      mintSurface.authorizedExternalAmount
+  noDirectNativeMint :
+    inboundBridgeDirectMintDelta input = 0
+  replayConsumed :
+    replay ∈ next
+  importedOnce :
+    imported = 1
+  nextReplaySetUnique :
+    next.Nodup
+  duplicateReplayRejects :
+    importBridgeReplay next (some replay) =
+      Except.error ActionStreamEffect.ActionStreamReject.bridgeReplayDuplicate
+  rawByteReplayedSupply :
+    expectedNativeSupplyAfter
+      initial.ledger.supply
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.supply
+  canonicalReplayedSupply :
+    expectedNativeSupplyAfter
+      initial.ledger.supply
+      (ledgerBlocksFromTreeReplay (rawTreeReplayInputs blocks)) =
       some final.ledger.supply
   finalSpentNullifiersUnique :
     final.ledger.spentNullifiers.Nodup
@@ -240,6 +361,206 @@ theorem accepted_inbound_bridge_raw_ingress_pending_action_publication_safe
         finalNullifiers,
       finalBridgeReplaysUnique :=
         finalReplays
+    }
+
+theorem accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe
+    {input : BridgePayloadInput}
+    {mintSurface : InboundBridgeMintAmountSurface}
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput : ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {receipt : InboundBridgeReceiptInput}
+    {backendReview : NativeBackendReviewInput}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {externalReceiptPqVerifierSoundness : Prop}
+    (inbound : input.actionKind = BridgeActionKind.inbound)
+    (acceptedPayload : bridgePayloadAccepts input = true)
+    (authorized : bridgeMintAmountAuthorized mintSurface = true)
+    (receiptAccepted :
+      inboundBridgeReceiptAccepts receipt = true)
+    (backendReviewAccepted :
+      nativeBackendReviewAccepts backendReview = true)
+    (externalReceiptPqVerifierSound :
+      externalReceiptPqVerifierSoundness)
+    (rawIngressFacts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (actionHashAccepted :
+      admissionAccepts actionHash = true)
+    (wireActionCountMatchesDeclared :
+      surface.daSidecarReplay.wireReplayProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (consumedNodup : consumed.Nodup)
+    (fresh :
+      importBridgeReplay consumed (some replay) =
+        Except.ok (next, imported))
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    RawIngressBridgeCanonicalPublicationReplayFacts
+      input
+      mintSurface
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      receipt
+      backendReview
+      consumed
+      next
+      replay
+      imported
+      initial
+      final
+      blocks
+      externalReceiptPqVerifierSoundness := by
+  have receiptPreconditions :
+      inboundBridgeReceiptPreconditions receipt = true :=
+    (accepts_iff_inbound_bridge_receipt_preconditions
+      (input := receipt)).mp receiptAccepted
+  have backendReviewPreconditions :
+      nativeBackendReviewPreconditions backendReview = true := by
+    rw [← accepts_iff_native_backend_review_preconditions backendReview]
+    exact backendReviewAccepted
+  have bridgePendingFacts :=
+    accepted_inbound_bridge_raw_ingress_pending_action_publication_safe
+      (input := input)
+      (mintSurface := mintSurface)
+      (surface := surface)
+      (streamOutput := streamOutput)
+      (wireOutput := wireOutput)
+      (semanticFields := semanticFields)
+      (pendingDecode := pendingDecode)
+      (blockActionDecode := blockActionDecode)
+      (actionHash := actionHash)
+      (blockIndex := blockIndex)
+      (canonicalState := canonicalState)
+      (reorgChain := reorgChain)
+      (commitManifest := commitManifest)
+      (durability := durability)
+      (consumed := consumed)
+      (next := next)
+      (replay := replay)
+      (imported := imported)
+      (initial := initial)
+      (final := final)
+      (blocks := blocks)
+      inbound
+      acceptedPayload
+      authorized
+      rawIngressFacts
+      sidecarRoute
+      pendingDecodeAccepted
+      blockActionDecodeAccepted
+      actionHashAccepted
+      wireActionCountMatchesDeclared
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      consumedNodup
+      fresh
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  rcases
+    accepted_raw_canonical_publication_refines_ledger_tree_replay
+      (blockIndex := blockIndex)
+      (canonicalState := canonicalState)
+      (reorgChain := reorgChain)
+      (commitManifest := commitManifest)
+      (durability := durability)
+      (initial := initial)
+      (final := final)
+      (blocks := blocks)
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw with
+    ⟨canonicalFacts, rawTreeCarriedStatePreconditions⟩
+  exact
+    {
+      externalReceiptPqVerifierSound :=
+        externalReceiptPqVerifierSound,
+      receiptAccepted := receiptAccepted,
+      receiptPreconditions := receiptPreconditions,
+      backendReviewAccepted := backendReviewAccepted,
+      backendReviewPreconditions := backendReviewPreconditions,
+      bridgePendingActionPublicationFacts := bridgePendingFacts,
+      rawBytePublication :=
+        bridgePendingFacts.rawIngressPendingActionPublicationFacts,
+      canonicalPublicationFacts := canonicalFacts,
+      rawTreeCarriedStatePreconditions :=
+        rawTreeCarriedStatePreconditions,
+      inboundPayloadAuthorizationFacts :=
+        bridgePendingFacts.inboundPayloadAuthorizationFacts,
+      mintPayloadHashMatches :=
+        bridgePendingFacts.mintPayloadHashMatches,
+      mintAmountBound :=
+        bridgePendingFacts.mintAmountBound,
+      noDirectNativeMint :=
+        bridgePendingFacts.noDirectNativeMint,
+      replayConsumed :=
+        bridgePendingFacts.replayConsumed,
+      importedOnce :=
+        bridgePendingFacts.importedOnce,
+      nextReplaySetUnique :=
+        bridgePendingFacts.nextReplaySetUnique,
+      duplicateReplayRejects :=
+        bridgePendingFacts.duplicateReplayRejects,
+      rawByteReplayedSupply :=
+        bridgePendingFacts.replayedSupply,
+      canonicalReplayedSupply :=
+        canonicalFacts.replayedSupply,
+      finalSpentNullifiersUnique :=
+        bridgePendingFacts.finalSpentNullifiersUnique,
+      finalBridgeReplaysUnique :=
+        bridgePendingFacts.finalBridgeReplaysUnique
     }
 
 end RawIngressBridgePendingActionPublication
