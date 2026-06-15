@@ -475,6 +475,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/SyncAdmission.lean",

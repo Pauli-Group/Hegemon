@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.49,
+  "overall_completion_percent": 76.54,
   "last_full_formal_core": {
-    "commit": "c09861aab177f3736633b3c1f15055bb01c12d4b",
-    "status": "passed locally 2026-06-14T23:44:13Z",
+    "commit": "worktree:pending-action-byte-publication-refinement",
+    "status": "passed locally 2026-06-15T00:15:47Z",
     "claims": 100,
-    "named_lean_theorems": 1432,
+    "named_lean_theorems": 1433,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -48,28 +48,27 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened canonical publication/replay refinement with `CanonicalPublicationReplayFacts`, `accepted_canonical_publication_refines_ledger_tree_replay`, and `accepted_raw_canonical_publication_refines_ledger_tree_replay`, composing accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and ledger/tree replay into one publication fact package carrying replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness.",
+    "summary": "Strengthened pending-action byte publication refinement with `PendingActionBytePublicationFacts` and `accepted_pending_action_bytes_bind_raw_canonical_publication`, composing accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, and raw canonical publication into one byte-admission fact package carrying exact parser, reload, action-hash, wire projection, replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean"
+      "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
-      "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay"
+      "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean Hegemon/Native/CanonicalPublicationRefinement.lean and lake build Hegemon.Native.CanonicalPublicationRefinement Hegemon passed locally; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-14T23:44:13Z",
+      "lean_formal": "targeted lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean and lake build Hegemon.Native.PendingActionBytePublicationRefinement Hegemon passed locally; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-15T00:15:47Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-14T23:44:13Z with 100 claims, 1432 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-15T00:15:47Z with 100 claims, 1433 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1432,
+      "named_lean_theorems": 1433,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "This is a zero-runtime-cost composition over accepted predicates and raw decoded ledger/tree replay summaries; it does not prove arbitrary raw SCALE/bincode/PendingAction byte field projection.",
-      "This does not mechanize sled or filesystem durability below the accepted durability predicate, hash/security/proof soundness, DA availability, external-chain bridge receipt soundness, or complete native-node equivalence.",
-      "The canonical publication package still assumes the decoded replay, reload, reorg, atomic commit, and durability predicates are the correct production-bound abstractions.",
+      "This is a zero-runtime-cost composition over accepted decode/reload/hash/wire/replay/publication predicates; it does not prove the internals of arbitrary SCALE/bincode/PendingAction parsers.",
+      "This does not mechanize sled or filesystem durability below the accepted durability predicate, hash/security/proof soundness, tx-leaf proof soundness, DA availability, external-chain bridge receipt soundness, or complete native-node equivalence.",
+      "The byte publication package still assumes the exact-decode, pending reload, action-hash, wire projection, raw replay, reorg, atomic commit, and durability predicates are the correct production-bound abstractions.",
       "The production cost is zero on the hot path; this adds Lean proof obligations and metadata only."
     ]
   },
@@ -447,7 +446,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 73,
+      "completion_percent": 74,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -455,12 +454,13 @@
         "tx-proof-manifest nested wrapper regression",
         "native tx-leaf/receipt-root exact decode gates",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean exposes accepted action-request and pending/staged sidecar reload parser-admission preconditions",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode and block-action decode with pending reload, action-hash admission, wire replay projection, and raw canonical publication facts",
         "node/src/native/mod.rs verifies non-genesis canonical sync rows by exact action decode plus decoded action-root admission before response publication"
       ],
       "missing_work": [
         "Complete byte-level grammar coverage for every consensus object.",
         "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
-        "Extend the top-level parser non-malleability theorem family beyond native sync/exact/block-action decode into every remaining consensus byte object."
+        "Extend the accepted-predicate composition into parser-internal implementation equivalence for every remaining consensus byte object."
       ],
       "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work."
     },
@@ -487,13 +487,14 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded ledger/tree replay, exposing commitment-root progression, accepted ledger replay, replayed supply/leaf facts, raw tree carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and accepted ledger/tree replay into a canonical publication fact package",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, and raw canonical publication into one byte-admission/refinement package",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
         "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
         "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows",
         "node/src/native/mod.rs load_staged_sizes_with_limits, load_staged_proofs_with_limits, and build_validated_startup_state_with_limits now route startup staged-sidecar repair and pending-action quarantine cleanup through the same formal storage-durability barrier before returning repaired startup state"
       ],
       "missing_work": [
-        "Bind arbitrary raw PendingAction bytes to the decoded replay, sidecar, action-hash, bridge replay-key, and tx-leaf artifact fields used by import/replay/startup.",
+        "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes and bind tx-leaf artifact fields plus DA sidecar materialization to the same decoded replay rows.",
         "Add remaining restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."

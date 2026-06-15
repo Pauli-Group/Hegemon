@@ -275,7 +275,7 @@
       "id": "formal.transaction-public-input-shape",
       "component": "transaction verifier public-input shape",
       "claim_class": "lean_theorem",
-    "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, output-slot commitment/ciphertext-hash facts including direct list-index facts, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
+      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, output-slot commitment/ciphertext-hash facts including direct list-index facts, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -292,12 +292,12 @@
         "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_padding_not_suffix",
         "Hegemon.Transaction.PublicInputs.validPublicInputShape_rejects_stablecoin_missing_asset",
         "Hegemon.Transaction.PublicInputs.validOutputSlot_implies_output_slot_facts",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_head_facts",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_tail_valid",
-      "Hegemon.Transaction.PublicInputs.output_slot_at_get_indices",
-      "Hegemon.Transaction.PublicInputs.allOutputsValid_output_slot_facts_at",
-      "Hegemon.Transaction.PublicInputs.validPublicInputShape_output_slot_facts_at"
-    ],
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_head_facts",
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_tail_valid",
+        "Hegemon.Transaction.PublicInputs.output_slot_at_get_indices",
+        "Hegemon.Transaction.PublicInputs.allOutputsValid_output_slot_facts_at",
+        "Hegemon.Transaction.PublicInputs.validPublicInputShape_output_slot_facts_at"
+      ],
       "assumptions": [
         "The Lean Digest model and generated vectors use abstract one-limb nonzero/zero digests; they do not prove Poseidon2, note commitment, nullifier, or ciphertext hash derivation security.",
         "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership. The indexed output-slot theorems derive active-commitment and inactive commitment/ciphertext-hash facts from the same executable predicate.",
@@ -525,7 +525,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-  "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation under one deployed verifier soundness assumption; the native tx-leaf theorem composes those boundary facts with accepted tx-leaf/action equality admission and packages active artifact input and output slots into no-theft/output-binding facts plus statement/proof/native equality gates.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation under one deployed verifier soundness assumption; the native tx-leaf theorem composes those boundary facts with accepted tx-leaf/action equality admission and packages active artifact input and output slots into no-theft/output-binding facts plus statement/proof/native equality gates.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -553,19 +553,19 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_implies_output_slot_facts_at",
         "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_implies_boundary_facts",
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_expose_spend_and_balance",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_core_statement_binding",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_input_slot_bound_to_statement",
-    "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_output_slot_bound_to_statement",
-    "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_exposes_spend_and_balance",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_core_statement_binding",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_input_slot_bound_to_statement",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_output_slot_bound_to_statement",
+        "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_exposes_spend_and_balance",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_active_input_no_theft"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
-    "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target.",
+        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target.",
         "`Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` composes those packaged proof-system boundary facts with accepted native tx-leaf/action equality admission, while `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` packages an active artifact input slot into spend facts and `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with statement/proof-binding vector facts, wrapper/public/statement facts, native output equality gates, and artifact digest/backend gates. Both still inherit the explicit deployed verifier soundness assumption where they derive accepted-relation facts.",
         "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, total input-slot facts across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement."
@@ -627,11 +627,11 @@
         "The theorem does not prove chain-level bridge mint authorization, deployed verifier soundness, hash security, proof-system soundness, or complete Rust/native-node refinement.",
         "Bridge mint/burn authorization remains a separate exception predicate and production binding target."
       ],
-  "evidence_paths": [
-    "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
-    "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-    "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
-    "formal/lean/Hegemon/Transaction/Balance.lean",
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+        "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
+        "formal/lean/Hegemon/Transaction/Balance.lean",
         "formal/lean/Hegemon.lean",
         "METHODS.md",
         "DESIGN.md",
@@ -797,23 +797,23 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-  "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions, a public metadata view that excludes raw ciphertext bytes, and a batch/timing view that exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index. It proves that changing private witnesses or prover randomness does not change those projections; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; valid observer-chain worlds with equal public inputs and placement imply equal batch/timing leakage; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, the selected projected DA bytes can be tied to the public ciphertext-hash row through an explicit hash-match predicate, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
+      "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions, a public metadata view that excludes raw ciphertext bytes, and a batch/timing view that exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index. It proves that changing private witnesses or prover randomness does not change those projections; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; valid observer-chain worlds with equal public inputs and placement imply equal batch/timing leakage; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, the selected projected DA bytes can be tied to the public ciphertext-hash row through an explicit hash-match predicate, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
       "lean_theorems": [
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness",
-    "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness",
-    "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness",
-    "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
-    "Hegemon.Privacy.Observer.public_metadata_view_ignores_prover_randomness",
-    "Hegemon.Privacy.Observer.batch_timing_view_ignores_prover_randomness",
-    "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
-    "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_and_randomness",
-    "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_and_randomness",
-    "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
-    "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
-    "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
+        "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness",
+        "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness",
+        "Hegemon.Privacy.Observer.observer_view_ignores_prover_randomness",
+        "Hegemon.Privacy.Observer.public_metadata_view_ignores_prover_randomness",
+        "Hegemon.Privacy.Observer.batch_timing_view_ignores_prover_randomness",
+        "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_and_randomness",
+        "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_and_randomness",
+        "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_and_randomness",
+        "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
+        "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
+        "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_length",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summaries_have_chain_format",
         "Hegemon.Privacy.Observer.parsed_chain_ciphertext_summary_at_rank",
@@ -831,24 +831,24 @@
         "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq",
         "Hegemon.Privacy.NativeObserverSurface.valid_observer_chain_surface_bound_to_shape",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_bound_to_observer_surface",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_observer_rank",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_facts",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_has_projected_da_bytes",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage"
-  ],
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_observer_rank",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_parsed_observer_wire_at_rank",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_has_indexed_statement_observer_wire_fixed_chain_shape",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_facts",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_has_projected_da_bytes",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_same_chain_wire_preserves_allowed_leakage"
+      ],
       "assumptions": [
-    "The full observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index. The public metadata view intentionally removes raw ciphertext bytes while keeping public inputs, parsed summaries, block height, and action index. The batch/timing view intentionally exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index so batching and timing leakage are explicit instead of hidden inside an informal privacy claim.",
+        "The full observer view intentionally includes public transaction inputs, ciphertext bytes, parsed ciphertext summaries derived from `parseChainNoteCiphertext`, block height, and action index. The public metadata view intentionally removes raw ciphertext bytes while keeping public inputs, parsed summaries, block height, and action index. The batch/timing view intentionally exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index so batching and timing leakage are explicit instead of hidden inside an informal privacy claim.",
         "Accepted parsed chain summaries are proved to carry the expected chain crypto suite and fixed ML-KEM ciphertext length before they enter the observer leakage model; byte-bounded accepted chain wires are additionally proved to have the fixed production chain ciphertext wire length.",
         "A valid observer-chain surface requires a valid public-input shape, parser-derived chain ciphertext summaries, and a public ciphertext-byte count equal to the active output count derived from public output flags.",
-    "Active output-slot theorems prove that an active public output forces nonzero public active-output count, has an active-output rank below that count, selects an observer ciphertext wire row that parses to the same chain-format summary, exposes direct shape/statement/proof-binding vector indices for the selected commitment and ciphertext-hash fields, and under byte-bounded observer wires carries the fixed production chain ciphertext wire length plus fixed-length DA projection bytes. The packaged active-output ciphertext boundary additionally carries native ciphertext-hash, ciphertext-payload-hash, and output-count equality gates through the same selected row; the selected projected-DA hash theorem then ties those DA bytes to the public ciphertext-hash row only through an explicit hash-match predicate. This proves the selected row's structural DA preimage boundary, but still does not prove BLAKE3 security or in-Lean public ciphertext-hash equality for selected wire bytes.",
+        "Active output-slot theorems prove that an active public output forces nonzero public active-output count, has an active-output rank below that count, selects an observer ciphertext wire row that parses to the same chain-format summary, exposes direct shape/statement/proof-binding vector indices for the selected commitment and ciphertext-hash fields, and under byte-bounded observer wires carries the fixed production chain ciphertext wire length plus fixed-length DA projection bytes. The packaged active-output ciphertext boundary additionally carries native ciphertext-hash, ciphertext-payload-hash, and output-count equality gates through the same selected row; the selected projected-DA hash theorem then ties those DA bytes to the public ciphertext-hash row only through an explicit hash-match predicate. This proves the selected row's structural DA preimage boundary, but still does not prove BLAKE3 security or in-Lean public ciphertext-hash equality for selected wire bytes.",
         "The native observer-surface theorem composes the observer boundary with accepted native tx-leaf/action output-slot binding and the canonical deployed verifier surface, but it inherits that surface's explicit `DeployedTxVerifierSoundnessAssumption` boundary.",
-    "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer, public-metadata, and batch/timing projections.",
-    "This is a leakage-boundary theorem only. The public metadata view proves deterministic non-wire metadata preservation, and the batch/timing view proves deterministic batch-count and placement preservation under valid same-public-input worlds, but neither proves simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
+        "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, and prover randomness from the formal observer, public-metadata, and batch/timing projections.",
+        "This is a leakage-boundary theorem only. The public metadata view proves deterministic non-wire metadata preservation, and the batch/timing view proves deterministic batch-count and placement preservation under valid same-public-input worlds, but neither proves simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Privacy/Observer.lean",
@@ -877,7 +877,7 @@
       "id": "formal.ciphertext-privacy-game-boundary",
       "component": "note ciphertext privacy game boundary",
       "claim_class": "lean_theorem",
-  "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, public metadata leakage, and explicit batch/timing leakage even when raw ciphertext bytes are not equal, and that the only non-public cryptographic obligation carried by this boundary is the named wire-indistinguishability premise. It now packages the deterministic privacy boundary with first-class proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy assumptions, while proving full observer, public metadata, and batch/timing projections ignore private witnesses and prover randomness once public wire data is fixed. It composes that public-metadata boundary with active native tx-leaf output slots, proving the selected public observer rank carries the same parsed summary and same statement/proof-bound commitment/ciphertext-hash fields across both privacy-game worlds while also carrying batch/timing equality and the explicit wire-indistinguishability obligation. It now also composes the selected row with wallet decrypt-to-commitment binding, proving recipient-decrypted selected outputs reconstruct the exact plaintext-derived commitment carried by the public shape, statement preimage, and proof-binding message. A focused wallet regression checks that same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
+      "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, public metadata leakage, and explicit batch/timing leakage even when raw ciphertext bytes are not equal, and that the only non-public cryptographic obligation carried by this boundary is the named wire-indistinguishability premise. It now packages the deterministic privacy boundary with first-class proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy assumptions, while proving full observer, public metadata, and batch/timing projections ignore private witnesses and prover randomness once public wire data is fixed. It composes that public-metadata boundary with active native tx-leaf output slots, proving the selected public observer rank carries the same parsed summary and same statement/proof-bound commitment/ciphertext-hash fields across both privacy-game worlds while also carrying batch/timing equality and the explicit wire-indistinguishability obligation. It now also composes the selected row with wallet decrypt-to-commitment binding, proving recipient-decrypted selected outputs reconstruct the exact plaintext-derived commitment carried by the public shape, statement preimage, and proof-binding message. A focused wallet regression checks that same-plaintext same-recipient encryption consumes fresh KEM randomness and produces different chain wire bytes while both ciphertexts decrypt to the same plaintext.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_crypto_indistinguishability_assumption_and_rust_randomness_regression",
       "production_eligible": false,
@@ -885,10 +885,10 @@
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_ciphertext_shape",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_active_output_count",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_ciphertext_summary_count",
-    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
-    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_metadata_leakage",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_summaries_have_chain_format",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_public_metadata_leakage",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_preserves_batch_timing_leakage",
-    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.same_wire_ciphertext_privacy_game_implies_same_allowed_leakage",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary",
@@ -897,7 +897,7 @@
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment"
       ],
       "assumptions": [
-    "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_boundary_facts` additionally carries first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game. When the game is composed with an active native tx-leaf output slot, the selected public active-output rank, parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates are deterministic public metadata carried across both worlds. The selected wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate.",
+        "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_boundary_facts` additionally carries first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game. When the game is composed with an active native tx-leaf output slot, the selected public active-output rank, parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates are deterministic public metadata carried across both worlds. The selected wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate.",
         "The cryptographic privacy step is the explicit `wireIndistinguishable` field. It stands for the ML-KEM encapsulation, AEAD confidentiality, KDF/domain separation, and RNG freshness assumptions needed to treat different same-shape ciphertext wires as computationally indistinguishable.",
         "The wallet regression proves production encryption is not accidentally deterministic for same plaintext and same recipient under distinct RNG streams. It is not a proof of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator-based zero knowledge."
       ],
@@ -927,7 +927,7 @@
         },
         {
           "id": "wallet-metadata-and-timing-privacy-not-covered",
-      "description": "The boundary now exposes batch/timing leakage as a first-class projection, but it does not hide wallet metadata, network metadata, mempool timing, batching patterns, or amount-pattern privacy.",
+          "description": "The boundary now exposes batch/timing leakage as a first-class projection, but it does not hide wallet metadata, network metadata, mempool timing, batching patterns, or amount-pattern privacy.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -2986,7 +2986,7 @@
       "id": "native.pending-action-reload",
       "component": "native pending action startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions. Blueprint bindings plus regressions require startup semantic mempool re-admission and canonical reorg pending resurrection to re-run arrival-time-insensitive semantic duplicate rejection against loaded or rebuilt canonical state, bridge replay, staged sidecars, and resource budgets before pending actions can feed mining selection or reorg persistence.",
+      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions. Blueprint bindings plus regressions require startup semantic mempool re-admission and canonical reorg pending resurrection to re-run arrival-time-insensitive semantic duplicate rejection against loaded or rebuilt canonical state, bridge replay, staged sidecars, and resource budgets before pending actions can feed mining selection or reorg persistence. The byte publication refinement theorem now carries accepted pending-action reload preconditions into the same package as exact decode, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
@@ -2999,19 +2999,22 @@
         "Hegemon.Native.PendingActionReload.duplicate_pending_action_rejects",
         "Hegemon.Native.PendingActionReload.malformed_key_precedes_key_hash_mismatch",
         "Hegemon.Native.PendingActionReload.key_hash_mismatch_precedes_recomputed_hash_mismatch",
-        "Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_precedes_duplicate"
+        "Hegemon.Native.PendingActionReload.recomputed_hash_mismatch_precedes_duplicate",
+        "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication"
       ],
       "assumptions": [
         "The Lean model represents the per-entry startup reload decision table over production-derived booleans: 32-byte sled-key shape, embedded tx_hash equality with the key, recomputed pending_action_hash equality with the embedded tx_hash, and loaded-action hash uniqueness.",
         "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before key/hash mismatch, key/hash mismatch before recomputed-hash mismatch, and recomputed-hash mismatch before duplicate reporting.",
-        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication, require canonical reorg pending resurrection to re-admit existing pending actions before orphaned old-chain actions, and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence."
+        "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication, require canonical reorg pending resurrection to re-admit existing pending actions before orphaned old-chain actions, and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence.",
+        "The byte publication refinement theorem proves composition of accepted pending-action reload predicates with existing byte/replay/publication predicates; it still assumes the production-derived booleans faithfully summarize the decoded pending-action bytes."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
         "formal/lean/Hegemon/Native/GeneratePendingActionReloadVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -3274,29 +3277,29 @@
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorizes_asset_delta",
         "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_authorized_asset_delta_value",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_statement_proof_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_full_statement_artifact_output_slot_full_binding",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_boundary_input_slot_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_input_slot_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_active_input_no_theft",
-      "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_canonical_artifact_boundary_facts",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft_full_binding",
-      "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_input_slot_authorization_full_binding",
-      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding",
-      "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_input_slot_authorization_full_binding"
-    ],
-    "assumptions": [
-      "The statement/proof-facts and full statement-artifact facts theorems are assumption-free over the accepted native tx-leaf/action equality gate and canonical statement surface; the accepted transaction relation and asset authorization still depend on `DeployedTxVerifierSoundnessAssumption`.",
-      "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
-      "The theorem set narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical statement/proof facts, deployed-verifier facts, total input-slot statement/proof-binding facts, selected output-slot full-binding facts, active input no-theft facts, proof-keyed transfer payload full-binding facts, proof-keyed total input-slot authorization facts, validated transfer payload no-theft-before-state-mutation facts, validated transfer input-slot authorization-before-state-mutation facts, wrapper-surface facts, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
-    ],
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_active_input_bound_to_statement",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_input_slot_bound_to_statement",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_output_slot_bound_to_statement",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_statement_proof_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_full_statement_artifact_output_slot_full_binding",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_boundary_input_slot_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_accepted_artifact_statement_boundary_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_input_slot_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_active_input_no_theft",
+        "Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_canonical_artifact_boundary_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_canonical_artifact_boundary_facts",
+        "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft",
+        "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_active_input_no_theft_full_binding",
+        "Hegemon.Native.TxLeafCanonicalSurface.proof_keyed_transfer_payload_input_slot_authorization_full_binding",
+        "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding",
+        "Hegemon.Native.TransferNoTheftBoundary.validated_transfer_payload_input_slot_authorization_full_binding"
+      ],
+      "assumptions": [
+        "The statement/proof-facts and full statement-artifact facts theorems are assumption-free over the accepted native tx-leaf/action equality gate and canonical statement surface; the accepted transaction relation and asset authorization still depend on `DeployedTxVerifierSoundnessAssumption`.",
+        "The tx-leaf/action binding facts are over decoded production-derived predicates; SCALE decoding, tx-leaf artifact parser completeness, hash collision resistance, ciphertext hash derivation, and verifier implementation correctness remain separate obligations.",
+        "The theorem set narrows the native-to-transaction proof boundary and packages the native artifact equality gate with canonical statement/proof facts, deployed-verifier facts, total input-slot statement/proof-binding facts, selected output-slot full-binding facts, active input no-theft facts, proof-keyed transfer payload full-binding facts, proof-keyed total input-slot authorization facts, validated transfer payload no-theft-before-state-mutation facts, validated transfer input-slot authorization-before-state-mutation facts, wrapper-surface facts, root/fee/balance-slot/stablecoin identity, spend/balance, and authorized asset-delta facts; it does not discharge deployed STARK/AIR, SmallWood, recursive proof, witness extraction, stablecoin policy/oracle/attestation, bridge mint authorization, or complete native-node refinement."
+      ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
@@ -3939,7 +3942,7 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode can be carried together with pending reload, action-hash, wire replay, and canonical publication facts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3967,19 +3970,22 @@
         "Hegemon.Native.CodecAdmission.trailing_sync_rejects",
         "Hegemon.Native.CodecAdmission.valid_block_actions_accept",
         "Hegemon.Native.CodecAdmission.valid_exact_decode_accepts",
-        "Hegemon.Native.CodecAdmission.valid_sync_accepts"
+        "Hegemon.Native.CodecAdmission.valid_sync_accepts",
+        "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication"
       ],
       "assumptions": [
         "The Lean model treats underlying wire, SCALE, and bincode parsers as parser-acceptance predicates and proves the executable exact-consumption, canonical re-encode, and count-admission table around those parsers.",
         "Generated Lean conformance vectors cover valid bounded sync messages, legacy bincode sync-message rejection, sync trailing-byte rejection, valid/trailing/non-canonical SCALE decode, valid/trailing/non-canonical bincode decode, block action count mismatch rejection, and trailing action payload rejection.",
-        "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence."
+        "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence.",
+        "The byte publication refinement theorem reuses the exact-decode and block-action decode kernels as accepted parser predicates; it does not replace external parser implementation review."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CodecAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -4478,7 +4484,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface.",
+      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface. The pending-action byte publication theorem additionally composes exact pending-action decode, pending-action reload key/hash admission, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts into one byte-admission-to-publication package.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4539,12 +4545,14 @@
         "Hegemon.Native.BlockReplayInputProjection.valid_raw_projected_ledger_state_after_startup_equivalence",
         "Hegemon.Native.BlockReplayInputProjection.stale_raw_projected_carried_state_rejects",
         "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
-        "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay"
+        "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay",
+        "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication"
       ],
       "assumptions": [
         "The theorem binds decoded native replay fields to the projected replay model; arbitrary raw SCALE/bincode decoding, hash implementation/security, sled/fs durability below the accepted durability predicate, proof soundness, and complete native-node equivalence remain separate obligations.",
         "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, `accepted_trace_is_canonical` pins the accepted-stage order, and the ledger-chain theorems pin stale leaf/bridge replay carried-state rejection at the chain level.",
-        "The canonical publication refinement theorem is a zero-runtime-cost composition over existing production-bound reload, reorg-chain, atomic commit, durability, and ledger/tree replay predicates; it does not add a new Rust vector beyond the existing gates for those predicates."
+        "The canonical publication refinement theorem is a zero-runtime-cost composition over existing production-bound reload, reorg-chain, atomic commit, durability, and ledger/tree replay predicates; it does not add a new Rust vector beyond the existing gates for those predicates.",
+        "The pending-action byte publication theorem composes existing production-bound parser/admission booleans with raw canonical publication facts; it still does not prove arbitrary byte parser implementation correctness, BLAKE3/hash security, tx-leaf proof soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
@@ -4554,7 +4562,8 @@
         "formal/lean/Hegemon/Native/GenerateBlockReplayRefinementVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
