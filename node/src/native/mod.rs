@@ -1275,6 +1275,7 @@ struct NativeStablecoinPolicyAuthorizationInput {
     stablecoin_present: bool,
     policy_known: bool,
     policy_active: bool,
+    policy_lifecycle_open: bool,
     asset_matches: bool,
     policy_hash_matches: bool,
     policy_version_matches: bool,
@@ -1290,6 +1291,7 @@ struct NativeStablecoinPolicyAuthorizationInput {
 enum NativeStablecoinPolicyAuthorizationRejection {
     PolicyMissing,
     PolicyInactive,
+    PolicyNotLive,
     AssetMismatch,
     PolicyHashMismatch,
     PolicyVersionMismatch,
@@ -1307,6 +1309,7 @@ impl NativeStablecoinPolicyAuthorizationRejection {
         match self {
             Self::PolicyMissing => "policy_missing",
             Self::PolicyInactive => "policy_inactive",
+            Self::PolicyNotLive => "policy_not_live",
             Self::AssetMismatch => "asset_mismatch",
             Self::PolicyHashMismatch => "policy_hash_mismatch",
             Self::PolicyVersionMismatch => "policy_version_mismatch",
@@ -7359,6 +7362,8 @@ fn evaluate_native_stablecoin_policy_authorization(
         Err(NativeStablecoinPolicyAuthorizationRejection::PolicyMissing)
     } else if !input.policy_active {
         Err(NativeStablecoinPolicyAuthorizationRejection::PolicyInactive)
+    } else if !input.policy_lifecycle_open {
+        Err(NativeStablecoinPolicyAuthorizationRejection::PolicyNotLive)
     } else if !input.asset_matches {
         Err(NativeStablecoinPolicyAuthorizationRejection::AssetMismatch)
     } else if !input.policy_hash_matches {
@@ -7382,20 +7387,6 @@ fn evaluate_native_stablecoin_policy_authorization(
     }
 }
 
-fn native_stablecoin_policy_entry_for_binding<'a>(
-    binding: &StablecoinPolicyBinding,
-    entries: &'a [StablecoinPolicyManifestEntry],
-) -> Option<&'a StablecoinPolicyManifestEntry> {
-    entries
-        .iter()
-        .find(|entry| u64::from(entry.asset_id) == binding.asset_id)
-        .or_else(|| {
-            entries
-                .iter()
-                .find(|entry| entry.policy_hash() == binding.policy_hash)
-        })
-}
-
 fn native_stablecoin_policy_authorization_input_for_entry(
     current_height: u64,
     binding: &StablecoinPolicyBinding,
@@ -7406,6 +7397,7 @@ fn native_stablecoin_policy_authorization_input_for_entry(
             stablecoin_present: true,
             policy_known: false,
             policy_active: false,
+            policy_lifecycle_open: false,
             asset_matches: false,
             policy_hash_matches: false,
             policy_version_matches: false,
@@ -7419,11 +7411,17 @@ fn native_stablecoin_policy_authorization_input_for_entry(
     };
     let oracle_fresh = entry.oracle_submitted_at <= current_height
         && current_height.saturating_sub(entry.oracle_submitted_at) <= entry.oracle_max_age;
+    let policy_lifecycle_open = current_height >= entry.enabled_at
+        && match entry.retired_at {
+            Some(retired_at) => current_height < retired_at,
+            None => true,
+        };
     let issuance_abs = binding.issuance_delta.unsigned_abs();
     NativeStablecoinPolicyAuthorizationInput {
         stablecoin_present: true,
         policy_known: true,
         policy_active: entry.active,
+        policy_lifecycle_open,
         asset_matches: u64::from(entry.asset_id) == binding.asset_id,
         policy_hash_matches: entry.policy_hash() == binding.policy_hash,
         policy_version_matches: entry.policy_version == binding.policy_version,
@@ -7443,10 +7441,19 @@ fn native_stablecoin_policy_binding_authorized_by_entries(
     binding: &StablecoinPolicyBinding,
     entries: &[StablecoinPolicyManifestEntry],
 ) -> bool {
-    let entry = native_stablecoin_policy_entry_for_binding(binding, entries);
-    let input =
-        native_stablecoin_policy_authorization_input_for_entry(current_height, binding, entry);
-    evaluate_native_stablecoin_policy_authorization(input).is_ok()
+    entries.iter().any(|entry| {
+        let plausible_candidate = u64::from(entry.asset_id) == binding.asset_id
+            || entry.policy_hash() == binding.policy_hash;
+        plausible_candidate
+            && evaluate_native_stablecoin_policy_authorization(
+                native_stablecoin_policy_authorization_input_for_entry(
+                    current_height,
+                    binding,
+                    Some(entry),
+                ),
+            )
+            .is_ok()
+    })
 }
 
 fn native_stablecoin_policy_binding_authorized_by_protocol_manifest(
@@ -13483,6 +13490,7 @@ mod tests {
         stablecoin_present: bool,
         policy_known: bool,
         policy_active: bool,
+        policy_lifecycle_open: bool,
         asset_matches: bool,
         policy_hash_matches: bool,
         policy_version_matches: bool,
@@ -18823,6 +18831,7 @@ mod tests {
             stablecoin_present: case.stablecoin_present,
             policy_known: case.policy_known,
             policy_active: case.policy_active,
+            policy_lifecycle_open: case.policy_lifecycle_open,
             asset_matches: case.asset_matches,
             policy_hash_matches: case.policy_hash_matches,
             policy_version_matches: case.policy_version_matches,
@@ -23551,6 +23560,34 @@ mod tests {
     }
 
     #[test]
+    fn stablecoin_policy_manifest_authorization_uses_live_duplicate_candidate() {
+        let height = 20;
+        let (live, binding) = test_manifest_authorized_stablecoin_policy(10, height);
+
+        let mut retired = live.clone();
+        retired.retired_at = Some(height);
+        assert!(
+            native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &binding,
+                &[retired, live.clone()]
+            ),
+            "retired duplicate must not mask a later live policy"
+        );
+
+        let mut not_yet_enabled = live.clone();
+        not_yet_enabled.enabled_at = height.saturating_add(1);
+        assert!(
+            native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &binding,
+                &[not_yet_enabled, live]
+            ),
+            "not-yet-enabled duplicate must not mask a later live policy"
+        );
+    }
+
+    #[test]
     fn stablecoin_policy_manifest_authorization_rejects_invalid_records() {
         let height = 20;
         let (entry, binding) = test_manifest_authorized_stablecoin_policy(11, height);
@@ -23564,6 +23601,24 @@ mod tests {
         assert!(
             !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[inactive]),
             "inactive policy must reject"
+        );
+
+        let mut not_yet_enabled = entry.clone();
+        not_yet_enabled.enabled_at = height.saturating_add(1);
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &binding,
+                &[not_yet_enabled]
+            ),
+            "not-yet-enabled policy must reject"
+        );
+
+        let mut retired = entry.clone();
+        retired.retired_at = Some(height);
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[retired]),
+            "retired policy must reject at and after retired_at"
         );
 
         let mut stale = entry.clone();
@@ -25727,6 +25782,8 @@ mod tests {
             max_mint_per_epoch: 100,
             oracle_max_age: 10,
             oracle_submitted_at: height.saturating_sub(1),
+            enabled_at: height.saturating_sub(5),
+            retired_at: None,
             policy_version: u32::from(seed).saturating_add(3),
             active: true,
             oracle_commitment: [seed.wrapping_add(4); 48],

@@ -33,6 +33,8 @@ pub struct StablecoinPolicyManifestEntry {
     pub max_mint_per_epoch: u128,
     pub oracle_max_age: u64,
     pub oracle_submitted_at: u64,
+    pub enabled_at: u64,
+    pub retired_at: Option<u64>,
     pub policy_version: u32,
     pub active: bool,
     pub oracle_commitment: [u8; 48],
@@ -42,6 +44,7 @@ pub struct StablecoinPolicyManifestEntry {
 
 impl StablecoinPolicyManifestEntry {
     pub fn policy_hash(&self) -> [u8; 48] {
+        // Lifecycle and live oracle evidence are authorization facts, not policy identity.
         let encoded = (
             self.asset_id,
             self.oracle_feed,
@@ -177,6 +180,8 @@ pub fn protocol_manifest() -> ProtocolManifest {
             max_mint_per_epoch: 1_000_000_000,
             oracle_max_age: u64::MAX,
             oracle_submitted_at: 0,
+            enabled_at: 0,
+            retired_at: Some(0),
             policy_version: 1,
             active: false,
             oracle_commitment: [0u8; 48],

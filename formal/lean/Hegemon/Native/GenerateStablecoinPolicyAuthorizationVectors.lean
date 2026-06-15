@@ -9,6 +9,7 @@ def rejectionJson : Option StablecoinPolicyReject -> String
   | none => "null"
   | some StablecoinPolicyReject.policyMissing => "\"policy_missing\""
   | some StablecoinPolicyReject.policyInactive => "\"policy_inactive\""
+  | some StablecoinPolicyReject.policyNotLive => "\"policy_not_live\""
   | some StablecoinPolicyReject.assetMismatch => "\"asset_mismatch\""
   | some StablecoinPolicyReject.policyHashMismatch => "\"policy_hash_mismatch\""
   | some StablecoinPolicyReject.policyVersionMismatch =>
@@ -32,6 +33,8 @@ def stablecoinPolicyCaseJson
     ++ "      \"stablecoin_present\": " ++ boolJson input.stablecoinPresent ++ ",\n"
     ++ "      \"policy_known\": " ++ boolJson input.policyKnown ++ ",\n"
     ++ "      \"policy_active\": " ++ boolJson input.policyActive ++ ",\n"
+    ++ "      \"policy_lifecycle_open\": "
+      ++ boolJson input.policyLifecycleOpen ++ ",\n"
     ++ "      \"asset_matches\": " ++ boolJson input.assetMatches ++ ",\n"
     ++ "      \"policy_hash_matches\": " ++ boolJson input.policyHashMatches ++ ",\n"
     ++ "      \"policy_version_matches\": "
@@ -64,6 +67,8 @@ def vectorJson : String :=
       { authorizedPolicyInput with policyKnown := false } ++ ",\n"
     ++ stablecoinPolicyCaseJson "policy-inactive-rejected"
       { authorizedPolicyInput with policyActive := false } ++ ",\n"
+    ++ stablecoinPolicyCaseJson "policy-not-live-rejected"
+      { authorizedPolicyInput with policyLifecycleOpen := false } ++ ",\n"
     ++ stablecoinPolicyCaseJson "asset-mismatch-rejected"
       { authorizedPolicyInput with assetMatches := false } ++ ",\n"
     ++ stablecoinPolicyCaseJson "policy-hash-mismatch-rejected"
@@ -86,6 +91,7 @@ def vectorJson : String :=
       { authorizedPolicyInput with
         policyKnown := false,
         policyActive := false,
+        policyLifecycleOpen := false,
         assetMatches := false,
         policyHashMatches := false,
         policyVersionMatches := false,
@@ -98,6 +104,12 @@ def vectorJson : String :=
     ++ stablecoinPolicyCaseJson "policy-active-precedes-binding-mismatch"
       { authorizedPolicyInput with
         policyActive := false,
+        policyLifecycleOpen := false,
+        assetMatches := false,
+        policyHashMatches := false } ++ ",\n"
+    ++ stablecoinPolicyCaseJson "policy-lifecycle-precedes-binding-mismatch"
+      { authorizedPolicyInput with
+        policyLifecycleOpen := false,
         assetMatches := false,
         policyHashMatches := false } ++ ",\n"
     ++ stablecoinPolicyCaseJson "attestation-dispute-precedes-stale-oracle"

@@ -5,6 +5,7 @@ namespace StablecoinPolicyAuthorization
 inductive StablecoinPolicyReject where
   | policyMissing
   | policyInactive
+  | policyNotLive
   | assetMismatch
   | policyHashMismatch
   | policyVersionMismatch
@@ -20,6 +21,7 @@ structure StablecoinPolicyAuthorizationInput where
   stablecoinPresent : Bool
   policyKnown : Bool
   policyActive : Bool
+  policyLifecycleOpen : Bool
   assetMatches : Bool
   policyHashMatches : Bool
   policyVersionMatches : Bool
@@ -40,6 +42,8 @@ def evaluateStablecoinPolicyAuthorization
     Except.error StablecoinPolicyReject.policyMissing
   else if input.policyActive = false then
     Except.error StablecoinPolicyReject.policyInactive
+  else if input.policyLifecycleOpen = false then
+    Except.error StablecoinPolicyReject.policyNotLive
   else if input.assetMatches = false then
     Except.error StablecoinPolicyReject.assetMismatch
   else if input.policyHashMatches = false then
@@ -81,6 +85,7 @@ def stablecoinPolicyAuthorizationPreconditions
   else
     input.policyKnown &&
     input.policyActive &&
+    input.policyLifecycleOpen &&
     input.assetMatches &&
     input.policyHashMatches &&
     input.policyVersionMatches &&
@@ -96,25 +101,27 @@ theorem accepts_iff_policy_preconditions
     stablecoinPolicyAuthorizationAccepts input =
       stablecoinPolicyAuthorizationPreconditions input := by
   cases input with
-  | mk stablecoinPresent policyKnown policyActive assetMatches
-      policyHashMatches policyVersionMatches oracleCommitmentMatches
-      attestationCommitmentMatches attestationNotDisputed oracleFresh
-      issuanceNonzero issuanceWithinLimit =>
+  | mk stablecoinPresent policyKnown policyActive policyLifecycleOpen
+      assetMatches policyHashMatches policyVersionMatches
+      oracleCommitmentMatches attestationCommitmentMatches
+      attestationNotDisputed oracleFresh issuanceNonzero
+      issuanceWithinLimit =>
       unfold stablecoinPolicyAuthorizationAccepts
       unfold stablecoinPolicyAuthorizationPreconditions
       unfold evaluateStablecoinPolicyAuthorization
       cases stablecoinPresent <;> cases policyKnown <;> cases policyActive <;>
-        cases assetMatches <;> cases policyHashMatches <;>
-        cases policyVersionMatches <;> cases oracleCommitmentMatches <;>
-        cases attestationCommitmentMatches <;> cases attestationNotDisputed <;>
-        cases oracleFresh <;> cases issuanceNonzero <;>
-        cases issuanceWithinLimit <;> rfl
+        cases policyLifecycleOpen <;> cases assetMatches <;>
+        cases policyHashMatches <;> cases policyVersionMatches <;>
+        cases oracleCommitmentMatches <;> cases attestationCommitmentMatches <;>
+        cases attestationNotDisputed <;> cases oracleFresh <;>
+        cases issuanceNonzero <;> cases issuanceWithinLimit <;> rfl
 
 def authorizedPolicyInput : StablecoinPolicyAuthorizationInput :=
   {
     stablecoinPresent := true,
     policyKnown := true,
     policyActive := true,
+    policyLifecycleOpen := true,
     assetMatches := true,
     policyHashMatches := true,
     policyVersionMatches := true,
@@ -161,42 +168,57 @@ theorem asset_mismatch_rejects
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (mismatch : input.assetMatches = false) :
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.assetMismatch := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, mismatch]
+  simp [present, known, active, live, mismatch]
+
+theorem policy_not_live_rejects
+    {input : StablecoinPolicyAuthorizationInput}
+    (present : input.stablecoinPresent = true)
+    (known : input.policyKnown = true)
+    (active : input.policyActive = true)
+    (notLive : input.policyLifecycleOpen = false) :
+    evaluateStablecoinPolicyAuthorization input =
+      Except.error StablecoinPolicyReject.policyNotLive := by
+  unfold evaluateStablecoinPolicyAuthorization
+  simp [present, known, active, notLive]
 
 theorem policy_hash_mismatch_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (mismatch : input.policyHashMatches = false) :
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.policyHashMismatch := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, mismatch]
+  simp [present, known, active, live, asset, mismatch]
 
 theorem policy_version_mismatch_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (mismatch : input.policyVersionMatches = false) :
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.policyVersionMismatch := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, mismatch]
+  simp [present, known, active, live, asset, hash, mismatch]
 
 theorem oracle_commitment_mismatch_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -204,13 +226,14 @@ theorem oracle_commitment_mismatch_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.oracleCommitmentMismatch := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, mismatch]
+  simp [present, known, active, live, asset, hash, version, mismatch]
 
 theorem attestation_commitment_mismatch_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -219,13 +242,14 @@ theorem attestation_commitment_mismatch_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.attestationCommitmentMismatch := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, oracle, mismatch]
+  simp [present, known, active, live, asset, hash, version, oracle, mismatch]
 
 theorem attestation_disputed_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -235,13 +259,14 @@ theorem attestation_disputed_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.attestationDisputed := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, oracle, attestation, disputed]
+  simp [present, known, active, live, asset, hash, version, oracle, attestation, disputed]
 
 theorem oracle_stale_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -252,13 +277,14 @@ theorem oracle_stale_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.oracleStale := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, oracle, attestation, notDisputed, stale]
+  simp [present, known, active, live, asset, hash, version, oracle, attestation, notDisputed, stale]
 
 theorem issuance_zero_rejects
     {input : StablecoinPolicyAuthorizationInput}
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -270,7 +296,7 @@ theorem issuance_zero_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.issuanceZero := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, oracle, attestation,
+  simp [present, known, active, live, asset, hash, version, oracle, attestation,
     notDisputed, fresh, zero]
 
 theorem issuance_over_limit_rejects
@@ -278,6 +304,7 @@ theorem issuance_over_limit_rejects
     (present : input.stablecoinPresent = true)
     (known : input.policyKnown = true)
     (active : input.policyActive = true)
+    (live : input.policyLifecycleOpen = true)
     (asset : input.assetMatches = true)
     (hash : input.policyHashMatches = true)
     (version : input.policyVersionMatches = true)
@@ -290,7 +317,7 @@ theorem issuance_over_limit_rejects
     evaluateStablecoinPolicyAuthorization input =
       Except.error StablecoinPolicyReject.issuanceOverLimit := by
   unfold evaluateStablecoinPolicyAuthorization
-  simp [present, known, active, asset, hash, version, oracle, attestation,
+  simp [present, known, active, live, asset, hash, version, oracle, attestation,
     notDisputed, fresh, nonzero, over]
 
 theorem accepted_present_implies_live_policy_facts
@@ -299,6 +326,7 @@ theorem accepted_present_implies_live_policy_facts
     (accepted : stablecoinPolicyAuthorizationAccepts input = true) :
     input.policyKnown = true ∧
     input.policyActive = true ∧
+    input.policyLifecycleOpen = true ∧
     input.assetMatches = true ∧
     input.policyHashMatches = true ∧
     input.policyVersionMatches = true ∧
@@ -309,16 +337,17 @@ theorem accepted_present_implies_live_policy_facts
     input.issuanceNonzero = true ∧
     input.issuanceWithinLimit = true := by
   cases input with
-  | mk stablecoinPresent policyKnown policyActive assetMatches
-      policyHashMatches policyVersionMatches oracleCommitmentMatches
-      attestationCommitmentMatches attestationNotDisputed oracleFresh
-      issuanceNonzero issuanceWithinLimit =>
+  | mk stablecoinPresent policyKnown policyActive policyLifecycleOpen
+      assetMatches policyHashMatches policyVersionMatches
+      oracleCommitmentMatches attestationCommitmentMatches
+      attestationNotDisputed oracleFresh issuanceNonzero
+      issuanceWithinLimit =>
       cases stablecoinPresent <;> cases policyKnown <;> cases policyActive <;>
-        cases assetMatches <;> cases policyHashMatches <;>
-        cases policyVersionMatches <;> cases oracleCommitmentMatches <;>
-        cases attestationCommitmentMatches <;> cases attestationNotDisputed <;>
-        cases oracleFresh <;> cases issuanceNonzero <;>
-        cases issuanceWithinLimit <;>
+        cases policyLifecycleOpen <;> cases assetMatches <;>
+        cases policyHashMatches <;> cases policyVersionMatches <;>
+        cases oracleCommitmentMatches <;> cases attestationCommitmentMatches <;>
+        cases attestationNotDisputed <;> cases oracleFresh <;>
+        cases issuanceNonzero <;> cases issuanceWithinLimit <;>
         simp [stablecoinPolicyAuthorizationAccepts,
           evaluateStablecoinPolicyAuthorization] at present accepted ⊢
 

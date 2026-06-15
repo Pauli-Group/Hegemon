@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 83.52,
+  "overall_completion_percent": 83.62,
   "last_full_formal_core": {
-    "date": "2026-06-15T22:26:08Z",
-    "commit": "5c308217+worktree",
-    "status": "passed locally after native stablecoin policy manifest authorization integration",
+    "date": "2026-06-15T23:11:19Z",
+    "commit": "907702b4+worktree",
+    "status": "passed locally after active native stablecoin policy manifest lifecycle authorization integration and duplicate-candidate masking fix",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 117,
-    "named_lean_theorems": 1662,
+    "named_lean_theorems": 1669,
     "axiom_free_theorems": 766,
-    "axiom_dependent_theorems": 896,
+    "axiom_dependent_theorems": 903,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 107,
     "residual_risks": 45,
@@ -65,7 +65,7 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Bound native stablecoin policy authorization into a Lean-backed formal-core gate and the production native transfer path. Enabled stablecoin payloads now fail closed unless a protocol-manifest stablecoin policy authorizes the exact asset, policy hash, version, oracle commitment, attestation commitment, freshness window, dispute state, and issuance bounds.",
+    "summary": "Bound native stablecoin policy authorization into a Lean-backed formal-core gate and the production native transfer path. Enabled stablecoin payloads now fail closed unless a protocol-manifest stablecoin policy authorizes the exact asset, policy hash, version, oracle commitment, attestation commitment, enabled/retired lifecycle, freshness window, dispute state, and issuance bounds. The list authorization helper now evaluates every plausible manifest candidate so a retired or not-yet-enabled duplicate cannot mask a later live policy entry.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean",
       "formal/lean/Hegemon/Native/GenerateStablecoinPolicyAuthorizationVectors.lean"
@@ -75,27 +75,28 @@
       "Hegemon.Native.StablecoinPolicyAuthorization.complete_policy_authorization_accepts",
       "Hegemon.Native.StablecoinPolicyAuthorization.absent_stablecoin_accepts",
       "Hegemon.Native.StablecoinPolicyAuthorization.accepted_present_implies_live_policy_facts",
-      "Hegemon.Native.StablecoinPolicyAuthorization.missing_policy_rejects",
-      "Hegemon.Native.StablecoinPolicyAuthorization.inactive_policy_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.policy_missing_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.policy_inactive_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.policy_not_live_rejects",
       "Hegemon.Native.StablecoinPolicyAuthorization.asset_mismatch_rejects",
       "Hegemon.Native.StablecoinPolicyAuthorization.policy_hash_mismatch_rejects",
       "Hegemon.Native.StablecoinPolicyAuthorization.policy_version_mismatch_rejects",
       "Hegemon.Native.StablecoinPolicyAuthorization.oracle_commitment_mismatch_rejects",
       "Hegemon.Native.StablecoinPolicyAuthorization.attestation_commitment_mismatch_rejects",
-      "Hegemon.Native.StablecoinPolicyAuthorization.disputed_attestation_rejects",
-      "Hegemon.Native.StablecoinPolicyAuthorization.stale_oracle_rejects",
-      "Hegemon.Native.StablecoinPolicyAuthorization.zero_issuance_rejects",
-      "Hegemon.Native.StablecoinPolicyAuthorization.over_limit_issuance_rejects"
+      "Hegemon.Native.StablecoinPolicyAuthorization.attestation_disputed_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.oracle_stale_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.issuance_zero_rejects",
+      "Hegemon.Native.StablecoinPolicyAuthorization.issuance_over_limit_rejects"
     ],
     "validation": {
-      "lean_formal": "bash scripts/check_lean_formal.sh passed locally with 1662 claimed theorem declarations, 766 axiom-free theorem declarations, 896 theorem declarations depending only on allowed kernel axioms, and zero temporary/unwaived axioms",
+      "lean_formal": "bash scripts/check_lean_formal.sh passed locally with 1669 claimed theorem declarations, 766 axiom-free theorem declarations, 903 theorem declarations depending only on allowed kernel axioms, and zero temporary/unwaived axioms",
       "vector_json": "lake exe gen_stablecoin_policy_authorization_vectors emitted parseable JSON locally",
-      "targeted_rust": "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture passed locally",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T22:26:08Z with native stablecoin policy manifest authorization integrated",
+      "targeted_rust": "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture passed locally with seven stablecoin policy tests, including retired/not-yet-enabled duplicate masking regressions",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T23:11:19Z with active native stablecoin policy manifest lifecycle authorization integrated",
       "claims": 117,
-      "named_lean_theorems": 1662,
+      "named_lean_theorems": 1669,
       "axiom_free_theorems": 766,
-      "axiom_dependent_theorems": 896,
+      "axiom_dependent_theorems": 903,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 107,
       "residual_risks": 45,
@@ -110,19 +111,20 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "The production source of truth is still the protocol manifest; replacing it with replayed native policy/oracle/attestation state or an explicit active-manifest lifecycle remains open.",
+      "The production source of truth is still the protocol manifest with explicit active-manifest lifecycle fields; replacing that source with replayed native policy/oracle/attestation state remains open.",
       "The proof binds the authorization decision table, not oracle-source honesty, attestation-signature soundness, or policy-governance correctness.",
       "The higher LiveStablecoinPolicyAuthorizes surface still needs to be tied to this exact production predicate across complete native-node replay."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-15",
-    "summary": "Bound native stablecoin policy authorization to production transfer admission. The release path no longer accepts enabled stablecoin payloads through a mutable authorization bit; it derives authorization from protocol_manifest().stablecoin_policies and the Lean decision table, while the old set-membership helper remains test-only for legacy fixtures.",
+    "summary": "Bound native stablecoin policy authorization to production transfer admission. The release path no longer accepts enabled stablecoin payloads through a mutable authorization bit; it derives authorization from protocol_manifest().stablecoin_policies, including explicit enabled/retired lifecycle checks, and the Lean decision table. The manifest list helper accepts if any plausible candidate passes the exact table, so a stale duplicate cannot shadow a live entry; the old set-membership helper remains test-only for legacy fixtures.",
     "changed_runtime_paths": [
       "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized",
       "node/src/native/mod.rs native_stablecoin_policy_binding_authorized_by_protocol_manifest",
+      "node/src/native/mod.rs native_stablecoin_policy_binding_authorized_by_entries",
       "node/src/native/mod.rs evaluate_native_stablecoin_policy_authorization",
-      "protocol/kernel/src/manifest.rs StablecoinPolicyManifestEntry oracle_submitted_at",
+      "protocol/kernel/src/manifest.rs StablecoinPolicyManifestEntry oracle_submitted_at/enabled_at/retired_at",
       "scripts/check_formal_core.sh stablecoin policy authorization vector gate"
     ],
     "supporting_theorem_families": [
@@ -135,11 +137,12 @@
       "targeted_rust": [
         "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_accepts_exact_active_policy --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_uses_live_duplicate_candidate --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_rejects_invalid_records --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T22:26:08Z with the native stablecoin policy authorization gate enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T23:11:19Z with the native stablecoin policy authorization gate enabled",
       "claims": 117,
-      "named_lean_theorems": 1662,
+      "named_lean_theorems": 1669,
       "production_eligible_claims": 107,
       "falsification_cases": 466,
       "implementation_bindings": 207,
@@ -150,7 +153,7 @@
       "implementation_order_edges": 371
     },
     "known_limitations": [
-      "The manifest-backed production predicate still needs a replayed native policy/oracle/attestation state source or explicit active-manifest lifecycle before this is full dynamic policy verification.",
+      "The manifest-backed production predicate now has an explicit active-manifest lifecycle, but still needs a replayed native policy/oracle/attestation state source before this is full dynamic policy verification.",
       "The proof does not verify oracle-source honesty, attestation-signature soundness, policy governance, hash security, or proof-system soundness.",
       "Raw parser equivalence, storage durability, complete native-node equivalence, and the higher LiveStablecoinPolicyAuthorizes replay theorem remain separate open work."
     ]
@@ -159,7 +162,7 @@
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 87,
+      "completion_percent": 89,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -350,15 +353,15 @@
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
         "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases",
-        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
-        "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
+        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
+        "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
         "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-        "Replace the static protocol-manifest stablecoin policy source with replayed native policy/oracle/attestation state, or ship an explicit active-manifest lifecycle with equivalent replay/freshness evidence.",
-        "Lift the exact native stablecoin manifest authorization predicate into the higher LiveStablecoinPolicyAuthorizes theorem surface across complete native-node replay."
+        "Bind the active manifest lifecycle to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence.",
+        "Lift the exact native stablecoin manifest authorization predicate, including the lifecycle-open fact, into the higher LiveStablecoinPolicyAuthorizes theorem surface across complete native-node replay."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
     },
