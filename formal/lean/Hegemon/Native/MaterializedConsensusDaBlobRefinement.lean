@@ -9,6 +9,7 @@ open Hegemon.Native.AcceptedChain
 open Hegemon.Native.ActionHashAdmission
 open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.AtomicCommitManifestAdmission
+open Hegemon.Native.BlockActionValidation
 open Hegemon.Native.BlockIndexReload
 open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.CanonicalReorgChainAdmission
@@ -138,6 +139,32 @@ def TransactionsFitU32
   transactions.length < u32Bound
     ∧ ∀ transaction, transaction ∈ transactions →
         CiphertextRowsFitU32 transaction.ciphertexts
+
+structure TransferFilteredMaterializedTransactionProjectionFacts
+    (blockActionDecode : BlockActionDecodeInput)
+    (validationSummary : BlockActionValidationSummary)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (actions : List MaterializedTransferActionRow)
+    (payloads : List MaterializedTransferPayloadRow)
+    (transactions : List MaterializedConsensusTransaction) : Prop where
+  decodedNativeActionsMatchWireRows :
+    wireOutput.projectedActionCount =
+      blockActionDecode.actualActionPayloadCount
+  validatedActionsMatchWireRows :
+    wireOutput.projectedActionCount =
+      validationSummary.validatedActionCount
+  materializedActionsMatchWireRows :
+    wireOutput.projectedActionCount = actions.length
+  materializedPayloadsMatchWireRows :
+    wireOutput.projectedActionCount = payloads.length
+  payloadRowsMatchTransactionRows :
+    payloads.length = transactions.length
+  rowBinding :
+    ∀ (index : Nat) action payload transaction,
+      actions[index]? = some action →
+      payloads[index]? = some payload →
+      transactions[index]? = some transaction →
+        MaterializedRowFeedsTransactionNew action payload transaction
 
 structure MaterializedConsensusDaBlobRefinementFacts
     (surface : RawIngressSidecarReplaySurface)
@@ -300,6 +327,134 @@ theorem transaction_new_feeds_concrete_consensus_da_blob
   injection mappedAt with payloadEq
   subst payload
   exact { ciphertextsFromTransaction := rfl }
+
+theorem raw_ingress_production_projection_lifts_transfer_filter_facts
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    (productionProjection :
+      RawIngressFullByteProductionProjectionFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        actions.length
+        payloads.length)
+    (payloadRowsMatchTransactionRows :
+      payloads.length = transactions.length)
+    (rowBinding :
+      ∀ (index : Nat) action payload transaction,
+        actions[index]? = some action →
+        payloads[index]? = some payload →
+        transactions[index]? = some transaction →
+          MaterializedRowFeedsTransactionNew action payload transaction) :
+    TransferFilteredMaterializedTransactionProjectionFacts
+      blockActionDecode
+      validationSummary
+      wireOutput
+      actions
+      payloads
+      transactions :=
+  {
+    decodedNativeActionsMatchWireRows :=
+      productionProjection.fullByteRowsMatchDecodedPayloads,
+    validatedActionsMatchWireRows :=
+      productionProjection.replayRowsMatchValidatedActions,
+    materializedActionsMatchWireRows :=
+      productionProjection.wireRowsMatchMaterializedActions,
+    materializedPayloadsMatchWireRows :=
+      productionProjection.wireRowsMatchMaterializedPayloads,
+    payloadRowsMatchTransactionRows :=
+      payloadRowsMatchTransactionRows,
+    rowBinding := rowBinding
+  }
+
+theorem transfer_filtered_projection_rows_feed_transaction_new
+    {blockActionDecode : BlockActionDecodeInput}
+    {validationSummary : BlockActionValidationSummary}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    (projection :
+      TransferFilteredMaterializedTransactionProjectionFacts
+        blockActionDecode
+        validationSummary
+        wireOutput
+        actions
+        payloads
+        transactions) :
+    MaterializedRowsFeedTransactionNew
+      actions
+      payloads
+      transactions := by
+  refine
+    { actionPayloadLengths := ?_
+      payloadTransactionLengths :=
+        projection.payloadRowsMatchTransactionRows
+      rowBinding := projection.rowBinding }
+  calc
+    actions.length = wireOutput.projectedActionCount :=
+      projection.materializedActionsMatchWireRows.symm
+    _ = payloads.length :=
+      projection.materializedPayloadsMatchWireRows
 
 theorem accepted_materialized_transfer_payloads_feed_transaction_new_da_blob
     {surface : RawIngressSidecarReplaySurface}
@@ -520,6 +675,174 @@ theorem accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob
   exact
     { materializedRowsFeedTransactionNew :=
         publication.assumptions.materializedRowsFeedTransactionNewExplicit
+      transactionNewFeedsConsensusDaBlob :=
+        transaction_new_feeds_concrete_consensus_da_blob transactions
+      blobBytesEq := rfl
+      transactionLengthBounds := u32Bounds
+      materializedSidecarRows := publication.materializedSidecarRows
+      wireReplayDaRowBinding := publication.wireReplayDaRowBinding
+      candidateDaPublication := publication.candidateDaPublication
+      provenBatchDaPublication := publication.provenBatchDaPublication
+      recursiveSemanticDaPublication := publication.recursiveSemanticDaPublication
+      txLeafCiphertextPublication := publication.txLeafCiphertextPublication
+      statementCiphertextVectorPublication :=
+        publication.statementCiphertextVectorPublication
+      txLeafNativeStatementArtifactBinding :=
+        publication.txLeafNativeStatementArtifactBinding
+      acceptedLedgerTreeReplay := publication.acceptedLedgerTreeReplay
+      commitmentRootPublication := publication.commitmentRootPublication
+      replayedSupply := publication.replayedSupply
+      finalReplaySetsUnique := publication.finalReplaySetsUnique }
+
+theorem accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    (publication :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        True
+        True
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (productionProjection :
+      RawIngressFullByteProductionProjectionFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        actions.length
+        payloads.length)
+    (payloadRowsMatchTransactionRows :
+      payloads.length = transactions.length)
+    (rowBinding :
+      ∀ (index : Nat) action payload transaction,
+        actions[index]? = some action →
+        payloads[index]? = some payload →
+        transactions[index]? = some transaction →
+          MaterializedRowFeedsTransactionNew action payload transaction)
+    (u32Bounds : TransactionsFitU32 transactions) :
+    MaterializedConsensusDaBlobRefinementFacts
+      surface
+      blockActionDecode
+      wireOutput
+      semanticFields
+      initial
+      final
+      blocks
+      txLeaf
+      shape
+      statementFields
+      bindingFields
+      actions
+      payloads
+      transactions
+      (transactions.map consensusDaPayload)
+      (Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)) := by
+  have projection :
+      TransferFilteredMaterializedTransactionProjectionFacts
+        blockActionDecode
+        validationSummary
+        wireOutput
+        actions
+        payloads
+        transactions :=
+    raw_ingress_production_projection_lifts_transfer_filter_facts
+      productionProjection
+      payloadRowsMatchTransactionRows
+      rowBinding
+  exact
+    { materializedRowsFeedTransactionNew :=
+        transfer_filtered_projection_rows_feed_transaction_new projection
       transactionNewFeedsConsensusDaBlob :=
         transaction_new_feeds_concrete_consensus_da_blob transactions
       blobBytesEq := rfl

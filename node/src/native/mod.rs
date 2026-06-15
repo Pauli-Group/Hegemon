@@ -2796,6 +2796,7 @@ impl NativeNode {
         evaluate_native_block_replay_refinement_for_actions(
             "native mined block replay refinement failed",
             &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
             &state,
             &actions,
             native_block_replay_refinement_input_from_state(
@@ -2908,6 +2909,7 @@ impl NativeNode {
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
             &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
             &parent_state,
             &actions,
             native_block_replay_refinement_input_from_state(
@@ -3130,7 +3132,12 @@ impl NativeNode {
             verify_decoded_action_root(&actions, &meta, "native replay action root")?;
             validate_block_actions_locked(&state, &actions)?;
             let (state_root, nullifier_root, extrinsics_root, tx_count) =
-                preview_pending_roots(&self.da_ciphertext_tree, &state, &actions)?;
+                preview_pending_roots_with_archive(
+                    &self.da_ciphertext_tree,
+                    Some(&self.ciphertext_archive_tree),
+                    &state,
+                    &actions,
+                )?;
             let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
             let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
             let message_root = bridge_message_root(&bridge_messages);
@@ -3143,6 +3150,7 @@ impl NativeNode {
             evaluate_native_block_replay_refinement_for_actions(
                 "native replay refinement failed",
                 &self.da_ciphertext_tree,
+                Some(&self.ciphertext_archive_tree),
                 &state,
                 &actions,
                 native_block_replay_refinement_input_from_state(
@@ -3163,7 +3171,12 @@ impl NativeNode {
                 ),
             )?;
             verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
-            apply_actions_to_memory(&self.da_ciphertext_tree, &mut state, &actions)?;
+            apply_actions_to_memory_with_archive(
+                &self.da_ciphertext_tree,
+                Some(&self.ciphertext_archive_tree),
+                &mut state,
+                &actions,
+            )?;
             state.best = meta;
         }
         Ok(state)
@@ -3195,8 +3208,11 @@ impl NativeNode {
         .map_err(native_canonical_reorg_chain_admission_error)?;
 
         let mut new_state = self.replay_chain_state(&new_chain)?;
-        let canonical_index_plan =
-            plan_canonical_index_rebuild(&new_chain, &self.da_ciphertext_tree)?;
+        let canonical_index_plan = plan_canonical_index_rebuild(
+            &new_chain,
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+        )?;
         let new_action_hashes = action_hashes_from_chain(&new_chain)?;
         let mut pending = state.pending_actions.clone();
         for hash in &new_action_hashes {
@@ -3539,7 +3555,11 @@ impl NativeNode {
         let chain = self.chain_to_hash(self.best_meta().hash)?;
         let replayed_state = self.replay_chain_state(&chain)?;
         self.validate_loaded_state_matches_replay(&replayed_state)?;
-        let canonical_index_plan = plan_canonical_index_rebuild(&chain, &self.da_ciphertext_tree)?;
+        let canonical_index_plan = plan_canonical_index_rebuild(
+            &chain,
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+        )?;
         if self.canonical_index_matches_plan(&canonical_index_plan)? {
             return Ok(());
         }
@@ -9823,11 +9843,17 @@ fn native_block_replay_supply_parts(actions: &[PendingAction], height: u64) -> R
 fn evaluate_native_block_replay_refinement_for_actions(
     context: &'static str,
     da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
     state: &NativeState,
     actions: &[PendingAction],
     input: NativeBlockReplayRefinementInput,
 ) -> Result<NativeBlockReplayRefinementSummary> {
-    let materialized = materialize_native_action_payloads(da_ciphertext_tree, actions)?;
+    let materialized = materialize_native_action_payloads_from_state(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        state,
+        actions,
+    )?;
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
@@ -10027,15 +10053,92 @@ fn materialize_native_action_payloads(
     da_ciphertext_tree: &sled::Tree,
     actions: &[PendingAction],
 ) -> Result<Vec<NativeMaterializedActionPayload>> {
+    let starts = vec![0u64; actions.len()];
+    materialize_native_action_payloads_at_starts(da_ciphertext_tree, None, actions, &starts)
+}
+
+fn materialize_native_action_payloads_from_state(
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<NativeMaterializedActionPayload>> {
+    let starts = planned_action_starts_from_wire_counts(state, actions)?;
+    materialize_native_action_payloads_at_starts(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        actions,
+        &starts,
+    )
+}
+
+fn materialize_native_action_payloads_at_starts(
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+    actions: &[PendingAction],
+    commitment_starts: &[u64],
+) -> Result<Vec<NativeMaterializedActionPayload>> {
+    if actions.len() != commitment_starts.len() {
+        return Err(anyhow!(
+            "native materialized action start count mismatch: actions={} starts={}",
+            actions.len(),
+            commitment_starts.len()
+        ));
+    }
     actions
         .iter()
-        .map(|action| {
+        .zip(commitment_starts.iter().copied())
+        .map(|(action, commitment_start)| {
             Ok(NativeMaterializedActionPayload {
-                ciphertexts: canonical_ciphertexts_for_action(da_ciphertext_tree, action)?,
+                ciphertexts: canonical_ciphertexts_for_action(
+                    da_ciphertext_tree,
+                    ciphertext_archive_tree,
+                    action,
+                    commitment_start,
+                )?,
                 replay_key: bridge_inbound_replay_key_from_action(action)?,
             })
         })
         .collect()
+}
+
+fn planned_action_starts_from_wire_counts(
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<u64>> {
+    let mut bridge_replay_state =
+        InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
+    let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
+    let wire_steps = actions
+        .iter()
+        .map(|action| {
+            Ok(NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: canonical_ciphertext_count_for_action(action)?,
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: bridge_inbound_replay_key_from_action(action)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let stream = evaluate_native_action_stream_effect(
+        state.commitment_tree.leaf_count(),
+        wire_steps.iter().copied(),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(native_action_state_effect_error)?;
+    evaluate_native_action_plan_application_admission(
+        state.commitment_tree.leaf_count(),
+        &action_commitment_counts(actions),
+        &stream.planned_starts,
+    )
+    .map_err(|rejection| {
+        native_action_plan_application_admission_error(
+            "native wire-count action plan construction",
+            rejection,
+        )
+    })?;
+    Ok(stream.planned_starts)
 }
 
 fn plan_materialized_action_effects(
@@ -10043,22 +10146,33 @@ fn plan_materialized_action_effects(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<Vec<NativePlannedActionEffect>> {
+    plan_materialized_action_effects_with_archive(da_ciphertext_tree, None, state, actions)
+}
+
+fn plan_materialized_action_effects_with_archive(
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<NativePlannedActionEffect>> {
     let mut bridge_replay_state =
         InboundReplayState::new(state.consumed_bridge_messages.clone(), BTreeSet::new());
     let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
-    let materialized = materialize_native_action_payloads(da_ciphertext_tree, actions)?;
+    let wire_steps = actions
+        .iter()
+        .map(|action| {
+            Ok(NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: canonical_ciphertext_count_for_action(action)?,
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: bridge_inbound_replay_key_from_action(action)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let stream = evaluate_native_action_stream_effect(
         state.commitment_tree.leaf_count(),
-        actions
-            .iter()
-            .zip(materialized.iter())
-            .map(|(action, payload)| NativeActionStreamStep {
-                commitment_count: action.commitments.len(),
-                ciphertext_count: payload.ciphertexts.len(),
-                nullifiers: action.nullifiers.as_slice(),
-                replay_key: payload.replay_key,
-            }),
+        wire_steps.iter().copied(),
         &mut nullifier_state,
         &mut bridge_replay_state,
     )
@@ -10074,6 +10188,12 @@ fn plan_materialized_action_effects(
             rejection,
         )
     })?;
+    let materialized = materialize_native_action_payloads_at_starts(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        actions,
+        &stream.planned_starts,
+    )?;
 
     let planned = stream
         .planned_starts
@@ -10099,7 +10219,21 @@ fn apply_actions_to_memory(
     state: &mut NativeState,
     actions: &[PendingAction],
 ) -> Result<()> {
-    let planned = plan_materialized_action_effects(da_ciphertext_tree, state, actions)?;
+    apply_actions_to_memory_with_archive(da_ciphertext_tree, None, state, actions)
+}
+
+fn apply_actions_to_memory_with_archive(
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+    state: &mut NativeState,
+    actions: &[PendingAction],
+) -> Result<()> {
+    let planned = plan_materialized_action_effects_with_archive(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        state,
+        actions,
+    )?;
     apply_planned_actions_to_memory(state, actions, &planned)
 }
 
@@ -10165,6 +10299,7 @@ fn clear_staged_ciphertext_markers(state: &mut NativeState, action: &PendingActi
 fn plan_canonical_index_rebuild(
     chain: &[NativeBlockMeta],
     da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
 ) -> Result<NativeCanonicalIndexPlan> {
     let mut nullifier_state = NullifierState::default();
     let mut bridge_replay_state = InboundReplayState::default();
@@ -10173,29 +10308,28 @@ fn plan_canonical_index_rebuild(
         let actions = decode_block_actions(meta)?;
         decoded_actions.extend(actions);
     }
-    let materialized = materialize_native_action_payloads(da_ciphertext_tree, &decoded_actions)?;
-    let planned_actions = decoded_actions
-        .into_iter()
-        .zip(materialized)
-        .collect::<Vec<_>>();
+    let wire_steps = decoded_actions
+        .iter()
+        .map(|action| {
+            Ok(NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: canonical_ciphertext_count_for_action(action)?,
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: bridge_inbound_replay_key_from_action(action)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let stream = evaluate_native_action_stream_effect(
         0,
-        planned_actions
-            .iter()
-            .map(|(action, payload)| NativeActionStreamStep {
-                commitment_count: action.commitments.len(),
-                ciphertext_count: payload.ciphertexts.len(),
-                nullifiers: action.nullifiers.as_slice(),
-                replay_key: payload.replay_key,
-            }),
+        wire_steps.iter().copied(),
         &mut nullifier_state,
         &mut bridge_replay_state,
     )
     .map_err(native_action_state_effect_error)?;
-    let rebuild_commitment_counts = planned_actions
+    let rebuild_commitment_counts = decoded_actions
         .iter()
-        .map(|(action, _)| action.commitments.len())
+        .map(|action| action.commitments.len())
         .collect::<Vec<_>>();
     evaluate_native_action_plan_application_admission(
         0,
@@ -10208,6 +10342,16 @@ fn plan_canonical_index_rebuild(
             rejection,
         )
     })?;
+    let materialized = materialize_native_action_payloads_at_starts(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        &decoded_actions,
+        &stream.planned_starts,
+    )?;
+    let planned_actions = decoded_actions
+        .into_iter()
+        .zip(materialized)
+        .collect::<Vec<_>>();
 
     let mut plan = NativeCanonicalIndexPlan {
         commitment_entries: Vec::new(),
@@ -10283,7 +10427,9 @@ fn plan_canonical_index_rebuild(
 
 fn canonical_ciphertexts_for_action(
     da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
     action: &PendingAction,
+    commitment_start: u64,
 ) -> Result<Vec<Vec<u8>>> {
     match (action.family_id, action.action_id) {
         (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
@@ -10299,10 +10445,27 @@ fn canonical_ciphertexts_for_action(
             .iter()
             .enumerate()
             .map(|(idx, hash)| {
-                let bytes = da_ciphertext_tree
-                    .get(hash.as_slice())?
-                    .map(|bytes| bytes.to_vec())
-                    .ok_or_else(|| anyhow!("missing canonical DA ciphertext {}", hex48(hash)))?;
+                let bytes = if let Some(bytes) = da_ciphertext_tree.get(hash.as_slice())? {
+                    bytes.to_vec()
+                } else if let Some(ciphertext_archive_tree) = ciphertext_archive_tree {
+                    let offset = u64::try_from(idx)
+                        .map_err(|_| anyhow!("canonical DA ciphertext index overflow"))?;
+                    let archive_index = commitment_start
+                        .checked_add(offset)
+                        .ok_or_else(|| anyhow!("canonical DA ciphertext archive index overflow"))?;
+                    ciphertext_archive_tree
+                        .get(archive_index.to_be_bytes())?
+                        .map(|bytes| bytes.to_vec())
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "missing canonical DA ciphertext {} at archived index {}",
+                                hex48(hash),
+                                archive_index
+                            )
+                        })?
+                } else {
+                    return Err(anyhow!("missing canonical DA ciphertext {}", hex48(hash)));
+                };
                 if bytes.len() > MAX_CIPHERTEXT_BYTES {
                     return Err(anyhow!(
                         "canonical DA ciphertext {} exceeds limit {}",
@@ -10341,6 +10504,32 @@ fn canonical_ciphertexts_for_action(
             )?])
         }
         _ => Ok(Vec::new()),
+    }
+}
+
+fn canonical_ciphertext_count_for_action(action: &PendingAction) -> Result<usize> {
+    match (action.family_id, action.action_id) {
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
+            let args: ShieldedTransferInlineArgs =
+                decode_scale_exact(&action.public_args, "shielded inline action args")?;
+            Ok(args.ciphertexts.len())
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
+            if action.ciphertext_hashes.len() != action.ciphertext_sizes.len() {
+                return Err(anyhow!(
+                    "canonical DA ciphertext metadata count mismatch: hashes={} sizes={}",
+                    action.ciphertext_hashes.len(),
+                    action.ciphertext_sizes.len()
+                ));
+            }
+            Ok(action.ciphertext_hashes.len())
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
+            let _args: MintCoinbaseArgs =
+                decode_scale_exact(&action.public_args, "coinbase action args")?;
+            Ok(1)
+        }
+        _ => Ok(0),
     }
 }
 
@@ -10894,7 +11083,12 @@ fn verify_native_block_artifacts_locked(
         return Err(anyhow!("candidate artifact tx_count mismatch"));
     }
 
-    let materialized = materialize_native_action_payloads(&node.da_ciphertext_tree, actions)?;
+    let materialized = materialize_native_action_payloads_from_state(
+        &node.da_ciphertext_tree,
+        Some(&node.ciphertext_archive_tree),
+        state,
+        actions,
+    )?;
     let transfers = actions
         .iter()
         .zip(materialized.iter())
@@ -11247,6 +11441,15 @@ fn preview_pending_roots(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
+    preview_pending_roots_with_archive(da_ciphertext_tree, None, state, actions)
+}
+
+fn preview_pending_roots_with_archive(
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
     let transfer_count = actions
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
@@ -11266,7 +11469,12 @@ fn preview_pending_roots(
         }
     }
 
-    let planned = plan_materialized_action_effects(da_ciphertext_tree, state, actions)?;
+    let planned = plan_materialized_action_effects_with_archive(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        state,
+        actions,
+    )?;
     let mut leaf_cursor = state.commitment_tree.leaf_count();
     admit_native_action_plan_application(
         "native preview action plan application",
@@ -22278,6 +22486,7 @@ mod tests {
         let err = evaluate_native_block_replay_refinement_for_actions(
             "test replay",
             &da_ciphertext_tree,
+            None,
             &state,
             &[transfer, candidate],
             NativeBlockReplayRefinementInput {
@@ -22507,8 +22716,10 @@ mod tests {
         assert_eq!(decoded.len(), actions.len());
         assert_eq!(meta.action_bytes.len(), decoded.len());
         assert_eq!(usize::try_from(meta.tx_count).unwrap(), decoded.len());
-        for ((decoded_action, expected_action), raw_bytes) in
-            decoded.iter().zip(actions.iter()).zip(meta.action_bytes.iter())
+        for ((decoded_action, expected_action), raw_bytes) in decoded
+            .iter()
+            .zip(actions.iter())
+            .zip(meta.action_bytes.iter())
         {
             assert_eq!(decoded_action.tx_hash, expected_action.tx_hash);
             assert_eq!(decoded_action.encode(), *raw_bytes);
@@ -22538,9 +22749,12 @@ mod tests {
         let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &decoded)
             .expect("plan effects from same decoded actions");
         assert_eq!(planned.len(), decoded.len());
-        let projection =
-            admit_native_action_wire_replay_projection("projection equivalence", &decoded, &planned)
-                .expect("wire replay projection from same decoded actions");
+        let projection = admit_native_action_wire_replay_projection(
+            "projection equivalence",
+            &decoded,
+            &planned,
+        )
+        .expect("wire replay projection from same decoded actions");
         let materialized_ciphertext_rows = materialized
             .iter()
             .map(|payload| payload.ciphertexts.len())
@@ -22559,8 +22773,130 @@ mod tests {
             projection.projected_ciphertext_row_count,
             materialized_ciphertext_rows
         );
-        assert_eq!(projection.projected_ciphertext_row_count, planned_ciphertext_rows);
-        assert_eq!(projection.projected_bridge_replay_row_count, planned_replay_rows);
+        assert_eq!(
+            projection.projected_ciphertext_row_count,
+            planned_ciphertext_rows
+        );
+        assert_eq!(
+            projection.projected_bridge_replay_row_count,
+            planned_replay_rows
+        );
+    }
+
+    fn projection_equivalence_action_mix_block(
+        parent: &NativeBlockMeta,
+        pow_bits: u32,
+    ) -> (NativeBlockMeta, Vec<PendingAction>) {
+        let parent_state = test_state(parent.clone());
+        let anchor = parent_state.commitment_tree.root();
+        let actions = vec![
+            test_sidecar_transfer_action(anchor, [77u8; 48], [78u8; 48], 0),
+            test_outbound_bridge_action(b"projection surface outbound"),
+            test_inbound_bridge_action(b"projection surface inbound"),
+            test_candidate_artifact_action(1, 79),
+        ];
+        let block =
+            mined_child_with_actions(parent, parent.height + 1, pow_bits, 0, actions.clone());
+        (block, actions)
+    }
+
+    fn assert_canonical_projection_rows_match(
+        label: &'static str,
+        da_ciphertext_tree: &sled::Tree,
+        chain: &[NativeBlockMeta],
+    ) {
+        let genesis = chain.first().expect("projection chain genesis").clone();
+        let state = test_state(genesis);
+        let decoded_actions = chain
+            .iter()
+            .skip(1)
+            .flat_map(|meta| {
+                decode_block_actions(meta)
+                    .unwrap_or_else(|err| panic!("{label}: decode canonical action bytes: {err}"))
+            })
+            .collect::<Vec<_>>();
+        let materialized = materialize_native_action_payloads(da_ciphertext_tree, &decoded_actions)
+            .unwrap_or_else(|err| panic!("{label}: materialize decoded actions: {err}"));
+        let planned =
+            plan_materialized_action_effects(da_ciphertext_tree, &state, &decoded_actions)
+                .unwrap_or_else(|err| panic!("{label}: plan decoded actions: {err}"));
+        let projection =
+            admit_native_action_wire_replay_projection(label, &decoded_actions, &planned)
+                .unwrap_or_else(|err| panic!("{label}: project decoded actions: {err}"));
+        let plan = plan_canonical_index_rebuild(chain, da_ciphertext_tree, None)
+            .unwrap_or_else(|err| panic!("{label}: canonical index rebuild plan: {err}"));
+        let decoded_commitment_rows = decoded_actions
+            .iter()
+            .map(|action| action.commitments.len())
+            .sum::<usize>();
+        let decoded_nullifier_rows = decoded_actions
+            .iter()
+            .map(|action| action.nullifiers.len())
+            .sum::<usize>();
+        let decoded_ciphertext_index_rows = decoded_actions
+            .iter()
+            .map(|action| action.ciphertext_hashes.len())
+            .sum::<usize>();
+        let materialized_ciphertext_rows = materialized
+            .iter()
+            .map(|payload| payload.ciphertexts.len())
+            .sum::<usize>();
+        let planned_ciphertext_rows = planned
+            .iter()
+            .map(|effect| effect.ciphertexts.len())
+            .sum::<usize>();
+        let planned_replay_rows = planned
+            .iter()
+            .filter(|effect| effect.replay_key.is_some())
+            .count();
+
+        assert_eq!(
+            projection.projected_action_count,
+            decoded_actions.len(),
+            "{label}"
+        );
+        assert_eq!(
+            projection.projected_ciphertext_row_count, materialized_ciphertext_rows,
+            "{label}"
+        );
+        assert_eq!(
+            projection.projected_ciphertext_row_count, planned_ciphertext_rows,
+            "{label}"
+        );
+        assert_eq!(
+            projection.projected_bridge_replay_row_count, planned_replay_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.commitment_entries.len(),
+            decoded_commitment_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.nullifier_entries.len(),
+            decoded_nullifier_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.ciphertext_index_entries.len(),
+            decoded_ciphertext_index_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.ciphertext_archive_entries.len(),
+            materialized_ciphertext_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.ciphertext_archive_entries.len(),
+            planned_ciphertext_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.bridge_replay_entries.len(),
+            planned_replay_rows,
+            "{label}"
+        );
     }
 
     #[test]
@@ -22612,7 +22948,7 @@ mod tests {
         block.tx_count = 2;
         block.action_bytes = vec![first.encode(), second.encode()];
 
-        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree)
+        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree, None)
             .expect_err("duplicate nullifier must reject before rebuilding sled indexes");
         assert!(err.to_string().contains("duplicate_nullifier"));
         assert_eq!(
@@ -22662,7 +22998,7 @@ mod tests {
         block.tx_count = 1;
         block.action_bytes = vec![transfer.encode()];
 
-        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree)
+        let err = plan_canonical_index_rebuild(&[genesis, block], &da_ciphertext_tree, None)
             .expect_err("canonical index rebuild must canonicalize sidecar hash binding");
 
         assert!(
@@ -22677,91 +23013,47 @@ mod tests {
         let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
         let pow_bits = 0x207f_ffff;
         let genesis = genesis_meta(pow_bits).expect("genesis");
-        let anchor = genesis.state_root;
-        let transfer = test_sidecar_transfer_action(anchor, [77u8; 48], [78u8; 48], 0);
-        let outbound = test_outbound_bridge_action(b"canonical rebuild outbound");
-        let inbound = test_inbound_bridge_action(b"canonical rebuild inbound");
-        let candidate = test_candidate_artifact_action(1, 79);
-        let block_one_actions = vec![transfer, outbound];
-        let block_two_actions = vec![inbound, candidate];
-        let mut block_one = genesis.clone();
-        block_one.height = 1;
-        block_one.tx_count = u32::try_from(block_one_actions.len()).unwrap();
-        block_one.action_bytes = block_one_actions.iter().map(Encode::encode).collect();
-        let mut block_two = genesis.clone();
-        block_two.height = 2;
-        block_two.parent_hash = block_one.hash;
-        block_two.tx_count = u32::try_from(block_two_actions.len()).unwrap();
-        block_two.action_bytes = block_two_actions.iter().map(Encode::encode).collect();
-        for action in block_one_actions.iter().chain(block_two_actions.iter()) {
+        let (block, actions) = projection_equivalence_action_mix_block(&genesis, pow_bits);
+        for action in &actions {
             insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
         }
-        let chain = vec![genesis.clone(), block_one, block_two];
+        let chain = vec![genesis, block];
 
-        let decoded_actions = chain
-            .iter()
-            .skip(1)
-            .flat_map(|meta| decode_block_actions(meta).expect("decode canonical action bytes"))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            decoded_actions.len(),
-            block_one_actions.len() + block_two_actions.len()
-        );
-        let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &decoded_actions)
-            .expect("materialize decoded rebuild actions");
-        let planned = plan_materialized_action_effects(
-            &da_ciphertext_tree,
-            &test_state(genesis),
-            &decoded_actions,
-        )
-        .expect("plan decoded rebuild actions");
-        let projection = admit_native_action_wire_replay_projection(
+        assert_canonical_projection_rows_match(
             "canonical rebuild projection equivalence",
-            &decoded_actions,
-            &planned,
-        )
-        .expect("project decoded rebuild actions");
-
-        let plan = plan_canonical_index_rebuild(&chain, &da_ciphertext_tree)
-            .expect("canonical index rebuild plan");
-        let decoded_commitment_rows = decoded_actions
-            .iter()
-            .map(|action| action.commitments.len())
-            .sum::<usize>();
-        let decoded_nullifier_rows = decoded_actions
-            .iter()
-            .map(|action| action.nullifiers.len())
-            .sum::<usize>();
-        let decoded_ciphertext_index_rows = decoded_actions
-            .iter()
-            .map(|action| action.ciphertext_hashes.len())
-            .sum::<usize>();
-        let materialized_ciphertext_rows = materialized
-            .iter()
-            .map(|payload| payload.ciphertexts.len())
-            .sum::<usize>();
-        let planned_ciphertext_rows = planned
-            .iter()
-            .map(|effect| effect.ciphertexts.len())
-            .sum::<usize>();
-        let planned_replay_rows = planned
-            .iter()
-            .filter(|effect| effect.replay_key.is_some())
-            .count();
-
-        assert_eq!(projection.projected_action_count, decoded_actions.len());
-        assert_eq!(
-            projection.projected_ciphertext_row_count,
-            materialized_ciphertext_rows
+            &da_ciphertext_tree,
+            &chain,
         );
-        assert_eq!(projection.projected_ciphertext_row_count, planned_ciphertext_rows);
-        assert_eq!(projection.projected_bridge_replay_row_count, planned_replay_rows);
-        assert_eq!(plan.commitment_entries.len(), decoded_commitment_rows);
-        assert_eq!(plan.nullifier_entries.len(), decoded_nullifier_rows);
-        assert_eq!(plan.ciphertext_index_entries.len(), decoded_ciphertext_index_rows);
-        assert_eq!(plan.ciphertext_archive_entries.len(), materialized_ciphertext_rows);
-        assert_eq!(plan.ciphertext_archive_entries.len(), planned_ciphertext_rows);
-        assert_eq!(plan.bridge_replay_entries.len(), planned_replay_rows);
+    }
+
+    #[test]
+    fn block_range_projects_decoded_materialized_wire_rows() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let (block, actions) = projection_equivalence_action_mix_block(&genesis, pow_bits);
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, action);
+        }
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &block)
+            .expect("persist coherent sync block");
+        node.state.write().best = block.clone();
+
+        let served = node.block_range(0, 1).expect("serve canonical sync range");
+        assert_eq!(served.len(), 2);
+        assert_eq!(served[0].height, 0);
+        assert_eq!(served[0].hash, genesis.hash);
+        assert_eq!(served[1].height, 1);
+        assert_eq!(served[1].hash, block.hash);
+        assert_eq!(served[1].action_bytes, block.action_bytes);
+
+        assert_canonical_projection_rows_match(
+            "sync block_range projection equivalence",
+            &node.da_ciphertext_tree,
+            &served,
+        );
     }
 
     #[test]
@@ -22975,6 +23267,70 @@ mod tests {
             .get(action.ciphertext_hashes[0])
             .expect("read staged sidecar after commit")
             .is_none());
+    }
+
+    #[test]
+    fn committed_sidecar_replay_materializes_ciphertext_from_archive() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let parent = node.best_meta();
+        let action = test_sidecar_transfer_action(parent.state_root, [64u8; 48], [65u8; 48], 0);
+        let expected_ciphertext = test_transfer_ciphertext_bytes();
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+        let mut meta = mined_empty_child(&parent, 1, pow_bits, 0);
+        meta.action_bytes = vec![action.encode()];
+        meta.tx_count = 1;
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: 0,
+            ciphertexts: vec![expected_ciphertext.clone()],
+            replay_key: None,
+        }];
+
+        node.commit_mined_block_atomically(std::slice::from_ref(&action), &planned, &meta)
+            .expect("commit sidecar action");
+        assert!(node
+            .da_ciphertext_tree
+            .get(action.ciphertext_hashes[0])
+            .expect("read staged sidecar after commit")
+            .is_none());
+
+        let replay_state = test_state(parent.clone());
+        let materialized = materialize_native_action_payloads_from_state(
+            &node.da_ciphertext_tree,
+            Some(&node.ciphertext_archive_tree),
+            &replay_state,
+            std::slice::from_ref(&action),
+        )
+        .expect("materialize committed sidecar from canonical archive");
+        assert_eq!(
+            materialized[0].ciphertexts,
+            vec![expected_ciphertext.clone()]
+        );
+
+        let mut applied = test_state(parent.clone());
+        apply_actions_to_memory_with_archive(
+            &node.da_ciphertext_tree,
+            Some(&node.ciphertext_archive_tree),
+            &mut applied,
+            std::slice::from_ref(&action),
+        )
+        .expect("replay committed sidecar from canonical archive");
+        assert_eq!(applied.commitment_tree.leaf_count(), 1);
+        assert_eq!(applied.nullifiers, BTreeSet::from([action.nullifiers[0]]));
+
+        let plan = plan_canonical_index_rebuild(
+            &[parent, meta],
+            &node.da_ciphertext_tree,
+            Some(&node.ciphertext_archive_tree),
+        )
+        .expect("rebuild canonical rows from archived sidecar");
+        assert_eq!(
+            plan.ciphertext_archive_entries,
+            vec![(0, expected_ciphertext)]
+        );
+        assert_eq!(plan.ciphertext_index_entries.len(), 1);
     }
 
     #[test]

@@ -4879,7 +4879,7 @@
       "id": "native.sync-block-replay-publication",
       "component": "native sync response to raw replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches.",
+      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches. A production Rust regression now checks `block_range` response rows against the same decoded/materialized/planned/wire projection helper used by canonical-index rebuild.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -4891,6 +4891,7 @@
       "assumptions": [
         "The theorem composes accepted sync decode/count, block-action decode, and raw canonical publication predicates; it does not introduce runtime work.",
         "The equality between decoded block-action payload rows and raw replay action rows is now derived from accepted wire replay projection plus explicit production construction equalities tying the projection to declared decoded action rows and raw replay rows.",
+        "The `block_range_projects_decoded_materialized_wire_rows` conformance gate exercises the live sync range publication surface by serving a canonical block range and checking the served action bytes derive identical canonical projection rows.",
         "Sync wire parser internals, SCALE/bounded codec implementation correctness, hash security and implementation equivalence, proof-system soundness, storage durability, peer honesty, network liveness, and complete native-node refinement remain outside this theorem."
       ],
       "evidence_paths": [
@@ -4907,6 +4908,7 @@
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.SyncBlockReplayPublication Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/SyncBlockReplayPublication.lean",
+        "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
@@ -5599,7 +5601,7 @@
       "id": "native.materialized-sidecar-da-blob-publication",
       "component": "native materialized sidecar DA blob publication",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized sidecar DA blob publication surface composes the raw-ingress full-byte publication facts with native tx-leaf ciphertext/hash binding facts, exposing that accepted sidecar ciphertext materialization, wire replay rows, production decoded/validated/materialized projection rows, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, tx-leaf ciphertext hash rows, and replay publication are reviewed as one theorem package.",
+      "summary": "The Lean materialized sidecar DA blob publication surface composes the raw-ingress full-byte publication facts with native tx-leaf ciphertext/hash binding facts, exposing that accepted sidecar ciphertext materialization, wire replay rows, production decoded/validated/materialized projection rows, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, tx-leaf ciphertext hash rows, and replay publication are reviewed as one theorem package. Production replay now also has a regression that committed sidecar ciphertexts can be materialized from the canonical archive after mined commit removes staged DA rows.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_raw_ingress_da_and_tx_leaf_publication_surfaces",
       "production_eligible": true,
@@ -5610,6 +5612,7 @@
       "assumptions": [
         "This is a zero-runtime-cost Lean composition over the accepted raw-ingress full-byte publication surface, production decoded/validated/materialized/wire projection facts, and existing native tx-leaf statement artifact binding facts.",
         "The base theorem still carries materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob as explicit propositions; `native.materialized-consensus-da-blob-refinement` specializes those propositions into concrete Lean relations and a Rust conformance gate for the transfer sidecar path.",
+        "Canonical replay, artifact verification, memory replay, reorg replay, and startup canonical-index repair may materialize committed sidecar rows from the canonical ciphertext archive when staged DA rows have already been removed, but the archive bytes are still checked against the action's ciphertext hash and declared size.",
         "The theorem does not prove arbitrary byte parser internals, hash collision resistance, Reed-Solomon or network DA availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or full native-node refinement."
       ],
       "evidence_paths": [
@@ -5630,6 +5633,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh"
@@ -5647,7 +5651,7 @@
       "id": "native.materialized-consensus-da-blob-refinement",
       "component": "native materialized consensus DA blob refinement",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized consensus DA-blob refinement surface specializes the formerly opaque materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob assumptions into concrete Lean relations, and now proves the concrete Transaction::new-to-`Consensus.DaRoot.daBlob` path for `transactions.map consensusDaPayload` directly. Accepted materialized sidecar DA publication carries ordered action/payload/transaction binding, consensus DA payload binding, exact consensus DA blob bytes, explicit u32 length bounds matching the Rust encoder casts, and the existing sidecar, candidate/proven-batch DA-root, tx-leaf ciphertext, replay, supply, commitment-root, and replay-set facts. A Rust conformance test checks the sidecar materialization, consensus transaction construction, DA blob bytes, and DA root path against production helpers.",
+      "summary": "The Lean materialized consensus DA-blob refinement surface specializes the formerly opaque materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob assumptions into concrete Lean relations, and now proves the concrete Transaction::new-to-`Consensus.DaRoot.daBlob` path for `transactions.map consensusDaPayload` directly. The newest projection theorem derives the transfer-filtered `Transaction::new` row package from the raw-ingress production projection facts, so decoded action rows, validated rows, wire replay rows, materialized transfer rows, and consensus transaction rows stay tied before the concrete DA blob theorem is applied. Accepted materialized sidecar DA publication carries ordered action/payload/transaction binding, consensus DA payload binding, exact consensus DA blob bytes, explicit u32 length bounds matching the Rust encoder casts, and the existing sidecar, candidate/proven-batch DA-root, tx-leaf ciphertext, replay, supply, commitment-root, and replay-set facts. A Rust conformance test checks the sidecar materialization, consensus transaction construction, DA blob bytes, and DA root path against production helpers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_materialized_transaction_new_da_blob_refinement_plus_rust_conformance_test",
       "production_eligible": true,
@@ -5659,11 +5663,14 @@
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_transaction_new_da_blob",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.consensus_da_payload_transaction_bytes",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_concrete_consensus_da_blob",
-        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob"
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.raw_ingress_production_projection_lifts_transfer_filter_facts",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transfer_filtered_projection_rows_feed_transaction_new",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition and a targeted Rust conformance gate over the existing materialized sidecar, tx-leaf, and consensus DA helpers.",
-        "The theorem replaces the materialized-row-to-Transaction::new proposition with the concrete `MaterializedRowsFeedTransactionNew` relation, and proves the Transaction::new-to-DA-blob relation directly for `transactions.map consensusDaPayload` and `Consensus.DaRoot.daBlob`.",
+        "The theorem replaces the materialized-row-to-Transaction::new proposition with the concrete `MaterializedRowsFeedTransactionNew` relation, proves the Transaction::new-to-DA-blob relation directly for `transactions.map consensusDaPayload` and `Consensus.DaRoot.daBlob`, and now has a projection variant that derives the transfer-filtered row package from `RawIngressFullByteProductionProjectionFacts`.",
         "The theorem records explicit `u32` transaction/ciphertext length bounds because production `consensus::types::build_da_blob` encodes transaction and ciphertext counts by casting lengths to u32.",
         "The theorem and test do not prove arbitrary-byte parser internals, hash collision resistance, DA availability/retention, Reed-Solomon network availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],

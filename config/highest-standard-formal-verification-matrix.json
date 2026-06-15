@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.65,
+  "overall_completion_percent": 81.70,
   "last_full_formal_core": {
-    "commit": "a3f4a21ca8a32fe450ecebf6787bc72f092a39d4",
-    "status": "passed locally 2026-06-15T12:56:04Z",
+    "commit": "working-tree-pre-commit",
+    "status": "passed locally 2026-06-15T13:29:15Z",
     "claims": 115,
-    "named_lean_theorems": 1550,
+    "named_lean_theorems": 1553,
     "production_eligible_claims": 105,
     "blueprint_edges": 481,
-    "falsification_cases": 450,
-    "implementation_bindings": 200
+    "falsification_cases": 452,
+    "implementation_bindings": 202
   },
   "last_hegemon_dev_validation": {
     "date": "2026-06-15T12:59:20Z",
@@ -49,31 +49,36 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the materialized sidecar DA publication projection slice. The materialized sidecar DA publication theorem now composes with accepted block-action validation and named production projection facts, so decoded payload rows, validated action rows, materialized action/payload rows, and wire replay rows remain tied through the materialized DA publication surface. A Rust regression exercises the production canonical-index rebuild path across multiple blocks and checks rebuilt commitment/nullifier/ciphertext/replay rows derive from the same decoded, materialized, planned, and wire-projected action stream.",
+    "summary": "Proved the materialized consensus transfer-filter projection slice and hardened committed sidecar replay. The materialized consensus DA-blob refinement now derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before applying the concrete Consensus.DaRoot.daBlob theorem. Production canonical replay, artifact verification, memory replay, reorg replay, and startup canonical-index repair now use an archive-aware sidecar materializer, so committed sidecar ciphertexts remain replayable after mined commit removes staged DA rows while still checking hash and size. Rust regressions exercise canonical-index rebuild rows, sync block_range rows, and committed archive replay.",
     "lean_modules": [
+      "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
       "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
       "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
       "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.materialized_sidecar_da_blob_publication_binds_production_projection_rows"
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.raw_ingress_production_projection_lifts_transfer_filter_facts",
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transfer_filtered_projection_rows_feed_transaction_new",
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for Hegemon.Native.MaterializedSidecarDaBlobPublication and Hegemon",
+      "lean_formal": "targeted lake build passed locally for Hegemon.Native.MaterializedConsensusDaBlobRefinement, Hegemon.Native.MaterializedSidecarDaBlobPublication, Hegemon.Native.SyncBlockReplayPublication, and Hegemon",
       "targeted_rust": [
-        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally"
+        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally",
+        "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally",
+        "cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T12:56:04Z with 115 theorem-backed claims, 1550 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 450 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T13:29:15Z with 115 theorem-backed claims, 1553 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 452 falsification cases, 202 implementation bindings, 160 result obligations, 142 order constraints / 370 order edges, and 128 dominance constraints / 338 dominance edges",
       "claims": 115,
-      "named_lean_theorems": 1550,
+      "named_lean_theorems": 1553,
       "production_eligible_claims": 105,
       "blueprint_edges": 481,
-      "falsification_cases": 450,
-      "implementation_bindings": 200
+      "falsification_cases": 452,
+      "implementation_bindings": 202
     },
     "known_limitations": [
       "The slice still does not prove arbitrary-byte parser internals for SCALE/bincode/JSON inputs.",
-      "The Lean materialized publication projection theorem consumes named production projection facts; the Rust regression checks canonical-index rebuild but is not a full extraction proof for every import/sync/reorg/startup path.",
+      "The Lean materialized publication projection theorem consumes named production projection facts; the Rust regressions check canonical-index rebuild, sync block_range publication, and committed archive replay but are not a full extraction proof for every valid mined/announced/reorg/startup path.",
       "Hash security, DA availability, proof-system soundness, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions."
     ]
   },
@@ -554,7 +559,9 @@
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/wire row agreement at the raw-ingress full-byte publication surface",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks raw block-action bytes, decoded validation rows, materialized sidecar payload rows, planned effect rows, and wire replay rows are built from the same decoded actions",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean now lifts production decoded/validated/materialized/wire projection row agreement through the materialized sidecar DA publication surface",
-        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild rows are derived from the same decoded/materialized/planned/wire projection path"
+        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild rows are derived from the same decoded/materialized/planned/wire projection path",
+        "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks production sync block_range rows against the same decoded/materialized/planned/wire projection path",
+        "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks committed sidecar ciphertext replay uses the canonical archive after staged DA cleanup while preserving hash/size binding"
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
@@ -588,7 +595,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 85,
+      "completion_percent": 86,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -612,11 +619,14 @@
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean now composes the raw-ingress full-byte surface with production projection facts so materialized action/payload rows agree with decoded, validated, and wire replay rows",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks sidecar ciphertext hash/size binding, materialized ciphertext row counts, planned ciphertext row counts, and bridge replay row counts against production wire replay projection",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean materialized_sidecar_da_blob_publication_binds_production_projection_rows lifts production projection row agreement through the materialized DA publication surface",
-        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild ciphertext archive/index rows and bridge replay rows against decoded/materialized/planned/wire projection rows"
+        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild ciphertext archive/index rows and bridge replay rows against decoded/materialized/planned/wire projection rows",
+        "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks sync block_range publication rows against decoded/materialized/planned/wire projection rows",
+        "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks canonical replay/rebuild can materialize committed sidecar bytes from the canonical archive after mined commit removes staged DA rows, while still validating ciphertext hash and declared size",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before the concrete DA-blob theorem"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
-        "Extend materialized consensus DA-blob and row-projection refinement beyond focused canonical-index rebuild into mining, announced import, sync, replay, startup, and arbitrary-byte parser internals; DA availability and retention remain separate.",
+        "Extend materialized consensus DA-blob and row-projection refinement beyond focused canonical-index rebuild, sync publication, and committed archive replay into full valid mining/announced import/reorg/startup equivalence and arbitrary-byte parser internals; DA availability and retention remain separate.",
         "Specify hot/cold DA retention assumptions outside consensus."
       ],
       "performance_constraint": "Keep sidecar checks bounded by existing size caps and staged hashes."

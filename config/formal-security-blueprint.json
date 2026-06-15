@@ -3259,7 +3259,7 @@
               "caller": "replay_chain_state",
               "callee_must_precede": [
                 "evaluate_native_block_replay_refinement_for_actions",
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             }
@@ -5868,7 +5868,7 @@
             {
               "caller": "replay_chain_state",
               "callee_must_precede": [
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             }
@@ -6159,7 +6159,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "actions_extrinsics_root",
           "required_callers": [
-            "preview_pending_roots"
+            "preview_pending_roots_with_archive"
           ]
         },
         {
@@ -6186,11 +6186,11 @@
               "caller": "replay_chain_state",
               "callee_must_precede": [
                 "validate_block_actions_locked",
-                "preview_pending_roots",
+                "preview_pending_roots_with_archive",
                 "bridge_messages_from_actions",
                 "evaluate_native_block_replay_refinement_for_actions",
                 "verify_native_block_artifacts_locked",
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             }
@@ -6258,7 +6258,8 @@
           "callee": "evaluate_native_action_stream_effect",
           "required_callers": [
             "evaluate_native_block_replay_refinement_with_trace",
-            "plan_materialized_action_effects",
+            "planned_action_starts_from_wire_counts",
+            "plan_materialized_action_effects_with_archive",
             "plan_canonical_index_rebuild"
           ],
           "result_obligation": "must_check_result_fail_closed",
@@ -6275,11 +6276,9 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "materialize_native_action_payloads",
+          "callee": "materialize_native_action_payloads_from_state",
           "required_callers": [
             "evaluate_native_block_replay_refinement_for_actions",
-            "plan_materialized_action_effects",
-            "plan_canonical_index_rebuild",
             "verify_native_block_artifacts_locked"
           ],
           "result_obligation": "must_propagate_result",
@@ -6288,21 +6287,6 @@
               "caller": "evaluate_native_block_replay_refinement_for_actions",
               "callee_must_precede": [
                 "evaluate_native_block_replay_refinement"
-              ],
-              "must_dominate_successors": true
-            },
-            {
-              "caller": "plan_materialized_action_effects",
-              "callee_must_precede": [
-                "evaluate_native_action_stream_effect"
-              ],
-              "must_dominate_successors": true
-            },
-            {
-              "caller": "plan_canonical_index_rebuild",
-              "callee_must_precede": [
-                "evaluate_native_action_stream_effect",
-                "admit_native_action_wire_replay_projection"
               ],
               "must_dominate_successors": true
             },
@@ -6318,16 +6302,43 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "plan_materialized_action_effects",
+          "callee": "materialize_native_action_payloads_at_starts",
           "required_callers": [
-            "preview_pending_roots",
-            "apply_actions_to_memory",
-            "plan_pending_action_effects"
+            "materialize_native_action_payloads",
+            "materialize_native_action_payloads_from_state",
+            "plan_materialized_action_effects_with_archive",
+            "plan_canonical_index_rebuild"
           ],
           "result_obligation": "must_propagate_result",
           "call_order_constraints": [
             {
-              "caller": "preview_pending_roots",
+              "caller": "plan_materialized_action_effects_with_archive",
+              "callee_must_precede": [
+                "admit_native_action_wire_replay_projection"
+              ],
+              "must_dominate_successors": true
+            },
+            {
+              "caller": "plan_canonical_index_rebuild",
+              "callee_must_precede": [
+                "admit_native_action_wire_replay_projection"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_materialized_action_effects_with_archive",
+          "required_callers": [
+            "preview_pending_roots_with_archive",
+            "apply_actions_to_memory_with_archive",
+            "plan_materialized_action_effects"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "preview_pending_roots_with_archive",
               "callee_must_precede": [
                 "tree.append",
                 "nullifiers.insert",
@@ -6336,7 +6347,7 @@
               "must_dominate_successors": true
             },
             {
-              "caller": "apply_actions_to_memory",
+              "caller": "apply_actions_to_memory_with_archive",
               "callee_must_precede": [
                 "apply_planned_actions_to_memory"
               ],
@@ -6360,6 +6371,14 @@
               ]
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "plan_materialized_action_effects",
+          "required_callers": [
+            "plan_pending_action_effects"
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
@@ -6862,16 +6881,16 @@
               "caller": "replay_chain_state",
               "callee_must_precede": [
                 "validate_block_actions_locked",
-                "preview_pending_roots",
+                "preview_pending_roots_with_archive",
                 "verify_native_block_artifacts_locked",
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             },
             {
               "caller": "plan_canonical_index_rebuild",
               "callee_must_precede": [
-                "materialize_native_action_payloads",
+                "materialize_native_action_payloads_at_starts",
                 "evaluate_native_action_stream_effect"
               ]
             },
@@ -6958,7 +6977,7 @@
               "callee_must_precede": [
                 "evaluate_native_block_replay_refinement_for_actions",
                 "verify_native_block_artifacts_locked",
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             },
@@ -7930,9 +7949,9 @@
             {
               "caller": "replay_chain_state",
               "callee_must_precede": [
-                "preview_pending_roots",
+                "preview_pending_roots_with_archive",
                 "verify_native_block_artifacts_locked",
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             }
@@ -8068,6 +8087,7 @@
         "formal/lean/Hegemon/Native/CodecAdmission.lean",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon.lean",
+        "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -8087,6 +8107,11 @@
           "id": "formal-core-sync-block-replay-publication-claim",
           "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the sync block replay publication theorem.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "rust-sync-block-range-projection-row-test",
+          "description": "The production sync `block_range` regression must reject drift where served canonical block rows stop matching decoded action bytes, materialized sidecar payload rows, planned effect rows, wire replay rows, or rebuilt canonical projection rows.",
+          "gate": "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
         }
       ],
       "scope_boundary": "This node is a theorem-level composition over accepted bounded sync wire decode, response-count admission, exact block-action decode, accepted wire replay projection, and accepted raw canonical publication. It does not prove arbitrary sync/block parser internals, production construction of the wire projection from raw sync/block bytes, peer honesty, network liveness, hash security, proof-system soundness, storage durability, or complete native-node equivalence."
@@ -8425,7 +8450,8 @@
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_action_plan_application_admission",
           "required_callers": [
-            "plan_materialized_action_effects",
+            "planned_action_starts_from_wire_counts",
+            "plan_materialized_action_effects_with_archive",
             "plan_canonical_index_rebuild"
           ],
           "result_obligation": "must_propagate_result"
@@ -8435,7 +8461,7 @@
           "callee": "admit_native_action_plan_application",
           "required_callers": [
             "apply_planned_actions_to_memory",
-            "preview_pending_roots"
+            "preview_pending_roots_with_archive"
           ],
           "result_obligation": "must_propagate_result"
         }
@@ -8516,9 +8542,9 @@
           "path": "node/src/native/mod.rs",
           "callee": "admit_native_action_wire_replay_projection",
           "required_callers": [
-            "plan_materialized_action_effects",
+            "plan_materialized_action_effects_with_archive",
             "apply_planned_actions_to_memory",
-            "preview_pending_roots",
+            "preview_pending_roots_with_archive",
             "plan_canonical_index_rebuild"
           ],
           "result_obligation": "must_propagate_result"
@@ -9106,7 +9132,7 @@
             {
               "caller": "replay_chain_state",
               "callee_must_precede": [
-                "apply_actions_to_memory"
+                "apply_actions_to_memory_with_archive"
               ],
               "must_dominate_successors": true
             }
@@ -9838,7 +9864,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication, production decoded/validated/materialized/wire projection facts, and tx-leaf ciphertext binding facts. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions."
+        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication, production decoded/validated/materialized/wire projection facts, and tx-leaf ciphertext binding facts. The production replay path now also materializes committed sidecar ciphertexts from the canonical archive after staged DA cleanup while rechecking hash and size. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions."
       },
       "falsification_cases": [
         {
@@ -9855,6 +9881,11 @@
           "id": "rust-canonical-index-rebuild-projection-row-test",
           "description": "The production canonical-index rebuild regression must reject drift where decoded action bytes, materialized sidecar payload rows, planned effect rows, wire replay rows, or rebuilt canonical rows stop agreeing.",
           "gate": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-committed-sidecar-archive-replay-test",
+          "description": "Committed sidecar replay must materialize canonical ciphertext bytes from the canonical archive after mined commit removes staged DA rows, while still rejecting archive bytes that fail the action hash or size binding.",
+          "gate": "cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture"
         }
       ],
       "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, production projection row agreement, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. Its successor materialized consensus DA-blob refinement concretizes Transaction::new and DA-blob relations for the transfer sidecar path, but arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, and complete native-node refinement remain explicit."
@@ -9863,8 +9894,8 @@
       "id": "native.materialized-consensus-da-blob-refinement",
       "claim_id": "native.materialized-consensus-da-blob-refinement",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean materialized consensus DA-blob refinement surface, accepted materialized sidecar DA publication whose explicit materialized-row proposition is instantiated with `MaterializedRowsFeedTransactionNew` implies one record carrying ordered action/payload/transaction binding, direct `Transaction::new`-to-`Consensus.DaRoot.daBlob` binding for `transactions.map consensusDaPayload`, exact blob bytes, explicit u32 length bounds, sidecar materialization facts, wire replay DA-row binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash and payload-hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
-      "informal_argument": "`Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob` consumes `MaterializedSidecarDaBlobPublicationFacts` instantiated with concrete materialized row relations and `True` for the older DA-blob proposition, then constructs the concrete DA-blob relation internally. Helper theorems expose indexed row binding, prove each consensus DA payload has the same byte grammar as `Consensus.DaRoot.transactionBytes`, and prove that the assembled blob bytes equal `Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)`. The companion Rust test `native::tests::materialized_sidecar_transfer_payload_builds_consensus_da_blob` builds a sidecar transfer, stages canonical ciphertext bytes, materializes the payload, constructs the production consensus transaction, checks the transaction fields/ciphertext hashes, checks exact DA blob bytes, and checks the DA root against `state_da::da_root`.",
+      "formal_statement": "For the executable Lean materialized consensus DA-blob refinement surface, accepted materialized sidecar DA publication plus raw-ingress production projection facts imply one record carrying decoded/validated/wire/materialized/transaction row agreement, ordered action/payload/transaction binding, direct `Transaction::new`-to-`Consensus.DaRoot.daBlob` binding for `transactions.map consensusDaPayload`, exact blob bytes, explicit u32 length bounds, sidecar materialization facts, wire replay DA-row binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash and payload-hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
+      "informal_argument": "`Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob` consumes `MaterializedSidecarDaBlobPublicationFacts` instantiated with concrete materialized row relations and `True` for the older DA-blob proposition, then constructs the concrete DA-blob relation internally. `accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob` additionally derives the transfer-filtered `MaterializedRowsFeedTransactionNew` package from `RawIngressFullByteProductionProjectionFacts`, so decoded payload rows, validated rows, wire replay rows, materialized transfer rows, and consensus transaction rows remain tied before the concrete DA blob theorem is applied. Helper theorems expose indexed row binding, prove each consensus DA payload has the same byte grammar as `Consensus.DaRoot.transactionBytes`, and prove that the assembled blob bytes equal `Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)`. The companion Rust test `native::tests::materialized_sidecar_transfer_payload_builds_consensus_da_blob` builds a sidecar transfer, stages canonical ciphertext bytes, materializes the payload, constructs the production consensus transaction, checks the transaction fields/ciphertext hashes, checks exact DA blob bytes, and checks the DA root against `state_da::da_root`.",
       "depends_on": [
         "native.materialized-sidecar-da-blob-publication",
         "consensus.da-root-byte-binding",
@@ -9901,7 +9932,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a zero-runtime-cost Lean refinement plus targeted Rust conformance test over the materialized sidecar transfer-to-consensus DA path. The concrete Transaction::new-to-DA-blob relation is now proved for the production-shaped payload list; materialized row-to-transaction equivalence, DA availability, DA-root hash/security, proof soundness, parser internals, storage durability, and complete native-node refinement remain explicit."
+        "notes": "Accepted as a zero-runtime-cost Lean refinement plus targeted Rust conformance test over the materialized sidecar transfer-to-consensus DA path. The concrete Transaction::new-to-DA-blob relation is now proved for the production-shaped payload list, and a projection variant derives the transfer-filtered transaction row package from the raw-ingress production projection facts; DA availability, DA-root hash/security, proof soundness, parser internals, storage durability, and complete native-node refinement remain explicit."
       },
       "falsification_cases": [
         {
