@@ -6,7 +6,7 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 81.61,
   "last_full_formal_core": {
-    "commit": "working-tree-before-proof-slice-commit",
+    "commit": "ef2a2d5cc386a94cedc2fb234ba924a8768dfc6f",
     "status": "passed locally 2026-06-15T12:33:40Z",
     "claims": 115,
     "named_lean_theorems": 1549,
@@ -16,20 +16,21 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T12:12:57Z",
-    "commit": "b74e82b0ee8a1e731cc8eb2dd43360687fdf3d14",
-    "status": "passed with claims/blueprint gates, targeted Lean for NativeObserverSurface and CiphertextPrivacy, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production",
+    "date": "2026-06-15T12:38:00Z",
+    "commit": "ef2a2d5cc386a94cedc2fb234ba924a8768dfc6f",
+    "status": "passed with claims/blueprint gates, targeted Lean for pending-action row binding and raw-ingress full-byte publication, targeted Rust production projection regression, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at b74e82b0ee8a1e731cc8eb2dd43360687fdf3d14",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at ef2a2d5cc386a94cedc2fb234ba924a8768dfc6f",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1546 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 115 nodes, 480 edges, 446 falsification cases, and 200 implementation bindings",
-      "$HOME/.elan/bin/lake build Hegemon.Privacy.NativeObserverSurface Hegemon.Privacy.CiphertextPrivacy Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1549 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 115 nodes, 481 edges, 449 falsification cases, and 200 implementation bindings",
+      "$HOME/.elan/bin/lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon.Native.RawIngressFullBytePublicationSurface Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
+      "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture passed on hegemon-dev",
       "hegemon-node.service remained active with NRestarts=0; no restart was needed for the live service during this validation pass",
       "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11348",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26939 H/s, difficulty 520159231, blocks_found 675, and block_height 11348",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 19589",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26930 H/s, difficulty 520159231, blocks_found 675, and block_height 11348",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 19748",
       "timedatectl reported NTPSynchronized=yes"
     ]
   },
