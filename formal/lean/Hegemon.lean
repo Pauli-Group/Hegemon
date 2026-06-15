@@ -93,6 +93,7 @@ import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload
 import Hegemon.Native.StablecoinPolicyAuthorization
+import Hegemon.Native.StablecoinPolicyLiveAuthorization
 import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.SyncBlockReplayPublication

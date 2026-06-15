@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 83.62,
+  "overall_completion_percent": 83.85,
   "last_full_formal_core": {
-    "date": "2026-06-15T23:11:19Z",
-    "commit": "907702b4+worktree",
-    "status": "passed locally after active native stablecoin policy manifest lifecycle authorization integration and duplicate-candidate masking fix",
+    "date": "2026-06-15T23:50:32Z",
+    "commit": "d587e95a+worktree",
+    "status": "passed locally after adding the native stablecoin policy live-authorization bridge from accepted production authorization predicates to exact LiveStablecoinPolicyAuthorizes payloads",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 117,
-    "named_lean_theorems": 1669,
-    "axiom_free_theorems": 766,
-    "axiom_dependent_theorems": 903,
+    "named_lean_theorems": 1676,
+    "axiom_free_theorems": 768,
+    "axiom_dependent_theorems": 908,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 107,
     "residual_risks": 45,
@@ -329,7 +329,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 87,
+      "completion_percent": 90,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -353,16 +353,16 @@
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
         "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases",
-        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
-        "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
-        "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
-        "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
+      "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
+      "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean now instantiates LiveStablecoinPolicyAuthorizes from the accepted native stablecoin policy authorization predicate for the exact canonical StablecoinMintExceptionPayload, proves the predicate authorizes only that exact payload, exposes policy lifecycle/freshness/bounds facts, denies not-live payload authorization, and upgrades any publication-plus-exception-surface package to an authorized stablecoin mint exception surface",
+      "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
+      "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
+      "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
       ],
-      "missing_work": [
-        "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-        "Bind the active manifest lifecycle to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence.",
-        "Lift the exact native stablecoin manifest authorization predicate, including the lifecycle-open fact, into the higher LiveStablecoinPolicyAuthorizes theorem surface across complete native-node replay."
-      ],
+    "missing_work": [
+      "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
+      "Extend the native-policy LiveStablecoinPolicyAuthorizes bridge from manifest-time authorization predicates to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence."
+    ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
     },
     {
