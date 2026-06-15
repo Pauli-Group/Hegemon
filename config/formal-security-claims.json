@@ -3803,6 +3803,58 @@
       ]
     },
     {
+      "id": "native.raw-ingress-pending-action-publication-refinement",
+      "component": "native raw ingress pending-action publication refinement",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress pending-action publication refinement composes accepted raw-ingress sidecar replay publication with accepted pending-action byte publication, and the stronger tx-leaf variant additionally carries native tx-leaf/canonical statement artifact binding. The package binds action-request/pending/staged sidecar predicates, exact pending/block-action decode, DA sidecar materialization, raw canonical ledger/tree replay, replayed supply, commitment-root publication, nullifier uniqueness, bridge replay uniqueness, and tx-leaf statement/proof artifact facts to the same raw replay input.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressPendingActionPublicationRefinement.accepted_raw_ingress_pending_action_bytes_bind_publication",
+        "Hegemon.Native.RawIngressPendingActionPublicationRefinement.accepted_raw_ingress_pending_action_bytes_bind_tx_leaf_publication"
+      ],
+      "assumptions": [
+        "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate raw-ingress sidecar replay, pending-action byte parser/publication, canonical publication, native tx-leaf canonical surface, DA/sidecar binding, and replay-refinement claims for executable predicate conformance.",
+        "The publication theorem uses the accepted raw-ingress sidecar facts and accepted pending/block-action byte facts over the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness, so sidecar availability, DA-root binding, parser row-count agreement, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, final nullifier uniqueness, and final bridge replay-key uniqueness are reviewable as one surface.",
+        "The tx-leaf theorem composes that surface with accepted native tx-leaf/canonical statement artifact facts, binding the same raw ingress and byte-publication path to statement preimage, proof binding-message, public-input binding, wrapper admission, value/stablecoin fields, and native receipt/public-input/proof/backend equality gates.",
+        "The theorem does not prove full SCALE/JSON parser correctness, BLAKE3 hash security or implementation equivalence, DA availability or retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-pending-action-parser-internals-missing",
+          "description": "The theorem composes accepted production-bound predicates but still does not prove arbitrary raw byte-to-field parser internals for every PendingAction, sidecar, or tx-leaf object.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-raw-ingress-pending-action-crypto-soundness-missing",
+          "description": "The theorem binds decoded rows and statement artifacts but does not prove hash collision resistance, DA availability, recursive proof soundness, native tx-leaf proof soundness, or complete native-node refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",

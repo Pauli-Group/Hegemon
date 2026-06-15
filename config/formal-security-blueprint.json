@@ -8576,6 +8576,66 @@
       "scope_boundary": "This node proves a raw-ingress/sidecar/replay composition over accepted production-bound predicates. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, network/chunk retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
     },
     {
+      "id": "native.raw-ingress-pending-action-publication-refinement",
+      "claim_id": "native.raw-ingress-pending-action-publication-refinement",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress pending-action publication surface, accepted raw-ingress sidecar replay, accepted exact pending-action decode, accepted block-action decode, accepted action-hash admission, accepted canonical publication, accepted raw ledger/tree replay, and accepted native tx-leaf/canonical statement artifact facts together imply one named surface carrying parser row-count agreement, sidecar ciphertext availability and size agreement, DA-root binding, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, final nullifier uniqueness, final bridge replay-key uniqueness, and tx-leaf statement/proof artifact binding over the same raw replay input.",
+      "informal_argument": "`Hegemon.Native.RawIngressPendingActionPublicationRefinement.accepted_raw_ingress_pending_action_bytes_bind_publication` calls `raw_ingress_publication_equivalent_to_raw_ledger_tree_replay` and `accepted_pending_action_bytes_bind_raw_canonical_publication` with the same raw replay witness. The resulting record exposes the raw-ingress sidecar publication facts and pending-action byte publication facts together, including parser row-count agreement, sidecar availability/size facts, DA-root binding, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, and final replay-set uniqueness. `accepted_raw_ingress_pending_action_bytes_bind_tx_leaf_publication` composes that package with `accepted_pending_action_bytes_bind_tx_leaf_publication`, so the same raw-ingress/byte-publication path carries native tx-leaf full statement artifact facts from the canonical verifier surface.",
+      "depends_on": [
+        "native.raw-ingress-sidecar-replay-recoverability",
+        "native.block-replay-refinement",
+        "native.codec-admission",
+        "native.pending-action-reload",
+        "formal.native-tx-leaf-canonical-surface",
+        "native.da-sidecar-replay-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean composition over already production-bound raw-ingress sidecar replay, pending-action byte publication, canonical publication, and native tx-leaf/canonical statement artifact predicates. Scope excludes arbitrary-byte parser internals, cryptographic soundness, DA availability, proof soundness, and complete native-node refinement."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-pending-action-publication-theorem",
+          "description": "Removing or weakening the raw-ingress pending-action publication theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-pending-action-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the new composition theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves a raw-ingress/pending-action/canonical-publication/tx-leaf composition over accepted production-bound predicates. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root/action-hash security or implementation equivalence, DA availability or retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",

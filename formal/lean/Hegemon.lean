@@ -74,6 +74,7 @@ import Hegemon.Native.RawIngressSidecarReplayRecoverability
 import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
+import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload
