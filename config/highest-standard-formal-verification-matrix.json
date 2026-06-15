@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 76.54,
+  "overall_completion_percent": 76.6,
   "last_full_formal_core": {
-    "commit": "ff93184aa776b94ffa1222531c51045dd98da7e4",
-    "status": "passed locally 2026-06-15T00:15:47Z",
+    "commit": "worktree:pending-action-byte-tx-leaf-publication-refinement",
+    "status": "passed locally 2026-06-15T00:40:21Z",
     "claims": 100,
-    "named_lean_theorems": 1433,
+    "named_lean_theorems": 1434,
     "production_eligible_claims": 90,
     "falsification_cases": 413,
     "implementation_bindings": 200
@@ -48,19 +48,20 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-14",
-    "summary": "Strengthened pending-action byte publication refinement with `PendingActionBytePublicationFacts` and `accepted_pending_action_bytes_bind_raw_canonical_publication`, composing accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, and raw canonical publication into one byte-admission fact package carrying exact parser, reload, action-hash, wire projection, replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness.",
+    "summary": "Strengthened pending-action byte publication and tx-leaf statement binding refinement with `PendingActionBytePublicationFacts`, `accepted_pending_action_bytes_bind_raw_canonical_publication`, `PendingActionByteTxLeafPublicationFacts`, and `accepted_pending_action_bytes_bind_tx_leaf_publication`, composing accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, raw canonical publication, and accepted native tx-leaf/canonical statement artifact facts into one byte-admission/statement-binding fact package.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication"
+      "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication",
+      "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication"
     ],
     "validation": {
-      "lean_formal": "targeted lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean and lake build Hegemon.Native.PendingActionBytePublicationRefinement Hegemon passed locally; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-15T00:15:47Z",
+      "lean_formal": "targeted lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean and lake build Hegemon.Native.PendingActionBytePublicationRefinement Hegemon passed locally; full check_lean_formal passed inside scripts/check_formal_core.sh locally 2026-06-15T00:40:21Z",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-15T00:15:47Z with 100 claims, 1433 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally 2026-06-15T00:40:21Z with 100 claims, 1434 named Lean theorem declarations, 90 production-eligible claims, 389 blueprint edges, 413 falsification cases, and 200 implementation bindings",
       "claims": 100,
-      "named_lean_theorems": 1433,
+      "named_lean_theorems": 1434,
       "production_eligible_claims": 90,
       "falsification_cases": 413,
       "implementation_bindings": 200
@@ -287,7 +288,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 92,
+      "completion_percent": 93,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -308,6 +309,7 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free projects accepted native tx-leaf/action binding plus canonical statement surface into statement preimage success/length, proof binding-message success, public-input binding validity, wrapper preconditions/surface, and native receipt/public-input/proof/backend/ciphertext-payload equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free packages accepted native tx-leaf/action binding plus the canonical statement surface into public-shape validity, core statement binding, full vector/input/output binding, value-balance binding, stablecoin payload binding, tx-leaf preconditions, full tx-leaf equality facts, and native digest/backend gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages selected native output slots with the full statement/artifact surface, statement/proof-binding output rows, wrapper/public/statement facts, native output equality gates, and native artifact digest/backend gates",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean now composes accepted pending/block-action byte admission, raw canonical publication, and native tx-leaf/canonical statement artifact facts into one Lean surface",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct statement and proof-binding vector indices for the active output commitment/ciphertext-hash fields selected by an observer chain-wire row",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes total input-slot statement/proof-binding facts from packaged native artifact boundary facts",
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean now exposes accepted payload binding-hash, proof-binding-hash, and fee facts for downstream statement/proof-key composition",
@@ -454,7 +456,7 @@
         "tx-proof-manifest nested wrapper regression",
         "native tx-leaf/receipt-root exact decode gates",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean exposes accepted action-request and pending/staged sidecar reload parser-admission preconditions",
-        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode and block-action decode with pending reload, action-hash admission, wire replay projection, and raw canonical publication facts",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode and block-action decode with pending reload, action-hash admission, wire replay projection, raw canonical publication facts, and native tx-leaf/canonical statement artifact facts",
         "node/src/native/mod.rs verifies non-genesis canonical sync rows by exact action decode plus decoded action-root admission before response publication"
       ],
       "missing_work": [
@@ -487,7 +489,7 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean now composes accepted raw-ingress/sidecar predicates with raw-decoded ledger/tree replay, exposing commitment-root progression, accepted ledger replay, replayed supply/leaf facts, raw tree carried-state preconditions, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean now composes accepted DA/sidecar artifact predicates directly with raw decoded projected replay, exposing accepted replay over raw replay inputs plus supply, leaf-cursor, commitment-plan, carried-state, and final replay-set facts",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and accepted ledger/tree replay into a canonical publication fact package",
-        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, and raw canonical publication into one byte-admission/refinement package",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean composes accepted exact pending-action decode, accepted block-action decode, pending-action reload key/hash checks, action-hash admission, action wire-replay projection, raw canonical publication, and native tx-leaf/canonical statement artifact facts into one byte-admission/refinement package",
         "node/src/native/mod.rs revalidate_reorg_pending_actions is blueprint-bound before commit_reorg_state_atomically and publish_reorganized_state",
         "node/src/native/mod.rs load_canonical_sync_block_at_height is blueprint-bound to verify non-genesis decoded action roots before sync response publication",
         "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows",
