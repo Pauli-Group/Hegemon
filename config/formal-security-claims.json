@@ -3071,7 +3071,7 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, and tx-leaf artifact byte-shape facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, and tx-leaf parser shape bounds before expensive proof, recursive verification, or mining work.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, and receipt-root artifact schedule facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, tx-leaf parser shape bounds, and receipt-root leaf/fold schedule bounds before expensive proof, recursive verification, receipt-root folding, or mining work.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -3080,11 +3080,12 @@
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.action_request_projection_accepts_implies_preheavy_bounds",
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.transfer_payload_accepts_implies_preheavy_bounds",
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.candidate_artifact_accepts_implies_preheavy_bounds",
+        "Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts",
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
       ],
       "assumptions": [
-        "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, and native tx-leaf artifact parsing; it inherits production conformance from those gates and adds no new runtime helper.",
-        "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, strict action-request JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, and tx-leaf artifact byte-shape bounds.",
+        "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, native tx-leaf artifact parsing, and native receipt-root artifact schedule parsing; it inherits production conformance from those gates and adds no new runtime helper.",
+        "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, strict action-request JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, tx-leaf artifact byte-shape bounds, and receipt-root nonzero expected leaves, leaf/fold-count agreement, and exact fold-shape schedule facts.",
         "Parser correctness and benchmark-cap coverage are explicit assumptions on the verification-path surface; the theorem does not silently prove parser internals or cost-model completeness.",
         "The theorem covers decision-table composition only. It does not prove JSON parser correctness, RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness beyond cap behavior, DA availability, sled durability, proof-system soundness, mining liveness, or complete native-node equivalence."
       ],
@@ -3097,6 +3098,7 @@
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],

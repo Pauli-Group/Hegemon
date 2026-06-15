@@ -1,6 +1,7 @@
 import Hegemon.Native.ActionRequestProjectionAdmission
 import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.MineableActionAdmission
+import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
@@ -14,6 +15,7 @@ namespace PreHeavyWorkResourceBoundSurface
 open Hegemon.Native.MineableActionAdmission
 open Hegemon.Native.ActionRequestProjectionAdmission
 open Hegemon.Native.CandidateArtifactAdmission
+open Hegemon.Native.ReceiptRoot
 open Hegemon.Native.ResourceBudgetAdmission
 open Hegemon.Native.RpcAdmission
 open Hegemon.Native.SidecarUploadAdmission
@@ -639,6 +641,9 @@ structure PreHeavyWorkVerificationPathSurface where
   candidateArtifact : CandidateArtifactInput
   txLeafArtifactBytes : List Byte
   txLeafArtifactSummary : TxLeafSummary
+  receiptRootExpectedLeafCount : Nat
+  receiptRootArtifactBytes : List Byte
+  receiptRootSummary : ReceiptRootSummary
 deriving DecidableEq, Repr
 
 structure AcceptedPreHeavyWorkVerificationPathInputs
@@ -655,6 +660,13 @@ structure AcceptedPreHeavyWorkVerificationPathInputs
   txLeafArtifactParsed :
     parseNativeTxLeafArtifact surface.txLeafArtifactBytes =
       some surface.txLeafArtifactSummary
+  receiptRootArtifactParsed :
+    parseNativeReceiptRootArtifact surface.receiptRootArtifactBytes =
+      some surface.receiptRootSummary
+  receiptRootScheduleAccepted :
+    receiptRootScheduleAccepts
+        surface.receiptRootExpectedLeafCount
+        surface.receiptRootArtifactBytes = true
   parserCorrectnessAssumption :
     parserCorrectness
   benchmarkCapsAssumption :
@@ -679,6 +691,11 @@ structure AcceptedPreHeavyWorkVerificationPathBounds
     AcceptedNativeTxLeafArtifactByteShapeFacts
       surface.txLeafArtifactBytes
       surface.txLeafArtifactSummary
+  receiptRootScheduleFacts :
+    ReceiptRootScheduleFacts
+      surface.receiptRootExpectedLeafCount
+      surface.receiptRootArtifactBytes
+      surface.receiptRootSummary
   parserCorrectnessAssumption :
     parserCorrectness
   benchmarkCapsAssumption :
@@ -716,6 +733,10 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
     txLeafArtifactByteShapeFacts :=
       accepted_native_tx_leaf_artifact_bytes_expose_shape_facts
         accepted.txLeafArtifactParsed,
+    receiptRootScheduleFacts :=
+      receipt_root_schedule_accepts_implies_facts
+        accepted.receiptRootArtifactParsed
+        accepted.receiptRootScheduleAccepted,
     parserCorrectnessAssumption :=
       accepted.parserCorrectnessAssumption,
     benchmarkCapsAssumption :=

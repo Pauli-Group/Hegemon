@@ -114,6 +114,44 @@ def receiptRootScheduleAccepts (expectedLeafCount : Nat) (artifact : List Byte) 
         && (summary.foldCount == expectedFoldCount expectedLeafCount)
         && allFoldShapesExact summary.folds
 
+structure ReceiptRootScheduleFacts
+    (expectedLeafCount : Nat)
+    (artifact : List Byte)
+    (summary : ReceiptRootSummary) : Prop where
+  parsed :
+    parseNativeReceiptRootArtifact artifact = some summary
+  scheduleAccepted :
+    receiptRootScheduleAccepts expectedLeafCount artifact = true
+  expectedLeafCountPositive :
+    0 < expectedLeafCount
+  leafCountMatches :
+    summary.leafCount = expectedLeafCount
+  foldCountMatches :
+    summary.foldCount = expectedFoldCount expectedLeafCount
+  foldShapesExact :
+    allFoldShapesExact summary.folds = true
+
+theorem receipt_root_schedule_accepts_implies_facts
+    {expectedLeafCount : Nat}
+    {artifact : List Byte}
+    {summary : ReceiptRootSummary}
+    (parsed :
+      parseNativeReceiptRootArtifact artifact = some summary)
+    (accepted :
+      receiptRootScheduleAccepts expectedLeafCount artifact = true) :
+    ReceiptRootScheduleFacts expectedLeafCount artifact summary := by
+  have acceptedOriginal := accepted
+  unfold receiptRootScheduleAccepts at accepted
+  simp [parsed] at accepted
+  exact {
+    parsed := parsed,
+    scheduleAccepted := acceptedOriginal,
+    expectedLeafCountPositive := accepted.left.left.left,
+    leafCountMatches := accepted.left.left.right,
+    foldCountMatches := accepted.left.right,
+    foldShapesExact := accepted.right
+  }
+
 structure FoldWireFields where
   challenges : List Nat
   parentRows : List (List Nat)

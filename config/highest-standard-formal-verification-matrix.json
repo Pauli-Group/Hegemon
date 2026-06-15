@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 82.48,
+  "overall_completion_percent": 82.5,
   "last_full_formal_core": {
     "commit": "working-tree-pre-commit",
-    "status": "passed locally 2026-06-15T15:51:17Z",
+    "status": "passed locally 2026-06-15T16:26:57Z",
     "claims": 115,
-    "named_lean_theorems": 1579,
+    "named_lean_theorems": 1580,
     "production_eligible_claims": 105,
-    "blueprint_edges": 481,
+    "blueprint_edges": 482,
     "falsification_cases": 455,
     "implementation_bindings": 204
   },
@@ -52,13 +52,15 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved and production-bound three implementation-equivalence slices: recursive_block_v2 pre-proof verifier-surface admission before cryptographic recursive child verification, packed SmallWood active spend-auth key binding, and strict wallet DA note-ciphertext parsing. The Lean models cover recursive public/header/proof-width/projection/crypto-boundary checks, SmallWood active auth-link equality to the PRF-derived spend-auth limbs, and chain/DA note-ciphertext parser accept/reject facts. Production now gates recursive_block_v2 through verify_block_recursive_v2_surface before verify_tree_child_v2, enforces active SmallWood pk_auth linkage in build_packed_bridge_linear_constraints, and routes node/archive ciphertext RPC decoding through NoteCiphertext::from_da_bytes.",
+    "summary": "Proved and production-bound three implementation-equivalence slices and one zero-runtime-cost pre-heavy resource tightening: recursive_block_v2 pre-proof verifier-surface admission before cryptographic recursive child verification, packed SmallWood active spend-auth key binding, strict wallet DA note-ciphertext parsing, and receipt-root schedule facts carried by the pre-heavy verification-path surface. The Lean models cover recursive public/header/proof-width/projection/crypto-boundary checks, SmallWood active auth-link equality to the PRF-derived spend-auth limbs, chain/DA note-ciphertext parser accept/reject facts, and receipt-root nonzero expected leaves plus leaf/fold schedule agreement before receipt-root folding.",
     "lean_modules": [
       "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean",
       "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockV2VerifierSurfaceVectors.lean",
       "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
       "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
-      "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean"
+      "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
+      "formal/lean/Hegemon/Native/ReceiptRoot.lean",
+      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.surface_accepts_iff_preconditions",
@@ -81,10 +83,12 @@
       "Hegemon.Wallet.NoteCiphertextWire.da_nonzero_padding_rejects",
       "Hegemon.Wallet.NoteCiphertextWire.da_truncated_kem_rejects",
       "Hegemon.Wallet.NoteCiphertextWire.da_trailing_byte_rejects",
-      "Hegemon.Wallet.NoteCiphertextWire.parsed_da_ciphertext_has_gamma_suite_and_fixed_kem"
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_da_ciphertext_has_gamma_suite_and_fixed_kem",
+      "Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts",
+      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Consensus.RecursiveBlockV2VerifierSurface Hegemon.Consensus.GenerateRecursiveBlockV2VerifierSurfaceVectors Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Wallet.NoteCiphertextWire Hegemon.Wallet.GenerateNoteCiphertextWireVectors Hegemon passed locally",
+      "lean_formal": "lake build Hegemon.Consensus.RecursiveBlockV2VerifierSurface Hegemon.Consensus.GenerateRecursiveBlockV2VerifierSurfaceVectors Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Wallet.NoteCiphertextWire Hegemon.Wallet.GenerateNoteCiphertextWireVectors Hegemon.Native.ReceiptRoot Hegemon.Native.PreHeavyWorkResourceBoundSurface Hegemon passed locally",
       "targeted_rust": [
         "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture passed locally",
         "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture passed locally",
@@ -92,11 +96,11 @@
         "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture passed locally",
         "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T15:51:17Z with 115 claims, 1579 named Lean theorem declarations, 105 production-eligible claims, 481 blueprint edges, 455 falsification cases, and 204 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T16:26:57Z with 115 claims, 1580 named Lean theorem declarations, 105 production-eligible claims, 482 blueprint edges, 455 falsification cases, and 204 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1579,
+      "named_lean_theorems": 1580,
       "production_eligible_claims": 105,
-      "blueprint_edges": 481,
+      "blueprint_edges": 482,
       "falsification_cases": 455,
       "implementation_bindings": 204
     },
@@ -136,7 +140,7 @@
       ],
       "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T15:51:17Z with recursive_block_v2 verifier-surface, SmallWood auth-link, and wallet DA parser gates enabled",
       "claims": 115,
-      "named_lean_theorems": 1579,
+      "named_lean_theorems": 1580,
       "production_eligible_claims": 105,
       "falsification_cases": 455,
       "implementation_bindings": 204,
@@ -735,7 +739,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -746,10 +750,11 @@
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean theorem `accepted_preheavy_resource_bound_surface_exposes_bounds` composes accepted resource-budget, RPC admission, sidecar upload, and mineable-action surfaces into one pre-heavy-work resource fact package",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean proves accepted sync response counts bound synced raw block batches before raw replay publication",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now composes transfer-payload caps, candidate-artifact recursive proof caps, and tx-leaf artifact parser shape facts with the pre-heavy-work resource surface while carrying parser/cost assumptions explicitly",
-        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now proves `action_request_projection_accepts_implies_preheavy_bounds`, deriving strict submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates from accepted action-request projection before heavy work"
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now proves `action_request_projection_accepts_implies_preheavy_bounds`, deriving strict submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates from accepted action-request projection before heavy work",
+        "formal/lean/Hegemon/Native/ReceiptRoot.lean now proves `receipt_root_schedule_accepts_implies_facts`, and PreHeavyWorkResourceBoundSurface carries receipt-root nonzero expected-leaf, exact leaf/fold-count, and fold-shape schedule facts before receipt-root folding"
       ],
       "missing_work": [
-        "Extend pre-heavy-work and sidecar proof-byte bounds to the remaining consensus-facing parser and public input families.",
+        "Extend pre-heavy-work and sidecar proof-byte bounds to the remaining consensus-facing parser families not yet represented in the composed verification-path surface.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],
