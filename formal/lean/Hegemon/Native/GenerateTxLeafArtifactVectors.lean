@@ -47,10 +47,12 @@ def summaryFieldJson (summary : Option TxLeafSummary) : String :=
 
 def txLeafCaseJson (name : String) (artifact : List Byte) : String :=
   let summary := parseNativeTxLeafArtifact artifact
+  let strictSummary := parseNativeTxLeafArtifactStrict artifact
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"artifact_hex\": \"" ++ hexBytes artifact ++ "\",\n"
     ++ "      \"expected_valid\": " ++ boolJson summary.isSome ++ ",\n"
+    ++ "      \"expected_canonical_valid\": " ++ boolJson strictSummary.isSome ++ ",\n"
     ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ "\n"
     ++ "    }"
 

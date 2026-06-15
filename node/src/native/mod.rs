@@ -14965,6 +14965,52 @@ mod tests {
     }
 
     #[test]
+    fn startup_rejects_committed_sidecar_archive_hash_drift() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let parent = node.best_meta();
+            let action = test_sidecar_transfer_action(parent.state_root, [69u8; 48], [70u8; 48], 0);
+            insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+            let replay_state = test_state(parent.clone());
+            let candidate = test_candidate_artifact_action(1, 72);
+            let actions = vec![action.clone(), candidate];
+            let meta = mined_child_with_actions(&parent, 1, pow_bits, 0, actions.clone());
+            let planned =
+                plan_materialized_action_effects(&node.da_ciphertext_tree, &replay_state, &actions)
+                    .expect("plan sidecar commit");
+            node.commit_mined_block_atomically(&actions, &planned, &meta)
+                .expect("commit sidecar action");
+            node.db.flush().expect("flush sidecar commit");
+        }
+
+        {
+            let db = sled::open(&config.db_path).expect("open test db for archive corruption");
+            let ciphertext_archive_tree = db
+                .open_tree("shielded_ciphertexts_by_index")
+                .expect("ciphertext archive tree");
+            let mut corrupted = test_transfer_ciphertext_bytes();
+            corrupted[0] ^= 1;
+            ciphertext_archive_tree
+                .insert(0u64.to_be_bytes(), corrupted)
+                .expect("corrupt canonical archive");
+            db.flush().expect("flush archive corruption");
+        }
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("startup must reject committed sidecar archive hash drift"),
+            Err(err) => err,
+        };
+        let err = format!("{err:?}");
+        assert!(
+            err.contains("canonical DA ciphertext hash mismatch"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn wallet_archive_rpcs_are_paginated_and_wallet_compatible() {
         use base64::Engine;
 

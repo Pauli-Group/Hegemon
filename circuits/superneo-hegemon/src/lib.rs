@@ -2911,6 +2911,36 @@ pub fn encode_native_tx_leaf_artifact_bytes(artifact: &NativeTxLeafArtifact) -> 
     encode_native_tx_leaf_artifact(artifact)
 }
 
+fn ensure_native_tx_leaf_artifact_canonical_encoding(
+    artifact: &NativeTxLeafArtifact,
+    artifact_bytes: &[u8],
+) -> Result<()> {
+    let canonical = encode_native_tx_leaf_artifact(artifact)?;
+    ensure!(
+        canonical == artifact_bytes,
+        "native tx-leaf artifact must use canonical encoding"
+    );
+    Ok(())
+}
+
+pub fn decode_native_tx_leaf_artifact_canonical_bytes(
+    artifact_bytes: &[u8],
+) -> Result<NativeTxLeafArtifact> {
+    decode_native_tx_leaf_artifact_canonical_bytes_with_params(
+        &native_backend_params(),
+        artifact_bytes,
+    )
+}
+
+pub fn decode_native_tx_leaf_artifact_canonical_bytes_with_params(
+    params: &NativeBackendParams,
+    artifact_bytes: &[u8],
+) -> Result<NativeTxLeafArtifact> {
+    let artifact = decode_native_tx_leaf_artifact_with_params(params, artifact_bytes)?;
+    ensure_native_tx_leaf_artifact_canonical_encoding(&artifact, artifact_bytes)?;
+    Ok(artifact)
+}
+
 pub fn native_tx_leaf_record_from_artifact(artifact: &NativeTxLeafArtifact) -> NativeTxLeafRecord {
     NativeTxLeafRecord {
         params_fingerprint: artifact.params_fingerprint,
@@ -3319,6 +3349,7 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     artifact_bytes: &[u8],
 ) -> Result<NativeTxLeafMetadata> {
     let artifact = decode_native_tx_leaf_artifact_with_params(params, artifact_bytes)?;
+    ensure_native_tx_leaf_artifact_canonical_encoding(&artifact, artifact_bytes)?;
     ensure!(
         artifact.version == native_tx_leaf_artifact_version(params),
         "unsupported native tx-leaf artifact version {}",
@@ -5290,6 +5321,7 @@ mod tests {
         name: String,
         artifact_hex: String,
         expected_valid: bool,
+        expected_canonical_valid: bool,
         expected_summary: Option<LeanNativeTxLeafArtifactSummary>,
     }
 
@@ -5780,15 +5812,21 @@ mod tests {
     }
 
     #[test]
-    fn native_tx_leaf_artifact_defaults_missing_backend_byte_to_plonky3() {
+    fn native_tx_leaf_artifact_canonical_admission_rejects_missing_backend() {
         let witness = sample_witness(19);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
         let built = sample_native_tx_leaf_artifact(19);
         let mut legacy_bytes = built.artifact_bytes.clone();
         legacy_bytes.pop().expect("proof backend byte");
-        let metadata =
-            verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes).unwrap();
-        assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
+        let decoded = decode_native_tx_leaf_artifact_bytes(&legacy_bytes).unwrap();
+        assert_eq!(decoded.proof_backend, TxProofBackend::Plonky3Fri);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes)
+            .expect_err("release verifier must reject missing-backend alternate encoding");
+        assert!(
+            err.to_string().contains("canonical encoding"),
+            "unexpected error: {err}"
+        );
+        assert!(decode_native_tx_leaf_artifact_canonical_bytes(&legacy_bytes).is_err());
     }
 
     #[test]
@@ -5813,6 +5851,14 @@ mod tests {
                 "{}: production decode result disagreed with Lean expectation: {:?}",
                 case.name,
                 decoded.as_ref().err()
+            );
+            let canonical_decoded = decode_native_tx_leaf_artifact_canonical_bytes(&artifact_bytes);
+            assert_eq!(
+                canonical_decoded.is_ok(),
+                case.expected_canonical_valid,
+                "{}: production canonical decode result disagreed with Lean expectation: {:?}",
+                case.name,
+                canonical_decoded.as_ref().err()
             );
 
             let Some(expected) = case.expected_summary else {

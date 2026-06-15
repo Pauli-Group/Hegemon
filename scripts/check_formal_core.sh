@@ -330,6 +330,7 @@ HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS="$LEAN_BLOCK_ARTIFACT_BIND
   cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture
   cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture
   cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture
+  cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS="$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_commitment_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS="$LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS" \

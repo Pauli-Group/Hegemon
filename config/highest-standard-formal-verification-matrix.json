@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.70,
+  "overall_completion_percent": 81.89,
   "last_full_formal_core": {
     "commit": "working-tree-pre-commit",
-    "status": "passed locally 2026-06-15T13:29:15Z",
+    "status": "passed locally 2026-06-15T14:02:09Z",
     "claims": 115,
-    "named_lean_theorems": 1553,
+    "named_lean_theorems": 1556,
     "production_eligible_claims": 105,
     "blueprint_edges": 481,
     "falsification_cases": 452,
@@ -49,73 +49,73 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the materialized consensus transfer-filter projection slice and hardened committed sidecar replay. The materialized consensus DA-blob refinement now derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before applying the concrete Consensus.DaRoot.daBlob theorem. Production canonical replay, artifact verification, memory replay, reorg replay, and startup canonical-index repair now use an archive-aware sidecar materializer, so committed sidecar ciphertexts remain replayable after mined commit removes staged DA rows while still checking hash and size. Rust regressions exercise canonical-index rebuild rows, sync block_range rows, and committed archive replay.",
+    "summary": "Proved the strict native tx-leaf artifact admission slice and hardened committed sidecar startup replay. The Lean native tx-leaf artifact model now separates permissive legacy parsing from strict release verifier admission and proves explicit-backend artifacts parse while missing-backend encodings reject. Production verification now re-encodes decoded native tx-leaf artifacts before proof verification, so alternate missing-backend encodings cannot reach the verifier. Startup reopen now has a regression for committed sidecar archive hash drift, rejecting corrupted canonical archive bytes before accepting replayed state.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
-      "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
-      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
-      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean"
+      "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
+      "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.raw_ingress_production_projection_lifts_transfer_filter_facts",
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transfer_filtered_projection_rows_feed_transaction_new",
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob"
+      "Hegemon.Native.TxLeafArtifact.strict_valid_artifact_parses",
+      "Hegemon.Native.TxLeafArtifact.strict_missing_backend_rejects",
+      "Hegemon.Native.TxLeafArtifact.strict_legacy_missing_backend_rejects"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for Hegemon.Native.MaterializedConsensusDaBlobRefinement, Hegemon.Native.MaterializedSidecarDaBlobPublication, Hegemon.Native.SyncBlockReplayPublication, and Hegemon",
+      "lean_formal": "lake build Hegemon.Native.TxLeafArtifact Hegemon.Native.GenerateTxLeafArtifactVectors passed locally",
       "targeted_rust": [
-        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally",
-        "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally",
-        "cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture passed locally"
+        "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture passed locally",
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture passed locally",
+        "cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T13:29:15Z with 115 theorem-backed claims, 1553 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 452 falsification cases, 202 implementation bindings, 160 result obligations, 142 order constraints / 370 order edges, and 128 dominance constraints / 338 dominance edges",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T14:02:09Z with 115 theorem-backed claims, 1556 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 452 falsification cases, 202 implementation bindings, 160 result obligations, 142 order constraints / 370 order edges, and 128 dominance constraints / 338 dominance edges",
       "claims": 115,
-      "named_lean_theorems": 1553,
+      "named_lean_theorems": 1556,
       "production_eligible_claims": 105,
       "blueprint_edges": 481,
       "falsification_cases": 452,
       "implementation_bindings": 202
     },
     "known_limitations": [
-      "The slice still does not prove arbitrary-byte parser internals for SCALE/bincode/JSON inputs.",
-      "The Lean materialized publication projection theorem consumes named production projection facts; the Rust regressions check canonical-index rebuild, sync block_range publication, and committed archive replay but are not a full extraction proof for every valid mined/announced/reorg/startup path.",
+      "The strict tx-leaf admission slice proves the native tx-leaf artifact backend-byte canonicality boundary, not arbitrary-byte parser internals for every SCALE/bincode/JSON input.",
+      "The startup archive-drift regression covers committed sidecar ciphertext hash mismatch on reopen; it is not yet a complete restart theorem for every persisted supply, nullifier, commitment, sidecar, and bridge replay field together.",
       "Hash security, DA availability, proof-system soundness, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
-    "date": "2026-06-14",
-    "summary": "Bound live hegemon_submitAction bridge ingress to the same Lean-backed bridge payload admission chain used by native block and action validation. Bridge RPC submissions now construct zero-delta pending actions, then run validate_action_state through validate_pending_action_against_mempool_state and validate_bridge_action_payload before action hashing, sled insertion, durability flush, or pending-map publication.",
+    "date": "2026-06-15",
+    "summary": "Bound strict native tx-leaf artifact canonical admission into the production verifier path before heavy proof verification. Production now decodes, re-encodes, and byte-compares native tx-leaf artifacts so release verification rejects legacy missing-backend encodings even though the permissive decoder still exists for review and legacy inspection.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs NativeNode::validate_and_stage_action",
-      "node/src/native/mod.rs NativeNode::validate_action_state",
-      "node/src/native/mod.rs validate_pending_action_against_mempool_state",
-      "node/src/native/mod.rs validate_bridge_action_payload"
+      "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params",
+      "circuits/superneo-hegemon/src/lib.rs decode_native_tx_leaf_artifact_canonical_bytes_with_params",
+      "circuits/superneo-hegemon/src/lib.rs ensure_native_tx_leaf_artifact_canonical_encoding",
+      "node/src/native/mod.rs NativeNode::open committed sidecar archive replay validation"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.BridgeActionPayloadAdmission.*",
-      "Hegemon.Native.BridgeMintSafety.*",
-      "Hegemon.Native.ActionRequestProjectionAdmission.*"
+      "Hegemon.Native.TxLeafArtifact.strict_*",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.*",
+      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p hegemon-node submit_action_routes_bridge_payload_admission_before_staging --lib --no-default-features -- --nocapture"
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture",
+        "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture",
+        "cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-14T04:09:30Z",
-      "claims": 100,
-      "named_lean_theorems": 1373,
-      "production_eligible_claims": 90,
-      "falsification_cases": 413,
-      "implementation_bindings": 200,
-      "implementation_result_obligations": 158,
+      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-15T14:02:09Z",
+      "claims": 115,
+      "named_lean_theorems": 1556,
+      "production_eligible_claims": 105,
+      "falsification_cases": 452,
+      "implementation_bindings": 202,
+      "implementation_result_obligations": 160,
       "implementation_dominance_constraints": 128,
-      "implementation_dominance_edges": 339,
+      "implementation_dominance_edges": 338,
       "implementation_order_constraints": 142,
-      "implementation_order_edges": 371
+      "implementation_order_edges": 370
     },
     "known_limitations": [
-      "No new Lean theorem was added in this slice; it binds the existing bridge action payload admission and bridge mint-safety theorem families to live RPC bridge ingress.",
-      "The focused regression covers empty outbound payload and empty inbound receipt rejection before staging; replay, destination, payload-hash, and receipt-output regressions remain covered by the existing bridge validation tests and vector gates.",
-      "External-chain proof soundness, the future PQ-clean bridge mint grammar, bridge payload-hash security, and complete raw-byte native-node equivalence remain separate open work."
+      "Strict native tx-leaf admission does not prove full proof-system soundness or AIR/SmallWood equivalence.",
+      "The permissive artifact decoder is intentionally retained for non-release inspection; release verification goes through the strict canonical admission helper.",
+      "Complete raw-byte native-node equivalence, arbitrary parser internals, and external cryptographic assumptions remain separate open work."
     ]
   },
   "properties": [
@@ -496,7 +496,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 82,
+      "completion_percent": 85,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -514,7 +514,10 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean proves accepted native tx-leaf artifact parsing exposes bounded serialized/public/proof/commitment/backend shape facts before composing the parsed artifact with the canonical statement surface",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean derives decoded-row/raw-replay row agreement from accepted block-action decode plus accepted action wire-replay projection before raw canonical publication",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now packages decoded, validated, materialized, and wire-replay row agreement under named production projection facts",
-        "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode before validation/materialization/wire projection"
+        "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode before validation/materialization/wire projection",
+        "formal/lean/Hegemon/Native/TxLeafArtifact.lean now separates permissive parser backend-byte defaults from strict release verifier admission, proving strict explicit-backend acceptance and strict missing-backend rejection",
+        "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params now rejects noncanonical native tx-leaf artifacts whose decoded canonical encoding differs from the supplied bytes",
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression"
       ],
       "missing_work": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates.",
@@ -561,7 +564,8 @@
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean now lifts production decoded/validated/materialized/wire projection row agreement through the materialized sidecar DA publication surface",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild rows are derived from the same decoded/materialized/planned/wire projection path",
         "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks production sync block_range rows against the same decoded/materialized/planned/wire projection path",
-        "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks committed sidecar ciphertext replay uses the canonical archive after staged DA cleanup while preserving hash/size binding"
+        "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks committed sidecar ciphertext replay uses the canonical archive after staged DA cleanup while preserving hash/size binding",
+        "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks startup reopen rejects corrupted canonical sidecar archive bytes before accepting replayed state"
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
@@ -595,7 +599,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 86,
+      "completion_percent": 87,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -622,6 +626,7 @@
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild ciphertext archive/index rows and bridge replay rows against decoded/materialized/planned/wire projection rows",
         "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks sync block_range publication rows against decoded/materialized/planned/wire projection rows",
         "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks canonical replay/rebuild can materialize committed sidecar bytes from the canonical archive after mined commit removes staged DA rows, while still validating ciphertext hash and declared size",
+        "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks reopened nodes fail closed when committed sidecar archive bytes no longer match the action ciphertext hash",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before the concrete DA-blob theorem"
       ],
       "missing_work": [

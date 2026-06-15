@@ -5072,7 +5072,7 @@
       "id": "formal.native-tx-leaf-artifact-wire",
       "component": "native tx-leaf artifact wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf artifact kernel proves executable parse facts for the bounded wire grammar, including fixed headers, serialized STARK/public-tx count caps, proof-length caps, commitment row caps, backend-byte defaults, bad backend rejection, trailing-byte rejection, and truncation rejection; generated Lean vectors are checked against the production superneo-hegemon decoder and canonical encoder.",
+      "summary": "The Lean native tx-leaf artifact kernel proves executable parse facts for the bounded wire grammar, including fixed headers, serialized STARK/public-tx count caps, proof-length caps, commitment row caps, backend-byte defaults, strict canonical backend-byte admission, bad backend rejection, trailing-byte rejection, and truncation rejection; generated Lean vectors are checked against the production superneo-hegemon decoder, canonical decoder, and canonical encoder.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5091,12 +5091,15 @@
         "Hegemon.Native.TxLeafArtifact.rejects_too_many_rows",
         "Hegemon.Native.TxLeafArtifact.rejects_trailing_after_backend",
         "Hegemon.Native.TxLeafArtifact.rejects_truncated_artifact",
+        "Hegemon.Native.TxLeafArtifact.strict_legacy_missing_backend_rejects",
+        "Hegemon.Native.TxLeafArtifact.strict_missing_backend_rejects",
+        "Hegemon.Native.TxLeafArtifact.strict_valid_artifact_parses",
         "Hegemon.Native.TxLeafArtifact.valid_artifact_parses"
       ],
       "assumptions": [
         "The Lean model covers the native tx-leaf artifact byte grammar and parser control flow, not lattice commitment security, STARK proof soundness, or statement-digest collision resistance.",
-        "Generated Lean conformance vectors cover valid explicit-backend artifacts, missing-backend default behavior, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, proof-length cap rejection, row/coeff caps, and truncation rejection.",
-        "The production conformance test checks decoder agreement and canonical re-encoding behavior in superneo-hegemon; consensus receipt binding and statement-hash semantics are covered by separate claims."
+        "Generated Lean conformance vectors cover valid explicit-backend artifacts, permissive parser missing-backend default behavior, strict canonical rejection of missing-backend artifacts, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, proof-length cap rejection, row/coeff caps, and truncation rejection.",
+        "The production conformance test checks decoder agreement, strict canonical decoder agreement, and canonical re-encoding behavior in superneo-hegemon; production verification uses the strict canonical admission path before proof verification, while consensus receipt binding and statement-hash semantics are covered by separate claims."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",

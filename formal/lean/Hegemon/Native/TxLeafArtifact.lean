@@ -191,6 +191,13 @@ def parseNativeTxLeafArtifact (input : List Byte) : Option TxLeafSummary := do
     proofBackend
   }
 
+def parseNativeTxLeafArtifactStrict (input : List Byte) : Option TxLeafSummary := do
+  let summary ← parseNativeTxLeafArtifact input
+  if summary.hasExplicitBackend then
+    some summary
+  else
+    none
+
 structure TxLeafWireFields where
   version : Nat
   inputFlags : List Byte
@@ -423,6 +430,21 @@ theorem missing_backend_defaults_to_current_backend :
 
 theorem legacy_missing_backend_defaults_to_plonky3 :
     parseNativeTxLeafArtifact legacyMissingBackendArtifact = some legacyMissingBackendSummary := by
+  set_option maxRecDepth 50000 in
+  decide
+
+theorem strict_valid_artifact_parses :
+    parseNativeTxLeafArtifactStrict validArtifact = some validSummary := by
+  set_option maxRecDepth 50000 in
+  decide
+
+theorem strict_missing_backend_rejects :
+    parseNativeTxLeafArtifactStrict missingBackendArtifact = none := by
+  set_option maxRecDepth 50000 in
+  decide
+
+theorem strict_legacy_missing_backend_rejects :
+    parseNativeTxLeafArtifactStrict legacyMissingBackendArtifact = none := by
   set_option maxRecDepth 50000 in
   decide
 
