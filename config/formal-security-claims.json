@@ -5530,6 +5530,50 @@
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
       ]
+    },
+    {
+      "id": "native.materialized-sidecar-da-blob-publication",
+      "component": "native materialized sidecar DA blob publication",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean materialized sidecar DA blob publication surface composes the raw-ingress full-byte publication facts with native tx-leaf ciphertext/hash binding facts, exposing that accepted sidecar ciphertext materialization, wire replay rows, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, tx-leaf ciphertext hash rows, and replay publication are reviewed as one theorem package.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_raw_ingress_da_and_tx_leaf_publication_surfaces",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.MaterializedSidecarDaBlobPublication.accepted_materialized_sidecar_da_blob_publication"
+      ],
+      "assumptions": [
+        "This is a zero-runtime-cost Lean composition over the accepted raw-ingress full-byte publication surface and existing native tx-leaf statement artifact binding facts.",
+        "The theorem keeps materialized-row-to-Transaction::new equivalence, Transaction::new-to-consensus-DA-blob equivalence, DA-root hash/security equivalence, DA availability, proof-system soundness, and complete native-node equivalence as explicit propositions.",
+        "The theorem does not prove arbitrary byte parser internals, hash collision resistance, Reed-Solomon or network DA availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or full native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-materialized-sidecar-da-blob-publication-assumptions-explicit",
+          "description": "The theorem makes the accepted sidecar/DA/tx-leaf publication chain reviewable but leaves row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, proof soundness, and complete native-node refinement explicit.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     }
   ]
 }

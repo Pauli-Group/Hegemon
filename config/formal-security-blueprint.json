@@ -9777,6 +9777,58 @@
         }
       ],
       "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, and parsed tx-leaf artifact facts. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
+    },
+    {
+      "id": "native.materialized-sidecar-da-blob-publication",
+      "claim_id": "native.materialized-sidecar-da-blob-publication",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean materialized sidecar DA blob publication surface, accepted raw-ingress full-byte publication facts plus explicit materialized-row and DA construction assumptions imply a single record carrying sidecar materialization, wire replay DA-row binding, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, native tx-leaf ciphertext hash and payload hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
+      "informal_argument": "`accepted_materialized_sidecar_da_blob_publication` consumes `RawIngressFullBytePublicationFacts` and projects the nested DA sidecar, wire replay, canonical replay, and native tx-leaf full statement artifact fields into one review record. The theorem makes the production bridge from materialized sidecar rows to DA publication auditable while keeping row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof soundness, and full native-node equivalence explicit.",
+      "depends_on": [
+        "native.raw-ingress-full-byte-publication-surface",
+        "native.raw-ingress-da-sidecar-canonical-publication",
+        "native.da-sidecar-replay-binding",
+        "formal.native-tx-leaf-canonical-surface",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication and tx-leaf ciphertext binding facts. DA availability, DA-root hash/security equivalence, row-to-Transaction::new equivalence, proof soundness, and complete native-node refinement remain explicit assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-materialized-sidecar-da-blob-publication-theorem",
+          "description": "Removing or weakening the materialized sidecar DA blob publication theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-materialized-sidecar-da-blob-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. It does not prove arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, or complete native-node refinement."
     }
   ]
 }
