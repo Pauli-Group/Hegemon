@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.44,
+  "overall_completion_percent": 81.52,
   "last_full_formal_core": {
     "commit": "3c2662e9ed9cfc62ac0fe7ebc7b8a57ffb6a74a0",
     "status": "passed locally 2026-06-15T11:48:56Z",
@@ -48,46 +48,33 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the P3 public-input binding/proof-boundary slice and strengthened replay-row implementation equivalence. Successful public/serialized transaction binding now exposes theorem-level P3 field facts for merkle root, fee, signed value balance, input/output flags, balance-slot assets, and stablecoin payload fields, and those facts are carried through the canonical deployed-verifier surface. Block-action and sync replay publication now derive row/count agreement from accepted action wire-replay projection plus shared decoded-row premises instead of taking those equalities directly.",
+    "summary": "Proved the all-active native privacy secret-resampling slice. Selected and all-active native public metadata output-row packages now survive independent left/right private-witness and prover-randomness resampling while carrying public metadata leakage, batch/timing leakage, raw-wire indistinguishability, and the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, and network metadata assumptions.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
-      "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean"
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.PublicInputBinding.stablecoinBindingMatches_true_fields",
-      "Hegemon.Transaction.PublicInputBinding.bindPublicInputs_some_implies_p3_binding_facts",
-      "Hegemon.Transaction.PublicInputBinding.validBinding_true_has_p3_binding_facts",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_p3_public_input_binding_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_canonical_surface_public_input_p3_binding_facts",
-      "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_replay_row_count",
-      "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_bridge_replay_count",
-      "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions",
-      "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_derives_decoded_rows_match_raw_replay",
-      "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows"
+      "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for PublicInputBinding, CanonicalVerifierBoundary, ProofSystemBoundary, BlockActionReplayPublication, SyncBlockReplayPublication, and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for Hegemon.Privacy.NativeObserverSurface, Hegemon.Privacy.CiphertextPrivacy, and Hegemon with 131 jobs",
       "targeted_rust": [
-        "cargo test -p transaction-circuit lean_generated_public_input_binding_vectors_match_production passed",
-        "cargo test -p transaction-circuit lean_generated_proof_wrapper_admission_vectors_match_production passed",
-        "cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production passed",
-        "cargo test -p consensus lean_generated_native_tx_leaf_admission_vectors_match_production passed",
-        "cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production passed"
+        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib passed"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T11:48:56Z with 115 theorem-backed claims, 1543 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T12:10:07Z with 115 theorem-backed claims, 1546 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1543,
+      "named_lean_theorems": 1546,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The P3 public-input theorem surface does not discharge STARK/AIR/SmallWood soundness, witness extraction, hash security, bincode/postcard parser correctness beyond checked conformance vectors, or full verifier/native-node refinement.",
-      "The replay-row derivation still assumes production construction of the accepted wire replay projection from raw decoded bytes; arbitrary parser internals and complete raw-byte refinement remain explicit work.",
+      "The slice does not discharge ML-KEM, AEAD, KDF, RNG, hash security, or implementation-equivalence assumptions for those primitives.",
+      "The slice keeps simulator zero knowledge, wallet metadata hygiene, timing/batching policy, network metadata policy, and raw-wire indistinguishability as explicit assumptions rather than hidden conclusions.",
       "No runtime path changed in this zero-cost Lean composition."
     ]
   },
@@ -417,7 +404,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 56,
+      "completion_percent": 57,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -448,7 +435,8 @@
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem",
-        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected decrypt-to-commitment/projected-DA hash boundary with that open-assumption privacy boundary so deterministic observer leakage, secret-resampling stability, same-wire discharge, and the explicit privacy assumptions travel with the native selected-output implementation evidence"
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected decrypt-to-commitment/projected-DA hash boundary with that open-assumption privacy boundary so deterministic observer leakage, secret-resampling stability, same-wire discharge, and the explicit privacy assumptions travel with the native selected-output implementation evidence",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves selected and all-active native public metadata output-row packages survive independent left/right private-witness and prover-randomness resampling while carrying explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, and network metadata assumptions"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, sidecar privacy, and raw-wire indistinguishability assumptions.",
