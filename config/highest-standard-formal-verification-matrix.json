@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 79.27,
+  "overall_completion_percent": 79.38,
   "last_full_formal_core": {
     "commit": "2552c5c0d66c406cd5a46cd8182a5af0e580484c",
     "status": "passed locally 2026-06-15T06:11:03Z",
@@ -50,7 +50,7 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened raw-ingress implementation equivalence with action-hash/tx-leaf, DA-sidecar/canonical, full-byte publication, materialized sidecar DA-blob publication, and materialized transfer no-theft publication surfaces. The slice flattens accepted exact pending-action decode, block-action decode, action-hash admission, wire replay projection, DA sidecar publication, raw canonical publication, parsed tx-leaf artifact shape/projection, native tx-leaf full statement artifact facts, tx-leaf ciphertext hash/payload binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, active-input no-theft, and total input-slot authorization over the same raw ledger/tree replay witness while keeping parser, hash, DA availability, proof-system, storage, row-to-DA-blob, deployed verifier, and full native-node assumptions explicit.",
+    "summary": "Strengthened raw-ingress implementation equivalence with action-hash/tx-leaf, DA-sidecar/canonical, full-byte publication, materialized sidecar DA-blob publication, materialized transfer no-theft publication surfaces, and selected-output privacy/ciphertext DA-hash binding. The slice flattens accepted exact pending-action decode, block-action decode, action-hash admission, wire replay projection, DA sidecar publication, raw canonical publication, parsed tx-leaf artifact shape/projection, native tx-leaf full statement artifact facts, tx-leaf ciphertext hash/payload binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, active-input no-theft, total input-slot authorization, selected recipient decrypt-to-commitment binding, and both privacy-game worlds' projected DA preimages under the public ciphertext-hash predicate while keeping parser, hash, DA availability, proof-system, storage, row-to-DA-blob, deployed verifier, ML-KEM, AEAD, KDF, RNG, wire indistinguishability, and full native-node assumptions explicit.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
       "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
@@ -63,7 +63,8 @@
       "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
       "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
       "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
-      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
+      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
@@ -77,14 +78,15 @@
       "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.accepted_raw_ingress_da_sidecar_canonical_publication",
       "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface",
       "Hegemon.Native.MaterializedSidecarDaBlobPublication.accepted_materialized_sidecar_da_blob_publication",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication"
+      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for MaterializedTransferNoTheftPublication and Hegemon",
+      "lean_formal": "targeted lake build passed locally for NativeObserverSurface and Hegemon",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T06:11:03Z with 113 claims, 1482 named Lean theorem declarations, 103 production-eligible claims/nodes, 471 blueprint edges, 440 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T06:58:13Z with 113 claims, 1483 named Lean theorem declarations, 103 production-eligible claims/nodes, 471 blueprint edges, 440 falsification cases, and 200 implementation bindings",
       "claims": 113,
-      "named_lean_theorems": 1482,
+      "named_lean_theorems": 1483,
       "production_eligible_claims": 103,
       "blueprint_edges": 471,
       "falsification_cases": 440,
@@ -103,7 +105,8 @@
       "The DA-sidecar/canonical theorem composes sidecar admission, DA-root binding, proof sidecar metadata, canonical publication, replayed supply, and commitment-root publication over the same raw witness while keeping DA availability, hash security, storage durability, proof soundness, and full native-node equivalence explicit.",
       "The full-byte publication surface flattens nested accepted-predicate facts for review; arbitrary-byte parser internals and parser-to-canonical vector projection remain explicit assumptions.",
       "The materialized sidecar DA-blob publication theorem exposes sidecar materialization, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash/payload binding, replayed supply, and final replay-set uniqueness together, but keeps materialized-row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, proof soundness, and complete native-node equivalence explicit.",
-      "The materialized transfer no-theft theorem ties materialized DA publication to active-input no-theft and total input-slot authorization on the same tx-leaf/statement/replay surface, but keeps deployed verifier soundness, witness extraction, DA availability, hash security, storage durability, and complete native-node equivalence explicit."
+      "The materialized transfer no-theft theorem ties materialized DA publication to active-input no-theft and total input-slot authorization on the same tx-leaf/statement/replay surface, but keeps deployed verifier soundness, witness extraction, DA availability, hash security, storage durability, and complete native-node equivalence explicit.",
+      "The selected-output privacy/ciphertext DA-hash theorem proves recipient-decrypted selected rows reconstruct the statement/proof-bound output commitment while both same-shape privacy-game worlds expose projected DA preimages satisfying the public ciphertext-hash predicate, but keeps BLAKE3/hash security, ML-KEM/AEAD/KDF/RNG security, raw-wire indistinguishability, simulator zero knowledge, wallet metadata privacy, DA-root inclusion, and full wallet/native-node equivalence explicit."
     ]
   },
   "last_production_binding_slice": {
@@ -247,7 +250,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 79,
+      "completion_percent": 80,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -452,7 +455,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 79,
+      "completion_percent": 80,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -480,6 +483,7 @@
         "crypto/src/note_encryption.rs decrypt fail-closed regressions for wrong recipient, wrong secret key, version tamper, and KEM/note/memo payload malleation",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean proves decrypted plaintext plus recipient material exports the same abstract note commitment relation used by spend authorization and active public output slots",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes selected native tx-leaf observer rows, same-shape ciphertext privacy games, wallet decrypt success, and plaintext-to-commitment binding so recipient-decrypted selected output rows reconstruct the exact statement/proof-bound output commitment",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes recipient decrypt-to-commitment with the selected same-shape privacy-game projected-DA boundary so both worlds' selected DA preimages satisfy the explicit public ciphertext-hash predicate while the selected output reconstructs the statement/proof-bound commitment",
         "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean and generated Rust conformance vectors bind that abstract note commitment relation to the deployed input order and byte-limb grammar",
         "wallet/src/viewing.rs full-view decrypt regression proves recovered NoteData, input witness, output witness, and plaintext-derived commitment agree",
         "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, decoded native tx-leaf ciphertext hashes recomputed from decoded note DA bytes, and a verifying native tx-leaf artifact",
