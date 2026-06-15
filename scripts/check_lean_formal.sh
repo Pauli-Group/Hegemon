@@ -110,6 +110,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GeneratePendingActionReloadVectors.lean
   lake env lean Hegemon/Native/ActionScopeAdmission.lean
   lake env lean Hegemon/Native/GenerateActionScopeAdmissionVectors.lean
+  lake env lean Hegemon/Native/BlockActionValidation.lean
+  lake env lean Hegemon/Native/BlockActionReplayPublication.lean
   lake env lean Hegemon/Native/BridgeActionPayloadAdmission.lean
   lake env lean Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean
   lake env lean Hegemon/Native/BridgeWitnessBackscan.lean
@@ -162,6 +164,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/CanonicalPublicationRefinement.lean
   lake env lean Hegemon/Native/PendingActionByteParserRefinement.lean
   lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean
+  lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean
   lake env lean Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean
   lake env lean Hegemon/Native/RawIngressBridgePendingActionPublication.lean
   lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean
@@ -189,6 +192,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Release/PqBinaryPolicy.lean
   lake env lean Hegemon/Release/GeneratePqBinaryPolicyVectors.lean
   lake env lean Hegemon/Native/TxLeafArtifact.lean
+  lake env lean Hegemon/Native/TxLeafArtifactProjectionRefinement.lean
   lake env lean Hegemon/Native/GenerateTxLeafArtifactVectors.lean
   lake env lean Hegemon/Native/ReceiptRoot.lean
   lake env lean Hegemon/Native/GenerateReceiptRootVectors.lean

@@ -38,6 +38,7 @@ import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.ActionScopeAdmission
 import Hegemon.Native.AnnouncedBlockAdmission
 import Hegemon.Native.BlockActionValidation
+import Hegemon.Native.BlockActionReplayPublication
 import Hegemon.Native.BlockIndexReload
 import Hegemon.Native.BridgeReplayReload
 import Hegemon.Native.CanonicalStateReload
@@ -75,6 +76,7 @@ import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
+import Hegemon.Native.PendingActionByteReplayRowCountBinding
 import Hegemon.Native.RawIngressBridgePendingActionPublication
 import Hegemon.Native.RawIngressTransferNoTheftPublication
 import Hegemon.Native.SidecarUploadAdmission
@@ -85,6 +87,7 @@ import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferNoTheftBoundary
 import Hegemon.Native.TransferStateAdmission
+import Hegemon.Native.TxLeafArtifactProjectionRefinement
 import Hegemon.Native.TxLeafCanonicalSurface
 import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission

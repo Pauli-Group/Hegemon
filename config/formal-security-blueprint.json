@@ -7971,6 +7971,60 @@
       "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. A separate production binding and regression require arrival-time-insensitive semantic duplicate rejection before transfer/replay state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash or pending_action_semantic_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence."
     },
     {
+      "id": "native.block-action-replay-publication",
+      "claim_id": "native.block-action-replay-publication",
+      "kind": "target_claim",
+      "formal_statement": "If decoded block-action validation accepts and block replay accepts for the corresponding replay input, and the validation summary row count and imported bridge replay count match the replay summary, then the accepted publication surface exposes action-hash preconditions, all decoded validation rows consumed, replay-row agreement, bridge replay-count agreement, canonical replay trace order, accepted action-stream facts, commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts` composes the already checked decoded-action validation kernel with the block replay/accounting kernel. `accepted_actions_from_counts_rows` proves the recursive validation evaluator consumes every decoded validation row, `accepted_block_action_validation_hash_preconditions` extracts action hash/count uniqueness preconditions from acceptance, and `accepted_block_action_validation_counts_all_rows` specializes the row-count theorem to top-level block validation. The theorem then reuses `accepted_trace_is_canonical`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, `accepted_claims_expected_supply`, and `accepted_forbids_counterfeit_state_root` from block replay, while keeping the validation-to-replay row/count projection as explicit premises.",
+      "depends_on": [
+        "native.block-action-validation",
+        "native.block-replay-refinement",
+        "native.block-commitment-admission",
+        "native.block-action-hash-admission",
+        "native.transfer-state-admission",
+        "bridge.inbound-replay-state",
+        "shielded.nullifier-state",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "node/src/native/mod.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a Lean composition theorem that names the decoded-action-validation to replay-publication boundary. It deliberately keeps the production projection from decoded validation rows to replay rows as explicit premises until arbitrary raw-byte and native-node refinement are mechanized."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-block-action-replay-publication-theorem",
+          "description": "Removing or weakening the block-action replay publication theorem must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-block-action-replay-publication-claim",
+          "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the block-action replay publication theorem.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node is a theorem-level publication composition over accepted decoded block-action validation and accepted block replay. It does not prove arbitrary raw SCALE/bincode decoding, the production projection from decoded validation rows to replay rows, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, PoW threshold validity, or complete native-node equivalence."
+    },
+    {
       "id": "native.block-commitment-admission",
       "claim_id": "native.block-commitment-admission",
       "kind": "target_claim",
@@ -8634,6 +8688,119 @@
         }
       ],
       "scope_boundary": "This node proves a raw-ingress/pending-action/canonical-publication/tx-leaf composition over accepted production-bound predicates. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root/action-hash security or implementation equivalence, DA availability or retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
+    },
+    {
+      "id": "native.pending-action-byte-replay-row-count-binding",
+      "claim_id": "native.pending-action-byte-replay-row-count-binding",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean pending-action byte and raw-ingress publication surfaces, accepted exact pending-action decode, accepted block-action decode, accepted wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, and accepted decoded block-action validation imply replay row-count agreement with decoded payload rows and, under an explicit validation-row projection equality, replay row-count agreement with validated action rows.",
+      "informal_argument": "`Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_replay_row_counts` composes exact decode, block-action decode declared-count binding, and accepted wire replay projection to derive replay row-count equality. `pending_action_byte_publication_facts_bind_replay_row_counts` extracts the same facts from `PendingActionBytePublicationFacts`. `accepted_actions_from_validated_count` and `accepted_block_action_validation_validated_count` prove the recursive block-action validation evaluator consumes every accepted validation row. `accepted_pending_action_byte_decode_binds_validated_replay_row_counts` and `raw_ingress_pending_action_publication_binds_validated_replay_row_counts` then connect decoded payload rows, wire replay rows, and validated action rows while keeping the production decoded-action-to-validation-row equality as an explicit implementation-equivalence premise.",
+      "depends_on": [
+        "native.codec-admission",
+        "native.pending-action-reload",
+        "native.raw-ingress-pending-action-publication-refinement",
+        "native.block-action-validation",
+        "native.block-action-hash-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean",
+        "formal/lean/Hegemon.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean composition that names the pending-action parser/publication replay-row binding and validated-row boundary. Scope keeps arbitrary raw parser internals and production decoded-action-to-validation-row projection explicit."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-pending-action-byte-replay-row-count-binding-theorem",
+          "description": "Removing or weakening the pending-action byte replay row-count binding theorem set must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-pending-action-byte-replay-row-count-binding-claim",
+          "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the pending-action byte replay row-count binding theorem set.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves a parser/publication/validation row-count composition over accepted production-bound predicates. It does not prove arbitrary raw SCALE/bincode parser correctness, production decoded-action-to-validation-row projection beyond the explicit equality premise, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, DA availability, or complete native-node equivalence."
+    },
+    {
+      "id": "native.tx-leaf-artifact-projection-refinement",
+      "claim_id": "native.tx-leaf-artifact-projection-refinement",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean tx-leaf artifact projection surface, accepted bounded native tx-leaf artifact byte parsing plus explicit canonical projection assumptions imply parsed artifact shape facts and accepted native tx-leaf/action binding. Composed with the canonical transaction statement surface, pending-action byte publication, and raw-ingress pending-action tx-leaf publication, the same tx-leaf witness carries parsed artifact shape facts and full statement/artifact facts through the publication path.",
+      "informal_argument": "`Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_bytes_expose_shape_facts` proves that accepted artifact bytes expose bounded serialized input/output/balance-slot counts, public nullifier/commitment/ciphertext-hash counts, proof length, commitment row/coeff counts, and backend explicit/default facts. `tx_leaf_projection_assumptions_accept_binding` turns the explicit parser-to-canonical projection assumptions into accepted tx-leaf/action binding. `accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifact` composes those facts with the canonical transaction statement surface and existing tx-leaf canonical-surface theorem. The pending and raw-ingress publication theorems then package the parsed artifact facts with the same accepted pending-action byte and raw-ingress pending-action tx-leaf publication surfaces already used by transfer and bridge publication proofs.",
+      "depends_on": [
+        "formal.native-tx-leaf-artifact-wire",
+        "formal.native-tx-leaf-canonical-surface",
+        "native.raw-ingress-pending-action-publication-refinement",
+        "native.codec-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean parser-shape/projection composition over the existing tx-leaf artifact parser, tx-leaf canonical surface, pending-action publication, and raw-ingress publication predicates. Scope keeps the full parser-to-canonical vector projection, proof soundness, hash security, and complete native-node refinement explicit."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-tx-leaf-artifact-projection-refinement-theorem",
+          "description": "Removing or weakening the tx-leaf artifact projection refinement theorem set must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-tx-leaf-artifact-projection-refinement-claim",
+          "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the tx-leaf artifact projection refinement theorem set and required module.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves a parser-shape/projection/publication composition over accepted production-bound predicates and explicit projection assumptions. It does not prove full raw serialization-to-canonical-vector equivalence beyond those projection assumptions, BLAKE3/BLAKE2/Poseidon2 security or implementation equivalence, deployed STARK/AIR or SmallWood soundness, native tx-leaf proof soundness, proof privacy, DA availability, sled durability, or complete native-node refinement."
     },
     {
       "id": "native.raw-ingress-transfer-no-theft-publication",
