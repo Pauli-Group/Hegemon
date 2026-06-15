@@ -182,6 +182,20 @@ theorem aad_info_distinct_from_r2i :
     sessionAadInfo ≠ responderToInitiatorInfo := by
   decide
 
+theorem aad_info_distinct_from_send
+    {role : Role} :
+    sessionAadInfo ≠ expandInfo (sendSlot role) := by
+  cases role
+  · exact aad_info_distinct_from_i2r
+  · exact aad_info_distinct_from_r2i
+
+theorem aad_info_distinct_from_recv
+    {role : Role} :
+    sessionAadInfo ≠ expandInfo (recvSlot role) := by
+  cases role
+  · exact aad_info_distinct_from_r2i
+  · exact aad_info_distinct_from_i2r
+
 theorem sample_hkdf_ikm_is_ordered_shared_secrets :
     hkdfIkm sampleSessionInput =
       sampleSessionInput.shared1 ++ sampleSessionInput.shared2 := by

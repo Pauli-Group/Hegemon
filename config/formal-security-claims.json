@@ -2599,13 +2599,15 @@
       "id": "network.pq-noise-key-schedule",
       "component": "PQ Noise handshake and session channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and an assumption-explicit handshake-to-channel composition surface: accepted authenticated PQ handshakes establish direction-separated channel facts and initial protect/open transitions use role-correct send/receive slots and counters. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, and retain the legacy secure-channel comparison surface. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Network.PqNoise.aad_info_distinct_from_i2r",
         "Hegemon.Network.PqNoise.aad_info_distinct_from_r2i",
+        "Hegemon.Network.PqNoise.aad_info_distinct_from_send",
+        "Hegemon.Network.PqNoise.aad_info_distinct_from_recv",
         "Hegemon.Network.PqNoise.finish_preimage_starts_with_domain",
         "Hegemon.Network.PqNoise.hkdf_infos_distinct",
         "Hegemon.Network.PqNoise.init_hello_preimage_starts_with_domain",
@@ -2635,13 +2637,15 @@
         "Hegemon.Network.PqNoiseHandshakeChannel.pq_recv_slot_maps_to_secure_recv",
         "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_recv_infos_distinct",
         "Hegemon.Network.PqNoiseHandshakeChannel.secure_send_recv_labels_distinct",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_pq_channel_facts",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_pq_protect_open_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_channel_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_protect_open_facts"
       ],
       "assumptions": [
         "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
         "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, and InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; they do not require new runtime work.",
-        "The handshake-to-channel theorem carries transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
+        "The PQ-native and legacy-comparison handshake-to-channel theorems carry transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
         "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, and send/receive channel-counter state transitions only. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [

@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.22,
+  "overall_completion_percent": 81.34,
   "last_full_formal_core": {
     "commit": "0ed97944c1e524782a913860ab1d5d5d460e9bf4",
     "status": "passed locally 2026-06-15T11:07:48Z",
@@ -635,7 +635,7 @@
     {
       "id": "network.pq-channel-safety",
       "weight": 3,
-      "completion_percent": 78,
+      "completion_percent": 82,
       "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
       "current_evidence": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
@@ -644,11 +644,13 @@
         "prior ML-KEM seed and AES-GCM direction separation fixes",
         "formal/lean/Hegemon/Network/SecureChannel.lean channel-state protect/open transition theorems",
         "formal/lean/Hegemon/Network/PqNoise.lean channel-state protect/open transition theorems",
-        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean composes accepted authenticated PQ handshake assumptions with direction-separated initial channel/protect/open facts"
+        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean composes accepted authenticated PQ handshake assumptions with direction-separated initial channel/protect/open facts",
+        "formal/lean/Hegemon/Network/PqNoise.lean now proves role-selected AAD label separation from both send and receive HKDF labels",
+        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now binds accepted authenticated PQ handshakes directly to the PQ-native initial channel state and initial PQ Noise protect/open transitions, including role-correct slots, zero counters, separated AAD, and distinct protect/open slots"
       ],
       "missing_work": [
         "Bind all active frame send/receive paths to the theorem-backed channel-state transitions, not only helper call propagation.",
-        "Bind production handshake completion outputs to the assumption-explicit handshake-to-channel theorem surface.",
+        "Bind production transport/session completion outputs and all active frame paths to the PQ-native handshake-to-channel theorem surface.",
         "Discharge or externally justify ML-KEM/ML-DSA/HKDF/AES-GCM assumptions."
       ],
       "performance_constraint": "No extra round trips; checks should remain key-schedule/frame-admission local."
