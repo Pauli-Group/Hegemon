@@ -1107,6 +1107,370 @@ theorem stablecoin_mint_exception_authorized_payload_bound_to_statement
           exceptionSurface.statementIssuanceMagnitude,
           exceptionSurface.bindingIssuanceDelta] }
 
+theorem authorized_stablecoin_mint_exception_surface_live_authorizes_canonical_payload
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    livePolicyAuthorizes
+      (stablecoinMintExceptionPayload publicFields assetId delta) :=
+  surface.authorizedPayload
+
+theorem authorized_stablecoin_mint_exception_surface_canonical_payload_eq_public_fields
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    stablecoinMintExceptionPayload publicFields assetId delta =
+      { assetId := publicFields.stablecoinAsset
+        delta := publicFields.stablecoinIssuanceDelta
+        policyHash := publicFields.stablecoinPolicyHash
+        oracleCommitment := publicFields.stablecoinOracleCommitment
+        attestationCommitment := publicFields.stablecoinAttestationCommitment
+        policyVersion := publicFields.stablecoinPolicyVersion } := by
+  rcases surface.publicPayloadSelected with ⟨selectedAsset, deltaValue⟩
+  have selectedAsset' : assetId = publicFields.stablecoinAsset := by
+    simpa [stablecoinMintExceptionPayload] using selectedAsset
+  have deltaValue' : delta = publicFields.stablecoinIssuanceDelta := by
+    simpa [stablecoinMintExceptionPayload] using deltaValue
+  simp [stablecoinMintExceptionPayload, selectedAsset', deltaValue']
+
+theorem authorized_stablecoin_mint_exception_surface_bound_payload_fields
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    bound.stablecoinAsset =
+        (stablecoinMintExceptionPayload publicFields assetId delta).assetId
+      ∧ bound.stablecoinPolicyHash =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyHash
+      ∧ bound.stablecoinOracleCommitment =
+        (stablecoinMintExceptionPayload publicFields assetId delta).oracleCommitment
+      ∧ bound.stablecoinAttestationCommitment =
+        (stablecoinMintExceptionPayload publicFields assetId delta).attestationCommitment
+      ∧ bound.stablecoinPolicyVersion =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyVersion :=
+  surface.boundPayloadBinding
+
+theorem authorized_stablecoin_mint_exception_surface_statement_payload_fields
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    statementFields.stablecoinAsset =
+        (stablecoinMintExceptionPayload publicFields assetId delta).assetId
+      ∧ statementFields.stablecoinPolicyHashSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyHash
+      ∧ statementFields.stablecoinOracleCommitmentSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).oracleCommitment
+      ∧ statementFields.stablecoinAttestationCommitmentSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).attestationCommitment
+      ∧ statementFields.stablecoinPolicyVersion =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyVersion :=
+  surface.statementPayloadBinding
+
+theorem authorized_stablecoin_mint_exception_surface_binding_payload_fields
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    bindingFields.stablecoinAsset =
+        (stablecoinMintExceptionPayload publicFields assetId delta).assetId
+      ∧ bindingFields.stablecoinPolicyHashSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyHash
+      ∧ bindingFields.stablecoinOracleCommitmentSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).oracleCommitment
+      ∧ bindingFields.stablecoinAttestationCommitmentSeed =
+        (stablecoinMintExceptionPayload publicFields assetId delta).attestationCommitment
+      ∧ bindingFields.stablecoinPolicyVersion =
+        (stablecoinMintExceptionPayload publicFields assetId delta).policyVersion :=
+  surface.bindingPayloadBinding
+
+theorem authorized_stablecoin_mint_exception_surface_policy_metadata_preserved
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        delta
+        livePolicyAuthorizes) :
+    bound.stablecoinPolicyHash = publicFields.stablecoinPolicyHash
+      ∧ bound.stablecoinOracleCommitment =
+        publicFields.stablecoinOracleCommitment
+      ∧ bound.stablecoinAttestationCommitment =
+        publicFields.stablecoinAttestationCommitment
+      ∧ bound.stablecoinPolicyVersion =
+        publicFields.stablecoinPolicyVersion
+      ∧ statementFields.stablecoinPolicyHashSeed =
+        publicFields.stablecoinPolicyHash
+      ∧ statementFields.stablecoinOracleCommitmentSeed =
+        publicFields.stablecoinOracleCommitment
+      ∧ statementFields.stablecoinAttestationCommitmentSeed =
+        publicFields.stablecoinAttestationCommitment
+      ∧ statementFields.stablecoinPolicyVersion =
+        publicFields.stablecoinPolicyVersion
+      ∧ bindingFields.stablecoinPolicyHashSeed =
+        publicFields.stablecoinPolicyHash
+      ∧ bindingFields.stablecoinOracleCommitmentSeed =
+        publicFields.stablecoinOracleCommitment
+      ∧ bindingFields.stablecoinAttestationCommitmentSeed =
+        publicFields.stablecoinAttestationCommitment
+      ∧ bindingFields.stablecoinPolicyVersion =
+        publicFields.stablecoinPolicyVersion := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.boundPayloadBinding.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.boundPayloadBinding.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.boundPayloadBinding.2.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.boundPayloadBinding.2.2.2.2
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.statementPayloadBinding.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.statementPayloadBinding.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.statementPayloadBinding.2.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.statementPayloadBinding.2.2.2.2
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.bindingPayloadBinding.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.bindingPayloadBinding.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.bindingPayloadBinding.2.2.2.1
+  · simpa [stablecoinMintExceptionPayload] using
+      surface.bindingPayloadBinding.2.2.2.2
+
+theorem authorized_stablecoin_mint_exception_surface_no_unauthorized_payload
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (notAuthorized :
+      ¬ livePolicyAuthorizes
+        (stablecoinMintExceptionPayload publicFields assetId delta)) :
+    ¬ AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta
+      livePolicyAuthorizes := by
+  intro surface
+  exact notAuthorized surface.authorizedPayload
+
+theorem authorized_stablecoin_mint_exception_surface_no_mismatched_asset
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (mismatch : assetId ≠ publicFields.stablecoinAsset) :
+    ¬ AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta
+      livePolicyAuthorizes := by
+  intro surface
+  exact mismatch surface.exceptionSurface.selectedAsset
+
+theorem authorized_stablecoin_mint_exception_surface_no_mismatched_delta
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (mismatch : delta ≠ publicFields.stablecoinIssuanceDelta) :
+    ¬ AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta
+      livePolicyAuthorizes := by
+  intro surface
+  exact mismatch surface.exceptionSurface.deltaValue
+
+theorem authorized_stablecoin_mint_exception_surface_no_mismatched_public_payload
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (mismatch :
+      stablecoinMintExceptionPayload publicFields assetId delta ≠
+        { assetId := publicFields.stablecoinAsset
+          delta := publicFields.stablecoinIssuanceDelta
+          policyHash := publicFields.stablecoinPolicyHash
+          oracleCommitment := publicFields.stablecoinOracleCommitment
+          attestationCommitment := publicFields.stablecoinAttestationCommitment
+          policyVersion := publicFields.stablecoinPolicyVersion }) :
+    ¬ AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta
+      livePolicyAuthorizes := by
+  intro surface
+  exact mismatch
+    (authorized_stablecoin_mint_exception_surface_canonical_payload_eq_public_fields
+      surface)
+
+theorem authorized_stablecoin_mint_exception_surface_no_policy_metadata_mismatch
+    {publicFields : PublicInputBinding.PublicFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {assetId : Nat}
+    {delta : Int}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (mismatch :
+      bound.stablecoinPolicyHash ≠ publicFields.stablecoinPolicyHash
+        ∨ bound.stablecoinOracleCommitment ≠
+          publicFields.stablecoinOracleCommitment
+        ∨ bound.stablecoinAttestationCommitment ≠
+          publicFields.stablecoinAttestationCommitment
+        ∨ bound.stablecoinPolicyVersion ≠
+          publicFields.stablecoinPolicyVersion
+        ∨ statementFields.stablecoinPolicyHashSeed ≠
+          publicFields.stablecoinPolicyHash
+        ∨ statementFields.stablecoinOracleCommitmentSeed ≠
+          publicFields.stablecoinOracleCommitment
+        ∨ statementFields.stablecoinAttestationCommitmentSeed ≠
+          publicFields.stablecoinAttestationCommitment
+        ∨ statementFields.stablecoinPolicyVersion ≠
+          publicFields.stablecoinPolicyVersion
+        ∨ bindingFields.stablecoinPolicyHashSeed ≠
+          publicFields.stablecoinPolicyHash
+        ∨ bindingFields.stablecoinOracleCommitmentSeed ≠
+          publicFields.stablecoinOracleCommitment
+        ∨ bindingFields.stablecoinAttestationCommitmentSeed ≠
+          publicFields.stablecoinAttestationCommitment
+        ∨ bindingFields.stablecoinPolicyVersion ≠
+          publicFields.stablecoinPolicyVersion) :
+    ¬ AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta
+      livePolicyAuthorizes := by
+  intro surface
+  rcases
+      authorized_stablecoin_mint_exception_surface_policy_metadata_preserved
+        surface with
+    ⟨boundPolicyHash, boundOracle, boundAttestation, boundPolicyVersion,
+      statementPolicyHash, statementOracle, statementAttestation,
+      statementPolicyVersion, bindingPolicyHash, bindingOracle,
+      bindingAttestation, bindingPolicyVersion⟩
+  rcases mismatch with
+    boundPolicyHashMismatch | boundOracleMismatch | boundAttestationMismatch |
+    boundPolicyVersionMismatch | statementPolicyHashMismatch |
+    statementOracleMismatch | statementAttestationMismatch |
+    statementPolicyVersionMismatch | bindingPolicyHashMismatch |
+    bindingOracleMismatch | bindingAttestationMismatch |
+    bindingPolicyVersionMismatch
+  · exact boundPolicyHashMismatch boundPolicyHash
+  · exact boundOracleMismatch boundOracle
+  · exact boundAttestationMismatch boundAttestation
+  · exact boundPolicyVersionMismatch boundPolicyVersion
+  · exact statementPolicyHashMismatch statementPolicyHash
+  · exact statementOracleMismatch statementOracle
+  · exact statementAttestationMismatch statementAttestation
+  · exact statementPolicyVersionMismatch statementPolicyVersion
+  · exact bindingPolicyHashMismatch bindingPolicyHash
+  · exact bindingOracleMismatch bindingOracle
+  · exact bindingAttestationMismatch bindingAttestation
+  · exact bindingPolicyVersionMismatch bindingPolicyVersion
+
 theorem canonical_surface_authorized_active_input_bound_to_statement
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

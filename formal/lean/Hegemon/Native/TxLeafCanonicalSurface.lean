@@ -440,6 +440,13 @@ theorem tx_leaf_action_accepts_implies_binding_facts
         ⟨h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10,
           h11, h12, h13⟩
 
+theorem tx_leaf_action_accepts_implies_stablecoin_payload_matches
+    {input : TxLeafActionBindingInput}
+    (accepted : txLeafActionBindingAccepts input = true) :
+    input.stablecoinPayloadMatches = true := by
+  have facts := tx_leaf_action_accepts_implies_binding_facts accepted
+  exact facts.2.2.2.2.2.2.2.1
+
 theorem native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}
