@@ -220,12 +220,12 @@ theorem accepted_sidecar_transfer_state_implies_sidecar_materialized
       ∧ input.sidecarCiphertextSizesPresent = true
       ∧ input.sidecarCiphertextSizesMatch = true := by
   cases input with
-  | mk anchorKnown nullifierState commitmentsNonzero sidecarRoute
+  | mk anchorKnown nullifierState commitmentsNonzero stablecoinPolicyAuthorized sidecarRoute
       sidecarCiphertextsAvailable sidecarCiphertextSizesPresent
       sidecarCiphertextSizesMatch =>
       cases anchorKnown <;> cases nullifierState <;>
-        cases commitmentsNonzero <;> cases sidecarRoute <;>
-        cases sidecarCiphertextsAvailable <;>
+        cases commitmentsNonzero <;> cases stablecoinPolicyAuthorized <;>
+        cases sidecarRoute <;> cases sidecarCiphertextsAvailable <;>
         cases sidecarCiphertextSizesPresent <;>
         cases sidecarCiphertextSizesMatch <;>
         simp [evaluateTransferState] at accepted sidecar ⊢

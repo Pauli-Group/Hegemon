@@ -22,6 +22,8 @@ def rejectionJson : Option TransferStateReject -> String
   | some TransferStateReject.nullifierAlreadyPending =>
       "\"nullifier_already_pending\""
   | some TransferStateReject.commitmentZero => "\"commitment_zero\""
+  | some TransferStateReject.stablecoinPolicyUnauthorized =>
+      "\"stablecoin_policy_unauthorized\""
   | some TransferStateReject.sidecarCiphertextMissing =>
       "\"sidecar_ciphertext_missing\""
   | some TransferStateReject.sidecarCiphertextSizeMissing =>
@@ -36,6 +38,8 @@ def transferStateCaseJson (name : String) (input : TransferStateInput) : String 
     ++ "      \"nullifier_state\": "
       ++ nullifierStateJson input.nullifierState ++ ",\n"
     ++ "      \"commitments_nonzero\": " ++ boolJson input.commitmentsNonzero ++ ",\n"
+    ++ "      \"stablecoin_policy_authorized\": "
+      ++ boolJson input.stablecoinPolicyAuthorized ++ ",\n"
     ++ "      \"sidecar_route\": " ++ boolJson input.sidecarRoute ++ ",\n"
     ++ "      \"sidecar_ciphertexts_available\": "
       ++ boolJson input.sidecarCiphertextsAvailable ++ ",\n"
@@ -72,6 +76,8 @@ def vectorJson : String :=
         nullifierState := TransferNullifierState.alreadyPending } ++ ",\n"
     ++ transferStateCaseJson "zero-commitment-rejected"
       { validTransferState with commitmentsNonzero := false } ++ ",\n"
+    ++ transferStateCaseJson "unauthorized-stablecoin-policy-rejected"
+      { validTransferState with stablecoinPolicyAuthorized := false } ++ ",\n"
     ++ transferStateCaseJson "sidecar-ciphertext-missing-rejected"
       { validTransferState with sidecarCiphertextsAvailable := false } ++ ",\n"
     ++ transferStateCaseJson "sidecar-ciphertext-size-missing-rejected"
@@ -86,6 +92,16 @@ def vectorJson : String :=
       { validTransferState with
         nullifierState := TransferNullifierState.duplicate,
         commitmentsNonzero := false } ++ ",\n"
+    ++ transferStateCaseJson "commitment-precedes-stablecoin-policy"
+      { validTransferState with
+        commitmentsNonzero := false,
+        stablecoinPolicyAuthorized := false } ++ ",\n"
+    ++ transferStateCaseJson "stablecoin-policy-precedes-sidecar"
+      { validTransferState with
+        stablecoinPolicyAuthorized := false,
+        sidecarCiphertextsAvailable := false,
+        sidecarCiphertextSizesPresent := false,
+        sidecarCiphertextSizesMatch := false } ++ ",\n"
     ++ transferStateCaseJson "inline-ignores-sidecar-availability"
       { validTransferState with
         sidecarRoute := false,

@@ -4,22 +4,22 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 83.09,
+  "overall_completion_percent": 83.19,
   "last_full_formal_core": {
-    "date": "2026-06-15T19:29:59Z",
-    "commit": "7eedd410",
-    "status": "passed locally after wallet stablecoin policy admission and bounded PQ SecureSession frame-vector binding",
+    "date": "2026-06-15T20:12:57Z",
+    "commit": "2a02f9c2+worktree",
+    "status": "passed locally after native stablecoin authorization admission and decoded block-action binding",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 116,
-    "named_lean_theorems": 1611,
-    "axiom_free_theorems": 751,
-    "axiom_dependent_theorems": 860,
+    "named_lean_theorems": 1615,
+    "axiom_free_theorems": 754,
+    "axiom_dependent_theorems": 861,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 106,
     "residual_risks": 44,
     "blueprint_edges": 486,
     "falsification_cases": 459,
-    "implementation_bindings": 204,
+    "implementation_bindings": 205,
     "implementation_result_obligations": 161,
     "implementation_order_constraints": 143,
     "implementation_order_edges": 371,
@@ -64,41 +64,31 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened implementation-equivalence proof surfaces for stablecoin authorization and PQ active-frame admission. The stablecoin slice proves the authorized exception surface preserves the exact canonical public payload and policy metadata across bound inputs, statement rows, and proof-binding rows, and rejects unauthorized or mismatched authorized surfaces. The native slice names the production tx-leaf/action stablecoin payload equality gate. The PQ slice lifts peer-frame admission from the first frame to arbitrary modeled bounded frame indices below u64 overflow.",
+    "summary": "Bound native import-time stablecoin authorization into the Lean transfer-state and decoded block-action admission tables. Enabled stablecoin transfer payloads now fail closed unless the exact StablecoinPolicyBinding payload is present in native authorization state before mempool or decoded-block acceptance; Lean vectors check unauthorized-policy rejection and precedence against production Rust.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
-      "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean"
+      "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
+      "formal/lean/Hegemon/Native/BlockActionValidation.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_live_authorizes_canonical_payload",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_canonical_payload_eq_public_fields",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_bound_payload_fields",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_statement_payload_fields",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_binding_payload_fields",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_policy_metadata_preserved",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_no_unauthorized_payload",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_no_mismatched_asset",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_no_mismatched_delta",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_no_mismatched_public_payload",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.authorized_stablecoin_mint_exception_surface_no_policy_metadata_mismatch",
-      "Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_stablecoin_payload_matches",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_indexed_pq_peer_frame_admission_facts",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_bounded_pq_peer_frame_sequence_facts"
+      "Hegemon.Native.TransferStateAdmission.accepts_iff_state_preconditions",
+      "Hegemon.Native.TransferStateAdmission.stablecoin_policy_unauthorized_rejects",
+      "Hegemon.Native.TransferStateAdmission.commitment_zero_precedes_stablecoin_policy",
+      "Hegemon.Native.TransferStateAdmission.stablecoin_policy_precedes_sidecar_materialization",
+      "Hegemon.Native.BlockActionValidation.transfer_state_stablecoin_policy_rejects"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Transaction.CanonicalVerifierBoundary Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Native.TxLeafCanonicalSurface Hegemon.Network.PqNoiseHandshakeChannel Hegemon passed locally with 134 jobs",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T18:51:37Z after metadata integration",
+      "lean_formal": "lake env lean Hegemon/Native/TransferStateAdmission.lean, Hegemon/Native/BlockActionValidation.lean, Hegemon/Native/GenerateTransferStateAdmissionVectors.lean, and Hegemon/Native/GenerateBlockActionValidationVectors.lean passed locally",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T20:12:57Z after native stablecoin authorization integration",
       "claims": 116,
-      "named_lean_theorems": 1611,
-      "axiom_free_theorems": 751,
-      "axiom_dependent_theorems": 860,
+      "named_lean_theorems": 1615,
+      "axiom_free_theorems": 754,
+      "axiom_dependent_theorems": 861,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 106,
       "residual_risks": 44,
       "blueprint_edges": 486,
-      "falsification_cases": 458,
-      "implementation_bindings": 204,
+      "falsification_cases": 459,
+      "implementation_bindings": 205,
       "implementation_result_obligations": 161,
       "implementation_order_constraints": 143,
       "implementation_order_edges": 371,
@@ -107,9 +97,8 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "LiveStablecoinPolicyAuthorizes is still an explicit theorem predicate; production stablecoin policy/oracle/attestation lookup, freshness, and dispute checks remain to be bound.",
-      "The native stablecoin theorem names the tx-leaf/action payload equality gate, not live policy validity.",
-      "The PQ arbitrary-index theorem is over the executable Lean channel-state model; production transport/session byte-level equivalence and cryptographic AEAD/KEM/signature assumptions remain explicit.",
+      "The native gate enforces exact stablecoin authorization-state membership; the production policy-state writer and oracle freshness source remain to be bound.",
+      "LiveStablecoinPolicyAuthorizes remains a theorem predicate above the exact native authorization bit until policy/oracle/attestation state publication is fully modeled.",
       "Deployed proof-system soundness, cryptographic primitive security/equivalence, storage durability below accepted predicates, DA availability, and complete native-node equivalence remain explicit assumptions."
     ]
   },
@@ -146,7 +135,7 @@
       "implementation_order_edges": 371
     },
     "known_limitations": [
-      "The wallet stablecoin helper binds construction of submitted payloads, not native import-time LiveStablecoinPolicyAuthorizes validity against canonical chain state.",
+      "The wallet stablecoin helper binds construction of submitted payloads; the new native gate enforces exact authorization-state membership, while full policy-state publication and oracle freshness remain open.",
       "The PQ frame vectors cover bounded active-frame sequences in both roles, not full transport/session completion or liveness.",
       "Primitive cryptographic assumptions, proof-system soundness, raw parser equivalence, storage durability, and complete native-node equivalence remain separate open work."
     ]
@@ -322,7 +311,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 82,
+      "completion_percent": 84,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -345,12 +334,15 @@
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts authorized stablecoin mint exception payload facts to the accepted materialized transfer publication path",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
-        "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases"
+        "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases",
+        "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized fail-closes enabled stablecoin payloads unless the exact StablecoinPolicyBinding authorization key is present in native state before mempool or decoded-block acceptance",
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-        "Bind native import-time LiveStablecoinPolicyAuthorizes to production stablecoin policy/oracle/attestation lookup and freshness checks rather than only the wallet construction path plus explicit theorem predicate.",
-        "Bind remaining exception predicates to production admission paths beyond the tx-leaf/action stablecoin payload equality gate."
+        "Bind the native stablecoin authorization state writer to production policy/oracle/attestation lookup, dispute status, and freshness checks.",
+        "Lift the exact native stablecoin authorization bit into the higher LiveStablecoinPolicyAuthorizes theorem surface across complete native-node replay."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
     },

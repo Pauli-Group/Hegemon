@@ -85,6 +85,8 @@ def rejectionJson :
       "\"transfer_nullifier_already_pending\""
   | Except.error BlockActionReject.transferCommitmentZero =>
       "\"transfer_commitment_zero\""
+  | Except.error BlockActionReject.transferStablecoinPolicyUnauthorized =>
+      "\"transfer_stablecoin_policy_unauthorized\""
   | Except.error BlockActionReject.transferSidecarCiphertextMissing =>
       "\"transfer_sidecar_ciphertext_missing\""
   | Except.error BlockActionReject.transferSidecarCiphertextSizeMissing =>
@@ -122,6 +124,8 @@ def transferStateJson (state : TransferStateInput) : String :=
       ++ nullifierStateJson state.nullifierState ++ ",\n"
     ++ "            \"commitments_nonzero\": "
       ++ boolJson state.commitmentsNonzero ++ ",\n"
+    ++ "            \"stablecoin_policy_authorized\": "
+      ++ boolJson state.stablecoinPolicyAuthorized ++ ",\n"
     ++ "            \"sidecar_route\": "
       ++ boolJson state.sidecarRoute ++ ",\n"
     ++ "            \"sidecar_ciphertexts_available\": "
@@ -213,7 +217,9 @@ def vectorJson : String :=
     ++ caseJson "transfer-order-precedes-state"
       transferOrderPrecedesStateValidation ++ ",\n"
     ++ caseJson "transfer-state-rejected"
-      transferStateRejectValidation ++ "\n"
+      transferStateRejectValidation ++ ",\n"
+    ++ caseJson "transfer-state-stablecoin-policy-rejected"
+      transferStateStablecoinPolicyRejectValidation ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

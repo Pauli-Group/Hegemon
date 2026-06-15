@@ -939,6 +939,7 @@ enum NativeBlockActionValidationRejection {
     TransferDuplicateNullifier,
     TransferNullifierAlreadyPending,
     TransferCommitmentZero,
+    TransferStablecoinPolicyUnauthorized,
     TransferSidecarCiphertextMissing,
     TransferSidecarCiphertextSizeMissing,
     TransferSidecarCiphertextSizeMismatch,
@@ -969,6 +970,7 @@ impl NativeBlockActionValidationRejection {
             Self::TransferDuplicateNullifier => "transfer_duplicate_nullifier",
             Self::TransferNullifierAlreadyPending => "transfer_nullifier_already_pending",
             Self::TransferCommitmentZero => "transfer_commitment_zero",
+            Self::TransferStablecoinPolicyUnauthorized => "transfer_stablecoin_policy_unauthorized",
             Self::TransferSidecarCiphertextMissing => "transfer_sidecar_ciphertext_missing",
             Self::TransferSidecarCiphertextSizeMissing => {
                 "transfer_sidecar_ciphertext_size_missing"
@@ -1213,6 +1215,7 @@ struct NativeTransferStateAdmissionInput {
     anchor_known: bool,
     nullifier_state: NativeTransferNullifierAdmissionState,
     commitments_nonzero: bool,
+    stablecoin_policy_authorized: bool,
     sidecar_route: bool,
     sidecar_ciphertexts_available: bool,
     sidecar_ciphertext_sizes_present: bool,
@@ -1242,6 +1245,7 @@ enum NativeTransferStateAdmissionRejection {
     DuplicateNullifier,
     NullifierAlreadyPending,
     CommitmentZero,
+    StablecoinPolicyUnauthorized,
     SidecarCiphertextMissing,
     SidecarCiphertextSizeMissing,
     SidecarCiphertextSizeMismatch,
@@ -1257,6 +1261,7 @@ impl NativeTransferStateAdmissionRejection {
             Self::DuplicateNullifier => "duplicate_nullifier",
             Self::NullifierAlreadyPending => "nullifier_already_pending",
             Self::CommitmentZero => "commitment_zero",
+            Self::StablecoinPolicyUnauthorized => "stablecoin_policy_unauthorized",
             Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
             Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
             Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
@@ -2320,6 +2325,7 @@ struct NativeState {
     commitment_tree: CommitmentTreeState,
     nullifiers: BTreeSet<[u8; 48]>,
     consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    stablecoin_policy_authorizations: BTreeSet<Vec<u8>>,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
 }
@@ -2890,6 +2896,7 @@ impl NativeNode {
                 commitment_tree: state.commitment_tree.clone(),
                 nullifiers: state.nullifiers.clone(),
                 consumed_bridge_messages: state.consumed_bridge_messages.clone(),
+                stablecoin_policy_authorizations: state.stablecoin_policy_authorizations.clone(),
                 staged_ciphertexts: BTreeMap::new(),
                 staged_proofs: BTreeMap::new(),
             }
@@ -3117,6 +3124,7 @@ impl NativeNode {
             commitment_tree: CommitmentTreeState::default(),
             nullifiers: BTreeSet::new(),
             consumed_bridge_messages: BTreeSet::new(),
+            stablecoin_policy_authorizations: BTreeSet::new(),
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
@@ -6264,6 +6272,7 @@ fn build_validated_startup_state_with_limits(
         commitment_tree,
         nullifiers,
         consumed_bridge_messages,
+        stablecoin_policy_authorizations: BTreeSet::new(),
         staged_ciphertexts,
         staged_proofs,
     };
@@ -6842,6 +6851,8 @@ fn evaluate_native_transfer_state_admission(
             NativeTransferNullifierAdmissionState::Valid => {
                 if !input.commitments_nonzero {
                     Err(NativeTransferStateAdmissionRejection::CommitmentZero)
+                } else if !input.stablecoin_policy_authorized {
+                    Err(NativeTransferStateAdmissionRejection::StablecoinPolicyUnauthorized)
                 } else if !input.sidecar_route {
                     Ok(())
                 } else if !input.sidecar_ciphertexts_available {
@@ -6940,6 +6951,9 @@ fn native_transfer_state_admission_error(
             NativeTransferStateAdmissionRejection::CommitmentZero,
         ) => {
             anyhow!("zero commitment in block action")
+        }
+        (_, NativeTransferStateAdmissionRejection::StablecoinPolicyUnauthorized) => {
+            anyhow!("stablecoin policy unauthorized")
         }
         (_, NativeTransferStateAdmissionRejection::SidecarCiphertextMissing) => {
             anyhow!("missing staged ciphertext")
@@ -7280,6 +7294,23 @@ fn sidecar_ciphertext_state_for_action(
     (all_available, all_sizes_present, all_sizes_match)
 }
 
+fn stablecoin_policy_authorization_key(binding: &StablecoinPolicyBinding) -> Vec<u8> {
+    binding.encode()
+}
+
+fn native_transfer_stablecoin_policy_authorized(
+    state: &NativeState,
+    action: &PendingAction,
+) -> bool {
+    match transfer_action_stablecoin_binding(action) {
+        Ok(None) => true,
+        Ok(Some(binding)) => state
+            .stablecoin_policy_authorizations
+            .contains(&stablecoin_policy_authorization_key(&binding)),
+        Err(_) => false,
+    }
+}
+
 fn native_transfer_state_admission_input_for_mempool(
     state: &NativeState,
     action: &PendingAction,
@@ -7302,6 +7333,7 @@ fn native_transfer_state_admission_input_for_mempool(
             .commitments
             .iter()
             .all(|commitment| *commitment != [0u8; 48]),
+        stablecoin_policy_authorized: native_transfer_stablecoin_policy_authorized(state, action),
         sidecar_route,
         sidecar_ciphertexts_available,
         sidecar_ciphertext_sizes_present,
@@ -7321,6 +7353,7 @@ fn native_transfer_state_admission_input_for_block(
             .commitments
             .iter()
             .all(|commitment| *commitment != [0u8; 48]),
+        stablecoin_policy_authorized: native_transfer_stablecoin_policy_authorized(state, action),
         sidecar_route: false,
         sidecar_ciphertexts_available: true,
         sidecar_ciphertext_sizes_present: true,
@@ -9018,6 +9051,9 @@ fn native_block_action_validation_transfer_rejection(
         NativeTransferStateAdmissionRejection::CommitmentZero => {
             NativeBlockActionValidationRejection::TransferCommitmentZero
         }
+        NativeTransferStateAdmissionRejection::StablecoinPolicyUnauthorized => {
+            NativeBlockActionValidationRejection::TransferStablecoinPolicyUnauthorized
+        }
         NativeTransferStateAdmissionRejection::SidecarCiphertextMissing => {
             NativeBlockActionValidationRejection::TransferSidecarCiphertextMissing
         }
@@ -9136,6 +9172,9 @@ fn native_block_action_validation_transfer_state_rejection(
         }
         NativeBlockActionValidationRejection::TransferCommitmentZero => {
             Some(NativeTransferStateAdmissionRejection::CommitmentZero)
+        }
+        NativeBlockActionValidationRejection::TransferStablecoinPolicyUnauthorized => {
+            Some(NativeTransferStateAdmissionRejection::StablecoinPolicyUnauthorized)
         }
         NativeBlockActionValidationRejection::TransferSidecarCiphertextMissing => {
             Some(NativeTransferStateAdmissionRejection::SidecarCiphertextMissing)
@@ -9966,6 +10005,7 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
             anchor_known: true,
             nullifier_state: NativeTransferNullifierAdmissionState::Valid,
             commitments_nonzero: true,
+            stablecoin_policy_authorized: true,
             sidecar_route: false,
             sidecar_ciphertexts_available: true,
             sidecar_ciphertext_sizes_present: true,
@@ -10577,6 +10617,7 @@ fn revalidate_reorg_pending_actions(
         commitment_tree: canonical_state.commitment_tree.clone(),
         nullifiers: canonical_state.nullifiers.clone(),
         consumed_bridge_messages: canonical_state.consumed_bridge_messages.clone(),
+        stablecoin_policy_authorizations: canonical_state.stablecoin_policy_authorizations.clone(),
         staged_ciphertexts: canonical_state.staged_ciphertexts.clone(),
         staged_proofs: canonical_state.staged_proofs.clone(),
     };
@@ -13241,6 +13282,7 @@ mod tests {
         anchor_known: bool,
         nullifier_state: String,
         commitments_nonzero: bool,
+        stablecoin_policy_authorized: bool,
         sidecar_route: bool,
         sidecar_ciphertexts_available: bool,
         sidecar_ciphertext_sizes_present: bool,
@@ -13413,6 +13455,7 @@ mod tests {
         anchor_known: bool,
         nullifier_state: String,
         commitments_nonzero: bool,
+        stablecoin_policy_authorized: bool,
         sidecar_route: bool,
         sidecar_ciphertexts_available: bool,
         sidecar_ciphertext_sizes_present: bool,
@@ -18521,6 +18564,7 @@ mod tests {
             anchor_known: case.anchor_known,
             nullifier_state: lean_transfer_nullifier_state(&case.nullifier_state, &case.name),
             commitments_nonzero: case.commitments_nonzero,
+            stablecoin_policy_authorized: case.stablecoin_policy_authorized,
             sidecar_route: case.sidecar_route,
             sidecar_ciphertexts_available: case.sidecar_ciphertexts_available,
             sidecar_ciphertext_sizes_present: case.sidecar_ciphertext_sizes_present,
@@ -19083,6 +19127,7 @@ mod tests {
                 other => panic!("unknown block action transfer nullifier state {other}"),
             },
             commitments_nonzero: state.commitments_nonzero,
+            stablecoin_policy_authorized: state.stablecoin_policy_authorized,
             sidecar_route: state.sidecar_route,
             sidecar_ciphertexts_available: state.sidecar_ciphertexts_available,
             sidecar_ciphertext_sizes_present: state.sidecar_ciphertext_sizes_present,
@@ -22290,18 +22335,56 @@ mod tests {
     #[test]
     fn transfer_action_accepts_stablecoin_bound_inline_proof() {
         let pow_bits = 0x207f_ffff;
-        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
         let anchor = state.commitment_tree.root();
+        let binding = test_stablecoin_policy_binding(10);
+        authorize_test_stablecoin_policy(&mut state, &binding);
         let action = test_inline_transfer_action_with_stablecoin(
             anchor,
             [34u8; 48],
             [134u8; 48],
             0,
-            Some(test_stablecoin_policy_binding(10)),
+            Some(binding),
         );
 
         validate_block_actions_locked(&state, &[action])
             .expect("stablecoin-bound inline transfer should pass action validation");
+    }
+
+    #[test]
+    fn transfer_action_rejects_unauthorized_stablecoin_policy_in_block() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [58u8; 48],
+            [158u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("unauthorized stablecoin policy must fail block validation");
+        assert!(err.to_string().contains("stablecoin policy unauthorized"));
+    }
+
+    #[test]
+    fn transfer_action_rejects_unauthorized_stablecoin_sidecar_policy_in_block() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let action = test_sidecar_transfer_action_with_stablecoin(
+            anchor,
+            [61u8; 48],
+            [161u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("unauthorized stablecoin sidecar policy must fail block validation");
+        assert!(err.to_string().contains("stablecoin policy unauthorized"));
     }
 
     #[test]
@@ -23169,6 +23252,51 @@ mod tests {
 
         node.validate_action_state(&action)
             .expect("matching staged sidecar ciphertext should pass state admission");
+    }
+
+    #[test]
+    fn transfer_state_rejects_unauthorized_stablecoin_policy_in_mempool() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [54u8; 48],
+            [55u8; 48],
+            0,
+            Some(test_stablecoin_policy_binding(10)),
+        );
+
+        let err = node
+            .validate_action_state(&action)
+            .expect_err("unauthorized stablecoin policy must reject mempool state admission");
+        assert!(err.to_string().contains("stablecoin policy unauthorized"));
+    }
+
+    #[test]
+    fn transfer_state_accepts_authorized_stablecoin_policy_in_mempool() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let binding = test_stablecoin_policy_binding(10);
+        let action = test_inline_transfer_action_with_stablecoin(
+            anchor,
+            [59u8; 48],
+            [60u8; 48],
+            0,
+            Some(binding.clone()),
+        );
+        {
+            let mut state = node.state.write();
+            authorize_test_stablecoin_policy(&mut state, &binding);
+        }
+
+        node.validate_action_state(&action)
+            .expect("authorized stablecoin policy should pass mempool state admission");
     }
 
     #[test]
@@ -24989,6 +25117,7 @@ mod tests {
             commitment_tree: CommitmentTreeState::default(),
             nullifiers: BTreeSet::new(),
             consumed_bridge_messages: BTreeSet::new(),
+            stablecoin_policy_authorizations: BTreeSet::new(),
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         }
@@ -25203,6 +25332,15 @@ mod tests {
             issuance_delta: i128::from(seed) - 20,
             policy_version: u32::from(seed),
         }
+    }
+
+    fn authorize_test_stablecoin_policy(
+        state: &mut NativeState,
+        binding: &StablecoinPolicyBinding,
+    ) {
+        state
+            .stablecoin_policy_authorizations
+            .insert(stablecoin_policy_authorization_key(binding));
     }
 
     fn test_inline_transfer_action(

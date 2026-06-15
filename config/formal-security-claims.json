@@ -4816,7 +4816,7 @@
       "id": "native.transfer-state-admission",
       "component": "native shielded transfer state admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean transfer-state admission kernel proves the executable native shielded-transfer state table for known anchors, nullifier replay status, nonzero output commitments, sidecar ciphertext availability, sidecar ciphertext size presence, and staged size agreement; generated Lean vectors are checked against the production helper used by mempool and block validation.",
+      "summary": "The Lean transfer-state admission kernel proves the executable native shielded-transfer state table for known anchors, nullifier replay status, nonzero output commitments, enabled stablecoin policy authorization, sidecar ciphertext availability, sidecar ciphertext size presence, and staged size agreement; generated Lean vectors are checked against the production helper used by mempool and block validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4827,19 +4827,22 @@
         "Hegemon.Native.TransferStateAdmission.inline_ignores_sidecar_availability",
         "Hegemon.Native.TransferStateAdmission.nullifier_already_pending_rejects",
         "Hegemon.Native.TransferStateAdmission.nullifier_already_spent_rejects",
+        "Hegemon.Native.TransferStateAdmission.commitment_zero_precedes_stablecoin_policy",
         "Hegemon.Native.TransferStateAdmission.nullifier_precedes_commitment_zero",
         "Hegemon.Native.TransferStateAdmission.nullifier_zero_rejects",
         "Hegemon.Native.TransferStateAdmission.sidecar_ciphertext_missing_rejects",
         "Hegemon.Native.TransferStateAdmission.sidecar_ciphertext_size_mismatch_rejects",
         "Hegemon.Native.TransferStateAdmission.sidecar_ciphertext_size_missing_rejects",
+        "Hegemon.Native.TransferStateAdmission.stablecoin_policy_precedes_sidecar_materialization",
+        "Hegemon.Native.TransferStateAdmission.stablecoin_policy_unauthorized_rejects",
         "Hegemon.Native.TransferStateAdmission.unknown_anchor_precedes_nullifier",
         "Hegemon.Native.TransferStateAdmission.unknown_anchor_rejects",
         "Hegemon.Native.TransferStateAdmission.valid_transfer_state_accepts"
       ],
       "assumptions": [
-        "The Lean model treats anchor membership, nullifier status, commitment nonzeroness, sidecar route identity, and staged sidecar lookup results as production-derived predicates; it proves the executable admission table and rejection precedence.",
-        "Generated Lean conformance vectors cover valid inline and sidecar state admission, unknown anchors, zero/spent/duplicate/pending nullifiers, zero commitments, missing staged ciphertexts, missing staged ciphertext sizes, staged size mismatches, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, and inline transfer independence from sidecar staging.",
-        "The theorem covers executable native transfer state admission only. It does not prove commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, tx leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
+        "The Lean model treats anchor membership, nullifier status, commitment nonzeroness, exact stablecoin policy authorization, sidecar route identity, and staged sidecar lookup results as production-derived predicates; it proves the executable admission table and rejection precedence.",
+        "Generated Lean conformance vectors cover valid inline and sidecar state admission, unknown anchors, zero/spent/duplicate/pending nullifiers, zero commitments, unauthorized stablecoin policy, missing staged ciphertexts, missing staged ciphertext sizes, staged size mismatches, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, commitment-before-stablecoin precedence, stablecoin-before-sidecar precedence, and inline transfer independence from sidecar staging.",
+        "The theorem covers executable native transfer state admission only. It proves enabled stablecoin transfers must have the production-derived exact authorization predicate, but it does not prove a complete stablecoin policy-state writer, oracle freshness source, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, tx leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
@@ -4860,7 +4863,7 @@
       "id": "native.block-action-validation",
       "component": "native decoded block action validation composition",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-action validation kernel proves the composed native decoded-action import table: action count/hash admission, route/scope admission, route-specific payload success, bridge replay duplicate detection, shielded transfer ordering, and transfer state admission run in fixed order before block replay/accounting can treat decoded actions as valid; generated Lean vectors are checked against the production validate_block_actions_locked path, and runtime bindings/regressions additionally reject arrival-time-only semantic action duplicates.",
+      "summary": "The Lean block-action validation kernel proves the composed native decoded-action import table: action count/hash admission, route/scope admission, route-specific payload success, bridge replay duplicate detection, shielded transfer ordering, and transfer state admission, including stablecoin policy authorization failure, run in fixed order before block replay/accounting can treat decoded actions as valid; generated Lean vectors are checked against the production validate_block_actions_locked path, and runtime bindings/regressions additionally reject arrival-time-only semantic action duplicates.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regressions",
       "production_eligible": true,
@@ -4877,11 +4880,12 @@
         "Hegemon.Native.BlockActionValidation.transfer_payload_precedes_order",
         "Hegemon.Native.BlockActionValidation.descending_transfer_order_rejects",
         "Hegemon.Native.BlockActionValidation.transfer_order_precedes_state",
-        "Hegemon.Native.BlockActionValidation.transfer_state_rejects"
+        "Hegemon.Native.BlockActionValidation.transfer_state_rejects",
+        "Hegemon.Native.BlockActionValidation.transfer_state_stablecoin_policy_rejects"
       ],
       "assumptions": [
-        "The Lean model composes already-modeled decoded-action predicates over production-derived facts: action hash/count agreement, action scope routing, route-specific payload validity, transfer order keys, transfer state admission, and observed inbound bridge replay keys.",
-        "Generated Lean conformance vectors cover a valid mixed block, non-transfer actions between transfers, action hash mismatch, duplicate action hashes, scope-before-payload precedence, bridge payload-before-replay precedence, prior and cross-action bridge replay duplicates, transfer payload-before-order precedence, descending transfer order rejection, transfer order-before-state precedence, and transfer state rejection.",
+        "The Lean model composes already-modeled decoded-action predicates over production-derived facts: action hash/count agreement, action scope routing, route-specific payload validity, transfer order keys, transfer state admission including stablecoin policy authorization, and observed inbound bridge replay keys.",
+        "Generated Lean conformance vectors cover a valid mixed block, non-transfer actions between transfers, action hash mismatch, duplicate action hashes, scope-before-payload precedence, bridge payload-before-replay precedence, prior and cross-action bridge replay duplicates, transfer payload-before-order precedence, descending transfer order rejection, transfer order-before-state precedence, transfer state rejection, and unauthorized stablecoin policy rejection.",
         "The theorem covers executable decoded block-action validation composition only. Runtime bindings and focused regressions additionally require `validate_block_actions_locked` to reject decoded action streams whose semantic hash is duplicated only through arrival-time drift before transfer or replay-state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash security, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash security, tx-leaf proof soundness, recursive proof soundness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [

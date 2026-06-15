@@ -17,6 +17,7 @@ inductive TransferStateReject where
   | duplicateNullifier
   | nullifierAlreadyPending
   | commitmentZero
+  | stablecoinPolicyUnauthorized
   | sidecarCiphertextMissing
   | sidecarCiphertextSizeMissing
   | sidecarCiphertextSizeMismatch
@@ -26,6 +27,7 @@ structure TransferStateInput where
   anchorKnown : Bool
   nullifierState : TransferNullifierState
   commitmentsNonzero : Bool
+  stablecoinPolicyAuthorized : Bool
   sidecarRoute : Bool
   sidecarCiphertextsAvailable : Bool
   sidecarCiphertextSizesPresent : Bool
@@ -41,6 +43,8 @@ def evaluateTransferState
     | TransferNullifierState.valid =>
         if input.commitmentsNonzero = false then
           Except.error TransferStateReject.commitmentZero
+        else if input.stablecoinPolicyAuthorized = false then
+          Except.error TransferStateReject.stablecoinPolicyUnauthorized
         else if input.sidecarRoute = false then
           Except.ok ()
         else if input.sidecarCiphertextsAvailable = false then
@@ -79,6 +83,8 @@ def transferStatePreconditions (input : TransferStateInput) : Bool :=
     | TransferNullifierState.valid =>
         if input.commitmentsNonzero = false then
           false
+        else if input.stablecoinPolicyAuthorized = false then
+          false
         else if input.sidecarRoute = false then
           true
         else if input.sidecarCiphertextsAvailable = false then
@@ -94,19 +100,21 @@ def transferStatePreconditions (input : TransferStateInput) : Bool :=
 theorem accepts_iff_state_preconditions (input : TransferStateInput) :
     transferStateAccepts input = transferStatePreconditions input := by
   cases input with
-  | mk anchorKnown nullifierState commitmentsNonzero sidecarRoute
+  | mk anchorKnown nullifierState commitmentsNonzero stablecoinPolicyAuthorized sidecarRoute
       sidecarCiphertextsAvailable sidecarCiphertextSizesPresent
       sidecarCiphertextSizesMatch =>
       unfold transferStateAccepts transferStatePreconditions evaluateTransferState
       cases anchorKnown <;> cases nullifierState <;> cases commitmentsNonzero <;>
-        cases sidecarRoute <;> cases sidecarCiphertextsAvailable <;>
-        cases sidecarCiphertextSizesPresent <;> cases sidecarCiphertextSizesMatch <;> rfl
+        cases stablecoinPolicyAuthorized <;> cases sidecarRoute <;>
+        cases sidecarCiphertextsAvailable <;> cases sidecarCiphertextSizesPresent <;>
+        cases sidecarCiphertextSizesMatch <;> rfl
 
 def validTransferState : TransferStateInput :=
   {
     anchorKnown := true,
     nullifierState := TransferNullifierState.valid,
     commitmentsNonzero := true,
+    stablecoinPolicyAuthorized := true,
     sidecarRoute := true,
     sidecarCiphertextsAvailable := true,
     sidecarCiphertextSizesPresent := true,
@@ -171,36 +179,50 @@ theorem commitment_zero_rejects
   unfold evaluateTransferState
   simp [anchor, nullifiers, zero]
 
+theorem stablecoin_policy_unauthorized_rejects
+    {input : TransferStateInput}
+    (anchor : input.anchorKnown = true)
+    (nullifiers : input.nullifierState = TransferNullifierState.valid)
+    (commitments : input.commitmentsNonzero = true)
+    (unauthorized : input.stablecoinPolicyAuthorized = false) :
+    evaluateTransferState input =
+      Except.error TransferStateReject.stablecoinPolicyUnauthorized := by
+  unfold evaluateTransferState
+  simp [anchor, nullifiers, commitments, unauthorized]
+
 theorem sidecar_ciphertext_missing_rejects
     {input : TransferStateInput}
     (anchor : input.anchorKnown = true)
     (nullifiers : input.nullifierState = TransferNullifierState.valid)
     (commitments : input.commitmentsNonzero = true)
+    (stablecoin : input.stablecoinPolicyAuthorized = true)
     (sidecar : input.sidecarRoute = true)
     (missing : input.sidecarCiphertextsAvailable = false) :
     evaluateTransferState input =
       Except.error TransferStateReject.sidecarCiphertextMissing := by
   unfold evaluateTransferState
-  simp [anchor, nullifiers, commitments, sidecar, missing]
+  simp [anchor, nullifiers, commitments, stablecoin, sidecar, missing]
 
 theorem sidecar_ciphertext_size_missing_rejects
     {input : TransferStateInput}
     (anchor : input.anchorKnown = true)
     (nullifiers : input.nullifierState = TransferNullifierState.valid)
     (commitments : input.commitmentsNonzero = true)
+    (stablecoin : input.stablecoinPolicyAuthorized = true)
     (sidecar : input.sidecarRoute = true)
     (available : input.sidecarCiphertextsAvailable = true)
     (missing : input.sidecarCiphertextSizesPresent = false) :
     evaluateTransferState input =
       Except.error TransferStateReject.sidecarCiphertextSizeMissing := by
   unfold evaluateTransferState
-  simp [anchor, nullifiers, commitments, sidecar, available, missing]
+  simp [anchor, nullifiers, commitments, stablecoin, sidecar, available, missing]
 
 theorem sidecar_ciphertext_size_mismatch_rejects
     {input : TransferStateInput}
     (anchor : input.anchorKnown = true)
     (nullifiers : input.nullifierState = TransferNullifierState.valid)
     (commitments : input.commitmentsNonzero = true)
+    (stablecoin : input.stablecoinPolicyAuthorized = true)
     (sidecar : input.sidecarRoute = true)
     (available : input.sidecarCiphertextsAvailable = true)
     (present : input.sidecarCiphertextSizesPresent = true)
@@ -208,7 +230,7 @@ theorem sidecar_ciphertext_size_mismatch_rejects
     evaluateTransferState input =
       Except.error TransferStateReject.sidecarCiphertextSizeMismatch := by
   unfold evaluateTransferState
-  simp [anchor, nullifiers, commitments, sidecar, available, present, mismatch]
+  simp [anchor, nullifiers, commitments, stablecoin, sidecar, available, present, mismatch]
 
 theorem unknown_anchor_precedes_nullifier :
     evaluateTransferState
@@ -224,6 +246,24 @@ theorem nullifier_precedes_commitment_zero :
         nullifierState := TransferNullifierState.duplicate,
         commitmentsNonzero := false } =
       Except.error TransferStateReject.duplicateNullifier := by
+  rfl
+
+theorem commitment_zero_precedes_stablecoin_policy :
+    evaluateTransferState
+      { validTransferState with
+        commitmentsNonzero := false,
+        stablecoinPolicyAuthorized := false } =
+      Except.error TransferStateReject.commitmentZero := by
+  rfl
+
+theorem stablecoin_policy_precedes_sidecar_materialization :
+    evaluateTransferState
+      { validTransferState with
+        stablecoinPolicyAuthorized := false,
+        sidecarCiphertextsAvailable := false,
+        sidecarCiphertextSizesPresent := false,
+        sidecarCiphertextSizesMatch := false } =
+      Except.error TransferStateReject.stablecoinPolicyUnauthorized := by
   rfl
 
 theorem inline_ignores_sidecar_availability :

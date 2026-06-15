@@ -35,6 +35,7 @@ inductive BlockActionReject where
   | transferDuplicateNullifier
   | transferNullifierAlreadyPending
   | transferCommitmentZero
+  | transferStablecoinPolicyUnauthorized
   | transferSidecarCiphertextMissing
   | transferSidecarCiphertextSizeMissing
   | transferSidecarCiphertextSizeMismatch
@@ -109,6 +110,8 @@ def mapTransferReject : TransferStateReject -> BlockActionReject
       BlockActionReject.transferNullifierAlreadyPending
   | TransferStateReject.commitmentZero =>
       BlockActionReject.transferCommitmentZero
+  | TransferStateReject.stablecoinPolicyUnauthorized =>
+      BlockActionReject.transferStablecoinPolicyUnauthorized
   | TransferStateReject.sidecarCiphertextMissing =>
       BlockActionReject.transferSidecarCiphertextMissing
   | TransferStateReject.sidecarCiphertextSizeMissing =>
@@ -442,6 +445,24 @@ def transferStateRejectValidation : BlockActionValidationInput :=
 theorem transfer_state_rejects :
     evaluateBlockActionValidation transferStateRejectValidation =
       Except.error BlockActionReject.transferUnknownAnchor := by
+  rfl
+
+def transferStateStablecoinPolicyRejectValidation :
+    BlockActionValidationInput :=
+  {
+    validMixedValidation with
+    actions := [
+      {
+        validTransferAction 1 with
+        transferState :=
+          { validTransferState with stablecoinPolicyAuthorized := false }
+      }
+    ]
+  }
+
+theorem transfer_state_stablecoin_policy_rejects :
+    evaluateBlockActionValidation transferStateStablecoinPolicyRejectValidation =
+      Except.error BlockActionReject.transferStablecoinPolicyUnauthorized := by
   rfl
 
 end BlockActionValidation

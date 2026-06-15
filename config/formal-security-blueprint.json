@@ -7836,8 +7836,8 @@
       "id": "native.transfer-state-admission",
       "claim_id": "native.transfer-state-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean transfer-state admission transition, native shielded transfer state validation accepts only when the anchor is known, nullifiers are admissible in the current mempool or block state, all output commitments are nonzero, and sidecar transfers have staged ciphertexts whose observed sizes match the action metadata; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.TransferStateAdmission.accepts_iff_state_preconditions` proves the complete executable state-admission predicate, with companion theorems for unknown anchor, zero/spent/duplicate/pending nullifier, zero commitment, missing staged ciphertext, missing staged ciphertext size, staged ciphertext size mismatch, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, and inline transfer independence from sidecar availability. `gen_transfer_state_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_transfer_state_admission` helper now called by native mempool and block transfer validation. Native regressions reject unknown anchors, duplicate nullifiers, zero commitments, missing sidecar ciphertexts, and staged sidecar size mismatches.",
+      "formal_statement": "For the executable Lean transfer-state admission transition, native shielded transfer state validation accepts only when the anchor is known, nullifiers are admissible in the current mempool or block state, all output commitments are nonzero, enabled stablecoin payloads have an exact native policy authorization, and sidecar transfers have staged ciphertexts whose observed sizes match the action metadata; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.TransferStateAdmission.accepts_iff_state_preconditions` proves the complete executable state-admission predicate, with companion theorems for unknown anchor, zero/spent/duplicate/pending nullifier, zero commitment, unauthorized stablecoin policy, missing staged ciphertext, missing staged ciphertext size, staged ciphertext size mismatch, unknown-anchor-before-nullifier precedence, nullifier-before-commitment precedence, commitment-before-stablecoin precedence, stablecoin-before-sidecar precedence, and inline transfer independence from sidecar availability. `gen_transfer_state_admission_vectors` emits Lean-derived accept/reject examples. The formal-core gate checks those vectors against the production `evaluate_native_transfer_state_admission` helper now called by native mempool and block transfer validation. Native regressions reject unknown anchors, duplicate nullifiers, zero commitments, unauthorized stablecoin policies, missing sidecar ciphertexts, and staged sidecar size mismatches.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -7875,6 +7875,14 @@
           "required_callers": [
             "validate_block_actions_locked"
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_transfer_stablecoin_policy_authorized",
+          "required_callers": [
+            "native_transfer_state_admission_input_for_mempool",
+            "native_transfer_state_admission_input_for_block"
+          ]
         }
       ],
       "evidence_paths": [
@@ -7904,7 +7912,7 @@
         },
         {
           "id": "native-transfer-state-regressions",
-          "description": "Native transfer state validation must reject unknown anchors, duplicate nullifiers, zero commitments, missing staged sidecar ciphertexts, and staged sidecar size mismatches.",
+          "description": "Native transfer state validation must reject unknown anchors, duplicate nullifiers, zero commitments, unauthorized stablecoin policies, missing staged sidecar ciphertexts, and staged sidecar size mismatches.",
           "gate": "cargo test -p hegemon-node transfer_state_ --lib --no-default-features"
         },
         {
@@ -7913,14 +7921,14 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It does not prove SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It proves enabled stablecoin transfers require the exact production-derived authorization predicate before mempool/block acceptance, but it does not prove a complete stablecoin policy-state writer, oracle freshness source, SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-validation",
       "claim_id": "native.block-action-validation",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean block-action validation transition, a native decoded block action stream is accepted only when action hash/count admission accepts, every action passes route/scope admission, route-specific payload validation succeeds before replay/state checks, inbound bridge replay keys are not already consumed or duplicated earlier in the block, shielded transfer keys are nondecreasing, and every shielded transfer passes state admission; rejection precedence is fixed by the executable table.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions` proves the executable acceptance predicate over the composed validation table. Companion theorems pin valid mixed blocks, non-transfer interleaving, action hash mismatch, duplicate hashes, scope-before-payload, bridge payload-before-replay, prior and cross-action bridge replay duplicates, transfer payload-before-order, descending transfer order, transfer order-before-state, and transfer-state rejection behavior. `gen_block_action_validation_vectors` emits Lean-derived examples checked against production helper functions introduced in `node/src/native/mod.rs`, and `validate_block_actions_locked` now routes decoded block validation through that helper before preserving the existing user-facing rejection errors. A production-only binding additionally requires `validate_block_actions_locked` to reject duplicate `pending_action_semantic_hash` values before transfer/replay state construction, so arrival-time-only action replays cannot bypass duplicate `tx_hash` admission.",
+      "formal_statement": "For the executable Lean block-action validation transition, a native decoded block action stream is accepted only when action hash/count admission accepts, every action passes route/scope admission, route-specific payload validation succeeds before replay/state checks, inbound bridge replay keys are not already consumed or duplicated earlier in the block, shielded transfer keys are nondecreasing, and every shielded transfer passes state admission including stablecoin policy authorization; rejection precedence is fixed by the executable table.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionValidation.accepts_iff_block_action_validation_preconditions` proves the executable acceptance predicate over the composed validation table. Companion theorems pin valid mixed blocks, non-transfer interleaving, action hash mismatch, duplicate hashes, scope-before-payload, bridge payload-before-replay, prior and cross-action bridge replay duplicates, transfer payload-before-order, descending transfer order, transfer order-before-state, transfer-state rejection behavior, and unauthorized stablecoin policy rejection through transfer state. `gen_block_action_validation_vectors` emits Lean-derived examples checked against production helper functions introduced in `node/src/native/mod.rs`, and `validate_block_actions_locked` now routes decoded block validation through that helper before preserving the existing user-facing rejection errors. A production-only binding additionally requires `validate_block_actions_locked` to reject duplicate `pending_action_semantic_hash` values before transfer/replay state construction, so arrival-time-only action replays cannot bypass duplicate `tx_hash` admission.",
       "depends_on": [
         "native.codec-admission",
         "native.block-action-hash-admission",
