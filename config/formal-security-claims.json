@@ -3908,6 +3908,56 @@
       ]
     },
     {
+      "id": "native.raw-ingress-bridge-pending-action-publication",
+      "component": "native raw ingress bridge pending-action publication refinement",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress bridge pending-action publication refinement composes accepted inbound bridge payload authorization and decoded amount authorization with accepted raw-ingress pending-action publication over the same raw ledger/tree replay witness. The resulting theorem packages replayed supply, commitment-root publication, pending-action parser row-count agreement, zero direct native mint delta, one-shot bridge replay import, duplicate replay rejection, final nullifier uniqueness, and final bridge replay-key uniqueness on the same raw ingress and pending-action byte-publication surface.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_pending_action_publication_safe"
+      ],
+      "assumptions": [
+        "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate bridge payload/mint safety, raw-ingress pending-action publication, DA/sidecar binding, pending-action parser/publication, canonical publication, and replay-refinement claims for executable predicate conformance.",
+        "The theorem uses the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness as the raw-ingress pending-action publication theorem, so bridge replay one-shot consumption, zero direct native mint delta, replayed supply, commitment-root publication, parser row-count agreement, final nullifier uniqueness, and final bridge replay-key uniqueness are reviewable as one surface.",
+        "The theorem does not prove external bridge receipt validity, disabled RISC Zero receipt soundness, future PQ bridge receipt soundness, bridge payload hash security or implementation equivalence, DA availability, recursive proof soundness, native tx-leaf proof soundness, arbitrary raw byte parser internals, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+        "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-bridge-external-receipt-soundness-missing",
+          "description": "The theorem composes accepted Hegemon-side bridge predicates but does not prove external-chain receipt validity, disabled RISC Zero receipt soundness, or future PQ bridge receipt soundness.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-raw-ingress-bridge-parser-crypto-node-refinement-missing",
+          "description": "The theorem does not prove arbitrary byte parser internals, bridge payload hash security or implementation equivalence, DA availability, proof soundness, sled durability, or complete native-node refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",

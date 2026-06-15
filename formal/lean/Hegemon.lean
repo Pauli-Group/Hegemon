@@ -75,6 +75,7 @@ import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
+import Hegemon.Native.RawIngressBridgePendingActionPublication
 import Hegemon.Native.RawIngressTransferNoTheftPublication
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.StagedCiphertextReload
