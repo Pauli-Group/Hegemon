@@ -7,7 +7,7 @@
   "overall_completion_percent": 82.99,
   "last_full_formal_core": {
     "date": "2026-06-15T18:51:37Z",
-    "commit": "working-tree-before-stablecoin-anti-mismatch-indexed-pq-commit",
+    "commit": "9598446f0a4d",
     "status": "passed locally after authorized stablecoin anti-mismatch, native tx-leaf payload gate, and indexed PQ frame theorem integration",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 116,
@@ -28,19 +28,21 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T18:24:23Z",
-    "commit": "9c315b08bca3",
-    "status": "passed without node rebuild or restart because this slice changes only Lean proofs, formal metadata, and documentation; claims/blueprint gates, targeted Lean, RPC smoke, wallet-send, live mining status, service health, and NTP synchronized all passed",
+    "date": "2026-06-15T18:56:15Z",
+    "commit": "9598446f0a4d",
+    "status": "passed without node rebuild or restart because this slice changes only Lean proofs, formal metadata, and documentation; JSON validation, claims/blueprint gates, targeted Lean, RPC smoke, wallet-send, live mining status, isolated mining, service health, and NTP synchronized all passed",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9c315b08bca3",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9598446f0a4d",
       "no live-node rebuild or restart was required because the committed changes are Lean proofs, formal metadata, and documentation only",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 116 claims, 1597 named Lean theorem declarations, 106 production-eligible claims, and 44 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 116 claims, 1611 named Lean theorem declarations, 106 production-eligible claims, and 44 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 116 nodes, 486 edges, 458 falsification cases, 204 implementation bindings, and 161 result obligations",
-      "$HOME/.elan/bin/lake build Hegemon.Transaction.CanonicalVerifierBoundary Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Network.PqNoiseHandshakeChannel Hegemon passed from formal/lean on hegemon-dev with 134 jobs",
-      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12150",
+      "$HOME/.elan/bin/lake build Hegemon.Transaction.CanonicalVerifierBoundary Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Native.TxLeafCanonicalSurface Hegemon.Network.PqNoiseHandshakeChannel Hegemon passed from formal/lean on hegemon-dev with 134 jobs",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12182",
       "bash scripts/test-node.sh wallet-send passed via native::tests::submit_action_stages_and_imports_shielded_transfer",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, hash_rate about 24.36 kH/s, blocks_found 360, and block_height 12150",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, hash_rate about 24.31 kH/s, blocks_found 392, and block_height 12182",
+      "20-second live mining sample kept mining active but did not find a new block at current difficulty",
+      "isolated bash scripts/test-node.sh single-node mined height 22043 without disturbing the live service",
       "system_health reported isSyncing=false, peers=0, and shouldHavePeers=false",
       "systemctl is-active hegemon-node.service returned active and systemctl show NRestarts returned 0",
       "timedatectl reported NTPSynchronized=yes"
