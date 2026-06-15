@@ -236,6 +236,15 @@ theorem block_action_decode_acceptance_excludes_malleability
           h
         ] at accepted ⊢
 
+theorem block_action_decode_acceptance_binds_declared_count
+    {input : BlockActionDecodeInput}
+    (accepted : blockActionDecodeAccepts input = true) :
+    input.declaredTxCount = input.actualActionPayloadCount := by
+  have countMatches :=
+    (block_action_decode_acceptance_excludes_malleability
+      accepted).left
+  simpa [actionCountMatches] using countMatches
+
 structure CanonicalDecodeNonMalleabilityFacts
     (syncInput : SyncDecodeInput)
     (exactInput : ExactDecodeInput)

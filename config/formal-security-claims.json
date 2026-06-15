@@ -2985,14 +2985,49 @@
       "residual_risks": []
     },
     {
+      "id": "native.pre-heavy-resource-bound-surface",
+      "component": "native pre-heavy-work resource and DoS boundary",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, and mineable-action admission facts into one zero-runtime-cost theorem package exposing byte budgets, row/request caps, sidecar proof preconditions, and block-template sidecar/candidate preconditions before expensive proof or mining work.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_resource_bound_surface_exposes_bounds"
+      ],
+      "assumptions": [
+        "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, and native.mineable-action-admission; it inherits production conformance from those generated-vector gates and adds no new runtime helper.",
+        "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, sidecar request/capacity/proof metadata/proof-byte preconditions, and mineable-action candidate/sidecar preconditions.",
+        "The theorem covers decision-table composition only. It does not prove JSON parser correctness, RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness beyond cap behavior, DA availability, sled durability, proof-system soundness, mining liveness, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean",
+        "formal/lean/Hegemon/Native/ResourceBudgetAdmission.lean",
+        "formal/lean/Hegemon/Native/RpcAdmission.lean",
+        "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "cd formal/lean && lake build Hegemon.Native.PreHeavyWorkResourceBoundSurface Hegemon && lake env lean Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean",
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "native.pending-action-reload",
       "component": "native pending action startup reload",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions. Blueprint bindings plus regressions require startup semantic mempool re-admission and canonical reorg pending resurrection to re-run arrival-time-insensitive semantic duplicate rejection against loaded or rebuilt canonical state, bridge replay, staged sidecars, and resource budgets before pending actions can feed mining selection or reorg persistence. The byte publication refinement theorem now carries accepted pending-action reload preconditions into the same package as exact decode, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts.",
+      "summary": "The Lean native pending-action reload kernel proves the deterministic startup key/hash admission table for persisted pending actions. Blueprint bindings plus regressions require startup semantic mempool re-admission and canonical reorg pending resurrection to re-run arrival-time-insensitive semantic duplicate rejection against loaded or rebuilt canonical state, bridge replay, staged sidecars, and resource budgets before pending actions can feed mining selection or reorg persistence. The byte parser and publication refinement theorems now carry accepted pending-action reload preconditions into the same package as exact decode, block-action decode declared-count binding, action-hash admission, wire replay projection, and raw canonical publication facts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_runtime_regression",
       "production_eligible": true,
       "lean_theorems": [
+        "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_refines_wire_replay_rows",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication",
         "Hegemon.Native.PendingActionReload.accepts_iff_pending_action_reload_preconditions",
@@ -3009,7 +3044,7 @@
         "The Lean model represents the per-entry startup reload decision table over production-derived booleans: 32-byte sled-key shape, embedded tx_hash equality with the key, recomputed pending_action_hash equality with the embedded tx_hash, and loaded-action hash uniqueness.",
         "Generated Lean conformance vectors cover valid reload, each rejection reason, and rejection precedence for malformed key before key/hash mismatch, key/hash mismatch before recomputed-hash mismatch, and recomputed-hash mismatch before duplicate reporting.",
         "The theorem covers the executable startup key/hash admission table for observed persisted pending-action entries only. Blueprint bindings and focused runtime regressions additionally require semantic re-admission before NativeState publication, require canonical reorg pending resurrection to re-admit existing pending actions before orphaned old-chain actions, and reject persisted actions whose only transaction-hash distinction is arrival time. This does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash cryptographic security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence.",
-        "The byte publication refinement theorem proves composition of accepted pending-action reload predicates with existing byte/replay/publication predicates; it still assumes the production-derived booleans faithfully summarize the decoded pending-action bytes."
+        "The byte parser refinement theorem derives projected replay row-count equality from accepted decode, accepted wire replay, and the production count binding `wireProjection.actionCount = blockActionDecode.declaredTxCount`; it still assumes the production-derived booleans faithfully summarize the decoded pending-action bytes."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionReload.lean",
@@ -3017,6 +3052,7 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
       ],
       "gates": [
@@ -3594,12 +3630,14 @@
       "id": "native.action-wire-replay-projection-admission",
       "component": "native action wire replay projection",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action wire replay projection kernel proves executable admission for projecting decoded PendingAction ciphertext hash/size rows and inbound bridge replay keys onto planned native replay effects; generated Lean vectors are checked against the production helper called by materialized planning, root preview, memory application, and canonical-index rebuild before roots or canonical rows are derived. Canonical-index rebuild now obtains planned ciphertext bytes through the same canonical sidecar materialization helper as replay planning.",
+      "summary": "The Lean action wire replay projection kernel proves executable admission for projecting decoded PendingAction ciphertext hash/size rows and inbound bridge replay keys onto planned native replay effects, and accepted projection now exposes the projected action-row count. Generated Lean vectors are checked against the production helper called by materialized planning, root preview, memory application, and canonical-index rebuild before roots or canonical rows are derived. Canonical-index rebuild now obtains planned ciphertext bytes through the same canonical sidecar materialization helper as replay planning.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.ActionWireReplayProjectionAdmission.accepts_iff_wire_replay_projection_preconditions",
+        "Hegemon.Native.ActionWireReplayProjectionAdmission.accepted_wire_replay_projection_from_projected_action_count",
+        "Hegemon.Native.ActionWireReplayProjectionAdmission.accepted_wire_replay_projection_projected_action_count",
         "Hegemon.Native.ActionWireReplayProjectionAdmission.ciphertext_count_mismatch_rejects",
         "Hegemon.Native.ActionWireReplayProjectionAdmission.ciphertext_hash_mismatch_rejects",
         "Hegemon.Native.ActionWireReplayProjectionAdmission.ciphertext_size_mismatch_rejects",
@@ -3614,7 +3652,7 @@
       "assumptions": [
         "The Lean model covers decoded PendingAction ciphertext hash counts, ciphertext size counts, materialized ciphertext counts, ciphertext hash equality, size equality, and inbound replay-key equality as production-derived predicates. It does not prove SCALE decoding, BLAKE3 ciphertext-hash security or implementation equivalence, bridge receipt soundness, or replay-key hash derivation.",
         "Generated Lean conformance vectors cover valid mixed transfer/bridge projection, empty projection, plan-length mismatch, ciphertext count/hash/size mismatches, replay-key mismatch, and rejection precedence.",
-        "Production planning calls the projection gate after sidecar/inline ciphertext materialization and before preview, in-memory application, materialized planning output, or canonical-index rebuild can append commitments, derive roots, publish replay keys, or derive ciphertext archive/index rows. Canonical-index rebuild is now explicitly bound to `materialize_native_action_payloads`, so it cannot use a weaker sidecar fetch path before row derivation."
+        "Production planning calls the projection gate after sidecar/inline ciphertext materialization and before preview, in-memory application, materialized planning output, or canonical-index rebuild can append commitments, derive roots, publish replay keys, or derive ciphertext archive/index rows. Canonical-index rebuild is now explicitly bound to `materialize_native_action_payloads`, so it cannot use a weaker sidecar fetch path before row derivation. The accepted projection theorem proves projected action rows equal the accepted decoded action count."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionWireReplayProjectionAdmission.lean",
@@ -3947,12 +3985,13 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode can be carried together with pending reload, action-hash, wire replay, and canonical publication facts.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, and native block action payload counts; generated Lean vectors are checked against production decode helpers and block-action decoding, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with pending reload, action-hash, wire replay, and canonical publication facts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.CodecAdmission.action_count_mismatch_rejects",
+        "Hegemon.Native.CodecAdmission.block_action_decode_acceptance_binds_declared_count",
         "Hegemon.Native.CodecAdmission.block_action_decode_acceptance_excludes_malleability",
         "Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions",
         "Hegemon.Native.CodecAdmission.block_action_decode_rejects_count_mismatch",
@@ -3976,6 +4015,7 @@
         "Hegemon.Native.CodecAdmission.valid_block_actions_accept",
         "Hegemon.Native.CodecAdmission.valid_exact_decode_accepts",
         "Hegemon.Native.CodecAdmission.valid_sync_accepts",
+        "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_refines_wire_replay_rows",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication"
       ],
@@ -3983,7 +4023,7 @@
         "The Lean model treats underlying wire, SCALE, and bincode parsers as parser-acceptance predicates and proves the executable exact-consumption, canonical re-encode, and count-admission table around those parsers.",
         "Generated Lean conformance vectors cover valid bounded sync messages, legacy bincode sync-message rejection, sync trailing-byte rejection, valid/trailing/non-canonical SCALE decode, valid/trailing/non-canonical bincode decode, block action count mismatch rejection, and trailing action payload rejection.",
         "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence.",
-        "The byte publication refinement theorem reuses the exact-decode and block-action decode kernels as accepted parser predicates; it does not replace external parser implementation review."
+        "The byte parser refinement theorem reuses the exact-decode and block-action decode kernels as accepted parser predicates and derives projected replay row-count equality from declared action count plus accepted wire replay; it does not replace external parser implementation review."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CodecAdmission.lean",
@@ -3991,6 +4031,7 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
       ],
       "gates": [

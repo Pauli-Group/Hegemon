@@ -160,6 +160,67 @@ theorem accepts_iff_wire_replay_projection_preconditions
       hCounts
     ]
 
+theorem accepted_wire_replay_projection_from_projected_action_count
+    {projected ciphertextRows replayRows : Nat}
+    {actions : List WireReplayAction}
+    {output : ActionWireReplayProjectionOutput}
+    (accepted :
+      evaluateActionWireReplayProjectionFrom
+        projected
+        ciphertextRows
+        replayRows
+        actions =
+          Except.ok output) :
+    output.projectedActionCount = projected + actions.length := by
+  induction actions generalizing projected ciphertextRows replayRows with
+  | nil =>
+      simp [evaluateActionWireReplayProjectionFrom] at accepted
+      cases accepted
+      rfl
+  | cons action rest ih =>
+      by_cases hCounts : wireReplayActionCountsMatch action
+      · cases hHashes : action.ciphertextHashesMatch <;>
+          cases hSizes : action.ciphertextSizesMatch <;>
+          cases hReplay : action.replayKeyMatches <;>
+          simp [
+            evaluateActionWireReplayProjectionFrom,
+            hCounts,
+            hHashes,
+            hSizes,
+            hReplay
+          ] at accepted
+        have projectedCount := ih accepted
+        simp at projectedCount ⊢
+        omega
+      · simp [
+          evaluateActionWireReplayProjectionFrom,
+          hCounts
+        ] at accepted
+
+theorem accepted_wire_replay_projection_projected_action_count
+    {input : ActionWireReplayProjectionInput}
+    {output : ActionWireReplayProjectionOutput}
+    (accepted :
+      evaluateActionWireReplayProjection input =
+        Except.ok output) :
+    output.projectedActionCount = input.actionCount := by
+  unfold evaluateActionWireReplayProjection at accepted
+  by_cases hCounts : actionWireReplayPlanCountsMatch input
+  · simp [hCounts] at accepted
+    have projectedCount :=
+      accepted_wire_replay_projection_from_projected_action_count
+        (projected := 0)
+        (ciphertextRows := 0)
+        (replayRows := 0)
+        (actions := input.actions)
+        accepted
+    have countFacts :
+        input.actionCount = input.plannedCount ∧
+          input.actionCount = input.actions.length := by
+      simpa [actionWireReplayPlanCountsMatch] using hCounts
+    omega
+  · simp [hCounts] at accepted
+
 def validMixedProjection : ActionWireReplayProjectionInput :=
   {
     actionCount := 2,

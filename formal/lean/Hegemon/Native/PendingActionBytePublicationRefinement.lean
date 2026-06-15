@@ -3,6 +3,7 @@ import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.PendingActionReload
+import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.TxLeafCanonicalSurface
 
 namespace Hegemon
@@ -19,6 +20,7 @@ open Hegemon.Native.CanonicalPublicationRefinement
 open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
+open Hegemon.Native.PendingActionByteParserRefinement
 open Hegemon.Native.PendingActionReload
 open Hegemon.Native.StorageDurabilityAdmission
 open Hegemon.Native.BlockArtifactBindingAdmission
@@ -59,6 +61,13 @@ structure PendingActionBytePublicationFacts
   acceptedWireProjection :
     evaluateActionWireReplayProjection wireProjection =
       Except.ok wireOutput
+  parserWireReplayFacts :
+    PendingActionByteParserWireReplayFacts
+      pendingDecode
+      blockActionDecode
+      pendingReload
+      wireProjection
+      wireOutput
   projectedActionRowsMatchDecodedPayloads :
     wireOutput.projectedActionCount =
       blockActionDecode.actualActionPayloadCount
@@ -100,9 +109,9 @@ theorem accepted_pending_action_bytes_bind_raw_canonical_publication
     (wireProjectionAccepted :
       evaluateActionWireReplayProjection wireProjection =
         Except.ok wireOutput)
-    (projectedActionRowsMatchDecodedPayloads :
-      wireOutput.projectedActionCount =
-        blockActionDecode.actualActionPayloadCount)
+    (wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount)
     (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
     (canonicalStateAccepted :
       canonicalStateReloadAccepts canonicalState = true)
@@ -133,41 +142,17 @@ theorem accepted_pending_action_bytes_bind_raw_canonical_publication
       initial
       final
       blocks := by
-  have pendingDecodePreconditionsOk :
-      exactDecodePreconditions pendingDecode = true :=
-    (exact_accepts_iff_preconditions
-      (input := pendingDecode)).mp pendingDecodeAccepted
-  have pendingDecodeExactOk :
-      pendingDecode.parserAccepts = true
-        ∧ pendingDecode.consumedAllBytes = true
-        ∧ pendingDecode.canonicalReencodeMatches = true :=
-    exact_decode_acceptance_excludes_malleability
+  have parserWireReplayFacts :=
+    accepted_pending_action_byte_parser_refines_wire_replay_rows
       pendingDecodeAccepted
-  have blockActionDecodePreconditionsOk :
-      blockActionDecodePreconditions blockActionDecode = true :=
-    (block_action_decode_accepts_iff_preconditions
-      (input := blockActionDecode)).mp blockActionDecodeAccepted
-  have blockActionDecodeExactOk :
-      actionCountMatches blockActionDecode = true
-        ∧ blockActionDecode.everyActionDecodesExactly = true :=
-    block_action_decode_acceptance_excludes_malleability
       blockActionDecodeAccepted
-  have pendingReloadPreconditionsOk :
-      pendingActionReloadPreconditions pendingReload = true :=
-    (accepts_iff_pending_action_reload_preconditions
-      (input := pendingReload)).mp pendingReloadAccepted
+      pendingReloadAccepted
+      wireProjectionAccepted
+      wireActionCountMatchesDeclared
   have actionHashPreconditionsOk :
       admissionPreconditions actionHash = true :=
     (accepts_iff_admission_preconditions
       (input := actionHash)).mp actionHashAccepted
-  have wireProjectionAccepts :
-      actionWireReplayProjectionAccepts wireProjection = true := by
-    simp [actionWireReplayProjectionAccepts, wireProjectionAccepted]
-  have wireProjectionPreconditionsOk :
-      actionWireReplayProjectionPreconditions wireProjection = true :=
-    by
-      simpa [wireProjectionAccepts] using
-        (accepts_iff_wire_replay_projection_preconditions wireProjection)
   have canonicalFacts :=
     accepted_raw_canonical_publication_refines_ledger_tree_replay
       blockIndexAccepted
@@ -180,16 +165,22 @@ theorem accepted_pending_action_bytes_bind_raw_canonical_publication
       acceptedRaw
   exact
     {
-      pendingDecodePreconditions := pendingDecodePreconditionsOk,
-      pendingDecodeExact := pendingDecodeExactOk,
-      blockActionDecodePreconditions := blockActionDecodePreconditionsOk,
-      blockActionDecodeExact := blockActionDecodeExactOk,
-      pendingReloadPreconditions := pendingReloadPreconditionsOk,
+      pendingDecodePreconditions :=
+        parserWireReplayFacts.pendingDecodePreconditions,
+      pendingDecodeExact := parserWireReplayFacts.pendingDecodeExact,
+      blockActionDecodePreconditions :=
+        parserWireReplayFacts.blockActionDecodePreconditions,
+      blockActionDecodeExact :=
+        parserWireReplayFacts.blockActionDecodeExact,
+      pendingReloadPreconditions :=
+        parserWireReplayFacts.pendingReloadPreconditions,
       actionHashPreconditions := actionHashPreconditionsOk,
-      wireProjectionPreconditions := wireProjectionPreconditionsOk,
+      wireProjectionPreconditions :=
+        parserWireReplayFacts.wireProjectionPreconditions,
       acceptedWireProjection := wireProjectionAccepted,
+      parserWireReplayFacts := parserWireReplayFacts,
       projectedActionRowsMatchDecodedPayloads :=
-        projectedActionRowsMatchDecodedPayloads,
+        parserWireReplayFacts.projectedActionRowsMatchDecodedPayloads,
       canonicalPublicationFacts := canonicalFacts.left,
       rawTreeCarriedStatePreconditions := canonicalFacts.right
     }
@@ -293,9 +284,9 @@ theorem accepted_pending_action_bytes_bind_tx_leaf_publication
     (wireProjectionAccepted :
       evaluateActionWireReplayProjection wireProjection =
         Except.ok wireOutput)
-    (projectedActionRowsMatchDecodedPayloads :
-      wireOutput.projectedActionCount =
-        blockActionDecode.actualActionPayloadCount)
+    (wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount)
     (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
     (canonicalStateAccepted :
       canonicalStateReloadAccepts canonicalState = true)
@@ -358,7 +349,7 @@ theorem accepted_pending_action_bytes_bind_tx_leaf_publication
       pendingReloadAccepted
       actionHashAccepted
       wireProjectionAccepted
-      projectedActionRowsMatchDecodedPayloads
+      wireActionCountMatchesDeclared
       blockIndexAccepted
       canonicalStateAccepted
       canonicalReorgAccepted
