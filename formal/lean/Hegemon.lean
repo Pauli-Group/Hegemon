@@ -62,6 +62,7 @@ import Hegemon.Native.InboundBridgeReceiptAdmission
 import Hegemon.Native.MineableActionAdmission
 import Hegemon.Native.MinerIdentity
 import Hegemon.Native.MinedWorkAdmission
+import Hegemon.Native.MinedBlockCommitPublication
 import Hegemon.Native.NativeBackendReleasePosture
 import Hegemon.Native.NativeBackendReviewPolicy
 import Hegemon.Native.PreHeavyWorkResourceBoundSurface

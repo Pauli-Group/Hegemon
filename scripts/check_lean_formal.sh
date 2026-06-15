@@ -150,6 +150,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateMinerIdentityVectors.lean
   lake env lean Hegemon/Native/MinedWorkAdmission.lean
   lake env lean Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean
+  lake env lean Hegemon/Native/MinedBlockCommitPublication.lean
   lake env lean Hegemon/Native/WorkTemplateAdmission.lean
   lake env lean Hegemon/Native/GenerateWorkTemplateAdmissionVectors.lean
   lake env lean Hegemon/Native/RecursiveArtifactContextAdmission.lean

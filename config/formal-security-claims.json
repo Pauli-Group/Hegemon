@@ -525,7 +525,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now also splits deployed soundness into spend-only and balance/public-field-only assumptions, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot and public-delta consequences from those split assumptions, proves signed magnitude equality for public fields, and provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -568,7 +568,17 @@
         "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_parts_imply_deployed_tx_verifier_soundness_assumption",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_active_input_bound_to_statement",
         "Hegemon.Transaction.CanonicalVerifierBoundary.balance_public_field_facts_authorized_asset_delta_value",
-        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_authorized_asset_delta_value"
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_authorized_asset_delta_value",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_input_slot_bound_to_statement",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_field_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_implies_spend_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_split_boundary_facts_imply_full_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_parts_canonical_surface_implies_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_balance_public_boundary_facts_authorized_public_delta_value",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_spend_boundary_facts_input_slot_bound_to_statement",
+        "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_authorized_public_delta_value",
+        "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_input_slot_boundary_facts"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
@@ -5587,7 +5597,7 @@
       "id": "native.materialized-consensus-da-blob-refinement",
       "component": "native materialized consensus DA blob refinement",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized consensus DA-blob refinement surface specializes the formerly opaque materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob assumptions into concrete Lean relations. Accepted materialized sidecar DA publication now carries ordered action/payload/transaction binding, consensus DA payload binding, exact consensus DA blob bytes, explicit u32 length bounds matching the Rust encoder casts, and the existing sidecar, candidate/proven-batch DA-root, tx-leaf ciphertext, replay, supply, commitment-root, and replay-set facts. A Rust conformance test checks the sidecar materialization, consensus transaction construction, DA blob bytes, and DA root path against production helpers.",
+      "summary": "The Lean materialized consensus DA-blob refinement surface specializes the formerly opaque materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob assumptions into concrete Lean relations, and now proves the concrete Transaction::new-to-`Consensus.DaRoot.daBlob` path for `transactions.map consensusDaPayload` directly. Accepted materialized sidecar DA publication carries ordered action/payload/transaction binding, consensus DA payload binding, exact consensus DA blob bytes, explicit u32 length bounds matching the Rust encoder casts, and the existing sidecar, candidate/proven-batch DA-root, tx-leaf ciphertext, replay, supply, commitment-root, and replay-set facts. A Rust conformance test checks the sidecar materialization, consensus transaction construction, DA blob bytes, and DA root path against production helpers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_materialized_transaction_new_da_blob_refinement_plus_rust_conformance_test",
       "production_eligible": true,
@@ -5596,11 +5606,14 @@
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_consensus_da_payload_at",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_consensus_transaction_bytes",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_consensus_da_blob_bytes",
-        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_transaction_new_da_blob"
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_transaction_new_da_blob",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.consensus_da_payload_transaction_bytes",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_concrete_consensus_da_blob",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition and a targeted Rust conformance gate over the existing materialized sidecar, tx-leaf, and consensus DA helpers.",
-        "The theorem replaces two unstructured propositions at the review surface with concrete `MaterializedRowsFeedTransactionNew` and `TransactionNewFeedsConsensusDaBlob` relations over ordered action rows, payload rows, consensus transactions, DA payloads, and blob bytes.",
+        "The theorem replaces the materialized-row-to-Transaction::new proposition with the concrete `MaterializedRowsFeedTransactionNew` relation, and proves the Transaction::new-to-DA-blob relation directly for `transactions.map consensusDaPayload` and `Consensus.DaRoot.daBlob`.",
         "The theorem records explicit `u32` transaction/ciphertext length bounds because production `consensus::types::build_da_blob` encodes transaction and ciphertext counts by casting lengths to u32.",
         "The theorem and test do not prove arbitrary-byte parser internals, hash collision resistance, DA availability/retention, Reed-Solomon network availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],
@@ -5680,6 +5693,50 @@
         {
           "id": "native-materialized-transfer-da-and-node-refinement-explicit",
           "description": "The theorem composes accepted materialized DA and transfer no-theft surfaces but does not prove row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, storage durability, or complete native-node refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "native.mined-block-commit-publication",
+      "component": "native mined block commit publication surface",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean mined-block commit publication surface composes local mined-work freshness, native block-commitment admission, and atomic mined-block commit-manifest admission into one accepted publication package. Accepted local mined publication now exposes fresh parent/height preconditions, header/body/supply commitment preconditions, the mined-block manifest kind, and atomic manifest preconditions before production order gates publish state or broadcast.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_mined_work_commitment_atomic_manifest_composition",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.MinedBlockCommitPublication.mined_commit_kind_eq_of_accepts",
+        "Hegemon.Native.MinedBlockCommitPublication.accepts_iff_mined_block_commit_publication_preconditions",
+        "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts"
+      ],
+      "assumptions": [
+        "This is a zero-runtime-cost Lean composition over existing executable mined-work, block-commitment, and atomic-commit manifest admission predicates.",
+        "The theorem packages the predicates that production order bindings already require before mined state publication or broadcast; it does not add runtime checks beyond the existing helpers.",
+        "The theorem keeps proof-of-work hash-threshold soundness, parent-hash computation, body/replay implementation equivalence, supply-accounting implementation equivalence, sled transaction correctness, filesystem durability, and complete native-node refinement explicit."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
+        "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.MinedBlockCommitPublication Hegemon",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-mined-block-commit-publication-assumptions-explicit",
+          "description": "The theorem composes accepted mined-work, block-commitment, and atomic mined-commit manifest facts, but PoW hash-threshold soundness, body/replay implementation equivalence, supply-accounting implementation equivalence, sled transaction correctness, filesystem durability, and complete native-node refinement remain explicit.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

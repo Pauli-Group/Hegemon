@@ -101,6 +101,12 @@ def consensusTransactionBytes
         acc ++ Consensus.DaRoot.ciphertextBytes ciphertext)
       []
 
+theorem consensus_da_payload_transaction_bytes
+    (transaction : MaterializedConsensusTransaction) :
+    Consensus.DaRoot.transactionBytes (consensusDaPayload transaction) =
+      consensusTransactionBytes transaction := by
+  rfl
+
 structure TransactionNewFeedsConsensusDaPayload
     (transaction : MaterializedConsensusTransaction)
     (payload : Consensus.DaRoot.TxDaPayload) : Prop where
@@ -274,6 +280,27 @@ theorem transaction_new_feeds_consensus_da_blob_bytes
     blobBytes = Consensus.DaRoot.daBlob payloads :=
   binding.blobBytesEq
 
+theorem transaction_new_feeds_concrete_consensus_da_blob
+    (transactions : List MaterializedConsensusTransaction) :
+    TransactionNewFeedsConsensusDaBlob
+      transactions
+      (transactions.map consensusDaPayload)
+      (Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)) := by
+  refine
+    { payloadCountMatchesTransactions := by simp
+      payloadBinding := ?_
+      blobBytesEq := rfl }
+  intro index transaction payload transactionAt payloadAt
+  have mappedAt :
+      (transactions.map consensusDaPayload)[index]? =
+        some (consensusDaPayload transaction) := by
+    rw [List.getElem?_map, transactionAt]
+    rfl
+  rw [payloadAt] at mappedAt
+  injection mappedAt with payloadEq
+  subst payload
+  exact { ciphertextsFromTransaction := rfl }
+
 theorem accepted_materialized_transfer_payloads_feed_transaction_new_da_blob
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : ExactDecodeInput}
@@ -380,6 +407,122 @@ theorem accepted_materialized_transfer_payloads_feed_transaction_new_da_blob
         publication.assumptions.transactionNewFeedsConsensusDaBlobExplicit
       blobBytesEq :=
         publication.assumptions.transactionNewFeedsConsensusDaBlobExplicit.blobBytesEq
+      transactionLengthBounds := u32Bounds
+      materializedSidecarRows := publication.materializedSidecarRows
+      wireReplayDaRowBinding := publication.wireReplayDaRowBinding
+      candidateDaPublication := publication.candidateDaPublication
+      provenBatchDaPublication := publication.provenBatchDaPublication
+      recursiveSemanticDaPublication := publication.recursiveSemanticDaPublication
+      txLeafCiphertextPublication := publication.txLeafCiphertextPublication
+      statementCiphertextVectorPublication :=
+        publication.statementCiphertextVectorPublication
+      txLeafNativeStatementArtifactBinding :=
+        publication.txLeafNativeStatementArtifactBinding
+      acceptedLedgerTreeReplay := publication.acceptedLedgerTreeReplay
+      commitmentRootPublication := publication.commitmentRootPublication
+      replayedSupply := publication.replayedSupply
+      finalReplaySetsUnique := publication.finalReplaySetsUnique }
+
+theorem accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    (publication :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        (MaterializedRowsFeedTransactionNew
+          actions
+          payloads
+          transactions)
+        True
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (u32Bounds : TransactionsFitU32 transactions) :
+    MaterializedConsensusDaBlobRefinementFacts
+      surface
+      blockActionDecode
+      wireOutput
+      semanticFields
+      initial
+      final
+      blocks
+      txLeaf
+      shape
+      statementFields
+      bindingFields
+      actions
+      payloads
+      transactions
+      (transactions.map consensusDaPayload)
+      (Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)) := by
+  exact
+    { materializedRowsFeedTransactionNew :=
+        publication.assumptions.materializedRowsFeedTransactionNewExplicit
+      transactionNewFeedsConsensusDaBlob :=
+        transaction_new_feeds_concrete_consensus_da_blob transactions
+      blobBytesEq := rfl
       transactionLengthBounds := u32Bounds
       materializedSidecarRows := publication.materializedSidecarRows
       wireReplayDaRowBinding := publication.wireReplayDaRowBinding

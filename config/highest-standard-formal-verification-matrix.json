@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 79.77,
+  "overall_completion_percent": 80.02,
   "last_full_formal_core": {
     "commit": "c2af873280d13df51279d84616881c8951640e24",
     "status": "passed locally 2026-06-15T07:28:57Z",
@@ -51,76 +51,47 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened raw-ingress/materialized implementation equivalence, proof-system assumption factoring, and privacy/ciphertext binding. The slice now includes action-hash/tx-leaf, DA-sidecar/canonical, full-byte publication, materialized sidecar DA-blob publication, materialized consensus Transaction::new/DA-blob refinement, materialized transfer no-theft publication, selected-output privacy/ciphertext DA-hash binding, and split deployed verifier spend/balance soundness assumptions while keeping parser, hash, DA availability, proof-system, storage, deployed verifier, ML-KEM, AEAD, KDF, RNG, wire indistinguishability, and full native-node assumptions explicit.",
+    "summary": "Strengthened implementation equivalence with concrete DA-blob construction and mined-block publication composition. `accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob` removes the explicit Transaction::new-to-DA-blob proposition for the concrete `transactions.map consensusDaPayload` path, while `accepted_mined_block_commit_publication_facts` composes mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one accepted local mined-publication surface. Existing parser, hash, DA availability, proof-system, PoW threshold, storage durability, and complete native-node assumptions remain explicit. The proof-system boundary side of the slice also adds split spend-only and balance/public-field fact packages and direct consequences so future backend refinement can discharge smaller obligations instead of a monolithic verifier-soundness assumption.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
-      "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
-      "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
-      "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
-      "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean",
-      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean",
-      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean",
-      "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
-      "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
-      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
-      "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
-      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
       "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
-      "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
+      "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
+      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
       "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
-      "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts",
-      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication",
-      "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_protect_open_facts",
-      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths",
-      "Hegemon.Native.RawIngressActionHashTxLeafPublication.accepted_raw_ingress_action_hash_tx_leaf_publication",
-      "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.accepted_raw_ingress_da_sidecar_canonical_publication",
-      "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface",
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.accepted_materialized_sidecar_da_blob_publication",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash",
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_transaction_new_da_blob",
-      "Hegemon.Transaction.PublicInputBinding.signedMagnitudeMatches_true_eq",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.deployed_soundness_parts_imply_deployed_tx_verifier_soundness_assumption",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_active_input_bound_to_statement",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.balance_public_field_facts_authorized_asset_delta_value",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_authorized_asset_delta_value"
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.consensus_da_payload_transaction_bytes",
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_concrete_consensus_da_blob",
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob",
+      "Hegemon.Native.MinedBlockCommitPublication.mined_commit_kind_eq_of_accepts",
+      "Hegemon.Native.MinedBlockCommitPublication.accepts_iff_mined_block_commit_publication_preconditions",
+      "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_input_slot_bound_to_statement",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_field_facts",
+      "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_implies_spend_boundary_facts",
+      "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts",
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_split_boundary_facts_imply_full_boundary_facts",
+      "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_parts_canonical_surface_implies_boundary_facts",
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_balance_public_boundary_facts_authorized_public_delta_value",
+      "Hegemon.Transaction.ProofSystemBoundary.canonical_spend_boundary_facts_input_slot_bound_to_statement",
+      "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_authorized_public_delta_value",
+      "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_input_slot_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for MaterializedConsensusDaBlobRefinement, PublicInputBinding, CanonicalVerifierBoundary, ProofSystemBoundary, and Hegemon",
-      "targeted_rust": [
-        "cargo test -p hegemon-node materialized_sidecar_transfer_payload_builds_consensus_da_blob --lib --no-default-features -- --nocapture"
-      ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T07:28:57Z with 114 claims, 1493 named Lean theorem declarations, 104 production-eligible claims/nodes, 476 blueprint edges, 443 falsification cases, and 200 implementation bindings",
-      "claims": 114,
-      "named_lean_theorems": 1493,
-      "production_eligible_claims": 104,
-      "blueprint_edges": 476,
-      "falsification_cases": 443,
+      "lean_formal": "targeted lake build passed locally for MinedBlockCommitPublication, MaterializedConsensusDaBlobRefinement, CanonicalVerifierBoundary, ProofSystemBoundary, and Hegemon",
+      "targeted_rust": [],
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T07:49:18Z with 115 theorem-backed claims, 1509 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "claims": 115,
+      "named_lean_theorems": 1509,
+      "production_eligible_claims": 105,
+      "blueprint_edges": 480,
+      "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The row-count theorem composes accepted decode/publication/validation predicates; arbitrary raw-byte parser internals and production decoded-action-to-validation-row projection remain explicit premises.",
-      "The block-action replay publication theorem composes accepted validation and replay/accounting predicates; it does not prove hash security, proof-system soundness, storage durability, PoW threshold validity, or complete native-node equivalence.",
-      "The tx-leaf artifact projection theorem proves byte-shape and publication binding over explicit parser-to-canonical projection assumptions; it does not prove the full production serialization-to-statement vector path, proof soundness, hash security, or complete native-node equivalence.",
-      "The sync block replay publication theorem composes accepted sync decode/count, block-action decode, and raw canonical publication; it leaves arbitrary sync/block parser internals and decoded-row-to-raw-replay projection as explicit implementation-equivalence premises.",
-      "The PQ handshake/channel theorem keeps transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF, and AEAD soundness as explicit assumptions.",
-      "The bridge canonical publication theorem keeps external receipt/PQ verifier soundness explicit and does not certify the disabled or future verifier.",
-      "The resource theorem carries parser correctness and benchmark-cap assumptions explicitly rather than proving full parser/cost-model completeness.",
-      "No runtime hot-path work was added; these are Lean proof obligations and metadata only.",
-      "The raw-ingress action-hash/tx-leaf theorem exposes action-count, action-hash match, uniqueness, and full statement artifact facts but keeps parser/hash/proof soundness explicit.",
-      "The DA-sidecar/canonical theorem composes sidecar admission, DA-root binding, proof sidecar metadata, canonical publication, replayed supply, and commitment-root publication over the same raw witness while keeping DA availability, hash security, storage durability, proof soundness, and full native-node equivalence explicit.",
-      "The full-byte publication surface flattens nested accepted-predicate facts for review; arbitrary-byte parser internals and parser-to-canonical vector projection remain explicit assumptions.",
-      "The materialized sidecar DA-blob publication theorem exposes sidecar materialization, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash/payload binding, replayed supply, and final replay-set uniqueness together, but keeps materialized-row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, proof soundness, and complete native-node equivalence explicit.",
-      "The materialized transfer no-theft theorem ties materialized DA publication to active-input no-theft and total input-slot authorization on the same tx-leaf/statement/replay surface, but keeps deployed verifier soundness, witness extraction, DA availability, hash security, storage durability, and complete native-node equivalence explicit.",
-      "The selected-output privacy/ciphertext DA-hash theorem proves recipient-decrypted selected rows reconstruct the statement/proof-bound output commitment while both same-shape privacy-game worlds expose projected DA preimages satisfying the public ciphertext-hash predicate, but keeps BLAKE3/hash security, ML-KEM/AEAD/KDF/RNG security, raw-wire indistinguishability, simulator zero knowledge, wallet metadata privacy, DA-root inclusion, and full wallet/native-node equivalence explicit.",
-      "The materialized consensus DA-blob theorem makes materialized-row-to-Transaction::new and Transaction::new-to-consensus-DA-blob concrete at the Lean review surface and adds a Rust conformance test for the sidecar transfer path, but still leaves arbitrary-byte parser internals, DA availability/retention, DA-root hash/security, proof-system soundness, storage durability, and complete native-node equivalence explicit.",
-      "The split proof-system soundness theorem narrows the future AIR/Rust-refinement targets into spend-only and balance/public-field assumptions, but those assumptions remain explicit and are not a deployed proof-system soundness proof."
+      "The concrete DA-blob theorem removes the Transaction::new-to-DA-blob proposition for the production-shaped payload list but still assumes MaterializedRowsFeedTransactionNew and u32 length bounds.",
+      "The mined-block commit publication theorem composes accepted predicates; it does not prove PoW hash-threshold soundness, replay/body parser internals, storage durability, or complete native-node equivalence.",
+      "The proof-system boundary edits in this slice add narrower fact structures, but deployed proof-system soundness remains an explicit assumption until a backend/AIR refinement proof is mechanized.",
+      "The split proof-system boundary theorems reduce the shape of future obligations, but spend and balance/public-field deployed verifier soundness remain assumptions, not mechanized proof-system soundness."
     ]
   },
   "last_production_binding_slice": {
@@ -223,7 +194,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 73,
+      "completion_percent": 74,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -254,7 +225,8 @@
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now lifts the same live decoded-transfer validation/order boundary to every indexed input slot, exposing authorization-or-inactive-zero full-binding before modeled transfer state mutation",
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean composes raw-ingress pending-action tx-leaf publication with validated transfer active-input no-theft and total input-slot authorization facts over the same raw replay input",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean composes materialized DA publication, tx-leaf ciphertext binding, active-input no-theft, and total input-slot authorization on one accepted materialized raw-ingress surface",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now splits deployed verifier soundness into spend-only and balance/public-field assumptions, so active-input no-theft can depend only on the spend half before the full proof-system soundness theorem is discharged"
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now splits deployed verifier soundness into spend-only and balance/public-field assumptions, so active-input no-theft can depend only on the spend half before the full proof-system soundness theorem is discharged",
+        "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -387,7 +359,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -421,7 +393,8 @@
         "Native TxLeafCanonicalSurface now exposes a proof-keyed total input-slot authorization full-binding theorem, so future AIR/refinement work can target both active spends and inactive-zero padding slots through the same native tx-leaf/payload/statement/proof binding package",
         "TxLeafArtifactProjectionRefinement now binds bounded parsed tx-leaf artifact summaries to the full statement/artifact target under explicit parser-to-canonical projection assumptions, narrowing the future native tx-leaf proof/refinement target without claiming deployed proof-system soundness",
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean proves signedMagnitudeMatches_true_eq for the public-field signed magnitude relation",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean introduces spend-only and balance/public-field deployed soundness assumptions plus a compatibility theorem back to DeployedTxVerifierSoundnessAssumption"
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean introduces spend-only and balance/public-field deployed soundness assumptions plus a compatibility theorem back to DeployedTxVerifierSoundnessAssumption",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes split spend-only and balance/public-field boundary fact packages, direct input-slot binding, public authorized-delta consequences, and a rejoin theorem back to the full canonical verifier boundary"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
@@ -580,7 +553,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 89,
+      "completion_percent": 90,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -589,10 +562,11 @@
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean composes accepted decoded block-action validation with accepted block replay/accounting into a publication surface exposing action-hash preconditions, validated row consumption, replay-row agreement, bridge replay-count agreement, canonical replay trace, commitment preconditions, expected/claimed supply equality, and state-root agreement",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean extends the sync response path to the same raw canonical publication facts under explicit row-projection premises",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean ties accepted materialized transfer payloads to consensus Transaction::new and DA blob bytes before DA-root publication",
-        "scripts/check_formal_core.sh runs the materialized sidecar transfer consensus DA-blob conformance test as a release gate"
+        "scripts/check_formal_core.sh runs the materialized sidecar transfer consensus DA-blob conformance test as a release gate",
+        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast"
       ],
       "missing_work": [
-        "Unify admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, and publication.",
+        "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",
         "Make order/dominance constraints theorem-indexed rather than only blueprint-indexed.",
         "Add explicit fork-choice safety theorem boundary."
       ],
@@ -601,7 +575,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 82,
+      "completion_percent": 83,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -620,7 +594,8 @@
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean composes the raw-ingress full-byte surface with native tx-leaf ciphertext hash/payload binding, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA-root sourcing, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean keeps materialized DA publication and transfer no-theft/input-slot authorization on the same tx-leaf/statement/replay surface",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean specializes materialized rows into concrete Transaction::new and consensus DA-blob relations with exact Consensus.DaRoot.daBlob bytes and explicit u32 length bounds",
-        "node/src/native/mod.rs materialized_sidecar_transfer_payload_builds_consensus_da_blob checks sidecar materialization, consensus transaction fields, DA blob bytes, and DA root against production helpers"
+        "node/src/native/mod.rs materialized_sidecar_transfer_payload_builds_consensus_da_blob checks sidecar materialization, consensus transaction fields, DA blob bytes, and DA root against production helpers",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean now proves the concrete Transaction::new-to-Consensus.DaRoot.daBlob relation for transactions.map consensusDaPayload, leaving only materialized-row-to-transaction equivalence explicit on that path"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
