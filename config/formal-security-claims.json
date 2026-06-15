@@ -5391,6 +5391,145 @@
           "tracking": "docs/crypto/native_backend_formal_theorems.md"
         }
       ]
+    },
+    {
+      "id": "native.raw-ingress-action-hash-tx-leaf-publication",
+      "component": "native raw ingress action-hash tx-leaf publication",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress action-hash tx-leaf publication surface exposes action-hash admission components, exact pending/block-action decode facts, raw-ingress publication, canonical publication, replayed supply, final replay-set uniqueness, and native tx-leaf/canonical statement artifact binding over the same accepted raw-ingress pending-action tx-leaf publication witness.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates_with_explicit_crypto_assumptions",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressActionHashTxLeafPublication.action_hash_admission_preconditions_components",
+        "Hegemon.Native.RawIngressActionHashTxLeafPublication.raw_ingress_pending_action_tx_leaf_publication_facts_expose_action_hash_and_statement_binding",
+        "Hegemon.Native.RawIngressActionHashTxLeafPublication.accepted_raw_ingress_action_hash_tx_leaf_publication"
+      ],
+      "assumptions": [
+        "This is a zero-runtime-cost Lean composition over accepted raw-ingress pending-action tx-leaf publication facts and existing action-hash/tx-leaf/canonical statement predicates.",
+        "The theorem carries explicit propositions for pending-action exact-decode parser soundness, block-action exact-decode parser soundness, action-hash binding soundness, canonical statement-hash binding soundness, and native tx-leaf proof-system soundness; it does not discharge those cryptographic or proof-system assumptions.",
+        "Action-hash admission is decomposed into action-count match, action-hash match, and action-hash uniqueness facts, and the same surface carries statement preimage, binding-message, public-input binding, wrapper admission, value/stablecoin field binding, tx-leaf action preconditions, and native receipt/public-input/proof/backend equality gates.",
+        "The theorem does not prove arbitrary byte parser internals, BLAKE3/BLAKE2/Poseidon2 security or implementation equivalence, deployed STARK/AIR or SmallWood soundness, DA availability, sled durability, or complete native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-action-hash-crypto-soundness-explicit",
+          "description": "The theorem exposes action-hash and tx-leaf binding facts but keeps hash security/equivalence, parser internals, and native tx-leaf proof-system soundness explicit rather than discharged.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "native.raw-ingress-da-sidecar-canonical-publication",
+      "component": "native raw ingress DA sidecar canonical publication",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress DA sidecar canonical publication surface composes accepted raw-ingress sidecar publication and raw canonical publication over the same raw decoded ledger/tree replay witness, exposing DA-root binding, sidecar availability and size facts, proof sidecar admission facts, accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, and final nullifier/bridge replay uniqueness together.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates_with_explicit_da_and_crypto_assumptions",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.ledger_blocks_from_raw_tree_replay_inputs_eq_raw_replay_inputs",
+        "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.proof_metadata_preconditions_expose_binding_hash",
+        "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.proof_decoded_preconditions_expose_size_and_hash",
+        "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.accepted_raw_ingress_da_sidecar_canonical_publication"
+      ],
+      "assumptions": [
+        "This is a zero-runtime-cost Lean composition over accepted raw-ingress sidecar replay, DA sidecar binding, canonical publication, and raw projected ledger/tree replay predicates.",
+        "The theorem keeps DA availability, parser internals, hash security/equivalence, storage durability below the accepted predicate, proof soundness, and complete native-node equivalence as explicit propositions.",
+        "Accepted proof metadata and decoded-proof preconditions are decomposed into binding-hash presence/validity, proof presence, nonzero proof bytes, proof byte cap, and proof binding-hash match facts.",
+        "The theorem does not prove Reed-Solomon availability, network/chunk retention, BLAKE3/DA-root/action-root security or implementation equivalence, recursive proof soundness, native tx-leaf proof soundness, sled durability, or full native-node refinement."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-da-sidecar-availability-and-crypto-assumptions-explicit",
+          "description": "The theorem composes DA sidecar admission and canonical publication facts but does not discharge DA availability/retention, hash security/equivalence, proof soundness, or complete native-node equivalence.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
+      "id": "native.raw-ingress-full-byte-publication-surface",
+      "component": "native raw ingress full byte publication surface",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, and native tx-leaf full statement artifact facts.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_top_level_review_surface_over_existing_refinement_theorems",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface"
+      ],
+      "assumptions": [
+        "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, and canonical publication predicates.",
+        "The parser-to-canonical tx-leaf vector projection remains an explicit `NativeTxLeafArtifactCanonicalProjectionAssumptions` input, and arbitrary-byte parser internals remain separate from this composition theorem.",
+        "The theorem intentionally does not prove cryptographic hash security, proof-system soundness, DA availability, storage durability below accepted predicates, or complete native-node equivalence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-full-byte-parser-and-crypto-assumptions-explicit",
+          "description": "The theorem makes the full accepted surface reviewable but still leaves arbitrary-byte parser internals, parser-to-canonical vector projection, hash security/equivalence, proof soundness, and complete native-node refinement as explicit work.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     }
   ]
 }

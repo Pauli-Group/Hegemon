@@ -9622,6 +9622,161 @@
         }
       ],
       "scope_boundary": "This node does not claim the native backend is production-ready cryptography."
+    },
+    {
+      "id": "native.raw-ingress-action-hash-tx-leaf-publication",
+      "claim_id": "native.raw-ingress-action-hash-tx-leaf-publication",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress action-hash tx-leaf publication surface, accepted raw-ingress pending-action tx-leaf publication facts imply one named review surface exposing action-hash admission components, exact pending/block-action decode facts, raw and canonical publication facts, replayed supply, final replay-set uniqueness, and native tx-leaf/canonical statement artifact binding over the same accepted raw-ingress witness, while carrying parser/hash/proof soundness assumptions explicitly.",
+      "informal_argument": "`accepted_raw_ingress_action_hash_tx_leaf_publication` first obtains `RawIngressPendingActionTxLeafPublicationFacts` from the existing accepted raw-ingress pending-action publication theorem. `raw_ingress_pending_action_tx_leaf_publication_facts_expose_action_hash_and_statement_binding` then projects the nested pending-action byte publication, raw-ingress publication, canonical publication, and native tx-leaf full statement artifact facts into one record, and `action_hash_admission_preconditions_components` decomposes accepted action-hash admission into count/hash/uniqueness components.",
+      "depends_on": [
+        "native.raw-ingress-pending-action-publication-refinement",
+        "native.block-action-hash-admission",
+        "formal.native-tx-leaf-canonical-surface",
+        "formal.native-tx-leaf-artifact-wire",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean projection surface over existing raw-ingress pending-action tx-leaf publication facts. Parser, hash, statement-hash, and native tx-leaf proof-system soundness remain explicit assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-action-hash-tx-leaf-publication-theorem",
+          "description": "Removing or weakening the raw-ingress action-hash tx-leaf theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-action-hash-tx-leaf-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves an accepted-predicate composition and review surface. It does not prove arbitrary raw parser internals, hash security/equivalence, deployed proof-system soundness, native tx-leaf proof soundness, DA availability, storage durability, or complete native-node refinement."
+    },
+    {
+      "id": "native.raw-ingress-da-sidecar-canonical-publication",
+      "claim_id": "native.raw-ingress-da-sidecar-canonical-publication",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress DA sidecar canonical publication surface, accepted raw-ingress sidecar replay, accepted canonical publication gates, and accepted raw ledger/tree replay over the same raw decoded witness imply a single record carrying DA sidecar binding, proof sidecar admission facts, raw/canonical replay facts, commitment-root publication, replayed supply, replayed leaf cursor, and final nullifier/bridge replay uniqueness, with DA/parser/hash/storage/proof/native-node assumptions explicit.",
+      "informal_argument": "`accepted_raw_ingress_da_sidecar_canonical_publication` calls `raw_ingress_publication_equivalent_to_raw_ledger_tree_replay` and `accepted_raw_canonical_publication_refines_ledger_tree_replay` with the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness. It also decomposes proof metadata and decoded proof sidecar preconditions, so the accepted sidecar rows, DA-root binding, proof binding-hash facts, canonical publication, supply replay, commitment-root publication, and replay-set uniqueness facts are visible in one theorem package.",
+      "depends_on": [
+        "native.da-sidecar-replay-binding",
+        "native.raw-ingress-sidecar-replay-recoverability",
+        "native.block-replay-refinement",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean composition over raw-ingress sidecar and canonical publication predicates. DA availability, parser internals, hash security/equivalence, storage durability, proof soundness, and complete native-node equivalence remain explicit assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-da-sidecar-canonical-publication-theorem",
+          "description": "Removing or weakening the raw-ingress DA sidecar canonical theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-da-sidecar-canonical-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves a DA-sidecar/canonical-publication composition over accepted production-bound predicates. It does not prove arbitrary raw parser internals, DA availability or retention, hash security/equivalence, recursive/native proof soundness, sled durability, or complete native-node refinement."
+    },
+    {
+      "id": "native.raw-ingress-full-byte-publication-surface",
+      "claim_id": "native.raw-ingress-full-byte-publication-surface",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, and the canonical statement surface imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, and statement/proof artifact facts.",
+      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. This makes the accepted path from decoded pending-action bytes through sidecar publication, raw canonical replay, and tx-leaf statement artifact binding directly auditable without adding runtime work.",
+      "depends_on": [
+        "native.raw-ingress-pending-action-publication-refinement",
+        "native.tx-leaf-artifact-projection-refinement",
+        "native.da-sidecar-replay-binding",
+        "native.codec-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost top-level review surface over existing accepted parser/publication/projection predicates. Parser internals, projection assumptions, hash security, proof soundness, DA availability, and complete native-node refinement remain explicit."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-full-byte-publication-surface-theorem",
+          "description": "Removing or weakening the raw-ingress full-byte publication surface theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-full-byte-publication-surface-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, and parsed tx-leaf artifact facts. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
     }
   ]
 }

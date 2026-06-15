@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 78.53,
+  "overall_completion_percent": 79.08,
   "last_full_formal_core": {
     "commit": "400be061ec86868260258a572c14cd321201c1d1",
     "status": "passed locally 2026-06-15T04:36:55Z",
@@ -49,7 +49,7 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened implementation equivalence with `PendingActionByteReplayRowCountBinding`, `BlockActionReplayPublication`, `TxLeafArtifactProjectionRefinement`, `SyncBlockReplayPublication`, `PqNoiseHandshakeChannel`, and stronger bridge/resource packages. The slice composes accepted pending-action exact decode, block-action decode, wire replay projection, raw-ingress publication, decoded block-action validation, accepted block replay/accounting, bounded tx-leaf artifact byte parsing, bounded sync wire decode, inbound sync response-count admission, raw canonical publication, assumption-explicit PQ handshake-to-channel facts, bridge receipt/backend review facts, and pre-heavy transfer/candidate/tx-leaf resource bounds into named theorem surfaces.",
+    "summary": "Strengthened raw-ingress implementation equivalence with action-hash/tx-leaf, DA-sidecar/canonical, and full-byte publication surfaces. The slice flattens accepted exact pending-action decode, block-action decode, action-hash admission, wire replay projection, DA sidecar publication, raw canonical publication, parsed tx-leaf artifact shape/projection, and native tx-leaf full statement artifact facts over the same raw ledger/tree replay witness while keeping parser, hash, DA availability, proof-system, storage, and full native-node assumptions explicit.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
       "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
@@ -57,7 +57,10 @@
       "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
       "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean",
       "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean",
-      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean"
+      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean",
+      "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
+      "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
+      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
@@ -66,17 +69,20 @@
       "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication",
       "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_protect_open_facts",
       "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths"
+      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths",
+      "Hegemon.Native.RawIngressActionHashTxLeafPublication.accepted_raw_ingress_action_hash_tx_leaf_publication",
+      "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.accepted_raw_ingress_da_sidecar_canonical_publication",
+      "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for Hegemon.Native.SyncBlockReplayPublication, Hegemon.Network.PqNoiseHandshakeChannel, Hegemon.Native.RawIngressBridgePendingActionPublication, Hegemon.Native.PreHeavyWorkResourceBoundSurface, and Hegemon; full formal-core gate passed locally",
+      "lean_formal": "targeted lake build passed locally for RawIngressActionHashTxLeafPublication, RawIngressDaSidecarCanonicalPublication, RawIngressFullBytePublicationSurface, and Hegemon",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T04:36:55Z with 108 claims, 1472 named Lean theorem declarations, 98 production-eligible claims/nodes, 446 blueprint edges, 430 falsification cases, and 200 implementation bindings",
-      "claims": 108,
-      "named_lean_theorems": 1472,
-      "production_eligible_claims": 98,
-      "blueprint_edges": 446,
-      "falsification_cases": 430,
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T05:17:06Z with 111 claims, 1480 named Lean theorem declarations, 101 production-eligible claims/nodes, 460 blueprint edges, 436 falsification cases, and 200 implementation bindings",
+      "claims": 111,
+      "named_lean_theorems": 1480,
+      "production_eligible_claims": 101,
+      "blueprint_edges": 460,
+      "falsification_cases": 436,
       "implementation_bindings": 200
     },
     "known_limitations": [
@@ -87,7 +93,10 @@
       "The PQ handshake/channel theorem keeps transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF, and AEAD soundness as explicit assumptions.",
       "The bridge canonical publication theorem keeps external receipt/PQ verifier soundness explicit and does not certify the disabled or future verifier.",
       "The resource theorem carries parser correctness and benchmark-cap assumptions explicitly rather than proving full parser/cost-model completeness.",
-      "No runtime hot-path work was added; these are Lean proof obligations and metadata only."
+      "No runtime hot-path work was added; these are Lean proof obligations and metadata only.",
+      "The raw-ingress action-hash/tx-leaf theorem exposes action-count, action-hash match, uniqueness, and full statement artifact facts but keeps parser/hash/proof soundness explicit.",
+      "The DA-sidecar/canonical theorem composes sidecar admission, DA-root binding, proof sidecar metadata, canonical publication, replayed supply, and commitment-root publication over the same raw witness while keeping DA availability, hash security, storage durability, proof soundness, and full native-node equivalence explicit.",
+      "The full-byte publication surface flattens nested accepted-predicate facts for review; arbitrary-byte parser internals and parser-to-canonical vector projection remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
@@ -130,7 +139,7 @@
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 86,
+      "completion_percent": 87,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -153,7 +162,7 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean composes accepted sync decode/count admission and raw canonical publication so synced raw block batches carry replayed supply equality"
       ],
       "missing_work": [
-        "Bind remaining arbitrary raw-byte action decode paths to the stronger ledger-state transition beyond the accepted sync publication surface.",
+        "Remaining arbitrary parser internals, hash security/equivalence, proof soundness, and complete native-node refinement still need discharge beyond the accepted full-byte publication surface.",
         "State cryptographic and proof-system assumptions explicitly as theorem parameters."
       ],
       "performance_constraint": "No extra heavy runtime work; reuse existing checked supply helpers and replay summaries."
@@ -230,7 +239,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 78,
+      "completion_percent": 79,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -250,7 +259,7 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean carries synced raw block batches through raw canonical publication to accepted ledger/tree replay and commitment-root publication facts"
       ],
       "missing_work": [
-        "Lift the abstract root-cursor theorem into a full Merkle-root/tree-content invariant with membership.",
+        "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant with membership and hash implementation equivalence.",
         "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
         "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],
@@ -312,7 +321,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 96,
+      "completion_percent": 97,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -344,7 +353,7 @@
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface"
       ],
       "missing_work": [
-        "Complete production/refinement bindings for remaining proof artifact entry points.",
+        "Discharge remaining proof artifact entry points and the explicit native tx-leaf proof-system soundness assumptions.",
         "State hash collision resistance and transcript assumptions explicitly."
       ],
       "performance_constraint": "Keep shared helper reuse; no extra hashing beyond already-required statement construction."
@@ -352,7 +361,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -387,7 +396,7 @@
         "TxLeafArtifactProjectionRefinement now binds bounded parsed tx-leaf artifact summaries to the full statement/artifact target under explicit parser-to-canonical projection assumptions, narrowing the future native tx-leaf proof/refinement target without claiming deployed proof-system soundness"
       ],
       "missing_work": [
-        "Mechanize the transaction AIR relation or an auditable abstraction of it.",
+        "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
         "Discharge `DeployedTxVerifierSoundnessAssumption` with the deployed verifier/AIR/refinement theorem instead of leaving it as an explicit assumption."
@@ -477,7 +486,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 78,
+      "completion_percent": 80,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -496,7 +505,7 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean composes accepted bounded sync wire decode, response-count admission, exact block-action decode, and an explicit decoded-row/raw-replay projection premise"
       ],
       "missing_work": [
-        "Complete byte-level grammar coverage for every consensus object.",
+        "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates.",
         "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
         "Extend the accepted-predicate parser/wire composition into parser-internal implementation equivalence for every remaining consensus byte object."
       ],
@@ -542,7 +551,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 87,
+      "completion_percent": 88,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -552,7 +561,7 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean extends the sync response path to the same raw canonical publication facts under explicit row-projection premises"
       ],
       "missing_work": [
-        "Unify admission components into one accepted-block theorem.",
+        "Unify admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, and publication.",
         "Make order/dominance constraints theorem-indexed rather than only blueprint-indexed.",
         "Add explicit fork-choice safety theorem boundary."
       ],
@@ -561,7 +570,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 78,
+      "completion_percent": 80,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -579,7 +588,7 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean keeps parsed tx-leaf artifact shape and statement/artifact facts on the same raw-ingress pending-action publication surface that already carries sidecar availability, size agreement, and DA-root facts"
       ],
       "missing_work": [
-        "Lift the accepted-predicate ingress composition into a full arbitrary-byte SCALE/JSON parser refinement theorem for every PendingAction and sidecar field.",
+        "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
         "Bind DA-root construction and sidecar materialization across mining, announced import, sync, and replay.",
         "Specify hot/cold DA retention assumptions outside consensus."
       ],
@@ -637,7 +646,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 72,
+      "completion_percent": 73,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -650,7 +659,7 @@
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now composes transfer-payload caps, candidate-artifact recursive proof caps, and tx-leaf artifact parser shape facts with the pre-heavy-work resource surface while carrying parser/cost assumptions explicitly"
       ],
       "missing_work": [
-        "Extend the pre-heavy-work theorem to the remaining consensus-facing parser and public input families.",
+        "Extend pre-heavy-work and sidecar proof-byte bounds to the remaining consensus-facing parser and public input families.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

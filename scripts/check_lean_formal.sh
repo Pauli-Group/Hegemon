@@ -166,6 +166,9 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean
   lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean
   lake env lean Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean
+  lake env lean Hegemon/Native/RawIngressActionHashTxLeafPublication.lean
+  lake env lean Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean
+  lake env lean Hegemon/Native/RawIngressFullBytePublicationSurface.lean
   lake env lean Hegemon/Native/RawIngressBridgePendingActionPublication.lean
   lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean
   lake env lean Hegemon/Native/SidecarUploadAdmission.lean
