@@ -131,6 +131,22 @@ structure SecretResamplingPrivacyFacts
           privateWitness := rightPrivateWitness
           proverRandomnessSeed := rightProverRandomnessSeed }
 
+structure CiphertextPrivacyOpenAssumptionBoundaryFacts
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (assumptions : PrivacyBoundaryAssumptions) : Prop where
+  deterministicPublicBoundary :
+    CiphertextPrivacyBoundaryFacts left right wireIndistinguishable assumptions
+  secretResamplingBoundary :
+    SecretResamplingPrivacyFacts left right wireIndistinguishable assumptions
+  sameWireDischargesRawWirePrivacy :
+    left.ciphertextBytes = right.ciphertextBytes -> sameAllowedLeakage left right
+  rawWireIndistinguishable : wireIndistinguishable
+  proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene : assumptions.walletMetadataHygiene
+  timingAndBatchingPolicy : assumptions.timingAndBatchingPolicy
+  networkMetadataPolicy : assumptions.networkMetadataPolicy
+
 theorem ciphertext_privacy_game_preserves_public_ciphertext_shape
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right) :
@@ -360,6 +376,38 @@ theorem same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
       game.publicInputs
       sameWire
       game.placement
+
+theorem ciphertext_privacy_game_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      left
+      right
+      game.wireIndistinguishable
+      assumptions := by
+  have boundary :=
+    ciphertext_privacy_game_boundary_facts
+      game
+      assumptionProofs
+  exact {
+    deterministicPublicBoundary := boundary
+    secretResamplingBoundary :=
+      ciphertext_privacy_game_secret_resampling_boundary_facts
+        game
+        assumptionProofs
+    sameWireDischargesRawWirePrivacy :=
+      fun sameWire =>
+        same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
+          game
+          sameWire
+    rawWireIndistinguishable := boundary.rawWireIndistinguishable
+    proofSystemZeroKnowledge := boundary.proofSystemZeroKnowledge
+    walletMetadataHygiene := boundary.walletMetadataHygiene
+    timingAndBatchingPolicy := boundary.timingAndBatchingPolicy
+    networkMetadataPolicy := boundary.networkMetadataPolicy
+  }
 
 end CiphertextPrivacy
 end Privacy

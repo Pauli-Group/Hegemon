@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 80.16,
+  "overall_completion_percent": 80.29,
   "last_full_formal_core": {
     "commit": "b7c9d7cc3a0e1cb494c41a1b5dd39c708e43669b",
     "status": "passed locally 2026-06-15T08:26:34Z",
@@ -277,7 +277,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 72,
+      "completion_percent": 73,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -291,7 +291,8 @@
         "transaction witness, note, public-input, proof, and disclosure admission reject noncanonical real asset ids before they can alias a balance-slot padding value",
         "native bridge payload admission",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, a decoded amount-equality authorization boundary, and projected/raw-projected replay safety packages for authorized bridge amounts",
-        "native transfer payload/state admission"
+        "native transfer payload/state admission",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves accepted materialized transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
@@ -332,7 +333,8 @@
         "node/src/native/mod.rs native block artifact verification now builds tx-leaf transactions from canonical materialized sidecar ciphertext bytes before tx validity artifact construction",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean composes accepted raw-ingress sidecar publication with pending-action byte publication and native tx-leaf/canonical statement artifact facts over one raw replay input",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean composes parsed native tx-leaf artifact byte-shape facts, explicit parser-to-canonical projection assumptions, accepted tx-leaf/action binding, canonical statement surface facts, pending-action byte publication, and raw-ingress pending-action tx-leaf publication into one parsed statement/artifact publication surface",
-        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface"
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now projects materialized transfer publication records to selected output-slot statement/proof artifact facts"
       ],
       "missing_work": [
         "Discharge remaining proof artifact entry points and the explicit native tx-leaf proof-system soundness assumptions.",
@@ -391,7 +393,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 51,
+      "completion_percent": 52,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -418,7 +420,8 @@
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy as first-class assumptions in the privacy-game boundary theorem",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams",
-        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game"
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, sidecar privacy, and raw-wire indistinguishability assumptions.",
