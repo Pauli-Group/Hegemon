@@ -22673,6 +22673,98 @@ mod tests {
     }
 
     #[test]
+    fn canonical_index_rebuild_projects_decoded_materialized_wire_rows() {
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let anchor = genesis.state_root;
+        let transfer = test_sidecar_transfer_action(anchor, [77u8; 48], [78u8; 48], 0);
+        let outbound = test_outbound_bridge_action(b"canonical rebuild outbound");
+        let inbound = test_inbound_bridge_action(b"canonical rebuild inbound");
+        let candidate = test_candidate_artifact_action(1, 79);
+        let block_one_actions = vec![transfer, outbound];
+        let block_two_actions = vec![inbound, candidate];
+        let mut block_one = genesis.clone();
+        block_one.height = 1;
+        block_one.tx_count = u32::try_from(block_one_actions.len()).unwrap();
+        block_one.action_bytes = block_one_actions.iter().map(Encode::encode).collect();
+        let mut block_two = genesis.clone();
+        block_two.height = 2;
+        block_two.parent_hash = block_one.hash;
+        block_two.tx_count = u32::try_from(block_two_actions.len()).unwrap();
+        block_two.action_bytes = block_two_actions.iter().map(Encode::encode).collect();
+        for action in block_one_actions.iter().chain(block_two_actions.iter()) {
+            insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+        }
+        let chain = vec![genesis.clone(), block_one, block_two];
+
+        let decoded_actions = chain
+            .iter()
+            .skip(1)
+            .flat_map(|meta| decode_block_actions(meta).expect("decode canonical action bytes"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decoded_actions.len(),
+            block_one_actions.len() + block_two_actions.len()
+        );
+        let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &decoded_actions)
+            .expect("materialize decoded rebuild actions");
+        let planned = plan_materialized_action_effects(
+            &da_ciphertext_tree,
+            &test_state(genesis),
+            &decoded_actions,
+        )
+        .expect("plan decoded rebuild actions");
+        let projection = admit_native_action_wire_replay_projection(
+            "canonical rebuild projection equivalence",
+            &decoded_actions,
+            &planned,
+        )
+        .expect("project decoded rebuild actions");
+
+        let plan = plan_canonical_index_rebuild(&chain, &da_ciphertext_tree)
+            .expect("canonical index rebuild plan");
+        let decoded_commitment_rows = decoded_actions
+            .iter()
+            .map(|action| action.commitments.len())
+            .sum::<usize>();
+        let decoded_nullifier_rows = decoded_actions
+            .iter()
+            .map(|action| action.nullifiers.len())
+            .sum::<usize>();
+        let decoded_ciphertext_index_rows = decoded_actions
+            .iter()
+            .map(|action| action.ciphertext_hashes.len())
+            .sum::<usize>();
+        let materialized_ciphertext_rows = materialized
+            .iter()
+            .map(|payload| payload.ciphertexts.len())
+            .sum::<usize>();
+        let planned_ciphertext_rows = planned
+            .iter()
+            .map(|effect| effect.ciphertexts.len())
+            .sum::<usize>();
+        let planned_replay_rows = planned
+            .iter()
+            .filter(|effect| effect.replay_key.is_some())
+            .count();
+
+        assert_eq!(projection.projected_action_count, decoded_actions.len());
+        assert_eq!(
+            projection.projected_ciphertext_row_count,
+            materialized_ciphertext_rows
+        );
+        assert_eq!(projection.projected_ciphertext_row_count, planned_ciphertext_rows);
+        assert_eq!(projection.projected_bridge_replay_row_count, planned_replay_rows);
+        assert_eq!(plan.commitment_entries.len(), decoded_commitment_rows);
+        assert_eq!(plan.nullifier_entries.len(), decoded_nullifier_rows);
+        assert_eq!(plan.ciphertext_index_entries.len(), decoded_ciphertext_index_rows);
+        assert_eq!(plan.ciphertext_archive_entries.len(), materialized_ciphertext_rows);
+        assert_eq!(plan.ciphertext_archive_entries.len(), planned_ciphertext_rows);
+        assert_eq!(plan.bridge_replay_entries.len(), planned_replay_rows);
+    }
+
+    #[test]
     fn transfer_state_rejects_zero_commitment_in_block() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));

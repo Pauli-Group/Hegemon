@@ -9804,8 +9804,8 @@
       "id": "native.materialized-sidecar-da-blob-publication",
       "claim_id": "native.materialized-sidecar-da-blob-publication",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean materialized sidecar DA blob publication surface, accepted raw-ingress full-byte publication facts plus explicit materialized-row and DA construction assumptions imply a single record carrying sidecar materialization, wire replay DA-row binding, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, native tx-leaf ciphertext hash and payload hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
-      "informal_argument": "`accepted_materialized_sidecar_da_blob_publication` consumes `RawIngressFullBytePublicationFacts` and projects the nested DA sidecar, wire replay, canonical replay, and native tx-leaf full statement artifact fields into one review record. The theorem makes the production bridge from materialized sidecar rows to DA publication auditable while keeping row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof soundness, and full native-node equivalence explicit.",
+      "formal_statement": "For the executable Lean materialized sidecar DA blob publication surface, accepted raw-ingress full-byte publication facts plus explicit materialized-row and DA construction assumptions imply a single record carrying sidecar materialization, wire replay DA-row binding, production decoded/validated/materialized projection row agreement, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA root sourcing, native tx-leaf ciphertext hash and payload hash binding, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness.",
+      "informal_argument": "`accepted_materialized_sidecar_da_blob_publication` consumes `RawIngressFullBytePublicationFacts` and projects the nested DA sidecar, wire replay, canonical replay, and native tx-leaf full statement artifact fields into one review record. `materialized_sidecar_da_blob_publication_binds_production_projection_rows` composes that materialized publication with accepted block-action validation and named production projection facts, so decoded payload rows, validated action rows, materialized action/payload rows, and wire replay rows remain tied through the materialized DA surface. The Rust canonical-index rebuild regression checks the shipped multi-block path derives canonical rows from the same decoded/materialized/wire projection. The slice keeps row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof soundness, and full native-node equivalence explicit.",
       "depends_on": [
         "native.raw-ingress-full-byte-publication-surface",
         "native.raw-ingress-da-sidecar-canonical-publication",
@@ -9820,6 +9820,8 @@
         "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "implementation_bindings": [],
@@ -9836,7 +9838,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication and tx-leaf ciphertext binding facts. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions."
+        "notes": "Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication, production decoded/validated/materialized/wire projection facts, and tx-leaf ciphertext binding facts. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions."
       },
       "falsification_cases": [
         {
@@ -9848,9 +9850,14 @@
           "id": "formal-core-materialized-sidecar-da-blob-publication-claim",
           "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "rust-canonical-index-rebuild-projection-row-test",
+          "description": "The production canonical-index rebuild regression must reject drift where decoded action bytes, materialized sidecar payload rows, planned effect rows, wire replay rows, or rebuilt canonical rows stop agreeing.",
+          "gate": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. Its successor materialized consensus DA-blob refinement concretizes Transaction::new and DA-blob relations for the transfer sidecar path, but arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, and complete native-node refinement remain explicit."
+      "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, production projection row agreement, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. Its successor materialized consensus DA-blob refinement concretizes Transaction::new and DA-blob relations for the transfer sidecar path, but arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, and complete native-node refinement remain explicit."
     },
     {
       "id": "native.materialized-consensus-da-blob-refinement",

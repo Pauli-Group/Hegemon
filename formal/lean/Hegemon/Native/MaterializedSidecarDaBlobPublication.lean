@@ -8,12 +8,14 @@ open Hegemon.Native.AcceptedChain
 open Hegemon.Native.ActionHashAdmission
 open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.AtomicCommitManifestAdmission
+open Hegemon.Native.BlockActionValidation
 open Hegemon.Native.BlockIndexReload
 open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
 open Hegemon.Native.PendingActionByteParserRefinement
+open Hegemon.Native.PendingActionByteReplayRowCountBinding
 open Hegemon.Native.RawIngressFullBytePublicationSurface
 open Hegemon.Native.RawIngressSidecarReplayRecoverability
 open Hegemon.Native.StorageDurabilityAdmission
@@ -339,6 +341,129 @@ theorem accepted_materialized_sidecar_da_blob_publication
       finalReplaySetsUnique :=
         ⟨fullFacts.finalSpentNullifiersUnique,
           fullFacts.finalBridgeReplaysUnique⟩ }
+
+theorem materialized_sidecar_da_blob_publication_binds_production_projection_rows
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    (publication :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        materializedRowsFeedTransactionNew
+        transactionNewFeedsConsensusDaBlob
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (blockActionValidationAccepted :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (productionProjectionFacts :
+      PendingActionProductionProjectionFacts
+        blockActionDecode
+        surface.daSidecarReplay.wireReplayProjection
+        validation
+        materializedActionCount
+        materializedPayloadCount) :
+    RawIngressFullByteProductionProjectionFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount :=
+  accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows
+    publication.fullBytePublication
+    blockActionValidationAccepted
+    productionProjectionFacts
 
 end MaterializedSidecarDaBlobPublication
 end Native
