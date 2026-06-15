@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 80.29,
+  "overall_completion_percent": 80.46,
   "last_full_formal_core": {
     "commit": "40544069e6c5a50dcf95fad54d5395927d56c958",
     "status": "passed locally 2026-06-15T09:01:58Z",
@@ -177,7 +177,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -206,8 +206,11 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now composes accepted decoded transfer payload admission and singleton block-action validation acceptance, including payload-before-order and order-before-state precedence, with accepted native tx-leaf/action binding and canonical statement facts to expose active-input no-theft full-binding before modeled transfer state mutation",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now lifts the same live decoded-transfer validation/order boundary to every indexed input slot, exposing authorization-or-inactive-zero full-binding before modeled transfer state mutation",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now proves spend-only variants of both validated transfer no-theft and total input-slot authorization packages, requiring `DeployedTxVerifierSpendSoundnessAssumption` instead of full balance/public-field verifier soundness",
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean composes raw-ingress pending-action tx-leaf publication with validated transfer active-input no-theft and total input-slot authorization facts over the same raw replay input",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now carries the same raw replay/publication facts through a spend-only no-theft/input-slot publication theorem",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean composes materialized DA publication, tx-leaf ciphertext binding, active-input no-theft, and total input-slot authorization on one accepted materialized raw-ingress surface",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now carries the same materialized DA publication facts through a spend-only no-theft/input-slot publication theorem",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now splits deployed verifier soundness into spend-only and balance/public-field assumptions, so active-input no-theft can depend only on the spend half before the full proof-system soundness theorem is discharged",
         "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness"
       ],
@@ -344,7 +347,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 78,
+      "completion_percent": 79,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -379,7 +382,8 @@
         "TxLeafArtifactProjectionRefinement now binds bounded parsed tx-leaf artifact summaries to the full statement/artifact target under explicit parser-to-canonical projection assumptions, narrowing the future native tx-leaf proof/refinement target without claiming deployed proof-system soundness",
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean proves signedMagnitudeMatches_true_eq for the public-field signed magnitude relation",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean introduces spend-only and balance/public-field deployed soundness assumptions plus a compatibility theorem back to DeployedTxVerifierSoundnessAssumption",
-        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes split spend-only and balance/public-field boundary fact packages, direct input-slot binding, public authorized-delta consequences, and a rejoin theorem back to the full canonical verifier boundary"
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes split spend-only and balance/public-field boundary fact packages, direct input-slot binding, public authorized-delta consequences, and a rejoin theorem back to the full canonical verifier boundary",
+        "native transfer, raw-ingress, and materialized publication no-theft/input-slot theorems now consume the split spend-only verifier soundness assumption directly, proving those implementation-equivalence targets do not depend on balance/public-field soundness"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
