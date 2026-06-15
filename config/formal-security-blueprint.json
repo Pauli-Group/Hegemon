@@ -8636,6 +8636,77 @@
       "scope_boundary": "This node proves a raw-ingress/pending-action/canonical-publication/tx-leaf composition over accepted production-bound predicates. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root/action-hash security or implementation equivalence, DA availability or retention, recursive proof soundness, native tx-leaf proof soundness, sled transaction correctness, filesystem durability, or complete native-node refinement."
     },
     {
+      "id": "native.raw-ingress-transfer-no-theft-publication",
+      "claim_id": "native.raw-ingress-transfer-no-theft-publication",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean raw-ingress transfer no-theft publication surface, accepted raw-ingress pending-action tx-leaf publication, accepted decoded transfer payload admission, accepted tx-leaf/action binding, the canonical transaction statement surface, and the explicit deployed verifier soundness assumption together imply one named surface carrying replayed supply, final nullifier uniqueness, native tx-leaf statement/proof artifact facts, active-input no-theft full-binding facts, and total input-slot authorization-or-inactive-zero full-binding facts over the same raw ingress, pending-action bytes, sidecar, canonical publication, and tx-leaf artifact path.",
+      "informal_argument": "`Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication` first calls `accepted_raw_ingress_pending_action_bytes_bind_tx_leaf_publication` so the raw ingress, pending-action byte publication, DA sidecar materialization, raw canonical ledger/tree replay, commitment-root publication, replayed supply, final nullifier uniqueness, and native tx-leaf/canonical statement artifact facts are packaged over the same raw replay witness. It then calls `TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding` and `validated_transfer_payload_input_slot_authorization_full_binding`, which compose accepted decoded transfer payload admission and singleton block-action validation acceptance with accepted tx-leaf/action binding, the canonical statement surface, and the explicit deployed verifier soundness assumption. The resulting record keeps the replay/publication facts and the transfer no-theft/authorization facts together for downstream implementation-equivalence review without asserting cryptographic proof-system soundness.",
+      "depends_on": [
+        "native.raw-ingress-pending-action-publication-refinement",
+        "formal.native-tx-leaf-canonical-surface",
+        "formal.transaction-canonical-verifier-boundary",
+        "formal.transaction-spend-authorization-boundary",
+        "native.transfer-action-payload-admission",
+        "native.block-action-validation",
+        "native.da-sidecar-replay-binding",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean composition over raw-ingress pending-action publication and existing transfer no-theft/input-slot authorization boundary predicates. Scope keeps deployed-verifier soundness explicit and excludes arbitrary-byte parser internals, cryptographic soundness, wallet custody, and complete native-node refinement."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-raw-ingress-transfer-no-theft-publication-theorem",
+          "description": "Removing or weakening the raw-ingress transfer no-theft publication theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-raw-ingress-transfer-no-theft-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the new composition theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves a raw-ingress/pending-action/tx-leaf/transfer-no-theft composition over accepted production-bound predicates and the existing explicit deployed-verifier soundness assumption. It does not prove full SCALE/JSON parser correctness for arbitrary bytes, BLAKE3/DA-root/action-hash security or implementation equivalence, deployed STARK/AIR or SmallWood soundness, native tx-leaf proof soundness, witness extraction, wallet custody, sled transaction correctness, filesystem durability, or complete native-node refinement."
+    },
+    {
       "id": "native.block-replay-refinement",
       "claim_id": "native.block-replay-refinement",
       "kind": "target_claim",

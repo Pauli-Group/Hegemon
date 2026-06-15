@@ -4,14 +4,14 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 77.08,
+  "overall_completion_percent": 77.44,
   "last_full_formal_core": {
-    "commit": "25d03730189849f04be553033e8518d3f2de05f9",
-    "status": "passed locally 2026-06-15T02:19:01Z",
-    "claims": 102,
-    "named_lean_theorems": 1443,
-    "production_eligible_claims": 92,
-    "falsification_cases": 418,
+    "commit": "worktree:raw-ingress-transfer-no-theft-publication",
+    "status": "passed locally 2026-06-15T02:47:18Z",
+    "claims": 103,
+    "named_lean_theorems": 1444,
+    "production_eligible_claims": 93,
+    "falsification_cases": 420,
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
@@ -50,29 +50,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened implementation equivalence with `RawIngressPendingActionPublicationFacts`, `accepted_raw_ingress_pending_action_bytes_bind_publication`, and `accepted_raw_ingress_pending_action_bytes_bind_tx_leaf_publication`, composing accepted raw-ingress sidecar replay publication, pending-action byte publication, raw canonical ledger/tree replay, DA binding, replayed supply, commitment-root publication, nullifier/replay uniqueness, and native tx-leaf/canonical statement artifact facts over the same raw replay input.",
+    "summary": "Strengthened implementation equivalence with `RawIngressTransferNoTheftAuthorizationPublicationFacts` and `accepted_raw_ingress_transfer_payload_no_theft_authorization_publication`, composing accepted raw-ingress pending-action tx-leaf publication with accepted transfer payload admission, singleton block-action validation, active-input no-theft facts, total input-slot authorization facts, replayed supply, final nullifier uniqueness, and native tx-leaf statement/proof artifact facts over the same raw replay input.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
-      "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
-      "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean"
+      "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+      "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+      "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.RawIngressPendingActionPublicationRefinement.accepted_raw_ingress_pending_action_bytes_bind_publication",
-      "Hegemon.Native.RawIngressPendingActionPublicationRefinement.accepted_raw_ingress_pending_action_bytes_bind_tx_leaf_publication"
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication"
     ],
     "validation": {
-      "lean_formal": "targeted lake build Hegemon.Native.RawIngressPendingActionPublicationRefinement Hegemon and lake env lean Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean passed locally",
+      "lean_formal": "targeted lake build Hegemon.Native.RawIngressTransferNoTheftPublication Hegemon and lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean passed locally",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T02:19:01Z with 102 claims, 1443 named Lean theorem declarations, 92 production-eligible claims, 400 blueprint edges, 418 falsification cases, and 200 implementation bindings",
-      "claims": 102,
-      "named_lean_theorems": 1443,
-      "production_eligible_claims": 92,
-      "falsification_cases": 418,
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T02:47:18Z with 103 claims, 1444 named Lean theorem declarations, 93 production-eligible claims, 408 blueprint edges, 420 falsification cases, and 200 implementation bindings",
+      "claims": 103,
+      "named_lean_theorems": 1444,
+      "production_eligible_claims": 93,
+      "falsification_cases": 420,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The raw-ingress/pending-action publication refinement still composes accepted production-bound predicates; it does not prove parser internals for arbitrary byte streams.",
-      "The theorem binds statement artifacts to the same raw replay input but does not discharge deployed proof-system soundness, hash collision resistance, DA availability, sled durability, or complete native-node equivalence.",
+      "The raw-ingress transfer no-theft publication refinement composes accepted production-bound predicates; it does not prove parser internals for arbitrary byte streams.",
+      "The theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit and does not discharge deployed proof-system soundness, witness extraction, hash collision resistance, DA availability, sled durability, wallet custody, or complete native-node equivalence.",
       "No runtime hot-path work was added; these are Lean proof obligations and metadata only."
     ]
   },
@@ -116,7 +115,7 @@
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 83,
+      "completion_percent": 84,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -133,7 +132,8 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now maps raw decoded native block fields into projected replay and lifts accepted raw-projected replay to replayed supply equality",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean now composes bridge amount/replay safety with projected and raw-projected replayed supply equality",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean now composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and accepted ledger/tree replay into a canonical publication fact package carrying replayed supply equality",
-        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean binds accepted raw-ingress sidecar publication and accepted pending-action byte publication to the same raw ledger/tree replay carrying replayed supply equality"
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean binds accepted raw-ingress sidecar publication and accepted pending-action byte publication to the same raw ledger/tree replay carrying replayed supply equality",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean keeps replayed supply equality coupled to active-input no-theft and total input-slot authorization facts on the same raw-ingress tx-leaf publication surface"
       ],
       "missing_work": [
         "Bind remaining sync and arbitrary raw-byte action decode paths to the stronger ledger-state transition.",
@@ -173,7 +173,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 68,
+      "completion_percent": 71,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -201,7 +201,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now strengthens the proof-keyed active-input no-theft boundary with a full binding package carrying payload fee agreement, public-input binding, root/anchor binding, statement/proof nullifier-slot alignment, native fee/proof/backend/ciphertext-payload equality gates, and field-level tx-leaf binding facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now composes accepted decoded transfer payload admission and singleton block-action validation acceptance, including payload-before-order and order-before-state precedence, with accepted native tx-leaf/action binding and canonical statement facts to expose active-input no-theft full-binding before modeled transfer state mutation",
-        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now lifts the same live decoded-transfer validation/order boundary to every indexed input slot, exposing authorization-or-inactive-zero full-binding before modeled transfer state mutation"
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now lifts the same live decoded-transfer validation/order boundary to every indexed input slot, exposing authorization-or-inactive-zero full-binding before modeled transfer state mutation",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean composes raw-ingress pending-action tx-leaf publication with validated transfer active-input no-theft and total input-slot authorization facts over the same raw replay input"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -293,7 +294,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 94,
+      "completion_percent": 95,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -320,7 +321,8 @@
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean now exposes accepted payload binding-hash, proof-binding-hash, and fee facts for downstream statement/proof-key composition",
         "node/src/native/mod.rs regressions reject sidecar value-balance and inline/sidecar stablecoin proof-binding aliases",
         "node/src/native/mod.rs native block artifact verification now builds tx-leaf transactions from canonical materialized sidecar ciphertext bytes before tx validity artifact construction",
-        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean composes accepted raw-ingress sidecar publication with pending-action byte publication and native tx-leaf/canonical statement artifact facts over one raw replay input"
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean composes accepted raw-ingress sidecar publication with pending-action byte publication and native tx-leaf/canonical statement artifact facts over one raw replay input",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface"
       ],
       "missing_work": [
         "Complete production/refinement bindings for remaining proof artifact entry points.",

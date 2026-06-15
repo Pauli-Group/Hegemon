@@ -3855,6 +3855,59 @@
       ]
     },
     {
+      "id": "native.raw-ingress-transfer-no-theft-publication",
+      "component": "native raw ingress transfer no-theft publication refinement",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean raw-ingress transfer no-theft publication refinement composes accepted raw-ingress pending-action tx-leaf publication with accepted decoded transfer payload admission, singleton block-action validation, transfer no-theft boundary facts, and total input-slot authorization facts. Under the existing explicit deployed-verifier soundness assumption, the package binds replayed supply, final nullifier uniqueness, tx-leaf statement/proof artifact facts, active-input no-theft facts, and input-slot authorization-or-inactive-zero facts to the same raw ingress, pending-action bytes, sidecar, canonical publication, and tx-leaf artifact surface.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication"
+      ],
+      "assumptions": [
+        "This is a Lean composition theorem over accepted production-bound predicates. It relies on the separate raw-ingress pending-action publication, transfer no-theft boundary, native tx-leaf canonical surface, deployed verifier boundary, pending-action parser/publication, DA/sidecar binding, canonical publication, and replay-refinement claims for executable predicate conformance.",
+        "The theorem uses the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness as the raw-ingress pending-action publication theorem, so replayed supply and final nullifier uniqueness are coupled to the transfer authorization/no-theft package.",
+        "The theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit. It does not claim STARK/AIR, SmallWood, native tx-leaf, recursive proof, hash, witness extraction, wallet custody, or complete native-node soundness.",
+        "No runtime hot path is changed; this is a zero-runtime-cost composition layer and metadata gate."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
+        "formal/lean/Hegemon/Native/DaSidecarReplayBinding.lean",
+        "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-raw-ingress-transfer-soundness-assumption-explicit",
+          "description": "The theorem depends on `DeployedTxVerifierSoundnessAssumption`; deployed proof-system/AIR/SmallWood soundness and witness extraction remain explicit assumptions rather than mechanized proofs.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-raw-ingress-transfer-parser-node-refinement-missing",
+          "description": "The theorem composes accepted raw-ingress and transfer predicates but does not prove arbitrary byte parser internals, hash implementation equivalence, wallet custody, or complete native-node refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
+    },
+    {
       "id": "native.announced-block-admission",
       "component": "native announced block header admission",
       "claim_class": "lean_theorem",
