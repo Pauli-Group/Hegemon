@@ -1344,6 +1344,86 @@ theorem canonical_statement_balance_soundness_public_authorized_asset_delta_valu
       facts.validBalanceEq
       facts.publicFields
 
+theorem public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception
+    {publicFields : PublicInputBinding.PublicFields}
+    {assetId : Nat}
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero :
+      publicAuthorizedAssetDeltaValue publicFields assetId ≠ 0) :
+    publicFields.stablecoinEnabled = 1
+      ∧ assetId = publicFields.stablecoinAsset := by
+  by_cases native : assetId = Hegemon.Transaction.nativeAsset
+  · exact False.elim (nonNative native)
+  · by_cases enabled : publicFields.stablecoinEnabled = 1
+    · by_cases selected : assetId = publicFields.stablecoinAsset
+      · exact ⟨enabled, selected⟩
+      · exfalso
+        apply nonzero
+        simp [publicAuthorizedAssetDeltaValue, native, enabled, selected]
+    · exfalso
+      apply nonzero
+      simp [publicAuthorizedAssetDeltaValue, native, enabled]
+
+theorem canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : slotDelta assetId slots ≠ 0) :
+    publicFields.stablecoinEnabled = 1
+      ∧ assetId = publicFields.stablecoinAsset := by
+  have deltaEq :
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId :=
+    canonical_statement_balance_soundness_public_authorized_asset_delta_value
+      surface
+      balanceSound
+  have publicNonzero :
+      publicAuthorizedAssetDeltaValue publicFields assetId ≠ 0 := by
+    intro publicZero
+    apply nonzero
+    rw [deltaEq, publicZero]
+  exact
+    public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception
+      nonNative
+      publicNonzero
+
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

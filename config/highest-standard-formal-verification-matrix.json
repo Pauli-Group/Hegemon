@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.12,
+  "overall_completion_percent": 81.22,
   "last_full_formal_core": {
     "commit": "fb67db879a0d4c1152daf5f524f12f9779803817",
     "status": "passed locally 2026-06-15T10:47:26Z",
@@ -48,30 +48,31 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the parsed tx-leaf artifact projection proof-boundary slice. Parsed tx-leaf artifacts now compose with canonical native artifact boundary facts, and raw-ingress parsed tx-leaf publication now composes with both the full deployed verifier boundary facts and the spend-only verifier boundary facts under explicit soundness assumptions.",
+    "summary": "Proved the materialized transfer public stablecoin-exception slice. The canonical balance/public-field boundary now proves that any non-native nonzero public authorized delta requires public stablecoin enablement and the selected public stablecoin asset, and the materialized transfer publication surface lifts that fact onto the accepted materialized raw-ingress path under split spend and balance/public-field soundness assumptions.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean"
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_projection_binds_canonical_artifact_boundary_facts",
-      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_deployed_boundary_facts",
-      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_spend_boundary_facts"
+      "Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception",
+      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for TxLeafArtifactProjectionRefinement and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for CanonicalVerifierBoundary, MaterializedTransferNoTheftPublication, and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T10:37:36Z with 115 theorem-backed claims, 1526 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T11:07:48Z with 115 theorem-backed claims, 1529 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1526,
+      "named_lean_theorems": 1529,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The theorem slice still depends on `DeployedTxVerifierSoundnessAssumption` and `DeployedTxVerifierSpendSoundnessAssumption`; AIR/STARK/SmallWood proof soundness, witness extraction, and Rust verifier refinement are not yet mechanized.",
-      "Parser-to-canonical projection remains an explicit assumption; this is not yet a full serialization-to-statement-vector equivalence proof.",
-      "Hash/security equivalence, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions; no runtime path changed in this zero-cost Lean composition."
+      "The materialized theorem still depends on explicit `DeployedTxVerifierSpendSoundnessAssumption` and `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`; AIR/STARK/SmallWood soundness, witness extraction, and Rust verifier refinement are not yet mechanized.",
+      "The theorem proves the public stablecoin-exception shape, not stablecoin policy/oracle/attestation validity or chain-level bridge mint authorization.",
+      "Materialized-row-to-Transaction::new equivalence, hash/security equivalence, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions; no runtime path changed in this zero-cost Lean composition."
     ]
   },
   "last_production_binding_slice": {
@@ -277,7 +278,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 73,
+      "completion_percent": 75,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -292,7 +293,9 @@
         "native bridge payload admission",
         "formal/lean/Hegemon/Native/BridgeMintSafety.lean proves accepted inbound bridge payload authorization facts, fresh replay-key one-shot consumption, zero direct native mint delta for current state-delta-free inbound actions, a decoded amount-equality authorization boundary, and projected/raw-projected replay safety packages for authorized bridge amounts",
         "native transfer payload/state admission",
-        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves accepted materialized transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface"
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves accepted materialized transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves that any non-native nonzero public authorized delta requires public stablecoin enablement and the selected public stablecoin asset",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts the public non-native nonzero stablecoin-exception consequence to the accepted materialized transfer publication path under split spend and balance/public-field soundness assumptions"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",

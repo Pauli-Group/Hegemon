@@ -620,7 +620,7 @@
       "id": "formal.transaction-asset-isolation-boundary",
       "component": "transaction asset isolation and authorized mint boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
+      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires the selected public stablecoin exception. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -632,6 +632,8 @@
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta",
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception",
         "Hegemon.Transaction.AssetIsolation.accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero",
         "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta_value",
         "Hegemon.Transaction.AssetIsolation.accepted_transition_delta_authorized",
@@ -647,6 +649,7 @@
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -5670,7 +5673,7 @@
       "id": "native.materialized-transfer-no-theft-publication",
       "component": "native materialized transfer no-theft publication",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
+      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, the public non-native nonzero stablecoin-exception consequence, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_materialized_da_and_transfer_no_theft_surfaces",
       "production_eligible": true,
@@ -5678,11 +5681,12 @@
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_from_spend_soundness",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_authorized_asset_delta_value",
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition over accepted materialized DA publication, accepted transfer payload admission, accepted tx-leaf/action binding, canonical transaction statement facts, and the existing explicit deployed verifier soundness assumptions.",
-        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while exposing authorized per-asset delta values and output-slot statement/proof artifact rows at the materialized publication boundary; the no-theft/input-slot variant narrows this to `DeployedTxVerifierSpendSoundnessAssumption`. It does not claim deployed STARK/AIR, SmallWood, native tx-leaf proof, witness extraction, wallet custody, or recursive proof soundness.",
+        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while exposing authorized per-asset delta values and output-slot statement/proof artifact rows at the materialized publication boundary; the no-theft/input-slot variant narrows this to `DeployedTxVerifierSpendSoundnessAssumption`, and the public stablecoin-exception theorem pairs spend-only no-theft publication with `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`. It does not claim deployed STARK/AIR, SmallWood, native tx-leaf proof, witness extraction, wallet custody, or recursive proof soundness.",
         "The theorem inherits the materialized sidecar assumptions: row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof-system soundness, storage durability, and complete native-node equivalence remain explicit work."
       ],
       "evidence_paths": [

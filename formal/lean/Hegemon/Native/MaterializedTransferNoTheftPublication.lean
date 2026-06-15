@@ -922,6 +922,208 @@ theorem accepted_materialized_transfer_no_theft_publication_authorized_asset_del
         canonicalSurface
         sound).left⟩
 
+theorem accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields :
+      Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness :
+      Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    (materializedFacts :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        materializedRowsFeedTransactionNew
+        transactionNewFeedsConsensusDaBlob
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (payloadAccepted :
+      transferPayloadAccepts payload = true)
+    (txLeafAccepted :
+      BlockArtifactBindingAdmission.txLeafActionBindingAccepts txLeaf = true)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : Hegemon.Transaction.slotDelta assetId slots ≠ 0) :
+    MaterializedTransferNoTheftPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      payload
+      transferKey
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+      materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence
+    ∧ publicFields.stablecoinEnabled = 1
+    ∧ assetId = publicFields.stablecoinAsset := by
+  have publicationFacts :=
+    accepted_materialized_transfer_no_theft_publication_from_spend_soundness
+      (transferKey := transferKey)
+      (materializedFacts := materializedFacts)
+      (payloadAccepted := payloadAccepted)
+      (txLeafAccepted := txLeafAccepted)
+      (canonicalSurface := canonicalSurface)
+      (spendSound := spendSound)
+      (slot := slot)
+      (active := active)
+  have exceptionFacts :
+      publicFields.stablecoinEnabled = 1
+        ∧ assetId = publicFields.stablecoinAsset :=
+    canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception
+      canonicalSurface
+      balanceSound
+      nonNative
+      nonzero
+  exact ⟨publicationFacts, exceptionFacts⟩
+
 theorem materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : ExactDecodeInput}
