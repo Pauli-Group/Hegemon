@@ -391,6 +391,7 @@ cargo test -p wallet decrypt_rejects --lib -- --nocapture
 cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture
 cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture
 cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture
+cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture
 cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture

@@ -22,6 +22,10 @@ def keySlotName : KeySlot -> String
 def keySlotJson (slot : KeySlot) : String :=
   "\"" ++ keySlotName slot ++ "\""
 
+def peerRole : Role -> Role
+  | Role.initiator => Role.responder
+  | Role.responder => Role.initiator
+
 def sessionKeyCaseJson (name : String) (input : SessionKeyInput) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -56,6 +60,39 @@ def nonceCaseJson (name : String) (counter : Nat) : String :=
     ++ "      \"expected_nonce_hex\": \"" ++ hexBytes (nonceFromCounter counter) ++ "\",\n"
     ++ "      \"expected_valid\": " ++ boolJson (next != none) ++ ",\n"
     ++ "      \"expected_next_counter\": " ++ nullableNatStringJson next ++ "\n"
+    ++ "    }"
+
+def frameCaseJson (role : Role) (frameIndex : Nat) : String :=
+  let plaintext := patternedBytes (3 + frameIndex) (17 + frameIndex * 29)
+  "        {\n"
+    ++ "          \"frame_index\": \"" ++ toString frameIndex ++ "\",\n"
+    ++ "          \"expected_protect_slot\": " ++ keySlotJson (sendSlot role) ++ ",\n"
+    ++ "          \"expected_peer_open_slot\": "
+      ++ keySlotJson (recvSlot (peerRole role)) ++ ",\n"
+    ++ "          \"expected_nonce_hex\": \""
+      ++ hexBytes (nonceFromCounter frameIndex) ++ "\",\n"
+    ++ "          \"expected_protected_next_send_counter\": \""
+      ++ toString (frameIndex + 1) ++ "\",\n"
+    ++ "          \"expected_peer_next_recv_counter\": \""
+      ++ toString (frameIndex + 1) ++ "\",\n"
+    ++ "          \"expected_protected_slot_matches_peer_open\": "
+      ++ boolJson (sendSlot role == recvSlot (peerRole role)) ++ ",\n"
+    ++ "          \"expected_aad_distinct_from_key_info\": "
+      ++ boolJson (sessionAadInfo != expandInfo (sendSlot role)) ++ ",\n"
+    ++ "          \"plaintext_hex\": \""
+      ++ hexBytes plaintext ++ "\"\n"
+    ++ "        }"
+
+def frameSequenceCaseJson (name : String) (role : Role) (sequenceLength : Nat) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"role\": " ++ roleJson role ++ ",\n"
+    ++ "      \"peer_role\": " ++ roleJson (peerRole role) ++ ",\n"
+    ++ "      \"sequence_length\": \"" ++ toString sequenceLength ++ "\",\n"
+    ++ "      \"frames\": [\n"
+    ++ String.intercalate ",\n" ((List.range sequenceLength).map (frameCaseJson role))
+    ++ "\n"
+    ++ "      ]\n"
     ++ "    }"
 
 def initSigningCaseJson (name : String) (input : InitHelloSigningInput) : String :=
@@ -137,6 +174,10 @@ def vectorJson : String :=
     ++ nonceCaseJson "pattern" 72623859790382856 ++ ",\n"
     ++ nonceCaseJson "max-minus-one" (u64Max - 1) ++ ",\n"
     ++ nonceCaseJson "max-rejected" u64Max ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"frame_sequence_cases\": [\n"
+    ++ frameSequenceCaseJson "initiator-eight-frames" Role.initiator 8 ++ ",\n"
+    ++ frameSequenceCaseJson "responder-eight-frames" Role.responder 8 ++ "\n"
     ++ "  ],\n"
     ++ "  \"init_signing_cases\": [\n"
     ++ initSigningCaseJson "patterned-init" sampleInitSigningInput ++ ",\n"

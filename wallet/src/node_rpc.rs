@@ -1169,15 +1169,16 @@ impl NodeRpcClient {
             ));
         }
 
-        Ok(StablecoinPolicyBinding {
-            enabled: true,
+        stablecoin_policy_binding_from_admitted_state(
             asset_id,
-            policy_hash,
-            oracle_commitment: oracle.commitment,
-            attestation_commitment: attestation.commitment,
+            asset_id_u32,
             issuance_delta,
-            policy_version: policy.policy_version,
-        })
+            policy,
+            policy_hash,
+            oracle,
+            attestation,
+            metadata.block_number,
+        )
     }
 
     /// Check if a nullifier has been spent on-chain
@@ -1888,6 +1889,62 @@ struct AttestationCommitmentSnapshot {
     created_at: u64,
 }
 
+fn stablecoin_policy_binding_from_admitted_state(
+    asset_id: u64,
+    asset_id_u32: u32,
+    issuance_delta: i128,
+    policy: StablecoinPolicyStorage,
+    policy_hash: [u8; 48],
+    oracle: OracleCommitmentSnapshot,
+    attestation: AttestationCommitmentSnapshot,
+    current_block: u64,
+) -> Result<StablecoinPolicyBinding, WalletError> {
+    if issuance_delta == 0 {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin issuance delta must be non-zero",
+        ));
+    }
+    if issuance_delta.unsigned_abs() > u64::MAX as u128 {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin issuance delta exceeds u64 range",
+        ));
+    }
+    if policy.asset_id != asset_id_u32 {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin policy asset id mismatch",
+        ));
+    }
+    if !policy.active {
+        return Err(WalletError::InvalidArgument("stablecoin policy inactive"));
+    }
+    if policy.oracle_feeds.len() != 1 {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin policy requires exactly one oracle feed",
+        ));
+    }
+    let age = current_block.saturating_sub(oracle.submitted_at);
+    if age > policy.oracle_max_age {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin oracle commitment is stale",
+        ));
+    }
+    if attestation.disputed {
+        return Err(WalletError::InvalidArgument(
+            "stablecoin attestation is disputed",
+        ));
+    }
+
+    Ok(StablecoinPolicyBinding {
+        enabled: true,
+        asset_id,
+        policy_hash,
+        oracle_commitment: oracle.commitment,
+        attestation_commitment: attestation.commitment,
+        issuance_delta,
+        policy_version: policy.policy_version,
+    })
+}
+
 /// Blocking wrapper for NodeRpcClient
 ///
 /// Provides a blocking API for use in synchronous contexts.
@@ -2114,6 +2171,148 @@ mod tests {
         let hex = "gg00";
         let result = hex_to_array(hex);
         assert!(result.is_err());
+    }
+
+    fn sample_stablecoin_policy(asset_id: u32) -> StablecoinPolicyStorage {
+        StablecoinPolicyStorage {
+            asset_id,
+            oracle_feeds: vec![77],
+            attestation_id: 88,
+            min_collateral_ratio_ppm: 1_500_000,
+            max_mint_per_epoch: 1_000_000,
+            oracle_max_age: 10,
+            policy_version: 9,
+            active: true,
+        }
+    }
+
+    fn sample_oracle(submitted_at: u64) -> OracleCommitmentSnapshot {
+        OracleCommitmentSnapshot {
+            commitment: [0x22; 48],
+            submitted_at,
+        }
+    }
+
+    fn sample_attestation(disputed: bool) -> AttestationCommitmentSnapshot {
+        AttestationCommitmentSnapshot {
+            commitment: [0x33; 48],
+            disputed,
+            created_at: 12,
+        }
+    }
+
+    fn expect_invalid_argument<T: core::fmt::Debug>(
+        result: Result<T, WalletError>,
+        message: &'static str,
+    ) {
+        assert_eq!(
+            result
+                .expect_err("stablecoin admission should reject")
+                .to_string(),
+            format!("invalid argument: {message}")
+        );
+    }
+
+    #[test]
+    fn stablecoin_policy_admission_binds_exact_lookup_payload() {
+        let binding = stablecoin_policy_binding_from_admitted_state(
+            1001,
+            1001,
+            -42,
+            sample_stablecoin_policy(1001),
+            [0x11; 48],
+            sample_oracle(15),
+            sample_attestation(false),
+            20,
+        )
+        .expect("admitted stablecoin policy binding");
+
+        assert!(binding.enabled);
+        assert_eq!(binding.asset_id, 1001);
+        assert_eq!(binding.policy_hash, [0x11; 48]);
+        assert_eq!(binding.oracle_commitment, [0x22; 48]);
+        assert_eq!(binding.attestation_commitment, [0x33; 48]);
+        assert_eq!(binding.issuance_delta, -42);
+        assert_eq!(binding.policy_version, 9);
+    }
+
+    #[test]
+    fn stablecoin_policy_admission_rejects_invalid_lookup_records() {
+        expect_invalid_argument(
+            stablecoin_policy_binding_from_admitted_state(
+                1001,
+                1001,
+                0,
+                sample_stablecoin_policy(1001),
+                [0x11; 48],
+                sample_oracle(15),
+                sample_attestation(false),
+                20,
+            ),
+            "stablecoin issuance delta must be non-zero",
+        );
+
+        expect_invalid_argument(
+            stablecoin_policy_binding_from_admitted_state(
+                1001,
+                1001,
+                42,
+                StablecoinPolicyStorage {
+                    active: false,
+                    ..sample_stablecoin_policy(1001)
+                },
+                [0x11; 48],
+                sample_oracle(15),
+                sample_attestation(false),
+                20,
+            ),
+            "stablecoin policy inactive",
+        );
+
+        expect_invalid_argument(
+            stablecoin_policy_binding_from_admitted_state(
+                1001,
+                1001,
+                42,
+                StablecoinPolicyStorage {
+                    oracle_feeds: vec![77, 78],
+                    ..sample_stablecoin_policy(1001)
+                },
+                [0x11; 48],
+                sample_oracle(15),
+                sample_attestation(false),
+                20,
+            ),
+            "stablecoin policy requires exactly one oracle feed",
+        );
+
+        expect_invalid_argument(
+            stablecoin_policy_binding_from_admitted_state(
+                1001,
+                1001,
+                42,
+                sample_stablecoin_policy(1001),
+                [0x11; 48],
+                sample_oracle(9),
+                sample_attestation(false),
+                20,
+            ),
+            "stablecoin oracle commitment is stale",
+        );
+
+        expect_invalid_argument(
+            stablecoin_policy_binding_from_admitted_state(
+                1001,
+                1001,
+                42,
+                sample_stablecoin_policy(1001),
+                [0x11; 48],
+                sample_oracle(15),
+                sample_attestation(true),
+                20,
+            ),
+            "stablecoin attestation is disputed",
+        );
     }
 
     fn ciphertext_entry_for_bytes(index: u64, bytes: &[u8]) -> CiphertextEntryWire {

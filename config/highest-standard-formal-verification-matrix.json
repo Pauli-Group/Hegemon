@@ -4,11 +4,11 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 82.99,
+  "overall_completion_percent": 83.09,
   "last_full_formal_core": {
-    "date": "2026-06-15T18:51:37Z",
-    "commit": "9598446f0a4d",
-    "status": "passed locally after authorized stablecoin anti-mismatch, native tx-leaf payload gate, and indexed PQ frame theorem integration",
+    "date": "2026-06-15T19:29:59Z",
+    "commit": "pending-local-stablecoin-pq-frame-binding-commit",
+    "status": "passed locally after wallet stablecoin policy admission and bounded PQ SecureSession frame-vector binding",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 116,
     "named_lean_theorems": 1611,
@@ -18,7 +18,7 @@
     "production_eligible_claims": 106,
     "residual_risks": 44,
     "blueprint_edges": 486,
-    "falsification_cases": 458,
+    "falsification_cases": 459,
     "implementation_bindings": 204,
     "implementation_result_obligations": 161,
     "implementation_order_constraints": 143,
@@ -114,26 +114,29 @@
   },
   "last_production_binding_slice": {
     "date": "2026-06-15",
-    "summary": "Bound commitment-tree membership handoff evidence into the formal-core release gate. The production regression checks consensus CommitmentTreeState append roots, state-merkle append roots and authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node agree under the real merkle_node combiner, with representative wrong-leaf, wrong-position, pre-append-root, and unavailable-future-leaf rejection cases.",
+    "summary": "Bound wallet stablecoin policy construction and PQ Noise active-frame byte paths into formal-core release gates. The wallet regression checks storage-backed StablecoinPolicy, oracle, and attestation rows are bound into the exact submitted StablecoinPolicyBinding payload and fail closed on inactive, ambiguous, stale, disputed, zero-issuance, or over-range inputs. The PQ vector regression checks Lean-generated eight-frame initiator/responder sequences against production SecureSession send/receive, raw emitted ciphertext, and raw open/decrypt behavior.",
     "changed_runtime_paths": [
-      "consensus/src/commitment_tree.rs commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify",
-      "scripts/check_formal_core.sh commitment-tree membership handoff regression",
-      "scripts/check_lean_formal.sh explicit CommitmentTreeMembershipRefinement.lean check",
-      "scripts/hegemon_formal_core/src/lib.rs formal inventory requires CommitmentTreeMembershipRefinement.lean"
+      "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state",
+      "pq-noise/src/lib.rs lean_generated_pq_noise_vectors_match_production",
+      "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean frame_sequence_cases",
+      "scripts/check_formal_core.sh stablecoin_policy_admission and PQ Noise vector gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.CommitmentTreeMembershipRefinement.*",
-      "Hegemon.Transaction.MerklePath.*"
+      "Hegemon.Transaction.CanonicalVerifierBoundary.*AuthorizedStablecoin*",
+      "Hegemon.Native.TxLeafCanonicalSurface.tx_leaf_action_accepts_implies_stablecoin_payload_matches",
+      "Hegemon.Network.PqNoise.*",
+      "Hegemon.Network.PqNoiseHandshakeChannel.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture"
+        "cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture",
+        "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally with the commitment-tree membership handoff regression enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T19:29:59Z with the wallet stablecoin policy admission and bounded PQ SecureSession frame-vector gates enabled",
       "claims": 116,
-      "named_lean_theorems": 1588,
+      "named_lean_theorems": 1611,
       "production_eligible_claims": 106,
-      "falsification_cases": 458,
+      "falsification_cases": 459,
       "implementation_bindings": 204,
       "implementation_result_obligations": 161,
       "implementation_dominance_constraints": 129,
@@ -142,9 +145,9 @@
       "implementation_order_edges": 371
     },
     "known_limitations": [
-      "This binding adds no release-runtime work beyond a test/formal-core gate.",
-      "The Rust regression covers representative finite cases, not exhaustive production implementation equivalence.",
-      "Merkle hash security, storage durability, proof soundness, raw parser equivalence, and complete native-node equivalence remain separate open work."
+      "The wallet stablecoin helper binds construction of submitted payloads, not native import-time LiveStablecoinPolicyAuthorizes validity against canonical chain state.",
+      "The PQ frame vectors cover bounded active-frame sequences in both roles, not full transport/session completion or liveness.",
+      "Primitive cryptographic assumptions, proof-system soundness, raw parser equivalence, storage durability, and complete native-node equivalence remain separate open work."
     ]
   },
   "properties": [
@@ -318,7 +321,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -340,11 +343,12 @@
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now carries StablecoinMintExceptionPayload, LiveStablecoinPolicyAuthorizes, and AuthorizedStablecoinMintExceptionSurface so any explicit live-policy authorization is bound to the exact public, statement, and proof-binding stablecoin payload",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts authorized stablecoin mint exception payload facts to the accepted materialized transfer publication path",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
+        "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-        "Bind LiveStablecoinPolicyAuthorizes to the production stablecoin policy/oracle/attestation lookup and freshness checks rather than an explicit theorem predicate.",
+        "Bind native import-time LiveStablecoinPolicyAuthorizes to production stablecoin policy/oracle/attestation lookup and freshness checks rather than only the wallet construction path plus explicit theorem predicate.",
         "Bind remaining exception predicates to production admission paths beyond the tx-leaf/action stablecoin payload equality gate."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
@@ -715,7 +719,7 @@
     {
       "id": "network.pq-channel-safety",
       "weight": 3,
-      "completion_percent": 86,
+      "completion_percent": 88,
       "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
       "current_evidence": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
@@ -728,11 +732,13 @@
         "formal/lean/Hegemon/Network/PqNoise.lean now proves role-selected AAD label separation from both send and receive HKDF labels",
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now binds accepted authenticated PQ handshakes directly to the PQ-native initial channel state and initial PQ Noise protect/open transitions, including role-correct slots, zero counters, separated AAD, and distinct protect/open slots",
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves the first local protected PQ frame is admitted by the peer open path under the matching peer receive slot and zero nonce",
-        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active PQ frames below u64 overflow"
+        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active PQ frames below u64 overflow",
+        "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean now emits eight-frame initiator/responder PQ frame-sequence vectors",
+        "pq-noise/src/lib.rs formal vector gate drives production SecureSession send/recv, raw ciphertext emission, and raw open/decrypt against Lean slot, nonce, counter, and AAD expectations"
       ],
       "missing_work": [
-        "Bind all production active frame send/receive byte paths to the arbitrary-index theorem-backed channel-state transitions, not only modeled helper transitions.",
-        "Bind production transport/session completion outputs and all active frame paths to the PQ-native handshake-to-channel theorem surface.",
+        "Extend bounded SecureSession frame-vector conformance to full transport/session completion outputs and all integration paths.",
+        "Bind production transport/session completion outputs to the PQ-native handshake-to-channel theorem surface.",
         "Discharge or externally justify ML-KEM/ML-DSA/HKDF/AES-GCM assumptions."
       ],
       "performance_constraint": "No extra round trips; checks should remain key-schedule/frame-admission local."

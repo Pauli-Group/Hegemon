@@ -648,7 +648,7 @@
       "id": "formal.transaction-asset-isolation-boundary",
       "component": "transaction asset isolation and authorized mint boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a first-class stablecoin mint exception surface binding asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, proof-binding fields, and any explicit live-policy authorization predicate supplied for that exact payload. The authorized surface now also proves payload equality to public fields, preserves policy metadata through bound/statement/proof-binding rows, and rejects unauthorized or mismatched payload surfaces. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
+      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a first-class stablecoin mint exception surface binding asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, proof-binding fields, and any explicit live-policy authorization predicate supplied for that exact payload. The authorized surface now also proves payload equality to public fields, preserves policy metadata through bound/statement/proof-binding rows, and rejects unauthorized or mismatched payload surfaces. The wallet stablecoin policy binding helper now binds the storage-backed policy lookup, policy hash, oracle commitment, attestation commitment, issuance delta, and policy version into the exact payload while rejecting inactive policy, multi-oracle ambiguity, stale oracle data, disputed attestation, zero issuance, and over-range issuance. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -686,7 +686,7 @@
       ],
       "assumptions": [
         "The theorem depends on the accepted transaction relation introduced by `AcceptedTransactionSoundness`; that relation is still conditional on explicit balance and spend proof-system soundness assumptions.",
-        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas; the canonical public-field theorem binds the stablecoin exception payload and any explicit authorization predicate to public, bound, statement, and proof-binding fields and now rejects unauthorized/mismatched authorized surfaces, but it does not prove policy/oracle/attestation validity against external state.",
+        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas; the canonical public-field theorem binds the stablecoin exception payload and any explicit authorization predicate to public, bound, statement, and proof-binding fields and now rejects unauthorized/mismatched authorized surfaces. The wallet helper binds one production policy/oracle/attestation lookup path into the exact payload and fail-closed freshness/dispute checks, but it does not prove native import-time policy/oracle/attestation validity against chain state.",
         "The theorem does not prove chain-level bridge mint authorization, deployed verifier soundness, hash security, proof-system soundness, or complete Rust/native-node refinement.",
         "Bridge mint/burn authorization remains a separate exception predicate and production binding target."
       ],
@@ -697,6 +697,7 @@
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/Balance.lean",
         "formal/lean/Hegemon.lean",
+        "wallet/src/node_rpc.rs",
         "METHODS.md",
         "DESIGN.md",
         "scripts/check_formal_core.sh",
@@ -704,12 +705,13 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {
           "id": "asset-isolation-exceptions-not-production-bound",
-          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences, the canonical stablecoin mint exception surface, an explicit live-policy authorization predicate for that payload, anti-mismatch theorems for unauthorized or field-mismatched payloads, and native tx-leaf/action stablecoin payload gate projection, but production stablecoin policy/oracle/attestation validity, bridge mint exceptions, and complete native-node refinement still need stronger admission bindings.",
+          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences, the canonical stablecoin mint exception surface, an explicit live-policy authorization predicate for that payload, anti-mismatch theorems for unauthorized or field-mismatched payloads, and native tx-leaf/action stablecoin payload gate projection. The wallet construction path now binds storage-backed policy/oracle/attestation lookup records into the exact payload with freshness/dispute checks, but native import-time policy/oracle/attestation validity, bridge mint exceptions, and complete native-node refinement still need stronger admission bindings.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -2673,7 +2675,7 @@
       "id": "network.pq-noise-key-schedule",
       "component": "PQ Noise handshake and session channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, prove the first local protected frame is admitted by the peer receive path under the matching directional slot and nonce, and prove arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active frames below u64 overflow. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, and PqHandshake.",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, prove the first local protected frame is admitted by the peer receive path under the matching directional slot and nonce, and prove arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active frames below u64 overflow. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, PqHandshake, and bounded SecureSession active frame send/receive paths, including raw emitted ciphertext and raw open/decrypt checks.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2723,9 +2725,9 @@
       ],
       "assumptions": [
         "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
-        "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, and InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; they do not require new runtime work.",
+        "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement, and eight-frame production SecureSession send/open sequences in both directions. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; the frame-sequence vectors bind those transitions to the production byte path without adding runtime work.",
         "The PQ-native and legacy-comparison handshake-to-channel theorems carry transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
-        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, send/receive channel-counter state transitions, first peer frame slot/nonce admission, and arbitrary modeled bounded frame-index peer admission below u64 overflow. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, production active transport/session byte-level implementation equivalence, full network liveness, or complete native-node equivalence."
+        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, send/receive channel-counter state transitions, first peer frame slot/nonce admission, arbitrary modeled bounded frame-index peer admission below u64 overflow, and bounded production active-frame byte-path conformance. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full transport/session completion equivalence, full network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/PqNoise.lean",
@@ -2733,6 +2735,7 @@
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
         "pq-noise/src/types.rs",
         "pq-noise/src/noise.rs",
+        "pq-noise/src/session.rs",
         "pq-noise/src/handshake.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
