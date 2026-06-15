@@ -61,6 +61,9 @@ lean_exe gen_receipt_root_admission_vectors where
 lean_exe gen_recursive_block_admission_vectors where
   root := `Hegemon.Consensus.GenerateRecursiveBlockAdmissionVectors
 
+lean_exe gen_recursive_block_v2_verifier_surface_vectors where
+  root := `Hegemon.Consensus.GenerateRecursiveBlockV2VerifierSurfaceVectors
+
 lean_exe gen_recursive_public_replay_vectors where
   root := `Hegemon.Consensus.GenerateRecursivePublicReplayVectors
 

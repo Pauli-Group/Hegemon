@@ -52,7 +52,7 @@ def noteCiphertextCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"note_ciphertext_wire_cases\": [\n"
     ++ noteCiphertextCaseJson "crypto-valid" "crypto" validCryptoWire
       (parseCryptoNoteCiphertext validCryptoWire) ++ ",\n"
@@ -69,7 +69,17 @@ def vectorJson : String :=
     ++ noteCiphertextCaseJson "chain-noncanonical-compact-kem-length-rejected" "chain" chainNoncanonicalCompactWire
       (parseChainNoteCiphertext chainNoncanonicalCompactWire) ++ ",\n"
     ++ noteCiphertextCaseJson "chain-trailing-byte-rejected" "chain" chainTrailingWire
-      (parseChainNoteCiphertext chainTrailingWire) ++ "\n"
+      (parseChainNoteCiphertext chainTrailingWire) ++ ",\n"
+    ++ noteCiphertextCaseJson "da-valid" "da" validChainDaBytes
+      (parseDaNoteCiphertext validChainDaBytes) ++ ",\n"
+    ++ noteCiphertextCaseJson "da-memo-overrun-rejected" "da" daMemoOverrunWire
+      (parseDaNoteCiphertext daMemoOverrunWire) ++ ",\n"
+    ++ noteCiphertextCaseJson "da-nonzero-padding-rejected" "da" daNonzeroPaddingWire
+      (parseDaNoteCiphertext daNonzeroPaddingWire) ++ ",\n"
+    ++ noteCiphertextCaseJson "da-truncated-kem-rejected" "da" daTruncatedWire
+      (parseDaNoteCiphertext daTruncatedWire) ++ ",\n"
+    ++ noteCiphertextCaseJson "da-trailing-byte-rejected" "da" daTrailingWire
+      (parseDaNoteCiphertext daTrailingWire) ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

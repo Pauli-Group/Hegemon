@@ -2460,6 +2460,8 @@ fn build_packed_bridge_linear_constraints(
         let commitment1 = bridge_input_commitment_permutation(input, 1);
         let commitment2 = bridge_input_commitment_permutation(input, 2);
         let lane0 = permutation_lane(commitment0);
+        let lane1 = permutation_lane(commitment1);
+        let lane2 = permutation_lane(commitment2);
 
         push_bridge_constraint(
             &mut constraints,
@@ -2482,6 +2484,26 @@ fn build_packed_bridge_linear_constraints(
         push_poseidon_fresh_frame(&mut constraints, commitment0);
         push_poseidon_continuation(&mut constraints, commitment0, commitment1);
         push_poseidon_continuation(&mut constraints, commitment1, commitment2);
+        for limb in 0..4 {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(commitment2, 0, 2 + limb), lane2, 1),
+                    (
+                        poseidon_row(commitment1, layout.poseidon_last_row(), 2 + limb),
+                        lane1,
+                        neg_one,
+                    ),
+                    (
+                        poseidon_row(prf_permutation, layout.poseidon_last_row(), 1 + limb),
+                        prf_lane,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
 
         for level in 0..MERKLE_TREE_DEPTH {
             let merkle0 = bridge_input_merkle_permutation(input, level, 0);
@@ -4085,6 +4107,35 @@ mod tests {
             &material.auxiliary_witness_words,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        witness.sk_spend = [99u8; 32];
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let err = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .expect_err("mismatched spend secret and input pk_auth must fail");
+        assert!(err.to_string().contains("smallwood"));
     }
 
     #[test]

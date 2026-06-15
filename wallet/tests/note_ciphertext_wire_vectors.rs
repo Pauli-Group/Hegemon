@@ -50,7 +50,7 @@ fn lean_generated_note_ciphertext_wire_vectors_match_production() {
         std::fs::read_to_string(&path).expect("read generated Lean note-ciphertext wire vectors");
     let vectors: VectorFile =
         serde_json::from_str(&raw).expect("parse generated Lean note-ciphertext wire vectors");
-    assert_eq!(vectors.schema_version, 2);
+    assert_eq!(vectors.schema_version, 3);
     assert!(
         !vectors.note_ciphertext_wire_cases.is_empty(),
         "Lean note-ciphertext wire cases must not be empty"
@@ -83,6 +83,16 @@ fn verify_case(case: &VectorCase) {
             })
             .map_err(|_| ()),
         "chain" => WalletNoteCiphertext::from_chain_bytes(&bytes)
+            .map(|ct| ExpectedSummary {
+                version: ct.version,
+                crypto_suite: ct.crypto_suite,
+                diversifier_index: ct.diversifier_index,
+                kem_len: ct.kem_ciphertext.len(),
+                note_payload_len: ct.note_payload.len(),
+                memo_payload_len: ct.memo_payload.len(),
+            })
+            .map_err(|_| ()),
+        "da" => WalletNoteCiphertext::from_da_bytes(&bytes)
             .map(|ct| ExpectedSummary {
                 version: ct.version,
                 crypto_suite: ct.crypto_suite,
@@ -153,6 +163,23 @@ fn verify_case(case: &VectorCase) {
             ciphertext_hash_bytes(&production_da_bytes),
             ciphertext_hash_bytes(&expected_da_bytes),
             "production ciphertext hash must use the Lean-projected DA preimage for {}",
+            case.name
+        );
+    } else if case.format == "da" && case.expected_valid {
+        assert_eq!(
+            case.expected_wire_len,
+            wallet::notes::CHAIN_CIPHERTEXT_SIZE + synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN,
+            "fixed DA wire length mismatch for {}",
+            case.name
+        );
+        let ciphertext = WalletNoteCiphertext::from_da_bytes(&bytes)
+            .expect("valid DA vector parses as wallet ciphertext");
+        assert_eq!(
+            ciphertext
+                .to_da_bytes()
+                .expect("valid DA vector roundtrips"),
+            bytes,
+            "production DA parser must roundtrip strict DA bytes for {}",
             case.name
         );
     } else {

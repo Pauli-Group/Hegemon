@@ -18,6 +18,7 @@ import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.ProvenBatchBinding
 import Hegemon.Consensus.ReceiptRootAdmission
 import Hegemon.Consensus.RecursiveBlockAdmission
+import Hegemon.Consensus.RecursiveBlockV2VerifierSurface
 import Hegemon.Consensus.RecursivePublicReplay
 import Hegemon.Consensus.RecursiveSemanticInputs
 import Hegemon.Consensus.StatementAnchorAdmission
@@ -121,6 +122,7 @@ import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.ProofStatementBinding
 import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
+import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash
 import Hegemon.Wallet.NoteCiphertextDecrypt

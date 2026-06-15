@@ -130,6 +130,85 @@ pub struct NoteCiphertext {
 }
 
 impl NoteCiphertext {
+    fn parse_ciphertext_container(ciphertext_bytes: &[u8]) -> Result<Self, WalletError> {
+        if ciphertext_bytes.len() != CHAIN_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Invalid encrypted note container size: expected {}, got {}",
+                CHAIN_CIPHERTEXT_SIZE,
+                ciphertext_bytes.len()
+            )));
+        }
+
+        let version = ciphertext_bytes[0];
+        let crypto_suite = u16::from_le_bytes(
+            ciphertext_bytes[1..3]
+                .try_into()
+                .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
+        );
+        let diversifier_index = u32::from_le_bytes(
+            ciphertext_bytes[3..7]
+                .try_into()
+                .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
+        );
+
+        let mut offset = 7;
+        let note_len = u32::from_le_bytes(
+            ciphertext_bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| WalletError::Serialization("note_len parse failed".into()))?,
+        ) as usize;
+        offset += 4;
+
+        let note_end = offset
+            .checked_add(note_len)
+            .ok_or_else(|| WalletError::Serialization("note payload length overflow".into()))?;
+        let memo_len_end = note_end
+            .checked_add(4)
+            .ok_or_else(|| WalletError::Serialization("memo length offset overflow".into()))?;
+        if memo_len_end > CHAIN_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Note payload too large: {} bytes at offset {}",
+                note_len, offset
+            )));
+        }
+        let note_payload = ciphertext_bytes[offset..note_end].to_vec();
+        offset = note_end;
+
+        let memo_len = u32::from_le_bytes(
+            ciphertext_bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?,
+        ) as usize;
+        offset += 4;
+
+        let memo_end = offset
+            .checked_add(memo_len)
+            .ok_or_else(|| WalletError::Serialization("memo payload length overflow".into()))?;
+        if memo_end > CHAIN_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Memo payload too large: {} bytes at offset {}",
+                memo_len, offset
+            )));
+        }
+        let memo_payload = ciphertext_bytes[offset..memo_end].to_vec();
+        offset = memo_end;
+
+        if ciphertext_bytes[offset..].iter().any(|&byte| byte != 0) {
+            return Err(WalletError::Serialization(
+                "Encrypted note container has nonzero trailing padding".into(),
+            ));
+        }
+
+        Ok(Self {
+            version,
+            crypto_suite,
+            diversifier_index,
+            kem_ciphertext: Vec::new(),
+            note_payload,
+            memo_payload,
+        })
+    }
+
     /// Create an empty/dummy ciphertext for padding.
     /// Used when the proof has more output slots than actual recipients.
     pub fn empty() -> Self {
@@ -245,73 +324,10 @@ impl NoteCiphertext {
         }
 
         let ciphertext_bytes = &bytes[..CHAIN_CIPHERTEXT_SIZE];
-
-        // Parse the ciphertext portion
-        let version = ciphertext_bytes[0];
-        let crypto_suite = u16::from_le_bytes(
-            ciphertext_bytes[1..3]
-                .try_into()
-                .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
-        );
-        let diversifier_index = u32::from_le_bytes(
-            ciphertext_bytes[3..7]
-                .try_into()
-                .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
-        );
-
-        let mut offset = 7;
-
-        // Note payload length and data
-        let note_len = u32::from_le_bytes(
-            ciphertext_bytes[offset..offset + 4]
-                .try_into()
-                .map_err(|_| WalletError::Serialization("note_len parse failed".into()))?,
-        ) as usize;
-        offset += 4;
-
-        let note_end = offset
-            .checked_add(note_len)
-            .ok_or_else(|| WalletError::Serialization("note payload length overflow".into()))?;
-        let memo_len_end = note_end
-            .checked_add(4)
-            .ok_or_else(|| WalletError::Serialization("memo length offset overflow".into()))?;
-        if memo_len_end > CHAIN_CIPHERTEXT_SIZE {
-            return Err(WalletError::Serialization(format!(
-                "Note payload too large: {} bytes at offset {}",
-                note_len, offset
-            )));
-        }
-        let note_payload = ciphertext_bytes[offset..note_end].to_vec();
-        offset = note_end;
-
-        // Memo payload length and data
-        let memo_len = u32::from_le_bytes(
-            ciphertext_bytes[offset..offset + 4]
-                .try_into()
-                .map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?,
-        ) as usize;
-        offset += 4;
-
-        let memo_end = offset
-            .checked_add(memo_len)
-            .ok_or_else(|| WalletError::Serialization("memo payload length overflow".into()))?;
-        if memo_end > CHAIN_CIPHERTEXT_SIZE {
-            return Err(WalletError::Serialization(format!(
-                "Memo payload too large: {} bytes at offset {}",
-                memo_len, offset
-            )));
-        }
-        let memo_payload = ciphertext_bytes[offset..memo_end].to_vec();
-        offset = memo_end;
-
-        if ciphertext_bytes[offset..].iter().any(|&byte| byte != 0) {
-            return Err(WalletError::Serialization(
-                "Encrypted note container has nonzero trailing padding".into(),
-            ));
-        }
+        let mut parsed = Self::parse_ciphertext_container(ciphertext_bytes)?;
 
         let (kem_len, kem_len_bytes) = decode_compact_len(&bytes[CHAIN_CIPHERTEXT_SIZE..])?;
-        let expected_kem_len = expected_kem_ciphertext_len(crypto_suite)?;
+        let expected_kem_len = expected_kem_ciphertext_len(parsed.crypto_suite)?;
         if kem_len != expected_kem_len {
             return Err(WalletError::Serialization(format!(
                 "Invalid KEM ciphertext length: expected {}, got {}",
@@ -330,16 +346,36 @@ impl NoteCiphertext {
                 bytes.len()
             )));
         }
-        let kem_ciphertext = bytes[kem_start..kem_end].to_vec();
+        parsed.kem_ciphertext = bytes[kem_start..kem_end].to_vec();
+        Ok(parsed)
+    }
 
-        Ok(Self {
-            version,
-            crypto_suite,
-            diversifier_index,
-            kem_ciphertext,
-            note_payload,
-            memo_payload,
-        })
+    /// Parse from the DA sidecar format (ciphertext container + raw KEM ciphertext).
+    pub fn from_da_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
+        if bytes.len() < CHAIN_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Invalid DA encrypted note size: expected at least {}, got {}",
+                CHAIN_CIPHERTEXT_SIZE,
+                bytes.len()
+            )));
+        }
+
+        let mut parsed = Self::parse_ciphertext_container(&bytes[..CHAIN_CIPHERTEXT_SIZE])?;
+        let expected_kem_len = expected_kem_ciphertext_len(parsed.crypto_suite)?;
+        let expected_size = CHAIN_CIPHERTEXT_SIZE
+            .checked_add(expected_kem_len)
+            .ok_or_else(|| {
+                WalletError::Serialization("DA KEM ciphertext length overflow".into())
+            })?;
+        if bytes.len() != expected_size {
+            return Err(WalletError::Serialization(format!(
+                "Invalid DA encrypted note size: expected {}, got {}",
+                expected_size,
+                bytes.len()
+            )));
+        }
+        parsed.kem_ciphertext = bytes[CHAIN_CIPHERTEXT_SIZE..expected_size].to_vec();
+        Ok(parsed)
     }
 
     pub fn encrypt<R: RngCore + ?Sized>(
@@ -706,6 +742,20 @@ mod tests {
     }
 
     #[test]
+    fn da_serialization_round_trip() {
+        let ciphertext = sample_ciphertext(458, b"da memo");
+        let bytes = ciphertext.to_da_bytes().unwrap();
+        let recovered = NoteCiphertext::from_da_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.version, ciphertext.version);
+        assert_eq!(recovered.crypto_suite, ciphertext.crypto_suite);
+        assert_eq!(recovered.diversifier_index, ciphertext.diversifier_index);
+        assert_eq!(recovered.kem_ciphertext, ciphertext.kem_ciphertext);
+        assert_eq!(recovered.note_payload, ciphertext.note_payload);
+        assert_eq!(recovered.memo_payload, ciphertext.memo_payload);
+    }
+
+    #[test]
     fn to_chain_bytes_rejects_oversize_memo() {
         let mut rng = StdRng::seed_from_u64(789);
         let root = RootSecret::from_rng(&mut rng);
@@ -797,6 +847,18 @@ mod tests {
     }
 
     #[test]
+    fn from_da_bytes_rejects_memo_overrun() {
+        let ciphertext = sample_ciphertext(795, b"memo");
+        let mut bytes = ciphertext.to_da_bytes().unwrap();
+        let (_, memo_len_offset, memo_start, _) = payload_offsets(&bytes);
+        let overrun_len = CHAIN_CIPHERTEXT_SIZE - memo_start + 1;
+        bytes[memo_len_offset..memo_len_offset + 4]
+            .copy_from_slice(&(overrun_len as u32).to_le_bytes());
+
+        assert!(NoteCiphertext::from_da_bytes(&bytes).is_err());
+    }
+
+    #[test]
     fn from_chain_bytes_rejects_nonzero_container_padding() {
         let ciphertext = sample_ciphertext(791, b"memo");
         let mut bytes = ciphertext.to_chain_bytes().unwrap();
@@ -808,12 +870,32 @@ mod tests {
     }
 
     #[test]
+    fn from_da_bytes_rejects_nonzero_container_padding() {
+        let ciphertext = sample_ciphertext(796, b"memo");
+        let mut bytes = ciphertext.to_da_bytes().unwrap();
+        let (_, _, _, payload_end) = payload_offsets(&bytes);
+        assert!(payload_end < CHAIN_CIPHERTEXT_SIZE);
+        bytes[payload_end] = 0xaa;
+
+        assert!(NoteCiphertext::from_da_bytes(&bytes).is_err());
+    }
+
+    #[test]
     fn from_chain_bytes_rejects_trailing_bytes_after_kem() {
         let ciphertext = sample_ciphertext(792, b"memo");
         let mut bytes = ciphertext.to_chain_bytes().unwrap();
         bytes.push(0x99);
 
         assert!(NoteCiphertext::from_chain_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn from_da_bytes_rejects_trailing_bytes_after_kem() {
+        let ciphertext = sample_ciphertext(797, b"memo");
+        let mut bytes = ciphertext.to_da_bytes().unwrap();
+        bytes.push(0x99);
+
+        assert!(NoteCiphertext::from_da_bytes(&bytes).is_err());
     }
 
     #[test]
@@ -844,6 +926,24 @@ mod tests {
             assert!(
                 result.unwrap().is_err(),
                 "truncated prefix length {len} unexpectedly decoded"
+            );
+        }
+    }
+
+    #[test]
+    fn from_da_bytes_rejects_truncated_prefixes_without_panic() {
+        let ciphertext = sample_ciphertext(798, b"memo");
+        let bytes = ciphertext.to_da_bytes().unwrap();
+
+        for len in 0..bytes.len() {
+            let result = std::panic::catch_unwind(|| NoteCiphertext::from_da_bytes(&bytes[..len]));
+            assert!(
+                result.is_ok(),
+                "from_da_bytes panicked on prefix length {len}"
+            );
+            assert!(
+                result.unwrap().is_err(),
+                "truncated DA prefix length {len} unexpectedly decoded"
             );
         }
     }

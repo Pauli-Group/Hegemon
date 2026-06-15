@@ -74,6 +74,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Consensus/GenerateReceiptRootAdmissionVectors.lean
   lake env lean Hegemon/Consensus/RecursiveBlockAdmission.lean
   lake env lean Hegemon/Consensus/GenerateRecursiveBlockAdmissionVectors.lean
+  lake env lean Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean
+  lake env lean Hegemon/Consensus/GenerateRecursiveBlockV2VerifierSurfaceVectors.lean
   lake env lean Hegemon/Consensus/RecursivePublicReplay.lean
   lake env lean Hegemon/Consensus/GenerateRecursivePublicReplayVectors.lean
   lake env lean Hegemon/Consensus/RecursiveSemanticInputs.lean
@@ -224,6 +226,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/ProofSystemBoundary.lean
   lake env lean Hegemon/Transaction/ProofWrapperAdmission.lean
   lake env lean Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean
+  lake env lean Hegemon/Transaction/SmallWoodSpendAuthorization.lean
   lake env lean Hegemon/Transaction/StatementHash.lean
   lake env lean Hegemon/Transaction/GenerateStatementHashVectors.lean
 )

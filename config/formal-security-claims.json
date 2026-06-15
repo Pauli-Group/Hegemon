@@ -415,7 +415,7 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "component": "transaction spend authorization boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption.",
+      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link slice additionally proves the verifier-surface constraint that active input commitment auth limbs must equal PRF-derived spend-auth limbs and gates the production packed SmallWood constraint builder with a wrong-spend-secret regression.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumption",
       "production_eligible": false,
@@ -441,7 +441,10 @@
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_input_slot_facts_at",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_secret_rejects",
         "Hegemon.Transaction.SpendAuthorization.active_input_wrong_nullifier_rejects",
-        "Hegemon.Transaction.SpendAuthorization.active_input_wrong_membership_root_rejects"
+        "Hegemon.Transaction.SpendAuthorization.active_input_wrong_membership_root_rejects",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_pk_auth_eq_derived",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wrong_secret_rejects",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_auth_link_accepts_without_constraint"
       ],
       "assumptions": [
         "The executable Lean model uses abstract digest arithmetic for note commitments, spend-authority keys, nullifiers, and Merkle nodes. It proves relation plumbing, not hash security or implementation equivalence.",
@@ -449,11 +452,14 @@
         "`authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful authorization cannot be derived over mismatched public flag/nullifier vectors or mismatched private witness vectors.",
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
         "`authorizeInputSlots_input_slot_facts_at` covers every indexed input slot: inactive slots must have zero public nullifiers and active slots must expose the full spend facts.",
-        "This claim does not prove the deployed STARK/AIR or SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
+        "The SmallWood active-auth-link theorem models the exact four-limb linear equality enforced by the packed constraint builder for active inputs; the production regression mutates only `sk_spend` while leaving note `pk_auth` unchanged and requires the SmallWood verifier path to reject.",
+        "This claim does not prove the deployed STARK/AIR or complete SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
         "formal/lean/Hegemon.lean",
+        "circuits/transaction/src/smallwood_frontend.rs",
         "METHODS.md",
         "DESIGN.md",
         "scripts/check_formal_core.sh",
@@ -461,6 +467,7 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
@@ -739,7 +746,7 @@
       "id": "formal.wallet-note-ciphertext-wire",
       "component": "wallet note ciphertext wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format and the wallet chain container plus SCALE compact KEM length grammar; accepted parser summaries bind the expected ML-KEM ciphertext length and chain crypto suite, bounded accepted chain wires have the fixed production wire length and project to the exact DA ciphertext-hash preimage bytes by deleting the canonical compact KEM-length field, every active native tx-leaf privacy-game output row now carries the projected-DA boundary, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, selected native tx-leaf privacy-game rows compose with decrypt-to-commitment and projected-DA hash-boundary facts so recipient-decrypted selected outputs reconstruct the exact statement/proof-bound public commitment while both worlds' selected DA preimages satisfy the explicit ciphertext-hash predicate, and generated Lean vectors plus focused Rust regressions check the production parsers, projected DA bytes, production ciphertext hashing over that projected preimage, decrypt fail-closed behavior, full-view plaintext-to-commitment witness binding, wallet bundle/native tx-leaf commitment consistency, decoded chain-ciphertext byte hashing, and same-plaintext re-encryption freshness.",
+      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format, the wallet chain container plus SCALE compact KEM length grammar, and the raw DA sidecar container grammar; accepted parser summaries bind the expected ML-KEM ciphertext length and chain/DA crypto suite, bounded accepted chain wires have the fixed production wire length and project to the exact DA ciphertext-hash preimage bytes by deleting the canonical compact KEM-length field, every active native tx-leaf privacy-game output row now carries the projected-DA boundary, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, selected native tx-leaf privacy-game rows compose with decrypt-to-commitment and projected-DA hash-boundary facts so recipient-decrypted selected outputs reconstruct the exact statement/proof-bound public commitment while both worlds' selected DA preimages satisfy the explicit ciphertext-hash predicate, and generated Lean vectors plus focused Rust regressions check the production chain/DA parsers, projected DA bytes, production ciphertext hashing over that projected preimage, decrypt fail-closed behavior, full-view plaintext-to-commitment witness binding, wallet bundle/native tx-leaf commitment consistency, decoded chain/DA ciphertext byte hashing, and same-plaintext re-encryption freshness.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -749,6 +756,11 @@
         "Hegemon.Wallet.NoteCiphertextWire.chain_nonzero_padding_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.chain_valid_accepts",
+        "Hegemon.Wallet.NoteCiphertextWire.da_memo_overrun_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.da_nonzero_padding_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.da_trailing_byte_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.da_truncated_kem_rejects",
+        "Hegemon.Wallet.NoteCiphertextWire.da_valid_accepts",
         "Hegemon.Wallet.NoteCiphertextWire.bounded_parse_compact_mlkem_consumes_two",
         "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_fixed_wire_length_of_bounded",
         "Hegemon.Wallet.NoteCiphertextWire.valid_chain_da_projection",
@@ -756,6 +768,7 @@
         "Hegemon.Wallet.NoteCiphertextWire.chain_noncanonical_compact_kem_length_da_projection_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.chain_trailing_byte_da_projection_rejects",
         "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_projected_da_bytes_of_bounded",
+        "Hegemon.Wallet.NoteCiphertextWire.parsed_da_ciphertext_has_gamma_suite_and_fixed_kem",
         "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem",
         "Hegemon.Wallet.NoteCiphertextWire.parsed_chain_container_has_gamma_suite_and_fixed_kem",
         "Hegemon.Wallet.NoteCiphertextWire.parsed_crypto_ciphertext_has_fixed_kem_len",
@@ -785,8 +798,8 @@
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash"
       ],
       "assumptions": [
-        "The Lean model covers byte-level parser grammar for the two production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes and wallet::NoteCiphertext::from_chain_bytes.",
-        "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, trailing chain bytes, expected wire lengths, and expected DA projection bytes for valid chain wires, including the fixed valid chain length and fixed projected DA preimage length.",
+        "The Lean model covers byte-level parser grammar for the production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes, wallet::NoteCiphertext::from_chain_bytes, and wallet::NoteCiphertext::from_da_bytes as used by the node/archive wallet ciphertext RPC decoder.",
+        "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, trailing chain bytes, valid DA sidecar bytes, DA memo overrun, DA nonzero padding, DA KEM truncation, DA trailing bytes, expected wire lengths, and expected DA projection bytes for valid chain wires, including the fixed valid chain length and fixed projected DA preimage length.",
         "The decrypt-admission model treats wrong-recipient, wrong-secret-key, and malleated-byte rejection as the explicit Boolean predicate `cryptoAuthenticates = false`. Focused Rust regressions check that the production wallet and synthetic-crypto wrappers map wrong keys and KEM/note/memo payload malleation to failure and that wallet metadata mismatches fail before crypto.",
         "The plaintext-to-commitment model reuses `Hegemon.Transaction.SpendAuthorization.noteCommitmentFromWitness` as the abstract commitment relation, so decrypted wallet note data, input witness construction, and active public output commitment slots share one formal commitment formula. The native observer-surface composition now proves that every active native tx-leaf privacy-game output row exposes fixed projected DA preimage bytes under the explicit ML-KEM/AEAD/KDF/RNG assumptions, and that when a selected active output row is decrypted by matching recipient material, that plaintext-derived commitment is exactly the commitment carried by the public shape, statement preimage, and proof-binding message while the same selected left/right privacy-game rows expose fixed projected DA preimage bytes bound to the public ciphertext-hash row by an explicit predicate. The privacy game still exposes public metadata, batch/timing leakage, and the raw-wire indistinguishability obligation. Focused Rust regressions check both full-view decryption to `NoteData`/input/output witnesses and the tx-builder path from decrypted recipient ciphertext to bundle commitments, outgoing disclosures, decoded native tx-leaf public commitments, decoded native tx-leaf public ciphertext hashes recomputed from decoded note DA bytes, and native tx-leaf verification.",
         "A focused same-plaintext same-recipient re-encryption regression checks that wallet encryption consumes fresh KEM randomness and changes both the KEM ciphertext and full chain wire bytes under distinct RNG streams while preserving decrypt correctness.",
@@ -800,6 +813,7 @@
         "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean",
         "crypto/src/note_encryption.rs",
         "wallet/src/notes.rs",
+        "wallet/src/node_rpc.rs",
         "wallet/src/viewing.rs",
         "wallet/src/tx_builder.rs",
         "circuits/superneo-hegemon/src/lib.rs",
@@ -817,6 +831,8 @@
         "cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture",
         "cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture",
         "cargo test -p wallet from_chain_bytes --lib -- --nocapture",
+        "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture",
+        "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -1892,7 +1908,7 @@
       "id": "consensus.recursive-block-admission",
       "component": "recursive block artifact admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean recursive-block admission kernel proves executable fail-closed facts for recursive_block_v1/v2 envelope kind, verifier-profile agreement, artifact decoding, recursive header-version agreement, tx-count agreement, statement-commitment agreement, public replay agreement, and direct registry-verifier semantic-replay rejection; generated Lean vectors are checked against the production consensus verifier helpers.",
+      "summary": "The Lean recursive-block admission kernel proves executable fail-closed facts for recursive_block_v1/v2 envelope kind, verifier-profile agreement, artifact decoding, recursive header-version agreement, tx-count agreement, statement-commitment agreement, public replay agreement, direct registry-verifier semantic-replay rejection, and the shipped recursive_block_v2 pre-proof verifier surface; generated Lean vectors are checked against the production consensus and block-recursion verifier helpers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -1909,16 +1925,34 @@
         "Hegemon.Consensus.RecursiveBlockAdmission.tx_count_mismatch_rejects",
         "Hegemon.Consensus.RecursiveBlockAdmission.valid_v1_artifact_accepts",
         "Hegemon.Consensus.RecursiveBlockAdmission.valid_v2_artifact_accepts",
-        "Hegemon.Consensus.RecursiveBlockAdmission.wrong_kind_rejects"
+        "Hegemon.Consensus.RecursiveBlockAdmission.wrong_kind_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.crypto_verification_failed_is_after_surface_boundary",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_accepts_implies_surface_accepts",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_verifier_accepts_iff_surface_and_crypto",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.header_mismatch_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_canonical_encoding_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_decode_failed_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_padding_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projected_width_mismatch_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projection_failed_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_width_mismatch_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.public_mismatch_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.surface_accepts_iff_preconditions",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.unsupported_tx_count_rejects",
+        "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.valid_surface_accepts"
       ],
       "assumptions": [
         "The Lean model represents the cheap consensus admission and binding table around recursive_block_v1/v2 artifact verification after the ordered tx_leaf stream has already been verified, plus the rule that the generic registry ArtifactVerifier path must reject direct recursive-block verification because it lacks verified-record semantic replay inputs.",
-        "Generated Lean conformance vectors cover valid recursive_block_v2 and recursive_block_v1 product-path admission cases plus wrong artifact kind, verifier-profile mismatch, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, rejection-precedence for wrong kind before decode failure, and direct recursive_block_v1/v2 registry-verifier rejection with requires_semantic_replay.",
-        "The theorem covers executable recursive-block envelope/decode/header/count/statement/public-replay admission and direct registry-verifier semantic-replay rejection only. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
+        "Generated Lean conformance vectors cover valid recursive_block_v2 and recursive_block_v1 product-path admission cases plus wrong artifact kind, verifier-profile mismatch, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, rejection-precedence for wrong kind before decode failure, direct recursive_block_v1/v2 registry-verifier rejection with requires_semantic_replay, and shipped recursive_block_v2 pre-proof verifier-surface rejection for public mismatch, fixed proof-width mismatch, unsupported tx count, header mismatch, proof-prefix decode failure, and nonzero proof padding.",
+        "The theorem covers executable recursive-block envelope/decode/header/count/statement/public-replay admission, direct registry-verifier semantic-replay rejection, and recursive_block_v2 verifier-surface preconditions before cryptographic child proof verification. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean",
         "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockAdmissionVectors.lean",
+        "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean",
+        "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockV2VerifierSurfaceVectors.lean",
+        "circuits/block-recursion/src/tree_v2.rs",
+        "circuits/block-recursion/src/tests.rs",
         "consensus/src/proof.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -1926,6 +1960,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture",
+        "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated-json> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []

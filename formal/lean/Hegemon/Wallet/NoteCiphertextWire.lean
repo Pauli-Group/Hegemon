@@ -143,6 +143,14 @@ def parseChainNoteCiphertext (input : List Byte) : Option NoteCiphertextSummary 
   else
     none
 
+def parseDaNoteCiphertext (input : List Byte) : Option NoteCiphertextSummary := do
+  let (container, rest0) ← takeBytes chainCiphertextSize input
+  let summary ← parseChainContainer container
+  let rest1 ← skipBytes mlKemCiphertextLen rest0
+  match rest1 with
+  | [] => some summary
+  | _ :: _ => none
+
 def projectChainDaBytes (input : List Byte) : Option (List Byte) := do
   let _summary ← parseChainNoteCiphertext input
   some
@@ -278,6 +286,12 @@ def validChainWire : List Byte :=
 def validChainDaBytes : List Byte :=
   validChainContainer ++ sampleKemCiphertext
 
+def daTruncatedWire : List Byte :=
+  validChainDaBytes.take (chainCiphertextSize + mlKemCiphertextLen - 1)
+
+def daTrailingWire : List Byte :=
+  validChainDaBytes ++ [0x99]
+
 def chainMemoOverrunContainer : List Byte :=
   let headBytes :=
     [3]
@@ -290,6 +304,9 @@ def chainMemoOverrunContainer : List Byte :=
 
 def chainMemoOverrunWire : List Byte :=
   chainMemoOverrunContainer ++ chainCompactKemLen ++ sampleKemCiphertext
+
+def daMemoOverrunWire : List Byte :=
+  chainMemoOverrunContainer ++ sampleKemCiphertext
 
 def chainNonzeroPaddingContainer : List Byte :=
   let headBytes :=
@@ -304,6 +321,9 @@ def chainNonzeroPaddingContainer : List Byte :=
 
 def chainNonzeroPaddingWire : List Byte :=
   chainNonzeroPaddingContainer ++ chainCompactKemLen ++ sampleKemCiphertext
+
+def daNonzeroPaddingWire : List Byte :=
+  chainNonzeroPaddingContainer ++ sampleKemCiphertext
 
 def chainNoncanonicalCompactWire : List Byte :=
   validChainContainer
@@ -368,6 +388,34 @@ theorem chain_noncanonical_compact_kem_length_rejects :
 
 theorem chain_trailing_byte_rejects :
     parseChainNoteCiphertext chainTrailingWire = none := by
+  decide
+
+theorem da_valid_accepts :
+    parseDaNoteCiphertext validChainDaBytes =
+      some {
+        version := 3,
+        cryptoSuite := cryptoSuiteGamma,
+        diversifierIndex := 7,
+        kemLen := mlKemCiphertextLen,
+        notePayloadLen := sampleNotePayload.length,
+        memoPayloadLen := sampleMemoPayload.length
+      } := by
+  decide
+
+theorem da_memo_overrun_rejects :
+    parseDaNoteCiphertext daMemoOverrunWire = none := by
+  decide
+
+theorem da_nonzero_padding_rejects :
+    parseDaNoteCiphertext daNonzeroPaddingWire = none := by
+  decide
+
+theorem da_truncated_kem_rejects :
+    parseDaNoteCiphertext daTruncatedWire = none := by
+  decide
+
+theorem da_trailing_byte_rejects :
+    parseDaNoteCiphertext daTrailingWire = none := by
   decide
 
 theorem chain_noncanonical_compact_kem_length_da_projection_rejects :
@@ -541,6 +589,38 @@ theorem parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
                     | cons _ _ =>
                         simp at parsed
               · simp [kemMatches] at parsed
+
+theorem parsed_da_ciphertext_has_gamma_suite_and_fixed_kem
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseDaNoteCiphertext input = some summary) :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen := by
+  unfold parseDaNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      simp [takeEq] at parsed
+      cases parsedContainer : parseChainContainer container with
+      | none =>
+          simp [parsedContainer] at parsed
+      | some containerSummary =>
+          simp [parsedContainer] at parsed
+          cases skipKemEq : skipBytes mlKemCiphertextLen rest0 with
+          | none =>
+              simp [skipKemEq] at parsed
+          | some rest1 =>
+              simp [skipKemEq] at parsed
+              cases rest1 with
+              | nil =>
+                  simp at parsed
+                  cases parsed
+                  exact parsed_chain_container_has_gamma_suite_and_fixed_kem
+                    parsedContainer
+              | cons _ _ =>
+                  simp at parsed
 
 theorem bounded_parse_compact_mlkem_consumes_two
     {input rest : List Byte}

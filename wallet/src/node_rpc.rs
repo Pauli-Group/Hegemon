@@ -302,91 +302,6 @@ struct ShieldedTransferResponse {
     error: Option<String>,
 }
 
-/// Parse a NoteCiphertext from the chain wire format.
-///
-/// The compatibility RPC returns:
-/// - ciphertext[579]: version(1) + crypto_suite(2) + diversifier_index(4) + note_len(4) +
-///                    note_payload + memo_len(4) + memo_payload + padding
-/// - kem_ciphertext: raw ML-KEM ciphertext bytes (length implied by crypto_suite)
-fn parse_chain_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletError> {
-    const CIPHERTEXT_SIZE: usize = crate::notes::CHAIN_CIPHERTEXT_SIZE;
-    if bytes.len() < CIPHERTEXT_SIZE {
-        return Err(WalletError::Serialization(format!(
-            "Invalid encrypted note size: expected at least {}, got {}",
-            CIPHERTEXT_SIZE,
-            bytes.len()
-        )));
-    }
-
-    let ciphertext_bytes = &bytes[..CIPHERTEXT_SIZE];
-
-    // Parse the ciphertext portion
-    let version = ciphertext_bytes[0];
-    let crypto_suite = u16::from_le_bytes(
-        ciphertext_bytes[1..3]
-            .try_into()
-            .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
-    );
-    let diversifier_index = u32::from_le_bytes(
-        ciphertext_bytes[3..7]
-            .try_into()
-            .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
-    );
-
-    let mut offset = 7;
-
-    // Note payload length and data
-    let note_len = u32::from_le_bytes(
-        ciphertext_bytes[offset..offset + 4]
-            .try_into()
-            .map_err(|_| WalletError::Serialization("note_len parse failed".into()))?,
-    ) as usize;
-    offset += 4;
-
-    if offset + note_len + 4 > CIPHERTEXT_SIZE {
-        return Err(WalletError::Serialization(format!(
-            "Note payload too large: {} bytes at offset {}",
-            note_len, offset
-        )));
-    }
-    let note_payload = ciphertext_bytes[offset..offset + note_len].to_vec();
-    offset += note_len;
-
-    // Memo payload length and data
-    let memo_len = u32::from_le_bytes(
-        ciphertext_bytes[offset..offset + 4]
-            .try_into()
-            .map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?,
-    ) as usize;
-    offset += 4;
-
-    let memo_payload = if memo_len > 0 && offset + memo_len <= CIPHERTEXT_SIZE {
-        ciphertext_bytes[offset..offset + memo_len].to_vec()
-    } else {
-        Vec::new()
-    };
-
-    let expected_kem_len = crate::notes::expected_kem_ciphertext_len(crypto_suite)?;
-    let expected_size = CIPHERTEXT_SIZE + expected_kem_len;
-    if bytes.len() != expected_size {
-        return Err(WalletError::Serialization(format!(
-            "Invalid encrypted note size: expected {}, got {}",
-            expected_size,
-            bytes.len()
-        )));
-    }
-    let kem_ciphertext = bytes[CIPHERTEXT_SIZE..expected_size].to_vec();
-
-    Ok(NoteCiphertext {
-        version,
-        crypto_suite,
-        diversifier_index,
-        kem_ciphertext,
-        note_payload,
-        memo_payload,
-    })
-}
-
 /// Ciphertext entry with decoded content
 #[derive(Clone, Debug)]
 pub struct CiphertextEntry {
@@ -407,7 +322,7 @@ fn decode_ciphertext_entries(
         )
         .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
 
-        let ciphertext = parse_chain_encrypted_note(&bytes)?;
+        let ciphertext = NoteCiphertext::from_da_bytes(&bytes)?;
         decoded.push(CiphertextEntry {
             index: entry.index,
             ciphertext,
@@ -2199,6 +2114,64 @@ mod tests {
         let hex = "gg00";
         let result = hex_to_array(hex);
         assert!(result.is_err());
+    }
+
+    fn ciphertext_entry_for_bytes(index: u64, bytes: &[u8]) -> CiphertextEntryWire {
+        CiphertextEntryWire {
+            index,
+            ciphertext: base64::engine::general_purpose::STANDARD.encode(bytes),
+        }
+    }
+
+    fn memo_offsets_for_container(bytes: &[u8]) -> (usize, usize, usize) {
+        let note_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+        let memo_len_offset = 11 + note_len;
+        let memo_start = memo_len_offset + 4;
+        let memo_len = u32::from_le_bytes(
+            bytes[memo_len_offset..memo_len_offset + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        (memo_len_offset, memo_start, memo_start + memo_len)
+    }
+
+    #[test]
+    fn decode_ciphertext_entries_accepts_strict_da_ciphertext() {
+        let note = NoteCiphertext::empty();
+        let bytes = note.to_da_bytes().expect("DA bytes");
+        let decoded =
+            decode_ciphertext_entries(vec![ciphertext_entry_for_bytes(7, &bytes)]).unwrap();
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].index, 7);
+        assert_eq!(decoded[0].ciphertext, note);
+    }
+
+    #[test]
+    fn decode_ciphertext_entries_rejects_da_memo_overrun() {
+        let mut bytes = NoteCiphertext::empty().to_da_bytes().expect("DA bytes");
+        let (memo_len_offset, memo_start, _) = memo_offsets_for_container(&bytes);
+        let overrun_len = crate::notes::CHAIN_CIPHERTEXT_SIZE - memo_start + 1;
+        bytes[memo_len_offset..memo_len_offset + 4]
+            .copy_from_slice(&(overrun_len as u32).to_le_bytes());
+
+        assert!(
+            decode_ciphertext_entries(vec![ciphertext_entry_for_bytes(0, &bytes)]).is_err(),
+            "DA ciphertext memo overrun must not be silently treated as an empty memo"
+        );
+    }
+
+    #[test]
+    fn decode_ciphertext_entries_rejects_da_nonzero_padding() {
+        let mut bytes = NoteCiphertext::empty().to_da_bytes().expect("DA bytes");
+        let (_, _, payload_end) = memo_offsets_for_container(&bytes);
+        assert!(payload_end < crate::notes::CHAIN_CIPHERTEXT_SIZE);
+        bytes[payload_end] = 0xaa;
+
+        assert!(
+            decode_ciphertext_entries(vec![ciphertext_entry_for_bytes(0, &bytes)]).is_err(),
+            "DA ciphertext parser must reject nonzero container padding"
+        );
     }
 
     #[test]

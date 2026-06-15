@@ -116,6 +116,19 @@ pub struct RecursiveBlockArtifactV2 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecursiveBlockV2VerifierSurface {
+    pub expected_profile_tag: u32,
+    pub expected_relation_kind: u32,
+    pub expected_level: usize,
+    pub canonical_proof_len: usize,
+    pub projected_proof_bytes: usize,
+    expected_profile: SmallwoodRecursiveProfileTagV1,
+    expected_kind: SmallwoodRecursiveRelationKindV1,
+    expected_statement: RecursiveSegmentStatementV2,
+    canonical_proof_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockRecursiveProverInputV2 {
     pub records: Vec<BlockLeafRecordV1>,
     pub semantic: BlockSemanticInputsV1,
@@ -2295,6 +2308,21 @@ pub fn verify_block_recursive_v2(
     artifact: &RecursiveBlockArtifactV2,
     expected_public: &RecursiveBlockPublicV2,
 ) -> Result<RecursiveBlockPublicV2, BlockRecursionError> {
+    let surface = verify_block_recursive_v2_surface(artifact, expected_public)?;
+    verify_tree_child_v2(
+        surface.expected_profile,
+        surface.expected_kind,
+        surface.expected_level,
+        &surface.expected_statement,
+        &surface.canonical_proof_bytes,
+    )?;
+    Ok(expected_public.clone())
+}
+
+pub fn verify_block_recursive_v2_surface(
+    artifact: &RecursiveBlockArtifactV2,
+    expected_public: &RecursiveBlockPublicV2,
+) -> Result<RecursiveBlockV2VerifierSurface, BlockRecursionError> {
     if artifact.public != *expected_public {
         return Err(BlockRecursionError::InvalidField(
             "recursive_block_v2 public mismatch",
@@ -2345,19 +2373,22 @@ pub fn verify_block_recursive_v2(
     })?;
     if canonical_len > projected_proof_bytes {
         return Err(BlockRecursionError::WidthMismatch {
-            what: "recursive_block_v2 proof bytes",
+            what: "recursive_block_v2 projected proof bytes",
             expected: projected_proof_bytes,
             actual: canonical_len,
         });
     }
-    verify_tree_child_v2(
+    Ok(RecursiveBlockV2VerifierSurface {
+        expected_profile_tag: expected_profile.tag(),
+        expected_relation_kind: expected_kind.tag(),
+        expected_level,
+        canonical_proof_len: canonical_len,
+        projected_proof_bytes,
         expected_profile,
         expected_kind,
-        expected_level,
-        &expected_statement,
-        &canonical_proof_bytes,
-    )?;
-    Ok(expected_public.clone())
+        expected_statement,
+        canonical_proof_bytes,
+    })
 }
 
 #[cfg(test)]

@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.89,
+  "overall_completion_percent": 82.48,
   "last_full_formal_core": {
     "commit": "working-tree-pre-commit",
-    "status": "passed locally 2026-06-15T14:02:09Z",
+    "status": "passed locally 2026-06-15T15:51:17Z",
     "claims": 115,
-    "named_lean_theorems": 1556,
+    "named_lean_theorems": 1579,
     "production_eligible_claims": 105,
     "blueprint_edges": 481,
-    "falsification_cases": 452,
-    "implementation_bindings": 202
+    "falsification_cases": 455,
+    "implementation_bindings": 204
   },
   "last_hegemon_dev_validation": {
     "date": "2026-06-15T14:09:53Z",
@@ -51,73 +51,104 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the strict native tx-leaf artifact admission slice and hardened committed sidecar startup replay. The Lean native tx-leaf artifact model now separates permissive legacy parsing from strict release verifier admission and proves explicit-backend artifacts parse while missing-backend encodings reject. Production verification now re-encodes decoded native tx-leaf artifacts before proof verification, so alternate missing-backend encodings cannot reach the verifier. Startup reopen now has a regression for committed sidecar archive hash drift, rejecting corrupted canonical archive bytes before accepting replayed state.",
+    "summary": "Proved and production-bound three implementation-equivalence slices: recursive_block_v2 pre-proof verifier-surface admission before cryptographic recursive child verification, packed SmallWood active spend-auth key binding, and strict wallet DA note-ciphertext parsing. The Lean models cover recursive public/header/proof-width/projection/crypto-boundary checks, SmallWood active auth-link equality to the PRF-derived spend-auth limbs, and chain/DA note-ciphertext parser accept/reject facts. Production now gates recursive_block_v2 through verify_block_recursive_v2_surface before verify_tree_child_v2, enforces active SmallWood pk_auth linkage in build_packed_bridge_linear_constraints, and routes node/archive ciphertext RPC decoding through NoteCiphertext::from_da_bytes.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
-      "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean"
+      "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean",
+      "formal/lean/Hegemon/Consensus/GenerateRecursiveBlockV2VerifierSurfaceVectors.lean",
+      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+      "formal/lean/Hegemon/Wallet/GenerateNoteCiphertextWireVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TxLeafArtifact.strict_valid_artifact_parses",
-      "Hegemon.Native.TxLeafArtifact.strict_missing_backend_rejects",
-      "Hegemon.Native.TxLeafArtifact.strict_legacy_missing_backend_rejects"
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.surface_accepts_iff_preconditions",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_verifier_accepts_iff_surface_and_crypto",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.full_accepts_implies_surface_accepts",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.public_mismatch_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_width_mismatch_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.unsupported_tx_count_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.header_mismatch_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_decode_failed_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_canonical_encoding_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_padding_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projection_failed_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.proof_projected_width_mismatch_rejects",
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.crypto_verification_failed_is_after_surface_boundary",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_pk_auth_eq_derived",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wrong_secret_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.da_valid_accepts",
+      "Hegemon.Wallet.NoteCiphertextWire.da_memo_overrun_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.da_nonzero_padding_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.da_truncated_kem_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.da_trailing_byte_rejects",
+      "Hegemon.Wallet.NoteCiphertextWire.parsed_da_ciphertext_has_gamma_suite_and_fixed_kem"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.TxLeafArtifact Hegemon.Native.GenerateTxLeafArtifactVectors passed locally",
+      "lean_formal": "lake build Hegemon.Consensus.RecursiveBlockV2VerifierSurface Hegemon.Consensus.GenerateRecursiveBlockV2VerifierSurfaceVectors Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Wallet.NoteCiphertextWire Hegemon.Wallet.GenerateNoteCiphertextWireVectors Hegemon passed locally",
       "targeted_rust": [
-        "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture passed locally",
-        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture passed locally",
-        "cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture passed locally"
+        "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture passed locally",
+        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture passed locally",
+        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture passed locally",
+        "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture passed locally",
+        "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T14:02:09Z with 115 theorem-backed claims, 1556 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 452 falsification cases, 202 implementation bindings, 160 result obligations, 142 order constraints / 370 order edges, and 128 dominance constraints / 338 dominance edges",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T15:51:17Z with 115 claims, 1579 named Lean theorem declarations, 105 production-eligible claims, 481 blueprint edges, 455 falsification cases, and 204 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1556,
+      "named_lean_theorems": 1579,
       "production_eligible_claims": 105,
       "blueprint_edges": 481,
-      "falsification_cases": 452,
-      "implementation_bindings": 202
+      "falsification_cases": 455,
+      "implementation_bindings": 204
     },
     "known_limitations": [
-      "The strict tx-leaf admission slice proves the native tx-leaf artifact backend-byte canonicality boundary, not arbitrary-byte parser internals for every SCALE/bincode/JSON input.",
-      "The startup archive-drift regression covers committed sidecar ciphertext hash mismatch on reopen; it is not yet a complete restart theorem for every persisted supply, nullifier, commitment, sidecar, and bridge replay field together.",
-      "Hash security, DA availability, proof-system soundness, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions."
+      "This slice proves and checks recursive_block_v2 pre-proof verifier-surface admission; it does not prove recursive proof cryptographic soundness.",
+      "The crypto child proof verifier remains represented by the explicit crypto verification boundary theorem and existing proof-system assumptions.",
+      "Hash security, proof-system soundness, parser internals below accepted canonical bytes, and complete native-node equivalence remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-15",
-    "summary": "Bound strict native tx-leaf artifact canonical admission into the production verifier path before heavy proof verification. Production now decodes, re-encodes, and byte-compares native tx-leaf artifacts so release verification rejects legacy missing-backend encodings even though the permissive decoder still exists for review and legacy inspection.",
+    "summary": "Bound recursive_block_v2 pre-proof verifier-surface admission, packed SmallWood active spend-auth linkage, and wallet DA note-ciphertext parsing into production gates. Production now factors the recursive cheap surface into verify_block_recursive_v2_surface before verify_tree_child_v2, enforces active SmallWood pk_auth linkage before proof verification, and decodes node/archive DA ciphertext rows through NoteCiphertext::from_da_bytes.",
     "changed_runtime_paths": [
-      "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params",
-      "circuits/superneo-hegemon/src/lib.rs decode_native_tx_leaf_artifact_canonical_bytes_with_params",
-      "circuits/superneo-hegemon/src/lib.rs ensure_native_tx_leaf_artifact_canonical_encoding",
-      "node/src/native/mod.rs NativeNode::open committed sidecar archive replay validation"
+      "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2_surface",
+      "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2",
+      "circuits/block-recursion/src/lib.rs recursive_block_v2 verifier-surface exports",
+      "circuits/block-recursion/src/tests.rs lean_generated_recursive_block_v2_verifier_surface_vectors_match_production",
+      "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints",
+      "wallet/src/notes.rs NoteCiphertext::from_da_bytes",
+      "wallet/src/node_rpc.rs decode_ciphertext_entries",
+      "wallet/tests/note_ciphertext_wire_vectors.rs DA vector conformance",
+      "scripts/check_formal_core.sh recursive_block_v2, SmallWood auth-link, and wallet DA parser gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.TxLeafArtifact.strict_*",
-      "Hegemon.Native.TxLeafArtifactProjectionRefinement.*",
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*"
+      "Hegemon.Consensus.RecursiveBlockV2VerifierSurface.*",
+      "Hegemon.Consensus.RecursiveBlockAdmission.*",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.*",
+      "Hegemon.Wallet.NoteCiphertextWire.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture",
-        "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture",
-        "cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture"
+        "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture",
+        "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture",
+        "cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture",
+        "cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed 2026-06-15T14:02:09Z",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T15:51:17Z with recursive_block_v2 verifier-surface, SmallWood auth-link, and wallet DA parser gates enabled",
       "claims": 115,
-      "named_lean_theorems": 1556,
+      "named_lean_theorems": 1579,
       "production_eligible_claims": 105,
-      "falsification_cases": 452,
-      "implementation_bindings": 202,
-      "implementation_result_obligations": 160,
-      "implementation_dominance_constraints": 128,
-      "implementation_dominance_edges": 338,
-      "implementation_order_constraints": 142,
-      "implementation_order_edges": 370
+      "falsification_cases": 455,
+      "implementation_bindings": 204,
+      "implementation_result_obligations": 161,
+      "implementation_dominance_constraints": 129,
+      "implementation_dominance_edges": 339,
+      "implementation_order_constraints": 143,
+      "implementation_order_edges": 371
     },
     "known_limitations": [
-      "Strict native tx-leaf admission does not prove full proof-system soundness or AIR/SmallWood equivalence.",
-      "The permissive artifact decoder is intentionally retained for non-release inspection; release verification goes through the strict canonical admission helper.",
-      "Complete raw-byte native-node equivalence, arbitrary parser internals, and external cryptographic assumptions remain separate open work."
+      "The production helper is a pre-crypto verifier-surface gate; it does not discharge recursive proof cryptographic soundness.",
+      "The Lean-generated vectors cover representative accept/reject rows for the surface, not every possible proof-byte parser internal trace.",
+      "Complete recursive proof-system soundness, hash security, and native-node equivalence remain separate open work."
     ]
   },
   "properties": [
@@ -184,7 +215,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 76,
+      "completion_percent": 79,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -220,10 +251,12 @@
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now carries the same materialized DA publication facts through a spend-only no-theft/input-slot publication theorem",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now splits deployed verifier soundness into spend-only and balance/public-field assumptions, so active-input no-theft can depend only on the spend half before the full proof-system soundness theorem is discharged",
         "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness",
-        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with spend-only deployed verifier boundary facts, keeping parsed artifact, pending-action publication, raw-ingress publication, canonical statement, and no-theft target facts on one accepted surface"
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with spend-only deployed verifier boundary facts, keeping parsed artifact, pending-action publication, raw-ingress publication, canonical statement, and no-theft target facts on one accepted surface",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean proves the active SmallWood auth-link constraint implies input note pk_auth limbs equal PRF-derived spend-auth limbs and that wrong spend secrets reject",
+        "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints now enforces the four active auth-link constraints before SmallWood proof verification, and the regression packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth mutates only sk_spend while keeping note pk_auth unchanged"
       ],
       "missing_work": [
-        "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
+        "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link slice.",
         "Discharge the split spend-only deployed verifier soundness assumption with mechanized deployed verifier/AIR soundness and Rust verifier refinement."
       ],
       "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes."
@@ -357,7 +390,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 81,
+      "completion_percent": 83,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -397,7 +430,9 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs parsed tx-leaf artifact/projection facts with `NativeTxLeafCanonicalArtifactBoundaryFacts`, including canonical deployed verifier boundary facts, native equality gates, spend/balance exposure, and authorized asset-delta facts under the explicit full deployed verifier soundness assumption",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with full deployed verifier boundary facts and spend-only deployed verifier boundary facts, keeping the future verifier/AIR/refinement target on the same raw-ingress accepted publication surface",
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean now proves successful public/serialized binding exposes P3 public-input field facts for merkle root, fee, signed value balance, input/output flags, balance-slot assets, and stablecoin payload fields",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean and ProofSystemBoundary.lean now lift those P3 public-input field facts through the canonical deployed verifier surface"
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean and ProofSystemBoundary.lean now lift those P3 public-input field facts through the canonical deployed verifier surface",
+        "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean proves recursive_block_v2 pre-proof verifier-surface acceptance is exactly public tuple equality, fixed proof field width, supported tx count, derived header equality, canonical proof-prefix decoding, zero padding, projection success, projected-width admission, and explicit crypto-boundary acceptance",
+        "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2 now calls verify_block_recursive_v2_surface before verify_tree_child_v2, with Lean-generated vectors checked against the production helper"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
@@ -454,7 +489,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 81,
+      "completion_percent": 83,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -469,6 +504,9 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now exposes direct active output ciphertext-hash vector indices for the public shape, canonical statement, and proof-binding message that correspond to that selected observer row",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires consume exactly the fixed chain container, canonical compact ML-KEM length bytes, and ML-KEM ciphertext bytes",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean proves bounded accepted chain ciphertext wires project to fixed DA preimage bytes by removing the canonical compact KEM-length bytes",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean now proves direct DA sidecar ciphertext parser accept/reject facts for valid DA bytes, memo overrun, nonzero padding, KEM truncation, trailing bytes, and accepted-summary suite/KEM shape",
+        "wallet/src/notes.rs NoteCiphertext::from_da_bytes now enforces exact DA container plus KEM length, checked note/memo offsets, and zero container padding",
+        "wallet/src/node_rpc.rs decode_ciphertext_entries now uses NoteCiphertext::from_da_bytes for node/archive ciphertext rows instead of the previous permissive parser",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts bounded fixed chain ciphertext wire shape to active native tx-leaf observer rows",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean lifts the selected active observer row to projected DA preimage bytes while carrying statement/proof-binding ciphertext-hash indices and native equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean binds selected projected DA preimage bytes to the public ciphertext-hash row under an explicit hash-match predicate while preserving statement/proof-binding ciphertext-hash indices and native equality gates",
@@ -498,7 +536,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 85,
+      "completion_percent": 86,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -579,7 +617,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 90,
+      "completion_percent": 91,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -589,7 +627,9 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean extends the sync response path to the same raw canonical publication facts after deriving decoded-row/raw-replay agreement from accepted wire replay projection",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean ties accepted materialized transfer payloads to consensus Transaction::new and DA blob bytes before DA-root publication",
         "scripts/check_formal_core.sh runs the materialized sidecar transfer consensus DA-blob conformance test as a release gate",
-        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast"
+        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast",
+        "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean and gen_recursive_block_v2_verifier_surface_vectors prove/check recursive_block_v2 pre-proof surface admission before cryptographic child proof verification",
+        "config/formal-security-blueprint.json requires verify_block_recursive_v2_surface to propagate and dominate verify_tree_child_v2 in the shipped recursive_block_v2 verifier path"
       ],
       "missing_work": [
         "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",

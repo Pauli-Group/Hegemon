@@ -20,7 +20,7 @@ use super::{
     serialize_recursive_block_artifact_v2, serialize_recursive_block_public_v1,
     serialize_recursive_block_public_v2, step_recursive_witness_layout_v1,
     step_recursive_witness_words_v1, tree_proof_cap_report_v2, tree_witness_geometry_report_v2,
-    verify_block_recursive_v1, verify_block_recursive_v2,
+    verify_block_recursive_v1, verify_block_recursive_v2, verify_block_recursive_v2_surface,
     verify_hosted_recursive_proof_context_binding_trace_v1,
     verify_hosted_recursive_proof_context_components_v1,
     verify_hosted_recursive_proof_context_decs_merkle_v1,
@@ -89,6 +89,32 @@ struct LeanRecursivePublicReplayCase {
     expected_tx_count: u32,
     expected_public_bytes_len: usize,
     expected_carries_message_root: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LeanRecursiveBlockV2VerifierSurfaceVectorFile {
+    schema_version: u32,
+    surface_cases: Vec<LeanRecursiveBlockV2VerifierSurfaceCase>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LeanRecursiveBlockV2VerifierSurfaceCase {
+    name: String,
+    mutation: String,
+    public_matches: bool,
+    proof_width_matches: bool,
+    supported_tx_count: bool,
+    header_matches: bool,
+    proof_trace_decodes: bool,
+    proof_canonical_encoding: bool,
+    proof_padding_zero: bool,
+    proof_projection_succeeds: bool,
+    proof_projected_width_fits: bool,
+    crypto_verifier_accepts: bool,
+    expected_surface_valid: bool,
+    expected_surface_rejection: Option<String>,
+    expected_full_valid: bool,
+    expected_full_rejection: Option<String>,
 }
 
 struct FakeIdentityWitnessStatement {
@@ -862,6 +888,379 @@ fn lean_generated_recursive_public_replay_vectors_match_production() {
     for case in &vectors.replay_cases {
         verify_lean_recursive_public_replay_case(case);
     }
+}
+
+#[test]
+fn lean_generated_recursive_block_v2_verifier_surface_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS") else {
+        eprintln!(
+            "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS not set; skipping generated Lean vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(&path)
+        .expect("read generated Lean recursive block v2 verifier-surface vectors");
+    let vectors: LeanRecursiveBlockV2VerifierSurfaceVectorFile = serde_json::from_str(&raw)
+        .expect("parse generated Lean recursive block v2 verifier-surface vectors");
+    assert_eq!(vectors.schema_version, 1);
+    assert!(
+        !vectors.surface_cases.is_empty(),
+        "Lean recursive block v2 verifier-surface cases must not be empty"
+    );
+
+    for case in &vectors.surface_cases {
+        verify_lean_recursive_block_v2_verifier_surface_case(case);
+    }
+}
+
+fn verify_lean_recursive_block_v2_verifier_surface_case(
+    case: &LeanRecursiveBlockV2VerifierSurfaceCase,
+) {
+    let modeled_surface_valid = case.public_matches
+        && case.proof_width_matches
+        && case.supported_tx_count
+        && case.header_matches
+        && case.proof_trace_decodes
+        && case.proof_canonical_encoding
+        && case.proof_padding_zero
+        && case.proof_projection_succeeds
+        && case.proof_projected_width_fits;
+    assert_eq!(
+        modeled_surface_valid, case.expected_surface_valid,
+        "{} Lean verifier-surface precondition result is internally inconsistent",
+        case.name
+    );
+    assert_eq!(
+        modeled_surface_valid && case.crypto_verifier_accepts,
+        case.expected_full_valid,
+        "{} Lean full-verifier precondition result is internally inconsistent",
+        case.name
+    );
+    if case.crypto_verifier_accepts {
+        assert_eq!(
+            case.expected_full_rejection, case.expected_surface_rejection,
+            "{} full verifier should inherit the surface rejection when crypto accepts",
+            case.name
+        );
+    }
+
+    let (artifact, expected_public) = recursive_block_v2_surface_fixture_for_case(case);
+    let result = verify_block_recursive_v2_surface(&artifact, &expected_public);
+    assert_eq!(
+        result.is_ok(),
+        case.expected_surface_valid,
+        "{} recursive block v2 verifier-surface validity drifted from Lean spec: {result:?}",
+        case.name
+    );
+    let actual_rejection = result
+        .as_ref()
+        .err()
+        .map(recursive_block_v2_surface_error_label)
+        .map(str::to_string);
+    assert_eq!(
+        actual_rejection.as_deref(),
+        case.expected_surface_rejection.as_deref(),
+        "{} recursive block v2 verifier-surface rejection drifted from Lean spec",
+        case.name
+    );
+
+    if let Ok(surface) = result {
+        assert_eq!(
+            surface.expected_profile_tag, 1,
+            "{} profile tag drifted",
+            case.name
+        );
+        assert_eq!(
+            surface.expected_relation_kind, 4,
+            "{} relation-kind tag drifted",
+            case.name
+        );
+        assert_eq!(
+            surface.expected_level, 0,
+            "{} tree level drifted",
+            case.name
+        );
+        assert!(surface.canonical_proof_len <= surface.projected_proof_bytes);
+    }
+
+    let full_result = verify_block_recursive_v2(&artifact, &expected_public);
+    assert_eq!(
+        full_result.is_ok(),
+        case.expected_full_valid,
+        "{} recursive block v2 full-verifier validity drifted from Lean spec: {full_result:?}",
+        case.name
+    );
+    let actual_full_rejection = full_result
+        .as_ref()
+        .err()
+        .map(recursive_block_v2_full_error_label)
+        .map(str::to_string);
+    assert_eq!(
+        actual_full_rejection.as_deref(),
+        case.expected_full_rejection.as_deref(),
+        "{} recursive block v2 full-verifier rejection drifted from Lean spec",
+        case.name
+    );
+}
+
+fn recursive_block_v2_surface_fixture_for_case(
+    case: &LeanRecursiveBlockV2VerifierSurfaceCase,
+) -> (RecursiveBlockArtifactV2, RecursiveBlockPublicV2) {
+    let (mut artifact, mut expected_public) = prove_artifact_v2(1);
+    match case.mutation.as_str() {
+        "none" => {}
+        "public_mismatch" => {
+            expected_public.tx_count = expected_public.tx_count.saturating_add(1);
+        }
+        "proof_width_mismatch" => {
+            artifact.artifact.proof_bytes.pop();
+        }
+        "unsupported_tx_count" => {
+            artifact.public.tx_count = 0;
+            expected_public.tx_count = 0;
+        }
+        "header_mismatch" => {
+            artifact.artifact.header.tx_line_digest_v2[0] ^= 1;
+        }
+        "proof_decode_failed" => {
+            artifact.artifact.proof_bytes.fill(0xff);
+        }
+        "proof_padding" => {
+            let surface = verify_block_recursive_v2_surface(&artifact, &expected_public)
+                .expect("valid v2 surface");
+            let padding_index = surface.canonical_proof_len;
+            assert!(
+                padding_index < artifact.artifact.proof_bytes.len(),
+                "valid recursive_block_v2 fixture must have proof padding"
+            );
+            artifact.artifact.proof_bytes[padding_index] ^= 1;
+        }
+        "proof_projection_failed" => {
+            mutate_recursive_block_v2_aux_limb_count(&mut artifact, u32::MAX);
+        }
+        "proof_projected_width_mismatch" => {
+            mutate_recursive_block_v2_aux_limb_count(&mut artifact, 0);
+            if let Ok(surface) = verify_block_recursive_v2_surface(&artifact, &expected_public) {
+                inflate_recursive_block_v2_first_matrix(
+                    &mut artifact,
+                    surface.projected_proof_bytes + 1 - surface.canonical_proof_len,
+                );
+            }
+        }
+        "crypto_verification_failed" => {
+            artifact.artifact.proof_bytes[4] ^= 1;
+        }
+        other => panic!("unknown recursive block v2 verifier-surface mutation {other}"),
+    }
+    (artifact, expected_public)
+}
+
+fn recursive_block_v2_surface_error_label(error: &BlockRecursionError) -> &'static str {
+    match error {
+        BlockRecursionError::InvalidField("recursive_block_v2 public mismatch") => {
+            "public_mismatch"
+        }
+        BlockRecursionError::WidthMismatch {
+            what: "recursive_block_v2 proof bytes",
+            ..
+        } => "proof_width_mismatch",
+        BlockRecursionError::WidthMismatch {
+            what: "recursive_block_v2 projected proof bytes",
+            ..
+        } => "proof_projected_width_mismatch",
+        BlockRecursionError::InvalidLength {
+            what: "recursive_block_v2 tx_count",
+            ..
+        } => "unsupported_tx_count",
+        BlockRecursionError::InvalidField("recursive_block_v2 header mismatch") => {
+            "header_mismatch"
+        }
+        BlockRecursionError::InvalidField("tree_v2 proof trace decode") => "proof_decode_failed",
+        BlockRecursionError::InvalidField("tree_v2 proof canonical encoding") => {
+            "proof_canonical_encoding"
+        }
+        BlockRecursionError::InvalidField("tree_v2 proof padding") => "proof_padding",
+        BlockRecursionError::InvalidField(message)
+            if message.starts_with("tree_v2 project proof bytes") =>
+        {
+            "proof_projection_failed"
+        }
+        BlockRecursionError::InvalidLength {
+            what: "tree_v2 auxiliary witness limbs",
+            ..
+        } => "proof_projection_failed",
+        other => panic!("unexpected recursive block v2 verifier-surface error: {other:?}"),
+    }
+}
+
+fn recursive_block_v2_full_error_label(error: &BlockRecursionError) -> &'static str {
+    match error {
+        BlockRecursionError::InvalidField(message)
+            if message.starts_with("tree_v2 child verify") =>
+        {
+            "crypto_verification_failed"
+        }
+        other => recursive_block_v2_surface_error_label(other),
+    }
+}
+
+fn read_compact_u16_for_recursive_v2(bytes: &[u8], cursor: &mut usize) -> u16 {
+    assert!(
+        *cursor + 2 <= bytes.len(),
+        "recursive_block_v2 compact u16 read out of bounds"
+    );
+    let mut word = [0u8; 2];
+    word.copy_from_slice(&bytes[*cursor..*cursor + 2]);
+    *cursor += 2;
+    u16::from_le_bytes(word)
+}
+
+fn read_compact_u32_for_recursive_v2(bytes: &[u8], cursor: &mut usize) -> u32 {
+    assert!(
+        *cursor + 4 <= bytes.len(),
+        "recursive_block_v2 compact u32 read out of bounds"
+    );
+    let mut word = [0u8; 4];
+    word.copy_from_slice(&bytes[*cursor..*cursor + 4]);
+    *cursor += 4;
+    u32::from_le_bytes(word)
+}
+
+fn write_compact_u16_for_recursive_v2(bytes: &mut [u8], offset: usize, value: u16) {
+    assert!(
+        offset + 2 <= bytes.len(),
+        "recursive_block_v2 compact u16 write out of bounds"
+    );
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_compact_u32_for_recursive_v2(bytes: &mut [u8], offset: usize, value: u32) {
+    assert!(
+        offset + 4 <= bytes.len(),
+        "recursive_block_v2 compact u32 write out of bounds"
+    );
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn advance_recursive_v2_compact_smallwood_matrix(bytes: &[u8], cursor: &mut usize) {
+    let rows = read_compact_u16_for_recursive_v2(bytes, cursor) as usize;
+    let cols = read_compact_u16_for_recursive_v2(bytes, cursor) as usize;
+    let body_bytes = rows
+        .checked_mul(cols)
+        .and_then(|values| values.checked_mul(8))
+        .expect("recursive_block_v2 compact matrix byte count overflow");
+    assert!(
+        *cursor + body_bytes <= bytes.len(),
+        "recursive_block_v2 compact matrix body out of bounds"
+    );
+    *cursor += body_bytes;
+}
+
+fn advance_recursive_v2_compact_smallwood_auth_paths(bytes: &[u8], cursor: &mut usize) {
+    let rows = read_compact_u16_for_recursive_v2(bytes, cursor) as usize;
+    assert!(
+        *cursor + rows <= bytes.len(),
+        "recursive_block_v2 compact auth-path lengths out of bounds"
+    );
+    let lengths = &bytes[*cursor..*cursor + rows];
+    *cursor += rows;
+    let total_nodes = lengths.iter().map(|&len| len as usize).sum::<usize>();
+    let node_bytes = total_nodes
+        .checked_mul(32)
+        .expect("recursive_block_v2 compact auth-path byte count overflow");
+    assert!(
+        *cursor + node_bytes <= bytes.len(),
+        "recursive_block_v2 compact auth-path body out of bounds"
+    );
+    *cursor += node_bytes;
+}
+
+fn recursive_block_v2_first_matrix_bounds(proof_bytes: &[u8]) -> (usize, usize, u16, u16) {
+    let header_offset = 4 + 32 + 4 + 32;
+    let mut cursor = header_offset;
+    let rows = read_compact_u16_for_recursive_v2(proof_bytes, &mut cursor);
+    let cols = read_compact_u16_for_recursive_v2(proof_bytes, &mut cursor);
+    let body_bytes = rows as usize * cols as usize * 8;
+    assert!(
+        cursor + body_bytes <= proof_bytes.len(),
+        "recursive_block_v2 first matrix body out of bounds"
+    );
+    (header_offset, cursor + body_bytes, rows, cols)
+}
+
+fn recursive_block_v2_aux_limb_count_offset(proof_bytes: &[u8]) -> (usize, u32) {
+    let mut cursor = 4 + 32 + 4 + 32;
+    for _ in 0..5 {
+        advance_recursive_v2_compact_smallwood_matrix(proof_bytes, &mut cursor);
+    }
+    advance_recursive_v2_compact_smallwood_auth_paths(proof_bytes, &mut cursor);
+    advance_recursive_v2_compact_smallwood_matrix(proof_bytes, &mut cursor);
+    advance_recursive_v2_compact_smallwood_matrix(proof_bytes, &mut cursor);
+    assert!(
+        cursor < proof_bytes.len(),
+        "recursive_block_v2 opened-witness mode out of bounds"
+    );
+    assert_eq!(
+        proof_bytes[cursor], 1,
+        "recursive_block_v2 fixture must use row-scalar opened witness mode"
+    );
+    cursor += 1;
+    advance_recursive_v2_compact_smallwood_matrix(proof_bytes, &mut cursor);
+    let auxiliary_word_count = read_compact_u32_for_recursive_v2(proof_bytes, &mut cursor);
+    let auxiliary_limb_count_offset = cursor;
+    let _auxiliary_limb_count = read_compact_u32_for_recursive_v2(proof_bytes, &mut cursor);
+    (auxiliary_limb_count_offset, auxiliary_word_count)
+}
+
+fn mutate_recursive_block_v2_aux_limb_count(
+    artifact: &mut RecursiveBlockArtifactV2,
+    limb_count: u32,
+) {
+    let surface = verify_block_recursive_v2_surface(artifact, &artifact.public)
+        .expect("valid recursive_block_v2 fixture before aux-limb mutation");
+    let (offset, auxiliary_word_count) =
+        recursive_block_v2_aux_limb_count_offset(&artifact.artifact.proof_bytes);
+    assert!(
+        auxiliary_word_count > 0,
+        "recursive_block_v2 fixture must carry an auxiliary witness"
+    );
+    assert!(
+        offset + 4 <= surface.canonical_proof_len,
+        "recursive_block_v2 aux-limb offset must be inside canonical proof prefix"
+    );
+    write_compact_u32_for_recursive_v2(&mut artifact.artifact.proof_bytes, offset, limb_count);
+}
+
+fn inflate_recursive_block_v2_first_matrix(
+    artifact: &mut RecursiveBlockArtifactV2,
+    minimum_extra_bytes: usize,
+) {
+    let surface = verify_block_recursive_v2_surface(artifact, &artifact.public)
+        .expect("recursive_block_v2 fixture should pass before width inflation");
+    let cap = artifact.artifact.proof_bytes.len();
+    let padding_bytes = cap - surface.canonical_proof_len;
+    let (rows_offset, insert_at, rows, cols) =
+        recursive_block_v2_first_matrix_bounds(&artifact.artifact.proof_bytes);
+    assert!(
+        cols > 0,
+        "recursive_block_v2 first matrix must have columns"
+    );
+    let row_bytes = cols as usize * 8;
+    let extra_rows = minimum_extra_bytes.div_ceil(row_bytes).max(1);
+    let extra_bytes = extra_rows * row_bytes;
+    assert!(
+        extra_bytes <= padding_bytes,
+        "recursive_block_v2 fixture has insufficient padding for projected-width mutation"
+    );
+    let new_rows = rows
+        .checked_add(u16::try_from(extra_rows).expect("extra rows fit u16"))
+        .expect("recursive_block_v2 first matrix row count overflow");
+    write_compact_u16_for_recursive_v2(&mut artifact.artifact.proof_bytes, rows_offset, new_rows);
+    artifact
+        .artifact
+        .proof_bytes
+        .splice(insert_at..insert_at, std::iter::repeat(0).take(extra_bytes));
+    artifact.artifact.proof_bytes.truncate(cap);
 }
 
 #[test]
