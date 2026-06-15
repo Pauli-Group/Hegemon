@@ -98,25 +98,25 @@ def mapPayloadReject : ActionRoute -> BlockActionReject
   | ActionRoute.transfer => BlockActionReject.transferPayloadInvalid
 
 def mapTransferReject : TransferStateReject -> BlockActionReject
-  | TransferStateReject.unknownAnchor =>
+  | .unknownAnchor =>
       BlockActionReject.transferUnknownAnchor
-  | TransferStateReject.nullifierZero =>
+  | .nullifierZero =>
       BlockActionReject.transferNullifierZero
-  | TransferStateReject.nullifierAlreadySpent =>
+  | .nullifierAlreadySpent =>
       BlockActionReject.transferNullifierAlreadySpent
-  | TransferStateReject.duplicateNullifier =>
+  | .duplicateNullifier =>
       BlockActionReject.transferDuplicateNullifier
-  | TransferStateReject.nullifierAlreadyPending =>
+  | .nullifierAlreadyPending =>
       BlockActionReject.transferNullifierAlreadyPending
-  | TransferStateReject.commitmentZero =>
+  | .commitmentZero =>
       BlockActionReject.transferCommitmentZero
-  | TransferStateReject.stablecoinPolicyUnauthorized =>
+  | .stablecoinPolicyUnauthorized =>
       BlockActionReject.transferStablecoinPolicyUnauthorized
-  | TransferStateReject.sidecarCiphertextMissing =>
+  | .sidecarCiphertextMissing =>
       BlockActionReject.transferSidecarCiphertextMissing
-  | TransferStateReject.sidecarCiphertextSizeMissing =>
+  | .sidecarCiphertextSizeMissing =>
       BlockActionReject.transferSidecarCiphertextSizeMissing
-  | TransferStateReject.sidecarCiphertextSizeMismatch =>
+  | .sidecarCiphertextSizeMismatch =>
       BlockActionReject.transferSidecarCiphertextSizeMismatch
 
 def transferOrderExtends (previous : Option Nat) (key : Nat) : Bool :=

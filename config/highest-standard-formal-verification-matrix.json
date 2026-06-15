@@ -6,7 +6,7 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 83.19,
   "last_full_formal_core": {
-    "date": "2026-06-15T20:12:57Z",
+    "date": "2026-06-15T20:31:42Z",
     "commit": "2a02f9c2+worktree",
     "status": "passed locally after native stablecoin authorization admission and decoded block-action binding",
     "command": "bash scripts/check_formal_core.sh",
@@ -78,7 +78,7 @@
     ],
     "validation": {
       "lean_formal": "lake env lean Hegemon/Native/TransferStateAdmission.lean, Hegemon/Native/BlockActionValidation.lean, Hegemon/Native/GenerateTransferStateAdmissionVectors.lean, and Hegemon/Native/GenerateBlockActionValidationVectors.lean passed locally",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T20:12:57Z after native stablecoin authorization integration",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T20:31:42Z after native stablecoin authorization integration and portable Lean block-action pattern rebuild",
       "claims": 116,
       "named_lean_theorems": 1615,
       "axiom_free_theorems": 754,
