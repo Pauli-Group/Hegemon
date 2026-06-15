@@ -28,24 +28,24 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T22:35:28Z",
-    "commit": "a19c78b3",
-    "status": "passed after fast-forward, remote formal metadata gates, targeted Lean/vector/Rust stablecoin authorization gates, release rebuild, service restart, RPC smoke, wallet-send, live mining advance, sync health, service health, and NTP synchronization",
+    "date": "2026-06-15T23:20:32Z",
+    "commit": "355d48c7",
+    "status": "passed after fast-forward, remote formal metadata gates, targeted Lean/vector/Rust stablecoin lifecycle authorization gates, release rebuild, service restart, RPC smoke, wallet-send, live mining advance, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at a19c78b3e1ae",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 355d48c7",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 117 claims, 1662 named Lean theorem declarations, 107 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 117 claims, 1669 named Lean theorem declarations, 107 production-eligible claims, and 45 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 117 nodes, 488 edges, 466 falsification cases, 207 implementation bindings, and 161 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed and required the native stablecoin policy authorization proof files",
       "lake build Hegemon.Native.StablecoinPolicyAuthorization Hegemon.Native.GenerateStablecoinPolicyAuthorizationVectors Hegemon passed on hegemon-dev",
       "lake exe gen_stablecoin_policy_authorization_vectors emitted parseable JSON on hegemon-dev",
-      "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture passed six stablecoin policy tests on hegemon-dev",
+      "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture passed seven stablecoin policy tests on hegemon-dev, including retired/not-yet-enabled duplicate masking regression",
       "make node rebuilt target/release/hegemon-node on hegemon-dev",
       "sudo systemctl restart hegemon-node.service completed; systemctl is-active returned active and systemctl show NRestarts returned 0",
-      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12471",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12706",
       "bash scripts/test-node.sh wallet-send passed via native::tests::submit_action_stages_and_imports_shielded_transfer",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, block_height 12475, and about 11.98 kH/s",
-      "20-second live mining sample advanced block_height from 12475 to 12481 while mining stayed active",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, block_height 12707, blocks_found 2, and about 11.91 kH/s",
+      "20-second live mining sample advanced block_height from 12707 to 12713 while mining stayed active; blocks_found advanced to 8 and hash_rate reported about 16.41 kH/s",
       "system_health reported isSyncing=false, peers=0, and shouldHavePeers=false",
       "timedatectl reported NTPSynchronized=yes"
     ]
