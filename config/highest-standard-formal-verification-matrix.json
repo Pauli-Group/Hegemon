@@ -6,10 +6,10 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 80.16,
   "last_full_formal_core": {
-    "commit": "e91e7eaf86f8661f7266fd2a7fdc935bbad9e97d",
-    "status": "passed locally 2026-06-15T07:49:18Z",
+    "commit": "b7c9d7cc3a0e1cb494c41a1b5dd39c708e43669b",
+    "status": "passed locally 2026-06-15T08:26:34Z",
     "claims": 115,
-    "named_lean_theorems": 1509,
+    "named_lean_theorems": 1512,
     "production_eligible_claims": 105,
     "blueprint_edges": 480,
     "falsification_cases": 446,
@@ -62,14 +62,14 @@
       "Hegemon.Native.PreHeavyWorkResourceBoundSurface.action_request_projection_accepts_implies_preheavy_bounds"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for CiphertextPrivacy, RawIngressBridgePendingActionPublication, PreHeavyWorkResourceBoundSurface, and Hegemon before metadata finalization; full formal-core pending for this integrated slice",
+      "lean_formal": "targeted lake build passed locally for CiphertextPrivacy, RawIngressBridgePendingActionPublication, PreHeavyWorkResourceBoundSurface, and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "pending for this integrated slice",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T08:26:34Z with 115 theorem-backed claims, 1512 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": null,
+      "named_lean_theorems": 1512,
       "production_eligible_claims": 105,
-      "blueprint_edges": null,
-      "falsification_cases": null,
+      "blueprint_edges": 480,
+      "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
