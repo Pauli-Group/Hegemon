@@ -9829,6 +9829,60 @@
         }
       ],
       "scope_boundary": "This node proves an accepted-predicate composition and review surface tying materialized sidecar rows, DA publication, recursive semantic DA-root sourcing, and tx-leaf ciphertext hash binding. It does not prove arbitrary-byte parser internals, DA availability/retention, hash security/equivalence, proof-system soundness, storage durability, or complete native-node refinement."
+    },
+    {
+      "id": "native.materialized-transfer-no-theft-publication",
+      "claim_id": "native.materialized-transfer-no-theft-publication",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean materialized transfer no-theft publication surface, accepted materialized sidecar DA blob publication, accepted decoded transfer payload admission, accepted tx-leaf/action binding, the canonical transaction statement surface, and the explicit deployed verifier soundness assumption together imply one record carrying DA publication, tx-leaf ciphertext hash and payload-hash binding, replayed supply, accepted ledger/tree replay, commitment-root publication, final replay-set uniqueness, active-input no-theft full-binding facts, and total input-slot authorization-or-inactive-zero full-binding facts over the same materialized raw-ingress path.",
+      "informal_argument": "`Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication` consumes `MaterializedSidecarDaBlobPublicationFacts`, then calls `TransferNoTheftBoundary.validated_transfer_payload_active_input_no_theft_full_binding` and `validated_transfer_payload_input_slot_authorization_full_binding`. The resulting record keeps materialized sidecar publication, candidate/proven-batch/recursive DA-root binding, tx-leaf ciphertext hash and payload-hash binding, accepted ledger/tree replay, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, and total input-slot authorization on the same tx-leaf and statement surface without asserting deployed proof-system soundness.",
+      "depends_on": [
+        "native.materialized-sidecar-da-blob-publication",
+        "native.raw-ingress-transfer-no-theft-publication",
+        "formal.transaction-spend-authorization-boundary",
+        "formal.native-tx-leaf-canonical-surface",
+        "native.transfer-action-payload-admission",
+        "release.dependency-waivers"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "scripts/check_lean_formal.sh"
+      ],
+      "implementation_bindings": [],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-15",
+        "notes": "Accepted as a zero-runtime-cost Lean review surface over materialized DA publication and transfer no-theft/input-slot authorization facts. Deployed verifier soundness, DA availability/hash security, materialized-row-to-Transaction::new equivalence, and complete native-node refinement remain explicit assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-materialized-transfer-no-theft-publication-theorem",
+          "description": "Removing or weakening the materialized transfer no-theft publication theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "formal-core-materialized-transfer-no-theft-publication-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        }
+      ],
+      "scope_boundary": "This node proves an accepted-predicate composition tying materialized sidecar DA publication to transfer no-theft and total input-slot authorization. It does not prove arbitrary-byte parser internals, materialized-row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA availability/retention, hash security/equivalence, deployed STARK/AIR or SmallWood soundness, witness extraction, wallet custody, storage durability, or complete native-node refinement."
     }
   ]
 }

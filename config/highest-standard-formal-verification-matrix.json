@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 79.15,
+  "overall_completion_percent": 79.27,
   "last_full_formal_core": {
     "commit": "a4263b2f426f04a1a8f454e44fdc8f938a1eb840",
     "status": "passed locally 2026-06-15T05:43:20Z",
@@ -50,7 +50,7 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened raw-ingress implementation equivalence with action-hash/tx-leaf, DA-sidecar/canonical, full-byte publication, and materialized sidecar DA-blob publication surfaces. The slice flattens accepted exact pending-action decode, block-action decode, action-hash admission, wire replay projection, DA sidecar publication, raw canonical publication, parsed tx-leaf artifact shape/projection, native tx-leaf full statement artifact facts, tx-leaf ciphertext hash/payload binding, candidate/proven-batch DA-root binding, and recursive semantic DA-root sourcing over the same raw ledger/tree replay witness while keeping parser, hash, DA availability, proof-system, storage, row-to-DA-blob, and full native-node assumptions explicit.",
+    "summary": "Strengthened raw-ingress implementation equivalence with action-hash/tx-leaf, DA-sidecar/canonical, full-byte publication, materialized sidecar DA-blob publication, and materialized transfer no-theft publication surfaces. The slice flattens accepted exact pending-action decode, block-action decode, action-hash admission, wire replay projection, DA sidecar publication, raw canonical publication, parsed tx-leaf artifact shape/projection, native tx-leaf full statement artifact facts, tx-leaf ciphertext hash/payload binding, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, active-input no-theft, and total input-slot authorization over the same raw ledger/tree replay witness while keeping parser, hash, DA availability, proof-system, storage, row-to-DA-blob, deployed verifier, and full native-node assumptions explicit.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
       "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
@@ -62,7 +62,8 @@
       "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
       "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
       "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
-      "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean"
+      "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
@@ -75,17 +76,18 @@
       "Hegemon.Native.RawIngressActionHashTxLeafPublication.accepted_raw_ingress_action_hash_tx_leaf_publication",
       "Hegemon.Native.RawIngressDaSidecarCanonicalPublication.accepted_raw_ingress_da_sidecar_canonical_publication",
       "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface",
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.accepted_materialized_sidecar_da_blob_publication"
+      "Hegemon.Native.MaterializedSidecarDaBlobPublication.accepted_materialized_sidecar_da_blob_publication",
+      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for MaterializedSidecarDaBlobPublication and Hegemon",
+      "lean_formal": "targeted lake build passed locally for MaterializedTransferNoTheftPublication and Hegemon",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T05:43:20Z with 112 claims, 1481 named Lean theorem declarations, 102 production-eligible claims/nodes, 465 blueprint edges, 438 falsification cases, and 200 implementation bindings",
-      "claims": 112,
-      "named_lean_theorems": 1481,
-      "production_eligible_claims": 102,
-      "blueprint_edges": 465,
-      "falsification_cases": 438,
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T06:11:03Z with 113 claims, 1482 named Lean theorem declarations, 103 production-eligible claims/nodes, 471 blueprint edges, 440 falsification cases, and 200 implementation bindings",
+      "claims": 113,
+      "named_lean_theorems": 1482,
+      "production_eligible_claims": 103,
+      "blueprint_edges": 471,
+      "falsification_cases": 440,
       "implementation_bindings": 200
     },
     "known_limitations": [
@@ -100,7 +102,8 @@
       "The raw-ingress action-hash/tx-leaf theorem exposes action-count, action-hash match, uniqueness, and full statement artifact facts but keeps parser/hash/proof soundness explicit.",
       "The DA-sidecar/canonical theorem composes sidecar admission, DA-root binding, proof sidecar metadata, canonical publication, replayed supply, and commitment-root publication over the same raw witness while keeping DA availability, hash security, storage durability, proof soundness, and full native-node equivalence explicit.",
       "The full-byte publication surface flattens nested accepted-predicate facts for review; arbitrary-byte parser internals and parser-to-canonical vector projection remain explicit assumptions.",
-      "The materialized sidecar DA-blob publication theorem exposes sidecar materialization, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash/payload binding, replayed supply, and final replay-set uniqueness together, but keeps materialized-row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, proof soundness, and complete native-node equivalence explicit."
+      "The materialized sidecar DA-blob publication theorem exposes sidecar materialization, candidate/proven-batch DA-root binding, recursive semantic DA-root sourcing, tx-leaf ciphertext hash/payload binding, replayed supply, and final replay-set uniqueness together, but keeps materialized-row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, proof soundness, and complete native-node equivalence explicit.",
+      "The materialized transfer no-theft theorem ties materialized DA publication to active-input no-theft and total input-slot authorization on the same tx-leaf/statement/replay surface, but keeps deployed verifier soundness, witness extraction, DA availability, hash security, storage durability, and complete native-node equivalence explicit."
     ]
   },
   "last_production_binding_slice": {
@@ -203,7 +206,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 71,
+      "completion_percent": 72,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -232,7 +235,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages every proof-keyed native tx-leaf input slot, including inactive padding slots, into authorization-or-inactive-zero facts carrying payload binding-hash/proof-binding-hash/fee agreement, wrapper/public-input/statement facts, root/anchor binding, statement/proof nullifier-slot alignment, native proof/backend/ciphertext-payload gates, and field-level tx-leaf binding facts",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now composes accepted decoded transfer payload admission and singleton block-action validation acceptance, including payload-before-order and order-before-state precedence, with accepted native tx-leaf/action binding and canonical statement facts to expose active-input no-theft full-binding before modeled transfer state mutation",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now lifts the same live decoded-transfer validation/order boundary to every indexed input slot, exposing authorization-or-inactive-zero full-binding before modeled transfer state mutation",
-        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean composes raw-ingress pending-action tx-leaf publication with validated transfer active-input no-theft and total input-slot authorization facts over the same raw replay input"
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean composes raw-ingress pending-action tx-leaf publication with validated transfer active-input no-theft and total input-slot authorization facts over the same raw replay input",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean composes materialized DA publication, tx-leaf ciphertext binding, active-input no-theft, and total input-slot authorization on one accepted materialized raw-ingress surface"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -490,7 +494,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 80,
+      "completion_percent": 81,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -590,7 +594,8 @@
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean keeps inbound bridge mint/replay safety on the same sidecar/DA-bound raw-ingress pending-action publication surface",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean keeps raw-ingress pending-action publication row-count facts tied to the same wire replay and decoded payload surface",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean keeps parsed tx-leaf artifact shape and statement/artifact facts on the same raw-ingress pending-action publication surface that already carries sidecar availability, size agreement, and DA-root facts",
-        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean composes the raw-ingress full-byte surface with native tx-leaf ciphertext hash/payload binding, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA-root sourcing, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness"
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean composes the raw-ingress full-byte surface with native tx-leaf ciphertext hash/payload binding, candidate DA-root binding, proven-batch DA-root binding, recursive semantic DA-root sourcing, accepted ledger/tree replay, commitment-root publication, replayed supply, and final replay-set uniqueness",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean keeps materialized DA publication and transfer no-theft/input-slot authorization on the same tx-leaf/statement/replay surface"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",

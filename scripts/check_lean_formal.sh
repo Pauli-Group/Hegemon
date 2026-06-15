@@ -170,6 +170,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean
   lake env lean Hegemon/Native/RawIngressFullBytePublicationSurface.lean
   lake env lean Hegemon/Native/MaterializedSidecarDaBlobPublication.lean
+  lake env lean Hegemon/Native/MaterializedTransferNoTheftPublication.lean
   lake env lean Hegemon/Native/RawIngressBridgePendingActionPublication.lean
   lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean
   lake env lean Hegemon/Native/SidecarUploadAdmission.lean

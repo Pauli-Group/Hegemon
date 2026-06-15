@@ -5574,6 +5574,57 @@
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
       ]
+    },
+    {
+      "id": "native.materialized-transfer-no-theft-publication",
+      "component": "native materialized transfer no-theft publication",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under the existing explicit deployed-verifier soundness assumption, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, and input-slot authorization-or-inactive-zero facts to one materialized raw-ingress surface.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_composition_over_materialized_da_and_transfer_no_theft_surfaces",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication"
+      ],
+      "assumptions": [
+        "This is a zero-runtime-cost Lean composition over accepted materialized DA publication, accepted transfer payload admission, accepted tx-leaf/action binding, canonical transaction statement facts, and the existing explicit deployed verifier soundness assumption.",
+        "The theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit. It does not claim deployed STARK/AIR, SmallWood, native tx-leaf proof, witness extraction, wallet custody, or recursive proof soundness.",
+        "The theorem inherits the materialized sidecar assumptions: row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof-system soundness, storage durability, and complete native-node equivalence remain explicit work."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean",
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/README.md",
+        "METHODS.md",
+        "DESIGN.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/check_lean_formal.sh"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "native-materialized-transfer-deployed-verifier-soundness-explicit",
+          "description": "The theorem depends on `DeployedTxVerifierSoundnessAssumption`; deployed proof-system/AIR/SmallWood soundness and witness extraction remain explicit assumptions rather than mechanized proofs.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "native-materialized-transfer-da-and-node-refinement-explicit",
+          "description": "The theorem composes accepted materialized DA and transfer no-theft surfaces but does not prove row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security, DA availability, storage durability, or complete native-node refinement.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     }
   ]
 }
