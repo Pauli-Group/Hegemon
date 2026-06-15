@@ -632,7 +632,7 @@
       "id": "formal.transaction-asset-isolation-boundary",
       "component": "transaction asset isolation and authorized mint boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires the selected public stablecoin exception. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
+      "summary": "The Lean asset-isolation boundary proves that an accepted transaction relation authorizes every per-asset delta: native deltas must match the modeled native balance, non-native deltas are zero unless they are the selected stablecoin issuance/burn exception, and any nonzero non-native delta implies exactly that selected stablecoin exception. The canonical proof-system boundary now exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a first-class stablecoin mint exception surface binding asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, and proof-binding fields. The asset-isolation theorem also lifts those facts to an accepted-transaction-chain aggregate: chain asset deltas equal the sum of authorized per-transaction deltas, and a nonzero non-native chain delta requires at least one selected stablecoin exception.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -645,7 +645,9 @@
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta",
         "Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_authorized_asset_delta_value",
         "Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_surface_stablecoin_mint_exception_surface",
         "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception",
+        "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface",
         "Hegemon.Transaction.AssetIsolation.accepted_wrapper_only_native_or_selected_stablecoin_may_be_nonzero",
         "Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta_value",
         "Hegemon.Transaction.AssetIsolation.accepted_transition_delta_authorized",
@@ -655,7 +657,7 @@
       ],
       "assumptions": [
         "The theorem depends on the accepted transaction relation introduced by `AcceptedTransactionSoundness`; that relation is still conditional on explicit balance and spend proof-system soundness assumptions.",
-        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas, but not production stablecoin policy/oracle/attestation admission.",
+        "The chain aggregate theorem is over a list of accepted transaction relations, not complete block/native-node execution. It proves the stablecoin-exception shape for transaction-chain deltas; the canonical public-field theorem binds the stablecoin exception payload to statement/proof-binding fields but does not prove policy/oracle/attestation validity against external state.",
         "The theorem does not prove chain-level bridge mint authorization, deployed verifier soundness, hash security, proof-system soundness, or complete Rust/native-node refinement.",
         "Bridge mint/burn authorization remains a separate exception predicate and production binding target."
       ],
@@ -678,7 +680,7 @@
       "residual_risks": [
         {
           "id": "asset-isolation-exceptions-not-production-bound",
-          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences, but stablecoin policy authorization and bridge mint exceptions still need production admission bindings and complete native-node refinement.",
+          "description": "The asset-isolation theorem now packages accepted transaction-chain delta consequences and the canonical stablecoin mint exception surface, but stablecoin policy/oracle/attestation validity, bridge mint exceptions, and complete native-node refinement still need stronger production admission bindings.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -5794,7 +5796,7 @@
       "id": "native.materialized-transfer-no-theft-publication",
       "component": "native materialized transfer no-theft publication",
       "claim_class": "lean_theorem",
-      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, the public non-native nonzero stablecoin-exception consequence, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
+      "summary": "The Lean materialized transfer no-theft publication surface composes accepted materialized sidecar DA blob publication with accepted decoded transfer payload admission, singleton block-action validation, active-input no-theft facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds DA publication, tx-leaf ciphertext/hash binding, replayed supply, commitment-root publication, final replay-set uniqueness, active-input no-theft, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, the public non-native nonzero stablecoin-exception consequence, the full stablecoin mint exception surface, and output-slot statement/proof artifact rows to one materialized raw-ingress surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_materialized_da_and_transfer_no_theft_surfaces",
       "production_eligible": true,
@@ -5803,6 +5805,7 @@
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_from_spend_soundness",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_authorized_asset_delta_value",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception",
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_stablecoin_mint_exception_surface",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts"
       ],
       "assumptions": [

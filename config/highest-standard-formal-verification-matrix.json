@@ -4,12 +4,12 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 82.56,
+  "overall_completion_percent": 82.71,
   "last_full_formal_core": {
     "commit": "working-tree-pre-commit",
-    "status": "passed locally for the commitment-tree membership handoff slice",
+    "status": "passed locally for the stablecoin mint exception surface slice",
     "claims": 116,
-    "named_lean_theorems": 1588,
+    "named_lean_theorems": 1591,
     "production_eligible_claims": 106,
     "blueprint_edges": 486,
     "falsification_cases": 458,
@@ -291,7 +291,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 75,
+      "completion_percent": 78,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -308,11 +308,12 @@
         "native transfer payload/state admission",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves accepted materialized transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves that any non-native nonzero public authorized delta requires public stablecoin enablement and the selected public stablecoin asset",
-        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts the public non-native nonzero stablecoin-exception consequence to the accepted materialized transfer publication path under split spend and balance/public-field soundness assumptions"
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean packages the selected stablecoin exception as a StablecoinMintExceptionSurface binding the asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement rows, and proof-binding rows",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts the public non-native nonzero stablecoin-exception consequence and full stablecoin mint exception surface to the accepted materialized transfer publication path under split spend and balance/public-field soundness assumptions"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-        "Formalize production stablecoin issuance and live bridge mint authorization exceptions as separate chain-level predicates.",
+        "Formalize live stablecoin policy/oracle/attestation validity and live bridge mint authorization exceptions as separate chain-level predicates.",
         "Bind exception predicates to production admission paths."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."

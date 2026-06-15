@@ -47,6 +47,75 @@ def publicAuthorizedAssetDeltaValue
   else
     0
 
+structure StablecoinMintExceptionSurface
+    (publicFields : PublicInputBinding.PublicFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (assetId : Nat)
+    (delta : Int) : Prop where
+  publicEnabled : publicFields.stablecoinEnabled = 1
+  selectedAsset : assetId = publicFields.stablecoinAsset
+  deltaValue : delta = publicFields.stablecoinIssuanceDelta
+  publicDeltaMatchesBound :
+    PublicInputBinding.signedMagnitudeMatches
+      delta
+      bound.stablecoinIssuanceSign
+      bound.stablecoinIssuanceMagnitude = true
+  boundEnabled : bound.stablecoinEnabled = publicFields.stablecoinEnabled
+  boundAsset : bound.stablecoinAsset = publicFields.stablecoinAsset
+  boundPolicyHash :
+    bound.stablecoinPolicyHash = publicFields.stablecoinPolicyHash
+  boundOracleCommitment :
+    bound.stablecoinOracleCommitment =
+      publicFields.stablecoinOracleCommitment
+  boundAttestationCommitment :
+    bound.stablecoinAttestationCommitment =
+      publicFields.stablecoinAttestationCommitment
+  boundPolicyVersion :
+    bound.stablecoinPolicyVersion = publicFields.stablecoinPolicyVersion
+  statementEnabled :
+    statementFields.stablecoinEnabled = bound.stablecoinEnabled
+  statementAsset :
+    statementFields.stablecoinAsset = bound.stablecoinAsset
+  statementPolicyHash :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  statementOracleCommitment :
+    statementFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  statementAttestationCommitment :
+    statementFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
+  statementPolicyVersion :
+    statementFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
+  statementIssuanceSign :
+    statementFields.stablecoinIssuanceSign =
+      bound.stablecoinIssuanceSign
+  statementIssuanceMagnitude :
+    statementFields.stablecoinIssuanceMagnitude =
+      bound.stablecoinIssuanceMagnitude
+  bindingEnabled :
+    stablecoinEnabledFlagMatches
+      bound.stablecoinEnabled
+      bindingFields.stablecoinEnabled
+  bindingAsset :
+    bindingFields.stablecoinAsset = bound.stablecoinAsset
+  bindingPolicyHash :
+    bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+  bindingOracleCommitment :
+    bindingFields.stablecoinOracleCommitmentSeed =
+      bound.stablecoinOracleCommitment
+  bindingAttestationCommitment :
+    bindingFields.stablecoinAttestationCommitmentSeed =
+      bound.stablecoinAttestationCommitment
+  bindingIssuanceDelta :
+    PublicInputBinding.signedMagnitudeMatches
+      bindingFields.stablecoinIssuanceDelta
+      bound.stablecoinIssuanceSign
+      bound.stablecoinIssuanceMagnitude = true
+  bindingPolicyVersion :
+    bindingFields.stablecoinPolicyVersion = bound.stablecoinPolicyVersion
+
 structure CanonicalTxStatementSurface
     (wrapper : ProofWrapperInput)
     (shape : PublicInputShape)
@@ -795,6 +864,88 @@ theorem canonical_statement_surface_stablecoin_payload_bound
     surface.bindingStablecoinAttestationCommitment,
     surface.bindingStablecoinIssuanceDelta⟩
 
+theorem canonical_statement_surface_stablecoin_mint_exception_surface
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {assetId : Nat}
+    {delta : Int}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (publicEnabled : publicFields.stablecoinEnabled = 1)
+    (selectedAsset : assetId = publicFields.stablecoinAsset)
+    (deltaValue : delta = publicFields.stablecoinIssuanceDelta) :
+    StablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      delta := by
+  have p3Facts :=
+    canonical_statement_surface_p3_public_input_binding_facts surface
+  rcases
+      PublicInputBinding.stablecoinBindingMatches_true_fields
+        p3Facts.publicStablecoinBindingMatches with
+    ⟨hEnabled, hAsset, hPolicyVersion, hIssuance, hPolicyHash, hOracle,
+      hAttestation⟩
+  exact
+    { publicEnabled := publicEnabled
+      selectedAsset := selectedAsset
+      deltaValue := deltaValue
+      publicDeltaMatchesBound := by
+        rw [deltaValue, p3Facts.boundStablecoinIssuanceSign,
+          p3Facts.boundStablecoinIssuanceMagnitude]
+        exact hIssuance
+      boundEnabled := by
+        rw [p3Facts.boundStablecoinEnabled, ← hEnabled]
+      boundAsset := by
+        rw [p3Facts.boundStablecoinAsset, ← hAsset]
+      boundPolicyHash := by
+        rw [p3Facts.boundStablecoinPolicyHash, ← hPolicyHash]
+      boundOracleCommitment := by
+        rw [p3Facts.boundStablecoinOracleCommitment, ← hOracle]
+      boundAttestationCommitment := by
+        rw [p3Facts.boundStablecoinAttestationCommitment, ← hAttestation]
+      boundPolicyVersion := by
+        rw [p3Facts.boundStablecoinPolicyVersion, ← hPolicyVersion]
+      statementEnabled := surface.statementStablecoinEnabled
+      statementAsset := surface.statementStablecoinAsset
+      statementPolicyHash := surface.statementStablecoinPolicyHash
+      statementOracleCommitment :=
+        surface.statementStablecoinOracleCommitment
+      statementAttestationCommitment :=
+        surface.statementStablecoinAttestationCommitment
+      statementPolicyVersion := surface.statementStablecoinPolicyVersion
+      statementIssuanceSign := surface.statementStablecoinIssuanceSign
+      statementIssuanceMagnitude :=
+        surface.statementStablecoinIssuanceMagnitude
+      bindingEnabled := surface.bindingStablecoinEnabled
+      bindingAsset := surface.bindingStablecoinAsset
+      bindingPolicyHash := surface.bindingStablecoinPolicyHash
+      bindingOracleCommitment := surface.bindingStablecoinOracleCommitment
+      bindingAttestationCommitment :=
+        surface.bindingStablecoinAttestationCommitment
+      bindingIssuanceDelta := surface.bindingStablecoinIssuanceDelta
+      bindingPolicyVersion := surface.bindingStablecoinPolicyVersion }
+
 theorem canonical_surface_authorized_active_input_bound_to_statement
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -1453,6 +1604,86 @@ theorem canonical_statement_balance_soundness_non_native_nonzero_public_stableco
     public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception
       nonNative
       publicNonzero
+
+theorem canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : slotDelta assetId slots ≠ 0) :
+    StablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      (slotDelta assetId slots) := by
+  have exceptionFacts :
+      publicFields.stablecoinEnabled = 1
+        ∧ assetId = publicFields.stablecoinAsset :=
+    canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception
+      surface
+      balanceSound
+      nonNative
+      nonzero
+  have deltaEq :
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId :=
+    canonical_statement_balance_soundness_public_authorized_asset_delta_value
+      surface
+      balanceSound
+  have publicDelta :
+      publicAuthorizedAssetDeltaValue publicFields assetId =
+        publicFields.stablecoinIssuanceDelta := by
+    have selectedNonNative :
+        publicFields.stablecoinAsset ≠ Hegemon.Transaction.nativeAsset := by
+      intro stablecoinNative
+      apply nonNative
+      rw [exceptionFacts.right, stablecoinNative]
+    simp [publicAuthorizedAssetDeltaValue, selectedNonNative, exceptionFacts.left,
+      exceptionFacts.right]
+  exact
+    canonical_statement_surface_stablecoin_mint_exception_surface
+      surface
+      exceptionFacts.left
+      exceptionFacts.right
+      (by rw [deltaEq, publicDelta])
 
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}
