@@ -1,6 +1,7 @@
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 import Hegemon.Native.TxLeafArtifact
+import Hegemon.Transaction.ProofSystemBoundary
 
 namespace Hegemon
 namespace Native
@@ -23,8 +24,10 @@ open Hegemon.Native.StorageDurabilityAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafCanonicalSurface
 open Hegemon.Transaction.CanonicalVerifierBoundary
+open Hegemon.Transaction.ProofSystemBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
+open Hegemon.Transaction.SpendAuthorization
 
 private theorem readCappedU32_le
     {cap : Nat}
@@ -300,6 +303,60 @@ structure ParsedNativeTxLeafArtifactCanonicalFacts
       bindingFields
       bindingBytes
       merkleRoot
+
+structure ParsedNativeTxLeafCanonicalArtifactBoundaryFacts
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (txLeaf : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : Hegemon.Transaction.BalanceWitness)
+    (slots : List Hegemon.Transaction.BalanceSlot)
+    (assetId : Nat) : Prop where
+  parsedCanonicalFacts :
+    ParsedNativeTxLeafArtifactCanonicalFacts
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+  canonicalArtifactBoundaryFacts :
+    NativeTxLeafCanonicalArtifactBoundaryFacts
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId
 
 structure ParsedPendingActionByteTxLeafPublicationFacts
     (pendingDecode : ExactDecodeInput)
@@ -590,6 +647,98 @@ theorem accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifac
       txLeafAccepted := txLeafAccepted
       txLeafFullStatementArtifactFacts := txLeafFacts }
 
+theorem accepted_native_tx_leaf_artifact_projection_binds_canonical_artifact_boundary_facts
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId : Nat}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (projection :
+      NativeTxLeafArtifactCanonicalProjectionAssumptions
+        summary
+        txLeaf
+        shape
+        serializedFields
+        bound
+        statementFields
+        bindingFields)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (deployedSoundness :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    ParsedNativeTxLeafCanonicalArtifactBoundaryFacts
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId := by
+  have parsedCanonicalFacts :=
+    accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifact
+      parsed
+      projection
+      surface
+  have canonicalArtifactBoundaryFacts :=
+    native_tx_leaf_canonical_artifact_boundary_facts
+      (assetId := assetId)
+      parsedCanonicalFacts.txLeafAccepted
+      surface
+      deployedSoundness
+  exact
+    { parsedCanonicalFacts := parsedCanonicalFacts
+      canonicalArtifactBoundaryFacts := canonicalArtifactBoundaryFacts }
+
 theorem accepted_pending_action_bytes_bind_parsed_tx_leaf_publication
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
@@ -871,6 +1020,344 @@ theorem accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publicatio
   exact
     { rawIngressTxLeafPublicationFacts := rawTxLeafFacts
       parsedCanonicalFacts := parsedCanonicalFacts }
+
+theorem accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_deployed_boundary_facts
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    (rawIngressFacts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (actionHashAccepted :
+      admissionAccepts actionHash = true)
+    (wireActionCountMatchesDeclared :
+      surface.daSidecarReplay.wireReplayProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final)
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (projection :
+      NativeTxLeafArtifactCanonicalProjectionAssumptions
+        summary
+        txLeaf
+        shape
+        serializedFields
+        bound
+        statementFields
+        bindingFields)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (deployedSoundness :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    ParsedRawIngressPendingActionTxLeafPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      ∧ CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots := by
+  have parsedPublicationFacts :=
+    accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication
+      rawIngressFacts
+      sidecarRoute
+      pendingDecodeAccepted
+      blockActionDecodeAccepted
+      actionHashAccepted
+      wireActionCountMatchesDeclared
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+      parsed
+      projection
+      canonicalSurface
+  have boundaryFacts :=
+    deployed_soundness_canonical_surface_implies_boundary_facts
+      canonicalSurface
+      deployedSoundness
+  exact ⟨parsedPublicationFacts, boundaryFacts⟩
+
+theorem accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_spend_boundary_facts
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    (rawIngressFacts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (actionHashAccepted :
+      admissionAccepts actionHash = true)
+    (wireActionCountMatchesDeclared :
+      surface.daSidecarReplay.wireReplayProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final)
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (projection :
+      NativeTxLeafArtifactCanonicalProjectionAssumptions
+        summary
+        txLeaf
+        shape
+        serializedFields
+        bound
+        statementFields
+        bindingFields)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSoundness :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses) :
+    ParsedRawIngressPendingActionTxLeafPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      ∧ CanonicalDeployedVerifierSpendBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses := by
+  have parsedPublicationFacts :=
+    accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication
+      rawIngressFacts
+      sidecarRoute
+      pendingDecodeAccepted
+      blockActionDecodeAccepted
+      actionHashAccepted
+      wireActionCountMatchesDeclared
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+      parsed
+      projection
+      canonicalSurface
+  have boundaryFacts :=
+    spend_soundness_canonical_surface_implies_spend_boundary_facts
+      canonicalSurface
+      spendSoundness
+  exact ⟨parsedPublicationFacts, boundaryFacts⟩
 
 end TxLeafArtifactProjectionRefinement
 end Native

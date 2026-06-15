@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 80.95,
+  "overall_completion_percent": 81.12,
   "last_full_formal_core": {
     "commit": "0c4b8cad126282e877ef9fd23bdcb7322688e545",
     "status": "passed locally 2026-06-15T10:18:06Z",
@@ -49,28 +49,30 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the final bridge replay publication boundary for raw-ingress bridge pending-action publication. The new theorem binds the freshly imported replay set to the canonical replay witness, proves the exact inbound replay key remains present in the final published canonical replay set, and proves final-state reimport rejects with `bridgeReplayDuplicate`.",
+    "summary": "Proved the parsed tx-leaf artifact projection proof-boundary slice. Parsed tx-leaf artifacts now compose with canonical native artifact boundary facts, and raw-ingress parsed tx-leaf publication now composes with both the full deployed verifier boundary facts and the spend-only verifier boundary facts under explicit soundness assumptions.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
+      "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_final_replay_safe"
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_projection_binds_canonical_artifact_boundary_facts",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_deployed_boundary_facts",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_spend_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for RawIngressBridgePendingActionPublication and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for TxLeafArtifactProjectionRefinement and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T10:18:06Z with 115 theorem-backed claims, 1523 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T10:37:36Z with 115 theorem-backed claims, 1526 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1523,
+      "named_lean_theorems": 1526,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The final replay theorem requires the explicit equality `initial.ledger.consumedBridgeReplays = next` to connect fresh import output to the canonical replay witness.",
-      "External receipt soundness, future PQ-clean receipt-verifier soundness, arbitrary-byte parser internals, hash security, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions.",
-      "No runtime path changed in this slice; the improvement is a zero-cost Lean composition and production-bound claim/matrix update."
+      "The theorem slice still depends on `DeployedTxVerifierSoundnessAssumption` and `DeployedTxVerifierSpendSoundnessAssumption`; AIR/STARK/SmallWood proof soundness, witness extraction, and Rust verifier refinement are not yet mechanized.",
+      "Parser-to-canonical projection remains an explicit assumption; this is not yet a full serialization-to-statement-vector equivalence proof.",
+      "Hash/security equivalence, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions; no runtime path changed in this zero-cost Lean composition."
     ]
   },
   "last_production_binding_slice": {
@@ -173,7 +175,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 75,
+      "completion_percent": 76,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -208,7 +210,8 @@
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean composes materialized DA publication, tx-leaf ciphertext binding, active-input no-theft, and total input-slot authorization on one accepted materialized raw-ingress surface",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now carries the same materialized DA publication facts through a spend-only no-theft/input-slot publication theorem",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now splits deployed verifier soundness into spend-only and balance/public-field assumptions, so active-input no-theft can depend only on the spend half before the full proof-system soundness theorem is discharged",
-        "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness"
+        "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with spend-only deployed verifier boundary facts, keeping parsed artifact, pending-action publication, raw-ingress publication, canonical statement, and no-theft target facts on one accepted surface"
       ],
       "missing_work": [
         "Prove that the circuit/AIR constraints imply the spend-authorization relation.",
@@ -343,7 +346,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 79,
+      "completion_percent": 80,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -379,7 +382,9 @@
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean proves signedMagnitudeMatches_true_eq for the public-field signed magnitude relation",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean introduces spend-only and balance/public-field deployed soundness assumptions plus a compatibility theorem back to DeployedTxVerifierSoundnessAssumption",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes split spend-only and balance/public-field boundary fact packages, direct input-slot binding, public authorized-delta consequences, and a rejoin theorem back to the full canonical verifier boundary",
-        "native transfer, raw-ingress, and materialized publication no-theft/input-slot theorems now consume the split spend-only verifier soundness assumption directly, proving those implementation-equivalence targets do not depend on balance/public-field soundness"
+        "native transfer, raw-ingress, and materialized publication no-theft/input-slot theorems now consume the split spend-only verifier soundness assumption directly, proving those implementation-equivalence targets do not depend on balance/public-field soundness",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs parsed tx-leaf artifact/projection facts with `NativeTxLeafCanonicalArtifactBoundaryFacts`, including canonical deployed verifier boundary facts, native equality gates, spend/balance exposure, and authorized asset-delta facts under the explicit full deployed verifier soundness assumption",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with full deployed verifier boundary facts and spend-only deployed verifier boundary facts, keeping the future verifier/AIR/refinement target on the same raw-ingress accepted publication surface"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
