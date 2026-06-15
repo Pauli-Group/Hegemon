@@ -16,22 +16,22 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T09:06:43Z",
-    "commit": "9457d4c7ac7156ca8c46d23267b57299284474c3",
-    "status": "passed with claims/blueprint gates, targeted Lean for privacy ciphertext and materialized transfer no-theft publication modules, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production; the live service did not find a block during the 20-second sample at current difficulty",
+    "date": "2026-06-15T09:37:13Z",
+    "commit": "462a4e6daf50fedd8937057f4fa65544349fe7e3",
+    "status": "passed with claims/blueprint gates, targeted Lean for spend-only no-theft publication modules, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production; the live service did not find a block during the 20-second sample at current difficulty",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9457d4c7ac7156ca8c46d23267b57299284474c3",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 462a4e6daf50fedd8937057f4fa65544349fe7e3",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1515 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1519 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 115 nodes, 480 edges, 446 falsification cases, and 200 implementation bindings",
-      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Privacy.CiphertextPrivacy Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
+      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.TransferNoTheftBoundary Hegemon.Native.RawIngressTransferNoTheftPublication Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
       "hegemon-node.service remained active with NRestarts=0; no restart was needed for the live service during this validation pass",
-      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11311",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11335",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26979 H/s, difficulty 520159231, blocks_found 638, and block_height 11311 before and after the 20-second sample",
-      "live hegemon_consensusStatus reported syncing=false, peers=0, best_hash 0x0000a1ab87e34c8ac707b9f1953f155423670ce69842fa2f91e53eb11a1a1c87, state_root 0xd55ef51b2c2660477a3f8d5434ff41fd58d571adb63fcc6311f90727cde5812c41233d7b49082e04fe1b9bf17fe55d32, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3094463465708",
-      "live service block_height stayed at 11311 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 18336",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26972 H/s, difficulty 520159231, blocks_found 662, and block_height 11335 before and after the 20-second sample",
+      "live hegemon_consensusStatus reported syncing=false, peers=0, best_hash 0x00006850a82f3faeec35ed00305e806ad3d49d16e3f75ccb1aceef60d7f192bf, state_root 0x46209973f42822a7a3c15742fbccd1e2c659365e6640e45cfe41d33ac8c06aeb6f86b6615adf14580b61b5c0d40ae74a, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3106449767060",
+      "live service block_height stayed at 11335 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 18548",
       "timedatectl reported NTPSynchronized=yes and NTP=yes"
     ]
   },
