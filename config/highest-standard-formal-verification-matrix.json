@@ -7,7 +7,7 @@
   "overall_completion_percent": 83.09,
   "last_full_formal_core": {
     "date": "2026-06-15T19:29:59Z",
-    "commit": "pending-local-stablecoin-pq-frame-binding-commit",
+    "commit": "7eedd410",
     "status": "passed locally after wallet stablecoin policy admission and bounded PQ SecureSession frame-vector binding",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 116,
