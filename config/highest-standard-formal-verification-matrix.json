@@ -7,7 +7,7 @@
   "overall_completion_percent": 82.87,
   "last_full_formal_core": {
     "date": "2026-06-15T18:21:19Z",
-    "commit": "working-tree-before-authorized-stablecoin-pq-commit",
+    "commit": "9c315b08bca3",
     "status": "passed locally after authorized stablecoin mint exception and PQ peer-frame metadata integration",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 116,
@@ -28,22 +28,20 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T17:23:36Z",
-    "commit": "e61aa469b517",
-    "status": "passed without node restart because this slice changes Lean/formal metadata plus cfg(test) regression code only; claims/blueprint/inventory gates, targeted Lean, targeted Rust, RPC smoke, wallet-send, live mining status, isolated single-node block production, service health, and NTP synchronized all passed",
+    "date": "2026-06-15T18:24:23Z",
+    "commit": "9c315b08bca3",
+    "status": "passed without node rebuild or restart because this slice changes only Lean proofs, formal metadata, and documentation; claims/blueprint gates, targeted Lean, RPC smoke, wallet-send, live mining status, service health, and NTP synchronized all passed",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at e61aa469b517",
-      "no live-node rebuild/restart was required because the committed changes are Lean proofs, formal metadata, documentation, and cfg(test) regression code only",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9c315b08bca3",
+      "no live-node rebuild or restart was required because the committed changes are Lean proofs, formal metadata, and documentation only",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 116 claims, 1588 named Lean theorem declarations, 106 production-eligible claims, and 44 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 116 claims, 1597 named Lean theorem declarations, 106 production-eligible claims, and 44 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 116 nodes, 486 edges, 458 falsification cases, 204 implementation bindings, and 161 result obligations",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root \"$PWD\" passed and listed formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
-      "$HOME/.elan/bin/lake build Hegemon.Native.CommitmentTreeMembershipRefinement Hegemon passed from formal/lean on hegemon-dev with 134 jobs",
-      "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture passed on hegemon-dev",
-      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12108",
-      "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, hash_rate around 24.28 kH/s, blocks_found 318, and block_height 12108 before/after the 20-second sample",
-      "isolated bash scripts/test-node.sh single-node mined height 21498 because the live 20-second sample did not find a block at current difficulty",
+      "$HOME/.elan/bin/lake build Hegemon.Transaction.CanonicalVerifierBoundary Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Network.PqNoiseHandshakeChannel Hegemon passed from formal/lean on hegemon-dev with 134 jobs",
+      "bash scripts/smoke-test.sh passed against RPC port 9944 at height 12150",
+      "bash scripts/test-node.sh wallet-send passed via native::tests::submit_action_stages_and_imports_shielded_transfer",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, difficulty 520159231, hash_rate about 24.36 kH/s, blocks_found 360, and block_height 12150",
+      "system_health reported isSyncing=false, peers=0, and shouldHavePeers=false",
       "systemctl is-active hegemon-node.service returned active and systemctl show NRestarts returned 0",
       "timedatectl reported NTPSynchronized=yes"
     ]
