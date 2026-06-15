@@ -4,15 +4,15 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 81.52,
+  "overall_completion_percent": 81.61,
   "last_full_formal_core": {
-    "commit": "b74e82b0ee8a1e731cc8eb2dd43360687fdf3d14",
-    "status": "passed locally 2026-06-15T12:10:07Z",
+    "commit": "working-tree-before-proof-slice-commit",
+    "status": "passed locally 2026-06-15T12:33:40Z",
     "claims": 115,
-    "named_lean_theorems": 1546,
+    "named_lean_theorems": 1549,
     "production_eligible_claims": 105,
-    "blueprint_edges": 480,
-    "falsification_cases": 446,
+    "blueprint_edges": 481,
+    "falsification_cases": 449,
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
@@ -48,34 +48,33 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the all-active native privacy secret-resampling slice. Selected and all-active native public metadata output-row packages now survive independent left/right private-witness and prover-randomness resampling while carrying public metadata leakage, batch/timing leakage, raw-wire indistinguishability, and the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, and network metadata assumptions.",
+    "summary": "Proved the production projection row-binding slice for raw pending-action bytes. Accepted pending-action decode, block-action decode, block-action validation, materialized action/payload row counts, and action wire-replay projection now compose into named Lean facts, and the raw-ingress full-byte surface exposes decoded/validated/materialized/wire row agreement. A Rust regression exercises the production path from NativeBlockMeta.action_bytes through decode, validation, sidecar materialization, effect planning, and wire replay projection.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Privacy/Observer.lean"
+      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary"
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_production_projection_binds_decoded_validation_materialized_rows",
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows",
+      "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for Hegemon.Privacy.NativeObserverSurface, Hegemon.Privacy.CiphertextPrivacy, and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for Hegemon.Native.PendingActionByteReplayRowCountBinding, Hegemon.Native.RawIngressFullBytePublicationSurface, and Hegemon",
       "targeted_rust": [
-        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib passed"
+        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture passed locally"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T12:10:07Z with 115 theorem-backed claims, 1546 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T12:33:40Z with 115 theorem-backed claims, 1549 named Lean theorem declarations, 105 production-eligible claims/nodes, 481 blueprint edges, 449 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1546,
+      "named_lean_theorems": 1549,
       "production_eligible_claims": 105,
-      "blueprint_edges": 480,
-      "falsification_cases": 446,
+      "blueprint_edges": 481,
+      "falsification_cases": 449,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The slice does not discharge ML-KEM, AEAD, KDF, RNG, hash security, or implementation-equivalence assumptions for those primitives.",
-      "The slice keeps simulator zero knowledge, wallet metadata hygiene, timing/batching policy, network metadata policy, and raw-wire indistinguishability as explicit assumptions rather than hidden conclusions.",
-      "No runtime path changed in this zero-cost Lean composition."
+      "The slice still does not prove arbitrary-byte parser internals for SCALE/bincode/JSON inputs.",
+      "The Lean production projection theorem consumes named production projection facts; the Rust regression checks the current implementation path but is not a full extraction proof.",
+      "Hash security, DA availability, proof-system soundness, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
@@ -492,7 +491,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -508,12 +507,14 @@
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean binds exact pending/block-action decode facts, wire replay row-count agreement, raw-ingress sidecar rows, and canonical publication facts into one accepted byte-publication surface",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean proves accepted pending-action byte decode, block-action decode, and wire replay projection bind replay row counts to decoded payload rows and, under an explicit production projection premise, to validated action rows",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean proves accepted native tx-leaf artifact parsing exposes bounded serialized/public/proof/commitment/backend shape facts before composing the parsed artifact with the canonical statement surface",
-        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean derives decoded-row/raw-replay row agreement from accepted block-action decode plus accepted action wire-replay projection before raw canonical publication"
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean derives decoded-row/raw-replay row agreement from accepted block-action decode plus accepted action wire-replay projection before raw canonical publication",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now packages decoded, validated, materialized, and wire-replay row agreement under named production projection facts",
+        "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode before validation/materialization/wire projection"
       ],
       "missing_work": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates.",
         "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
-        "Extend the accepted-predicate parser/wire composition into parser-internal implementation equivalence for every remaining consensus byte object."
+        "Extend the accepted-predicate parser/wire/production projection composition into parser-internal implementation equivalence for every remaining consensus byte object."
       ],
       "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work."
     },
@@ -548,10 +549,14 @@
         "node/src/native/mod.rs plan_canonical_index_rebuild now decodes all block actions, materializes sidecar payloads once through materialize_native_action_payloads, and only then derives action-stream and wire-replay canonical rows",
         "node/src/native/mod.rs load_staged_sizes_with_limits, load_staged_proofs_with_limits, and build_validated_startup_state_with_limits now route startup staged-sidecar repair and pending-action quarantine cleanup through the same formal storage-durability barrier before returning repaired startup state",
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean now derives validation/replay row-count agreement and bridge replay-count agreement from accepted wire replay projection plus shared decoded-row construction premises",
-        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now derives decoded action-row/raw replay-row agreement from accepted block-action decode plus accepted wire replay projection before sync raw canonical publication"
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now derives decoded action-row/raw replay-row agreement from accepted block-action decode plus accepted wire replay projection before sync raw canonical publication",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now binds accepted decoded payload rows to validated action rows, materialized action/payload rows, and wire replay rows through named production projection facts",
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/wire row agreement at the raw-ingress full-byte publication surface",
+        "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks raw block-action bytes, decoded validation rows, materialized sidecar payload rows, planned effect rows, and wire replay rows are built from the same decoded actions"
       ],
       "missing_work": [
-        "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes and bind DA sidecar materialization to the same decoded replay rows.",
+        "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
+        "Generalize the decoded/validated/materialized/wire row projection proof across mining, announced import, sync, reorg replay, and startup repair paths as one complete native-node refinement theorem.",
         "Add remaining restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
@@ -581,7 +586,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 83,
+      "completion_percent": 84,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -601,11 +606,13 @@
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean keeps materialized DA publication and transfer no-theft/input-slot authorization on the same tx-leaf/statement/replay surface",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean specializes materialized rows into concrete Transaction::new and consensus DA-blob relations with exact Consensus.DaRoot.daBlob bytes and explicit u32 length bounds",
         "node/src/native/mod.rs materialized_sidecar_transfer_payload_builds_consensus_da_blob checks sidecar materialization, consensus transaction fields, DA blob bytes, and DA root against production helpers",
-        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean now proves the concrete Transaction::new-to-Consensus.DaRoot.daBlob relation for transactions.map consensusDaPayload, leaving only materialized-row-to-transaction equivalence explicit on that path"
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean now proves the concrete Transaction::new-to-Consensus.DaRoot.daBlob relation for transactions.map consensusDaPayload, leaving only materialized-row-to-transaction equivalence explicit on that path",
+        "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean now composes the raw-ingress full-byte surface with production projection facts so materialized action/payload rows agree with decoded, validated, and wire replay rows",
+        "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks sidecar ciphertext hash/size binding, materialized ciphertext row counts, planned ciphertext row counts, and bridge replay row counts against production wire replay projection"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
-        "Extend materialized consensus DA-blob refinement across mining, announced import, sync, replay, and arbitrary-byte parser internals; DA availability and retention remain separate.",
+        "Extend materialized consensus DA-blob and row-projection refinement across mining, announced import, sync, replay, startup, and arbitrary-byte parser internals; DA availability and retention remain separate.",
         "Specify hot/cold DA retention assumptions outside consensus."
       ],
       "performance_constraint": "Keep sidecar checks bounded by existing size caps and staged hashes."

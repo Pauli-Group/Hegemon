@@ -326,6 +326,7 @@ HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS="$LEAN_TRANSFER_STATE_ADMISSION_VE
 HEGEMON_LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS="$LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_artifact_binding_admission_vectors_match_production --lib --no-default-features -- --nocapture
   cargo test -p hegemon-node materialized_sidecar_transfer_payload_builds_consensus_da_blob --lib --no-default-features -- --nocapture
+  cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS="$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_commitment_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS="$LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS" \

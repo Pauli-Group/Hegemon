@@ -777,13 +777,13 @@
         "Hegemon.Wallet.NotePlaintextCommitment.exported_note_data_commitment_expands_to_field_formula",
         "Hegemon.Wallet.NotePlaintextCommitment.input_witness_from_recovered_reconstructs_note_commitment",
         "Hegemon.Wallet.NotePlaintextCommitment.input_witness_from_exported_plaintext_reconstructs_commitment",
-    "Hegemon.Wallet.NotePlaintextCommitment.decrypt_success_plaintext_to_commitment_boundary",
-    "Hegemon.Wallet.NotePlaintextCommitment.active_output_slot_commitment_matches_exported_plaintext",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_projected_da_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash"
-  ],
+        "Hegemon.Wallet.NotePlaintextCommitment.decrypt_success_plaintext_to_commitment_boundary",
+        "Hegemon.Wallet.NotePlaintextCommitment.active_output_slot_commitment_matches_exported_plaintext",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_boundary_binds_projected_da_hash",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_projected_da_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash"
+      ],
       "assumptions": [
         "The Lean model covers byte-level parser grammar for the two production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes and wallet::NoteCiphertext::from_chain_bytes.",
         "Generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid chain container bytes, chain memo overrun, nonzero fixed-container padding, noncanonical compact KEM length encoding, trailing chain bytes, expected wire lengths, and expected DA projection bytes for valid chain wires, including the fixed valid chain length and fixed projected DA preimage length.",
@@ -919,20 +919,20 @@
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_only_open_crypto_obligation",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.same_wire_ciphertext_privacy_game_implies_same_allowed_leakage",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_select_same_public_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_projected_da_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash",
-    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_secret_resampling_boundary_facts",
-    "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts",
-    "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary",
-    "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_open_assumption_decrypt_da_boundary"
-  ],
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_ciphertext_privacy_game_public_metadata_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_select_same_public_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_projected_da_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_secret_resampling_boundary_facts",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts",
+        "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary",
+        "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_open_assumption_decrypt_da_boundary"
+      ],
       "assumptions": [
         "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_boundary_facts`, `ciphertext_privacy_game_secret_resampling_boundary_facts`, and `ciphertext_privacy_game_open_assumption_boundary_facts` additionally carry first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game; the secret-resampling theorem proves public metadata and batch/timing leakage remain stable when left and right private witnesses and prover randomness are independently replaced, while the open-assumption theorem packages the deterministic public boundary, the resampling boundary, the same-wire leakage theorem, and the exact remaining assumption fields in one review surface. When the game is composed with active native tx-leaf output slots, every active public output rank carries the parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates across both worlds; the active-output secret-resampling theorem proves that this public metadata boundary is preserved for selected and all active rows after independent private-witness/prover-randomness resampling. The all-active wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate, and the open-assumption decrypt/DA theorem packages that selected-row decrypt/hash evidence together with the public privacy-boundary assumption object.",
         "The cryptographic privacy step is the explicit `wireIndistinguishable` field. It stands for the ML-KEM encapsulation, AEAD confidentiality, KDF/domain separation, and RNG freshness assumptions needed to treat different same-shape ciphertext wires as computationally indistinguishable.",
@@ -3916,7 +3916,7 @@
       "id": "native.pending-action-byte-replay-row-count-binding",
       "component": "native pending-action byte replay row-count binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, and decoded block-action validation. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, and raw-ingress pending-action publication can expose replay row-count equality against both decoded payload rows and validated action rows under an explicit production projection premise.",
+      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, decoded block-action validation, and production projection rows. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, and decoded payload rows, validated action rows, materialized action/payload rows, and wire replay rows agree under the named production projection facts now exercised by a Rust conformance regression.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_parser_publication_and_validation_predicates",
       "production_eligible": true,
@@ -3927,11 +3927,13 @@
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_block_action_validation_validated_count",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_validated_replay_row_counts",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_replay_row_counts",
-        "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts"
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_production_projection_binds_decoded_validation_materialized_rows",
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows"
       ],
       "assumptions": [
-        "The theorem composes accepted parser, wire-replay, publication, and block-action validation predicates; it does not prove arbitrary-byte parser internals.",
-        "The validated variants keep `validation.actions.length = blockActionDecode.actualActionPayloadCount` as an explicit implementation-equivalence premise until the production decoded-action-to-validation-row projection is mechanized end to end.",
+        "The theorem composes accepted parser, wire-replay, publication, block-action validation, and production projection predicates; it does not prove arbitrary-byte parser internals.",
+        "The production projection variants make decoded-action-to-validation-row, materialized-action, materialized-payload, and wire-replay row equality named review facts instead of anonymous equality premises; the companion Rust regression checks the current production construction path.",
         "Raw-ingress wrappers consume existing `RawIngressPendingActionPublicationFacts`; they do not prove DA availability, hash security, proof soundness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -3949,7 +3951,8 @@
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
-        "bash scripts/check_formal_core.sh"
+        "bash scripts/check_formal_core.sh",
+        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {
@@ -3960,7 +3963,7 @@
         },
         {
           "id": "native-pending-action-byte-row-count-validation-projection-open",
-          "description": "The validated row-count theorem keeps the production projection from decoded action payload rows to validation action rows as an explicit equality premise.",
+          "description": "The production decoded-action, validation, materialized-payload, and wire-replay projection is now a named Lean fact package with a Rust conformance regression for the current production path, but arbitrary parser-internal proof and complete native-node equivalence remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -5548,16 +5551,18 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "component": "native raw ingress full byte publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, and native tx-leaf full statement artifact facts.",
+      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection row agreement across decoded, validated, materialized, and wire-replay rows.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_top_level_review_surface_over_existing_refinement_theorems",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface"
+        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface",
+        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"
       ],
       "assumptions": [
-        "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, and canonical publication predicates.",
+        "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, canonical publication, and pending-action production projection predicates.",
         "The parser-to-canonical tx-leaf vector projection remains an explicit `NativeTxLeafArtifactCanonicalProjectionAssumptions` input, and arbitrary-byte parser internals remain separate from this composition theorem.",
+        "The production projection row theorem relies on named projection facts for validation and materialization row construction; the companion Rust regression exercises the current production helper path.",
         "The theorem intentionally does not prove cryptographic hash security, proof-system soundness, DA availability, storage durability below accepted predicates, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -5571,18 +5576,20 @@
         "METHODS.md",
         "DESIGN.md",
         "scripts/hegemon_formal_core/src/lib.rs",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
-        "bash scripts/check_formal_core.sh"
+        "bash scripts/check_formal_core.sh",
+        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {
           "id": "native-raw-ingress-full-byte-parser-and-crypto-assumptions-explicit",
-          "description": "The theorem makes the full accepted surface reviewable but still leaves arbitrary-byte parser internals, parser-to-canonical vector projection, hash security/equivalence, proof soundness, and complete native-node refinement as explicit work.",
+          "description": "The theorem makes the full accepted surface and production row projection reviewable, but still leaves arbitrary-byte parser internals, parser-to-canonical vector projection, hash security/equivalence, proof soundness, DA availability, and complete native-node refinement as explicit work.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

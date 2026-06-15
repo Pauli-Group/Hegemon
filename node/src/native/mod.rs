@@ -22489,6 +22489,81 @@ mod tests {
     }
 
     #[test]
+    fn pending_action_raw_bytes_project_to_validated_materialized_replay_rows() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [74u8; 48], [75u8; 48], 0);
+        let outbound = test_outbound_bridge_action(b"projection outbound");
+        let candidate = test_candidate_artifact_action(1, 76);
+        let actions = vec![transfer, outbound, candidate];
+        let meta = mined_child_with_actions(&state.best, 1, pow_bits, 0, actions.clone());
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+        }
+
+        let decoded = decode_block_actions(&meta).expect("decode canonical block action bytes");
+        assert_eq!(decoded.len(), actions.len());
+        assert_eq!(meta.action_bytes.len(), decoded.len());
+        assert_eq!(usize::try_from(meta.tx_count).unwrap(), decoded.len());
+        for ((decoded_action, expected_action), raw_bytes) in
+            decoded.iter().zip(actions.iter()).zip(meta.action_bytes.iter())
+        {
+            assert_eq!(decoded_action.tx_hash, expected_action.tx_hash);
+            assert_eq!(decoded_action.encode(), *raw_bytes);
+        }
+
+        validate_block_actions_locked(&state, &decoded).expect("decoded actions validate");
+        let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &decoded)
+            .expect("materialize from same decoded actions");
+        assert_eq!(materialized.len(), decoded.len());
+        for (action, payload) in decoded.iter().zip(materialized.iter()) {
+            assert_eq!(payload.ciphertexts.len(), action.ciphertext_hashes.len());
+            assert_eq!(
+                payload.replay_key,
+                bridge_inbound_replay_key_from_action(action).expect("project replay key")
+            );
+            for ((bytes, expected_hash), expected_size) in payload
+                .ciphertexts
+                .iter()
+                .zip(action.ciphertext_hashes.iter())
+                .zip(action.ciphertext_sizes.iter())
+            {
+                assert_eq!(ciphertext_hash_bytes(bytes), *expected_hash);
+                assert_eq!(bytes.len(), usize::try_from(*expected_size).unwrap());
+            }
+        }
+
+        let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &decoded)
+            .expect("plan effects from same decoded actions");
+        assert_eq!(planned.len(), decoded.len());
+        let projection =
+            admit_native_action_wire_replay_projection("projection equivalence", &decoded, &planned)
+                .expect("wire replay projection from same decoded actions");
+        let materialized_ciphertext_rows = materialized
+            .iter()
+            .map(|payload| payload.ciphertexts.len())
+            .sum::<usize>();
+        let planned_ciphertext_rows = planned
+            .iter()
+            .map(|effect| effect.ciphertexts.len())
+            .sum::<usize>();
+        let planned_replay_rows = planned
+            .iter()
+            .filter(|effect| effect.replay_key.is_some())
+            .count();
+        assert_eq!(projection.projected_action_count, decoded.len());
+        assert_eq!(projection.projected_action_count, materialized.len());
+        assert_eq!(
+            projection.projected_ciphertext_row_count,
+            materialized_ciphertext_rows
+        );
+        assert_eq!(projection.projected_ciphertext_row_count, planned_ciphertext_rows);
+        assert_eq!(projection.projected_bridge_replay_row_count, planned_replay_rows);
+    }
+
+    #[test]
     fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;

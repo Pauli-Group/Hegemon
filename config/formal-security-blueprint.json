@@ -8760,8 +8760,8 @@
       "id": "native.pending-action-byte-replay-row-count-binding",
       "claim_id": "native.pending-action-byte-replay-row-count-binding",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean pending-action byte and raw-ingress publication surfaces, accepted exact pending-action decode, accepted block-action decode, accepted wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, and accepted decoded block-action validation imply replay row-count agreement with decoded payload rows and, under an explicit validation-row projection equality, replay row-count agreement with validated action rows.",
-      "informal_argument": "`Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_replay_row_counts` composes exact decode, block-action decode declared-count binding, and accepted wire replay projection to derive replay row-count equality. `pending_action_byte_publication_facts_bind_replay_row_counts` extracts the same facts from `PendingActionBytePublicationFacts`. `accepted_actions_from_validated_count` and `accepted_block_action_validation_validated_count` prove the recursive block-action validation evaluator consumes every accepted validation row. `accepted_pending_action_byte_decode_binds_validated_replay_row_counts` and `raw_ingress_pending_action_publication_binds_validated_replay_row_counts` then connect decoded payload rows, wire replay rows, and validated action rows while keeping the production decoded-action-to-validation-row equality as an explicit implementation-equivalence premise.",
+      "formal_statement": "For the executable Lean pending-action byte and raw-ingress publication surfaces, accepted exact pending-action decode, accepted block-action decode, accepted wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, accepted decoded block-action validation, and named production projection facts imply replay row-count agreement with decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows.",
+      "informal_argument": "`Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_replay_row_counts` composes exact decode, block-action decode declared-count binding, and accepted wire replay projection to derive replay row-count equality. `pending_action_byte_publication_facts_bind_replay_row_counts` extracts the same facts from `PendingActionBytePublicationFacts`. `accepted_actions_from_validated_count` and `accepted_block_action_validation_validated_count` prove the recursive block-action validation evaluator consumes every accepted validation row. `accepted_pending_action_byte_decode_binds_validated_replay_row_counts` and `raw_ingress_pending_action_publication_binds_validated_replay_row_counts` connect decoded payload rows, wire replay rows, and validated action rows. `pending_action_production_projection_binds_decoded_validation_materialized_rows` and `accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows` then name the production projection facts tying decoded payload rows to validation actions, materialized action rows, materialized payload rows, and wire replay rows.",
       "depends_on": [
         "native.codec-admission",
         "native.pending-action-reload",
@@ -8789,7 +8789,8 @@
         "DESIGN.md",
         "scripts/hegemon_formal_core/src/lib.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "node/src/native/mod.rs"
       ],
       "target_review": {
         "status": "accepted",
@@ -8807,9 +8808,14 @@
           "id": "formal-core-pending-action-byte-replay-row-count-binding-claim",
           "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the pending-action byte replay row-count binding theorem set.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "rust-pending-action-raw-bytes-production-projection-test",
+          "description": "Changing raw block-action byte decode, validation, sidecar materialization, action planning, or wire replay projection so they no longer agree on rows must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves a parser/publication/validation row-count composition over accepted production-bound predicates. It does not prove arbitrary raw SCALE/bincode parser correctness, production decoded-action-to-validation-row projection beyond the explicit equality premise, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, DA availability, or complete native-node equivalence."
+      "scope_boundary": "This node proves a parser/publication/validation/materialization row-count composition over accepted production-bound predicates and gates the current Rust production path. It does not prove arbitrary raw SCALE/bincode parser correctness, all parser-internal implementation equivalence, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, DA availability, or complete native-node equivalence."
     },
     {
       "id": "native.tx-leaf-artifact-projection-refinement",
@@ -9731,14 +9737,15 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "claim_id": "native.raw-ingress-full-byte-publication-surface",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, and the canonical statement surface imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, and statement/proof artifact facts.",
-      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. This makes the accepted path from decoded pending-action bytes through sidecar publication, raw canonical replay, and tx-leaf statement artifact binding directly auditable without adding runtime work.",
+      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, the canonical statement surface, accepted block-action validation, and named production projection facts imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, statement/proof artifact facts, and decoded/validated/materialized/wire row agreement.",
+      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. `accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows` additionally constructs the pending-action replay row-count facts from that flattened surface and composes them with accepted block-action validation plus named production projection facts, so decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows agree at the raw-ingress full-byte boundary.",
       "depends_on": [
         "native.raw-ingress-pending-action-publication-refinement",
         "native.tx-leaf-artifact-projection-refinement",
         "native.da-sidecar-replay-binding",
         "native.codec-admission",
-        "release.dependency-waivers"
+        "release.dependency-waivers",
+        "native.pending-action-byte-replay-row-count-binding"
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
@@ -9747,7 +9754,9 @@
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
         "formal/lean/Hegemon.lean",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "node/src/native/mod.rs"
       ],
       "implementation_bindings": [],
       "evidence_paths": [
@@ -9757,7 +9766,9 @@
         "METHODS.md",
         "DESIGN.md",
         "scripts/hegemon_formal_core/src/lib.rs",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "node/src/native/mod.rs"
       ],
       "target_review": {
         "status": "accepted",
@@ -9775,9 +9786,19 @@
           "id": "formal-core-raw-ingress-full-byte-publication-surface-claim",
           "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "lean-raw-ingress-full-byte-production-projection-theorem",
+          "description": "Removing or weakening the raw-ingress full-byte production projection theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "rust-raw-ingress-full-byte-production-projection-test",
+          "description": "Changing the production raw bytes to validation/materialization/wire projection path so row counts diverge must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, and parsed tx-leaf artifact facts. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
+      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, and named production row projection facts. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
     },
     {
       "id": "native.materialized-sidecar-da-blob-publication",

@@ -55,6 +55,20 @@ structure PendingActionByteDecodeReplayRowCountFacts
     wireOutput.projectedActionCount =
       blockActionDecode.actualActionPayloadCount
 
+structure PendingActionProductionProjectionFacts
+    (blockActionDecode : BlockActionDecodeInput)
+    (wireProjection : ActionWireReplayProjectionInput)
+    (validation : BlockActionValidationInput)
+    (materializedActionCount materializedPayloadCount : Nat) : Prop where
+  validationActionsMatchDecodedPayloads :
+    validation.actions.length = blockActionDecode.actualActionPayloadCount
+  wireActionRowsMatchDecodedPayloads :
+    wireProjection.actionCount = blockActionDecode.actualActionPayloadCount
+  materializedActionRowsMatchDecodedPayloads :
+    materializedActionCount = blockActionDecode.actualActionPayloadCount
+  materializedPayloadRowsMatchActions :
+    materializedPayloadCount = materializedActionCount
+
 theorem accepted_pending_action_byte_decode_binds_replay_row_counts
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
@@ -318,6 +332,222 @@ structure PendingActionByteDecodeValidatedReplayRowCountFacts
   replayRowsMatchValidatedActions :
     wireOutput.projectedActionCount =
       validationSummary.validatedActionCount
+
+structure PendingActionByteDecodeValidatedProductionProjectionFacts
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (wireProjection : ActionWireReplayProjectionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (validation : BlockActionValidationInput)
+    (validationSummary : BlockActionValidationSummary)
+    (materializedActionCount materializedPayloadCount : Nat) : Prop where
+  validatedReplayRowCountFacts :
+    PendingActionByteDecodeValidatedReplayRowCountFacts
+      pendingDecode
+      blockActionDecode
+      wireProjection
+      wireOutput
+      validation
+      validationSummary
+  productionProjectionFacts :
+    PendingActionProductionProjectionFacts
+      blockActionDecode
+      wireProjection
+      validation
+      materializedActionCount
+      materializedPayloadCount
+  materializedActionRowsMatchValidatedActions :
+    materializedActionCount = validationSummary.validatedActionCount
+  materializedPayloadRowsMatchValidatedActions :
+    materializedPayloadCount = validationSummary.validatedActionCount
+  wireRowsMatchMaterializedActions :
+    wireOutput.projectedActionCount = materializedActionCount
+  wireRowsMatchMaterializedPayloads :
+    wireOutput.projectedActionCount = materializedPayloadCount
+
+theorem pending_action_production_projection_binds_decoded_validation_materialized_rows
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    (decodeFacts :
+      PendingActionByteDecodeReplayRowCountFacts
+        pendingDecode
+        blockActionDecode
+        wireProjection
+        wireOutput)
+    (blockActionValidationAccepted :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (projectionFacts :
+      PendingActionProductionProjectionFacts
+        blockActionDecode
+        wireProjection
+        validation
+        materializedActionCount
+        materializedPayloadCount) :
+    PendingActionByteDecodeValidatedProductionProjectionFacts
+      pendingDecode
+      blockActionDecode
+      wireProjection
+      wireOutput
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount := by
+  have validationAccepts :
+      blockActionValidationAccepts validation = true := by
+    simp [
+      blockActionValidationAccepts,
+      blockActionValidationAccepted
+    ]
+  have validationPreconditions :
+      blockActionValidationPreconditions validation = true := by
+    simpa [
+      accepts_iff_block_action_validation_preconditions validation
+    ] using validationAccepts
+  have validationCountMatchesActions :
+      validationSummary.validatedActionCount =
+        validation.actions.length :=
+    accepted_block_action_validation_validated_count
+      blockActionValidationAccepted
+  have replayRowsMatchValidatedActions :
+      wireOutput.projectedActionCount =
+        validationSummary.validatedActionCount := by
+    calc
+      wireOutput.projectedActionCount =
+          blockActionDecode.actualActionPayloadCount :=
+        decodeFacts.replayRowsMatchDecodedPayloads
+      _ = validation.actions.length :=
+        projectionFacts.validationActionsMatchDecodedPayloads.symm
+      _ = validationSummary.validatedActionCount :=
+        validationCountMatchesActions.symm
+  have validatedFacts :
+      PendingActionByteDecodeValidatedReplayRowCountFacts
+        pendingDecode
+        blockActionDecode
+        wireProjection
+        wireOutput
+        validation
+        validationSummary :=
+    {
+      decodeReplayRowCountFacts := decodeFacts,
+      blockActionValidationAccepted := blockActionValidationAccepted,
+      blockActionValidationPreconditions := validationPreconditions,
+      validationCountMatchesActions := validationCountMatchesActions,
+      validationActionsMatchDecodedPayloads :=
+        projectionFacts.validationActionsMatchDecodedPayloads,
+      replayRowsMatchValidatedActions :=
+        replayRowsMatchValidatedActions
+    }
+  have materializedActionRowsMatchValidatedActions :
+      materializedActionCount = validationSummary.validatedActionCount := by
+    calc
+      materializedActionCount =
+          blockActionDecode.actualActionPayloadCount :=
+        projectionFacts.materializedActionRowsMatchDecodedPayloads
+      _ = validation.actions.length :=
+        projectionFacts.validationActionsMatchDecodedPayloads.symm
+      _ = validationSummary.validatedActionCount :=
+        validationCountMatchesActions.symm
+  have materializedPayloadRowsMatchValidatedActions :
+      materializedPayloadCount = validationSummary.validatedActionCount := by
+    calc
+      materializedPayloadCount = materializedActionCount :=
+        projectionFacts.materializedPayloadRowsMatchActions
+      _ = validationSummary.validatedActionCount :=
+        materializedActionRowsMatchValidatedActions
+  have wireRowsMatchMaterializedActions :
+      wireOutput.projectedActionCount = materializedActionCount := by
+    calc
+      wireOutput.projectedActionCount =
+          validationSummary.validatedActionCount :=
+        replayRowsMatchValidatedActions
+      _ = materializedActionCount :=
+        materializedActionRowsMatchValidatedActions.symm
+  have wireRowsMatchMaterializedPayloads :
+      wireOutput.projectedActionCount = materializedPayloadCount := by
+    calc
+      wireOutput.projectedActionCount = materializedActionCount :=
+        wireRowsMatchMaterializedActions
+      _ = materializedPayloadCount :=
+        projectionFacts.materializedPayloadRowsMatchActions.symm
+  exact
+    {
+      validatedReplayRowCountFacts := validatedFacts,
+      productionProjectionFacts := projectionFacts,
+      materializedActionRowsMatchValidatedActions :=
+        materializedActionRowsMatchValidatedActions,
+      materializedPayloadRowsMatchValidatedActions :=
+        materializedPayloadRowsMatchValidatedActions,
+      wireRowsMatchMaterializedActions :=
+        wireRowsMatchMaterializedActions,
+      wireRowsMatchMaterializedPayloads :=
+        wireRowsMatchMaterializedPayloads
+    }
+
+theorem accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (wireProjectionAccepted :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (blockActionValidationAccepted :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (projectionFacts :
+      PendingActionProductionProjectionFacts
+        blockActionDecode
+        wireProjection
+        validation
+        materializedActionCount
+        materializedPayloadCount) :
+    PendingActionByteDecodeValidatedProductionProjectionFacts
+      pendingDecode
+      blockActionDecode
+      wireProjection
+      wireOutput
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount := by
+  have blockActionDeclaredCountOk :
+      blockActionDecode.declaredTxCount =
+        blockActionDecode.actualActionPayloadCount :=
+    block_action_decode_acceptance_binds_declared_count
+      blockActionDecodeAccepted
+  have wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount := by
+    calc
+      wireProjection.actionCount =
+          blockActionDecode.actualActionPayloadCount :=
+        projectionFacts.wireActionRowsMatchDecodedPayloads
+      _ = blockActionDecode.declaredTxCount :=
+        blockActionDeclaredCountOk.symm
+  have decodeFacts :=
+    accepted_pending_action_byte_decode_binds_replay_row_counts
+      pendingDecodeAccepted
+      blockActionDecodeAccepted
+      wireProjectionAccepted
+      wireActionCountMatchesDeclared
+  exact
+    pending_action_production_projection_binds_decoded_validation_materialized_rows
+      decodeFacts
+      blockActionValidationAccepted
+      projectionFacts
 
 theorem accepted_pending_action_byte_decode_binds_validated_replay_row_counts
     {pendingDecode : ExactDecodeInput}
