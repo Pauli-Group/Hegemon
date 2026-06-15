@@ -6,30 +6,30 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 81.34,
   "last_full_formal_core": {
-    "commit": "0ed97944c1e524782a913860ab1d5d5d460e9bf4",
-    "status": "passed locally 2026-06-15T11:07:48Z",
+    "commit": "814ca08b4543d7e62128c6e132c3e7d11896f84d",
+    "status": "passed locally 2026-06-15T11:27:05Z",
     "claims": 115,
-    "named_lean_theorems": 1529,
+    "named_lean_theorems": 1533,
     "production_eligible_claims": 105,
     "blueprint_edges": 480,
     "falsification_cases": 446,
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T11:11:08Z",
-    "commit": "0ed97944c1e524782a913860ab1d5d5d460e9bf4",
-    "status": "passed with claims/blueprint gates, targeted Lean for CanonicalVerifierBoundary and MaterializedTransferNoTheftPublication, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production",
+    "date": "2026-06-15T11:28:47Z",
+    "commit": "814ca08b4543d7e62128c6e132c3e7d11896f84d",
+    "status": "passed with claims/blueprint gates, targeted Lean for PqNoise and PqNoiseHandshakeChannel, live service health, wallet-send, live mining active, NTP synchronized, and isolated single-node mining proving block production",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 0ed97944c1e524782a913860ab1d5d5d460e9bf4",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 814ca08b4543d7e62128c6e132c3e7d11896f84d",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1529 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 115 claims, 1533 named Lean theorem declarations, 105 production-eligible claims, and 43 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 115 nodes, 480 edges, 446 falsification cases, and 200 implementation bindings",
-      "$HOME/.elan/bin/lake build Hegemon.Transaction.CanonicalVerifierBoundary Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
+      "$HOME/.elan/bin/lake build Hegemon.Network.PqNoise Hegemon.Network.PqNoiseHandshakeChannel Hegemon passed from formal/lean on hegemon-dev with 131 jobs",
       "hegemon-node.service remained active with NRestarts=0; no restart was needed for the live service during this validation pass",
       "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11346",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26951 H/s, difficulty 520159231, blocks_found 673, and block_height 11346",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 19186",
+      "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 26946 H/s, difficulty 520159231, blocks_found 673, and block_height 11346",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 19316",
       "timedatectl reported NTPSynchronized=yes"
     ]
   },
@@ -48,31 +48,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Proved the materialized transfer public stablecoin-exception slice. The canonical balance/public-field boundary now proves that any non-native nonzero public authorized delta requires public stablecoin enablement and the selected public stablecoin asset, and the materialized transfer publication surface lifts that fact onto the accepted materialized raw-ingress path under split spend and balance/public-field soundness assumptions.",
+    "summary": "Proved the PQ-native handshake/channel implementation-equivalence slice. The PQ Noise model now proves role-selected AAD label separation from both send and receive HKDF labels, and the handshake/channel bridge binds accepted authenticated PQ handshakes directly to the PQ-native initial channel state plus initial protect/open transitions with role-correct slots, zero nonces, per-direction counter advancement, AAD separation, and distinct protect/open slots.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean"
+      "formal/lean/Hegemon/Network/PqNoise.lean",
+      "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_publication_public_non_native_nonzero_requires_stablecoin_exception"
+      "Hegemon.Network.PqNoise.aad_info_distinct_from_send",
+      "Hegemon.Network.PqNoise.aad_info_distinct_from_recv",
+      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_pq_channel_facts",
+      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_pq_protect_open_facts"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for CanonicalVerifierBoundary, MaterializedTransferNoTheftPublication, and Hegemon with 131 jobs",
+      "lean_formal": "targeted lake build passed locally for PqNoise, PqNoiseHandshakeChannel, and Hegemon with 131 jobs",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T11:07:48Z with 115 theorem-backed claims, 1529 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T11:27:05Z with 115 theorem-backed claims, 1533 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
       "claims": 115,
-      "named_lean_theorems": 1529,
+      "named_lean_theorems": 1533,
       "production_eligible_claims": 105,
       "blueprint_edges": 480,
       "falsification_cases": 446,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The materialized theorem still depends on explicit `DeployedTxVerifierSpendSoundnessAssumption` and `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`; AIR/STARK/SmallWood soundness, witness extraction, and Rust verifier refinement are not yet mechanized.",
-      "The theorem proves the public stablecoin-exception shape, not stablecoin policy/oracle/attestation validity or chain-level bridge mint authorization.",
-      "Materialized-row-to-Transaction::new equivalence, hash/security equivalence, DA availability, storage durability below the modeled barrier, and complete native-node equivalence remain explicit assumptions; no runtime path changed in this zero-cost Lean composition."
+      "The handshake/channel theorem carries ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions; primitive cryptographic reductions are not mechanized in Lean.",
+      "SHA-256/HKDF implementation equivalence, OS RNG quality, KEM ciphertext correctness, network liveness, and complete native-node equivalence remain explicit assumptions.",
+      "Production transport/session completion outputs and all active frame send/receive paths still need deeper binding to the PQ-native handshake-to-channel theorem surface; no runtime path changed in this zero-cost Lean composition."
     ]
   },
   "last_production_binding_slice": {
