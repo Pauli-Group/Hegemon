@@ -1498,6 +1498,66 @@ theorem native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_p
         leftShape
         rightShape⟩
 
+theorem native_tx_leaf_ciphertext_privacy_game_all_active_outputs_select_same_public_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape) :
+    ∀ index publicCommitment publicCiphertextHash,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+        samePublicMetadataLeakage left right
+          ∧ sameBatchTimingLeakage left right
+          ∧ game.wireIndistinguishable
+          ∧ ActiveOutputPublicMetadataBoundary
+            input
+            shape
+            bound
+            statementFields
+            bindingFields
+            left
+            right
+            index
+            publicCommitment
+            publicCiphertextHash := by
+  intro index publicCommitment publicCiphertextHash slot
+  exact
+    native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary
+      bindingAccepted
+      surface
+      slot
+      game
+      leftShape
+
 theorem native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}
@@ -1802,6 +1862,153 @@ theorem native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitmen
       outputFacts,
       bindingFacts,
       activeBoundaryCopy⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_all_active_outputs_projected_da_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    (mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness : Prop)
+    (mlKemAssumption : mlKemIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (kdfAssumption : kdfDomainSeparation)
+    (rngAssumption : rngFreshness)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    ∀ index publicCommitment publicCiphertextHash,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+        mlKemIndistinguishability
+          ∧ aeadCiphertextConfidentiality
+          ∧ kdfDomainSeparation
+          ∧ rngFreshness
+          ∧ samePublicMetadataLeakage left right
+          ∧ sameBatchTimingLeakage left right
+          ∧ game.wireIndistinguishable
+          ∧ ∃ leftWire rightWire summary leftDaBytes rightDaBytes,
+            left.ciphertextBytes[
+                activeFlagCountBefore shape.outputFlags index]? =
+              some leftWire
+              ∧ right.ciphertextBytes[
+                  activeFlagCountBefore shape.outputFlags index]? =
+                some rightWire
+              ∧ left.ciphertextSummaries[
+                  activeFlagCountBefore shape.outputFlags index]? =
+                some summary
+              ∧ right.ciphertextSummaries[
+                  activeFlagCountBefore shape.outputFlags index]? =
+                some summary
+              ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+                leftWire = some summary
+              ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+                rightWire = some summary
+              ∧ Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+                leftWire = some leftDaBytes
+              ∧ Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+                rightWire = some rightDaBytes
+              ∧ leftDaBytes.length =
+                Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+                  + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+              ∧ rightDaBytes.length =
+                Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+                  + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+              ∧ summaryHasChainCiphertextFormat summary
+              ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded leftWire
+              ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded rightWire
+              ∧ leftWire.length =
+                Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+                  + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+                  + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+              ∧ rightWire.length =
+                Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+                  + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+                  + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+              ∧ shape.outputFlags[index]? = some 1
+              ∧ shape.commitments[index]? = some publicCommitment
+              ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+              ∧ statementFields.commitmentSeeds[index]? =
+                some publicCommitment
+              ∧ statementFields.ciphertextHashSeeds[index]? =
+                some publicCiphertextHash
+              ∧ bindingFields.commitmentSeeds[index]? =
+                some publicCommitment
+              ∧ bindingFields.ciphertextHashSeeds[index]? =
+                some publicCiphertextHash
+              ∧ input.ciphertextHashesMatch = true
+              ∧ input.ciphertextPayloadHashesMatch = true
+              ∧ input.outputCountMatches = true
+              ∧ OutputSlotFacts
+                1
+                publicCommitment
+                publicCiphertextHash
+              ∧ TxLeafActionBindingFacts input
+              ∧ ActiveOutputPublicMetadataBoundary
+                input
+                shape
+                bound
+                statementFields
+                bindingFields
+                left
+                right
+                index
+                publicCommitment
+                publicCiphertextHash := by
+  intro index publicCommitment publicCiphertextHash slot
+  exact
+    native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary
+      mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness
+      mlKemAssumption
+      aeadAssumption
+      kdfAssumption
+      rngAssumption
+      bindingAccepted
+      surface
+      slot
+      game
+      leftShape
+      leftObserverBytesBounded
+      rightObserverBytesBounded
 
 theorem native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment
     {input : TxLeafActionBindingInput}
@@ -2294,6 +2501,198 @@ theorem native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_state
       ciphertextPayloadHashesMatch,
       outputCountMatches,
       activeBoundary⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_open_assumption_decrypt_da_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    {attempt : DecryptAttempt}
+    {plaintext : NotePlaintextSummary}
+    {material : WalletRecipientMaterial}
+    {data : ExportedNoteData}
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness : Prop)
+    (mlKemAssumption : mlKemIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (kdfAssumption : kdfDomainSeparation)
+    (rngAssumption : rngFreshness)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (selectedAttempt :
+      left.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? =
+          some attempt.ciphertext)
+    (decryptAccepted : evaluateDecrypt attempt = none)
+    (exported : data = exportNoteData plaintext material)
+    (published : publicCommitment = commitmentFromNoteData data)
+    (ciphertextHashMatches : List Byte → Digest → Prop)
+    (leftCiphertextHashPreimage :
+      ∀ {wire summary daBytes},
+        left.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash)
+    (rightCiphertextHashPreimage :
+      ∀ {wire summary daBytes},
+        right.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      left
+      right
+      game.wireIndistinguishable
+      assumptions
+      ∧ mlKemIndistinguishability
+      ∧ aeadCiphertextConfidentiality
+      ∧ kdfDomainSeparation
+      ∧ rngFreshness
+      ∧ samePublicMetadataLeakage left right
+      ∧ sameBatchTimingLeakage left right
+      ∧ game.wireIndistinguishable
+      ∧ attempt.ciphertext.version = attempt.material.version
+      ∧ attempt.ciphertext.cryptoSuite = attempt.material.cryptoSuite
+      ∧ attempt.ciphertext.diversifierIndex =
+        attempt.material.diversifierIndex
+      ∧ attempt.cryptoAuthenticates = true
+      ∧ publicCommitment = commitmentFromPlaintext plaintext material
+      ∧ shape.commitments[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ statementFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ bindingFields.commitmentSeeds[index]? =
+        some (commitmentFromPlaintext plaintext material)
+      ∧ ∃ leftWire rightWire leftDaBytes rightDaBytes,
+        left.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? =
+          some leftWire
+          ∧ right.ciphertextBytes[
+              activeFlagCountBefore shape.outputFlags index]? =
+            some rightWire
+          ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            leftWire = some attempt.ciphertext
+          ∧ Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            rightWire = some attempt.ciphertext
+          ∧ Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            leftWire = some leftDaBytes
+          ∧ Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            rightWire = some rightDaBytes
+          ∧ ciphertextHashMatches leftDaBytes publicCiphertextHash
+          ∧ ciphertextHashMatches rightDaBytes publicCiphertextHash
+          ∧ leftDaBytes.length =
+            Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+              + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+          ∧ rightDaBytes.length =
+            Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+              + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+          ∧ summaryHasChainCiphertextFormat attempt.ciphertext
+          ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded leftWire
+          ∧ Hegemon.Wallet.NoteCiphertextWire.bytesBounded rightWire
+          ∧ leftWire.length =
+            Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+              + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+              + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+          ∧ rightWire.length =
+            Hegemon.Wallet.NoteCiphertextWire.chainCiphertextSize
+              + Hegemon.Wallet.NoteCiphertextWire.chainCompactKemLen.length
+              + Hegemon.Wallet.NoteCiphertextWire.mlKemCiphertextLen
+          ∧ shape.ciphertextHashes[index]? = some publicCiphertextHash
+          ∧ statementFields.ciphertextHashSeeds[index]? =
+            some publicCiphertextHash
+          ∧ bindingFields.ciphertextHashSeeds[index]? =
+            some publicCiphertextHash
+          ∧ input.ciphertextHashesMatch = true
+          ∧ input.ciphertextPayloadHashesMatch = true
+          ∧ input.outputCountMatches = true
+          ∧ ActiveOutputPublicMetadataBoundary
+            input
+            shape
+            bound
+            statementFields
+            bindingFields
+            left
+            right
+            index
+            publicCommitment
+            publicCiphertextHash := by
+  exact
+    ⟨ciphertext_privacy_game_open_assumption_boundary_facts
+        game
+        assumptionProofs,
+      native_tx_leaf_ciphertext_privacy_game_decrypts_selected_output_to_statement_commitment_and_projected_da_hash
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        mlKemAssumption
+        aeadAssumption
+        kdfAssumption
+        rngAssumption
+        bindingAccepted
+        surface
+        slot
+        game
+        leftShape
+        leftObserverBytesBounded
+        rightObserverBytesBounded
+        selectedAttempt
+        decryptAccepted
+        exported
+        published
+        ciphertextHashMatches
+        leftCiphertextHashPreimage
+        rightCiphertextHashPreimage⟩
 
 end NativeObserverSurface
 end Privacy

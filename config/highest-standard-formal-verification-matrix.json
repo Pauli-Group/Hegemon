@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 80.46,
+  "overall_completion_percent": 80.83,
   "last_full_formal_core": {
     "commit": "1187af69085367278739a9d53cd38db14e2cfe13",
     "status": "passed locally 2026-06-15T09:33:24Z",
@@ -398,7 +398,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 52,
+      "completion_percent": 56,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -419,14 +419,17 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now separates public metadata leakage from full observer leakage by excluding raw ciphertext bytes while retaining public inputs, parsed summaries, and placement",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve public metadata leakage even when raw ciphertext wires differ under the explicit wire-indistinguishability premise",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes active native tx-leaf output slots with the ciphertext privacy game, proving both worlds select the same public active-output rank/summary and the same statement/proof-bound commitment/ciphertext-hash metadata while preserving batch/timing leakage and leaving raw wire indistinguishability explicit",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now quantifies that selected public active-output privacy-game boundary over every active output slot in the accepted native tx-leaf surface",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes selected same-shape privacy-game output rows with fixed chain wire and projected DA-byte boundaries for both worlds while keeping ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability obligations explicit",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now lifts the fixed wire and projected DA-byte privacy-game boundary from a selected output row to every active output slot",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes the selected-row ciphertext privacy game with wallet decrypt-to-commitment binding, proving recipient-decrypted selected rows reconstruct the same plaintext-derived note commitment carried by public shape, statement preimage, and proof-binding rows while preserving explicit public metadata/batch leakage and raw-wire crypto obligations",
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy as first-class assumptions in the privacy-game boundary theorem",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
-        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem"
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected decrypt-to-commitment/projected-DA hash boundary with that open-assumption privacy boundary so deterministic observer leakage, secret-resampling stability, same-wire discharge, and the explicit privacy assumptions travel with the native selected-output implementation evidence"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, sidecar privacy, and raw-wire indistinguishability assumptions.",
@@ -438,7 +441,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 80,
+      "completion_percent": 81,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -458,6 +461,7 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean binds selected projected DA preimage bytes to the public ciphertext-hash row under an explicit hash-match predicate while preserving statement/proof-binding ciphertext-hash indices and native equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean packages active native output ciphertext boundary facts: selected parsed observer row, fixed chain wire shape, public/statement/proof-binding ciphertext-hash indices, and native ciphertext-hash/payload-hash/output-count equality gates",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages selected same-shape privacy-game output rows with fixed chain wire length, projected DA bytes, public/statement/proof-binding ciphertext-hash rows, and native ciphertext-hash/payload-hash/output-count gates for both worlds",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now quantifies the fixed wire/projected DA-byte privacy-game boundary over every active output slot in the accepted native tx-leaf surface",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now gives privacy/ciphertext follow-up proofs a selected-output full statement/artifact package carrying output-slot facts, statement/proof-binding rows, wrapper/public/statement facts, and native artifact digest/backend gates",
         "wallet note ciphertext wire vector gate checks expected projected DA bytes and production ciphertext_hash_bytes over wallet::NoteCiphertext::to_da_bytes",
         "DA sidecar ciphertext hash and staged-ciphertext reload gates",
