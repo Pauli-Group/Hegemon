@@ -6,7 +6,7 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 76.77,
   "last_full_formal_core": {
-    "commit": "worktree:canonical-surface-slot-boundary-facts",
+    "commit": "9ee7f3819f0f76d6e8ba00426bcce83a14f857bc",
     "status": "passed locally 2026-06-15T01:07:16Z",
     "claims": 100,
     "named_lean_theorems": 1436,
@@ -15,18 +15,18 @@
     "implementation_bindings": 200
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-15T00:43:55Z",
-    "commit": "6c54ff8279c5cc4831b74ee6cdf92e282750d8ce",
+    "date": "2026-06-15T01:11:35Z",
+    "commit": "9ee7f3819f0f76d6e8ba00426bcce83a14f857bc",
     "status": "passed with targeted Lean, live service health, wallet-send, live mining active, and isolated single-node mining proving block production; the live service did not find a block during the 20-second sample at current difficulty",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 6c54ff8279c5cc4831b74ee6cdf92e282750d8ce",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9ee7f3819f0f76d6e8ba00426bcce83a14f857bc",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.PendingActionBytePublicationRefinement Hegemon passed from formal/lean on hegemon-dev",
-      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean passed from formal/lean on hegemon-dev",
+      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Transaction.ProofSystemBoundary Hegemon passed from formal/lean on hegemon-dev",
+      "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Transaction/ProofSystemBoundary.lean passed from formal/lean on hegemon-dev",
       "hegemon-node.service remained active with NRestarts=0; no restart was needed because this slice changed Lean/docs/metadata, not runtime node code",
       "bash scripts/smoke-test.sh passed against RPC port 9944 at height 11255",
       "bash scripts/test-node.sh wallet-send passed",
-      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 14577",
+      "bash scripts/test-node.sh single-node passed on isolated ports 19945/31333 and mined height 14802",
       "live hegemon_miningStatus reported is_mining=true with one mining thread, hash_rate around 27026 H/s, difficulty 520159231, blocks_found 582, and height 11255 before and after the 20-second sample",
       "live consensus status reported syncing=false, peers=0, best_hash 0x0000a11bc7441102fc147a8ad75968928ca3a64f32adb18b372a7787f7c3c514, state_root 0xa8cb9d81090be11200ac54c61c06d4e05b1820f6c38fbb8be61219c61819b6f381b476ccb2724e6db14a0d546731672f, nullifier_root 0xaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262e00f03e7b69af26b7faaf09fcd333050, and supply_digest 3066495429220",
       "live service height stayed at 11255 during a 20-second mining-status sample, so block production was confirmed through the isolated single-node mining test instead of claiming live height advancement",
