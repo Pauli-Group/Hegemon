@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 80.02,
+  "overall_completion_percent": 80.16,
   "last_full_formal_core": {
     "commit": "e91e7eaf86f8661f7266fd2a7fdc935bbad9e97d",
     "status": "passed locally 2026-06-15T07:49:18Z",
@@ -50,47 +50,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-15",
-    "summary": "Strengthened implementation equivalence with concrete DA-blob construction and mined-block publication composition. `accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob` removes the explicit Transaction::new-to-DA-blob proposition for the concrete `transactions.map consensusDaPayload` path, while `accepted_mined_block_commit_publication_facts` composes mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one accepted local mined-publication surface. Existing parser, hash, DA availability, proof-system, PoW threshold, storage durability, and complete native-node assumptions remain explicit. The proof-system boundary side of the slice also adds split spend-only and balance/public-field fact packages and direct consequences so future backend refinement can discharge smaller obligations instead of a monolithic verifier-soundness assumption.",
+    "summary": "Integrated three zero-runtime-cost theorem strengthenings: secret-resampling stability for the ciphertext privacy game, canonical Hegemon-side raw-ingress bridge publication without an external receipt-soundness premise, and strict action-request projection facts inside the pre-heavy-work resource boundary. These raise privacy/unlinkability, bridge mint/replay safety, and resource/DoS coverage while keeping crypto security, external receipt soundness, parser internals, benchmark caps, and complete native-node equivalence explicit.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
-      "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean",
+      "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.consensus_da_payload_transaction_bytes",
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.transaction_new_feeds_concrete_consensus_da_blob",
-      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_payloads_feed_concrete_consensus_da_blob",
-      "Hegemon.Native.MinedBlockCommitPublication.mined_commit_kind_eq_of_accepts",
-      "Hegemon.Native.MinedBlockCommitPublication.accepts_iff_mined_block_commit_publication_preconditions",
-      "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_spend_soundness_input_slot_bound_to_statement",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.canonical_statement_balance_soundness_public_field_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_implies_spend_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_split_boundary_facts_imply_full_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_parts_canonical_surface_implies_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_balance_public_boundary_facts_authorized_public_delta_value",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_spend_boundary_facts_input_slot_bound_to_statement",
-      "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_authorized_public_delta_value",
-      "Hegemon.Transaction.ProofSystemBoundary.spend_soundness_canonical_surface_input_slot_boundary_facts"
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_secret_resampling_boundary_facts",
+      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_safe",
+      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.action_request_projection_accepts_implies_preheavy_bounds"
     ],
     "validation": {
-      "lean_formal": "targeted lake build passed locally for MinedBlockCommitPublication, MaterializedConsensusDaBlobRefinement, CanonicalVerifierBoundary, ProofSystemBoundary, and Hegemon",
+      "lean_formal": "targeted lake build passed locally for CiphertextPrivacy, RawIngressBridgePendingActionPublication, PreHeavyWorkResourceBoundSurface, and Hegemon before metadata finalization; full formal-core pending for this integrated slice",
       "targeted_rust": [],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T07:49:18Z with 115 theorem-backed claims, 1509 named Lean theorem declarations, 105 production-eligible claims/nodes, 480 blueprint edges, 446 falsification cases, and 200 implementation bindings",
+      "formal_core": "pending for this integrated slice",
       "claims": 115,
-      "named_lean_theorems": 1509,
+      "named_lean_theorems": null,
       "production_eligible_claims": 105,
-      "blueprint_edges": 480,
-      "falsification_cases": 446,
+      "blueprint_edges": null,
+      "falsification_cases": null,
       "implementation_bindings": 200
     },
     "known_limitations": [
-      "The concrete DA-blob theorem removes the Transaction::new-to-DA-blob proposition for the production-shaped payload list but still assumes MaterializedRowsFeedTransactionNew and u32 length bounds.",
-      "The mined-block commit publication theorem composes accepted predicates; it does not prove PoW hash-threshold soundness, replay/body parser internals, storage durability, or complete native-node equivalence.",
-      "The proof-system boundary edits in this slice add narrower fact structures, but deployed proof-system soundness remains an explicit assumption until a backend/AIR refinement proof is mechanized.",
-      "The split proof-system boundary theorems reduce the shape of future obligations, but spend and balance/public-field deployed verifier soundness remain assumptions, not mechanized proof-system soundness."
+      "The privacy theorem proves deterministic public metadata and explicit batch/timing stability under secret resampling; it does not hide batch/timing leakage or mechanize ML-KEM, AEAD, RNG, or simulator zero knowledge.",
+      "The bridge canonical-publication-safe theorem removes the external receipt-soundness premise only for Hegemon-side raw/canonical publication facts; external receipt/PQ verifier soundness remains explicit for live bridge verifier claims.",
+      "The resource theorem exposes action-request parser/projection facts before heavy work; JSON/base64/SCALE parser correctness, benchmark caps, proof-system soundness, and complete native-node equivalence remain explicit assumptions."
     ]
   },
   "last_production_binding_slice": {
@@ -406,7 +391,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 50,
+      "completion_percent": 51,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -432,10 +417,11 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now separates explicit batch/timing leakage from public metadata leakage by projecting active-output count, ciphertext count, parsed-summary count, block height, and action index",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy as first-class assumptions in the privacy-game boundary theorem",
-        "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams"
+        "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM and chain wire bytes under distinct RNG streams",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game"
       ],
       "missing_work": [
-        "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, and sidecar privacy assumptions.",
+        "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, sidecar privacy, and raw-wire indistinguishability assumptions.",
         "Add unlinkability tests for wallet metadata, proof wrappers, sidecars, batching, and timing surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
@@ -606,7 +592,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 66,
+      "completion_percent": 67,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -621,7 +607,8 @@
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now packages canonical publication, accepted inbound receipt admission, native backend review preconditions, and explicit external receipt/PQ verifier soundness on the same bridge raw-ingress replay surface",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
-        "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication"
+        "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication",
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_safe`, packaging Hegemon-side bridge payload, decoded amount, raw pending-action publication, canonical publication, commitment-root, raw/canonical supply replay, and replay uniqueness facts without external receipt-soundness assumptions"
       ],
       "missing_work": [
         "Replace the boundary-only decoded bridge mint amount surface with a live PQ-clean bridge mint payload grammar and production decoder when bridge minting is enabled.",
@@ -655,7 +642,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 73,
+      "completion_percent": 74,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -665,7 +652,8 @@
         "PQ/frame size regressions",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean theorem `accepted_preheavy_resource_bound_surface_exposes_bounds` composes accepted resource-budget, RPC admission, sidecar upload, and mineable-action surfaces into one pre-heavy-work resource fact package",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean proves accepted sync response counts bound synced raw block batches before raw replay publication",
-        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now composes transfer-payload caps, candidate-artifact recursive proof caps, and tx-leaf artifact parser shape facts with the pre-heavy-work resource surface while carrying parser/cost assumptions explicitly"
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now composes transfer-payload caps, candidate-artifact recursive proof caps, and tx-leaf artifact parser shape facts with the pre-heavy-work resource surface while carrying parser/cost assumptions explicitly",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now proves `action_request_projection_accepts_implies_preheavy_bounds`, deriving strict submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates from accepted action-request projection before heavy work"
       ],
       "missing_work": [
         "Extend pre-heavy-work and sidecar proof-byte bounds to the remaining consensus-facing parser and public input families.",

@@ -539,6 +539,99 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
     recursiveProofWithinCap := recursiveProofWithinCap
   }
 
+structure AcceptedActionRequestProjectionPreHeavyBounds
+    (input : ActionRequestProjectionInput) : Prop where
+  actionRequestAccepted :
+    actionRequestProjectionAccepts input = true
+  actionRequestPreconditions :
+    actionRequestProjectionPreconditions input = true
+  jsonDecodeAccepts :
+    input.jsonDecodeAccepts = true
+  kernelEnvelopeFieldsAbsent :
+    input.kernelEnvelopeFieldsAbsent = true
+  routeSupported :
+    input.routeSupported = true
+  nullifierScopeValid :
+    input.nullifierScopeValid = true
+  nullifierCountWithinLimit :
+    input.nullifierCountWithinLimit = true
+  nullifierHexValid :
+    input.nullifierHexValid = true
+  publicArgsEncodedWithinLimit :
+    input.publicArgsEncodedWithinLimit = true
+  publicArgsBase64Decodes :
+    input.publicArgsBase64Decodes = true
+  publicArgsDecodedWithinLimit :
+    input.publicArgsDecodedWithinLimit = true
+  routePayloadDecodesExactly :
+    input.routePayloadDecodesExactly = true
+
+theorem action_request_projection_accepts_implies_preheavy_bounds
+    {input : ActionRequestProjectionInput}
+    (accepted : actionRequestProjectionAccepts input = true) :
+    AcceptedActionRequestProjectionPreHeavyBounds input := by
+  have preconditions :
+      actionRequestProjectionPreconditions input = true :=
+    (accepts_iff_action_request_projection_preconditions).mp accepted
+  cases input with
+  | mk jsonDecodeAccepts kernelEnvelopeFieldsAbsent routeSupported
+      nullifierScopeValid nullifierCountWithinLimit nullifierHexValid
+      publicArgsEncodedWithinLimit publicArgsBase64Decodes
+      publicArgsDecodedWithinLimit routePayloadDecodesExactly =>
+      have jsonDecodeAcceptsFact : jsonDecodeAccepts = true := by
+        cases h : jsonDecodeAccepts <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have kernelEnvelopeFieldsAbsentFact :
+          kernelEnvelopeFieldsAbsent = true := by
+        cases h : kernelEnvelopeFieldsAbsent <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have routeSupportedFact : routeSupported = true := by
+        cases h : routeSupported <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have nullifierScopeValidFact : nullifierScopeValid = true := by
+        cases h : nullifierScopeValid <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have nullifierCountWithinLimitFact :
+          nullifierCountWithinLimit = true := by
+        cases h : nullifierCountWithinLimit <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have nullifierHexValidFact : nullifierHexValid = true := by
+        cases h : nullifierHexValid <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have publicArgsEncodedWithinLimitFact :
+          publicArgsEncodedWithinLimit = true := by
+        cases h : publicArgsEncodedWithinLimit <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have publicArgsBase64DecodesFact :
+          publicArgsBase64Decodes = true := by
+        cases h : publicArgsBase64Decodes <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have publicArgsDecodedWithinLimitFact :
+          publicArgsDecodedWithinLimit = true := by
+        cases h : publicArgsDecodedWithinLimit <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      have routePayloadDecodesExactlyFact :
+          routePayloadDecodesExactly = true := by
+        cases h : routePayloadDecodesExactly <;>
+          simp [actionRequestProjectionPreconditions, h] at preconditions ⊢
+      exact {
+        actionRequestAccepted := accepted,
+        actionRequestPreconditions := preconditions,
+        jsonDecodeAccepts := jsonDecodeAcceptsFact,
+        kernelEnvelopeFieldsAbsent := kernelEnvelopeFieldsAbsentFact,
+        routeSupported := routeSupportedFact,
+        nullifierScopeValid := nullifierScopeValidFact,
+        nullifierCountWithinLimit := nullifierCountWithinLimitFact,
+        nullifierHexValid := nullifierHexValidFact,
+        publicArgsEncodedWithinLimit :=
+          publicArgsEncodedWithinLimitFact,
+        publicArgsBase64Decodes := publicArgsBase64DecodesFact,
+        publicArgsDecodedWithinLimit :=
+          publicArgsDecodedWithinLimitFact,
+        routePayloadDecodesExactly :=
+          routePayloadDecodesExactlyFact
+      }
+
 structure PreHeavyWorkVerificationPathSurface where
   resourceSurface : PreHeavyWorkResourceBoundSurface
   actionRequest : ActionRequestProjectionInput
@@ -576,6 +669,8 @@ structure AcceptedPreHeavyWorkVerificationPathBounds
     actionRequestProjectionAccepts surface.actionRequest = true
   actionRequestPreconditions :
     actionRequestProjectionPreconditions surface.actionRequest = true
+  actionRequestBounds :
+    AcceptedActionRequestProjectionPreHeavyBounds surface.actionRequest
   transferBounds :
     AcceptedTransferPayloadPreHeavyBounds surface.transferPayload
   candidateBounds :
@@ -601,16 +696,17 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
       surface
       parserCorrectness
       benchmarkCaps := by
-  have actionRequestPreconditions :
-      actionRequestProjectionPreconditions surface.actionRequest = true :=
-    (accepts_iff_action_request_projection_preconditions).mp
-      accepted.actionRequestAccepted
   exact {
     resourceFacts :=
       accepted_preheavy_resource_bound_surface_exposes_bounds
         accepted.resourceAccepted,
     actionRequestAccepted := accepted.actionRequestAccepted,
-    actionRequestPreconditions := actionRequestPreconditions,
+    actionRequestPreconditions :=
+      (action_request_projection_accepts_implies_preheavy_bounds
+        accepted.actionRequestAccepted).actionRequestPreconditions,
+    actionRequestBounds :=
+      action_request_projection_accepts_implies_preheavy_bounds
+        accepted.actionRequestAccepted,
     transferBounds :=
       transfer_payload_accepts_implies_preheavy_bounds
         accepted.transferPayloadAccepted,

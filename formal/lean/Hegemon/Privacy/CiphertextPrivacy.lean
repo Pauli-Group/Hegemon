@@ -98,6 +98,39 @@ structure CiphertextPrivacyBoundaryFacts
             proverRandomnessSeed := proverRandomnessSeed } =
         batchTimingView right
 
+structure SecretResamplingPrivacyFacts
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (assumptions : PrivacyBoundaryAssumptions) : Prop where
+  publicCiphertextShape : samePublicCiphertextShape left right
+  publicMetadataLeakage : samePublicMetadataLeakage left right
+  batchTimingLeakage : sameBatchTimingLeakage left right
+  rawWireIndistinguishable : wireIndistinguishable
+  proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene : assumptions.walletMetadataHygiene
+  timingAndBatchingPolicy : assumptions.timingAndBatchingPolicy
+  networkMetadataPolicy : assumptions.networkMetadataPolicy
+  publicMetadataStableUnderIndependentSecretResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed,
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed }
+  batchTimingStableUnderIndependentSecretResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed,
+      sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed }
+
 theorem ciphertext_privacy_game_preserves_public_ciphertext_shape
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right) :
@@ -223,6 +256,77 @@ theorem ciphertext_privacy_game_boundary_facts
           right
           privateWitness
           proverRandomnessSeed
+  }
+
+theorem ciphertext_privacy_game_secret_resampling_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions) :
+    SecretResamplingPrivacyFacts
+      left
+      right
+      game.wireIndistinguishable
+      assumptions := by
+  have boundary :=
+    ciphertext_privacy_game_boundary_facts
+      game
+      assumptionProofs
+  exact {
+    publicCiphertextShape := boundary.publicCiphertextShape
+    publicMetadataLeakage := boundary.publicMetadataLeakage
+    batchTimingLeakage := boundary.batchTimingLeakage
+    rawWireIndistinguishable := boundary.rawWireIndistinguishable
+    proofSystemZeroKnowledge := boundary.proofSystemZeroKnowledge
+    walletMetadataHygiene := boundary.walletMetadataHygiene
+    timingAndBatchingPolicy := boundary.timingAndBatchingPolicy
+    networkMetadataPolicy := boundary.networkMetadataPolicy
+    publicMetadataStableUnderIndependentSecretResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed => by
+        unfold samePublicMetadataLeakage
+        calc
+          publicMetadataView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed } =
+            publicMetadataView left :=
+              boundary.leftPublicMetadataIgnoresSecrets
+                leftPrivateWitness
+                leftProverRandomnessSeed
+          _ = publicMetadataView right :=
+              boundary.publicMetadataLeakage
+          _ =
+            publicMetadataView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed } :=
+              (boundary.rightPublicMetadataIgnoresSecrets
+                rightPrivateWitness
+                rightProverRandomnessSeed).symm
+    batchTimingStableUnderIndependentSecretResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed => by
+        unfold sameBatchTimingLeakage
+        calc
+          batchTimingView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed } =
+            batchTimingView left :=
+              boundary.leftBatchTimingIgnoresSecrets
+                leftPrivateWitness
+                leftProverRandomnessSeed
+          _ = batchTimingView right :=
+              boundary.batchTimingLeakage
+          _ =
+            batchTimingView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed } :=
+              (boundary.rightBatchTimingIgnoresSecrets
+                rightPrivateWitness
+                rightProverRandomnessSeed).symm
   }
 
 def buildCiphertextPrivacyGame
