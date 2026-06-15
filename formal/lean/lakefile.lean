@@ -232,6 +232,9 @@ lean_exe gen_staged_ciphertext_reload_vectors where
 lean_exe gen_staged_proof_reload_vectors where
   root := `Hegemon.Native.GenerateStagedProofReloadVectors
 
+lean_exe gen_stablecoin_policy_authorization_vectors where
+  root := `Hegemon.Native.GenerateStablecoinPolicyAuthorizationVectors
+
 lean_exe gen_storage_durability_admission_vectors where
   root := `Hegemon.Native.GenerateStorageDurabilityAdmissionVectors
 

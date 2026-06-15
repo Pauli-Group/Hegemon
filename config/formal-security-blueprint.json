@@ -853,7 +853,7 @@
       "claim_id": "formal.transaction-asset-isolation-boundary",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean accepted-transaction boundary, every per-asset delta is authorized: native asset deltas match the modeled native balance, non-native unselected deltas are zero, and any nonzero non-native delta implies the selected stablecoin issuance/burn exception. The canonical proof-system boundary exposes the same native and per-asset authorized-delta facts directly from packaged deployed-verifier boundary facts, and the canonical balance/public-field boundary proves that a non-native nonzero public delta requires a full stablecoin mint exception surface binding the asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement fields, proof-binding fields, and any explicit live-policy authorization predicate supplied for that exact payload. The authorized surface additionally preserves exact policy metadata through public, bound, statement, and proof-binding rows and cannot be inhabited by unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata payloads. For any list of accepted transaction transitions, the aggregate chain asset delta equals the aggregate authorized delta, and a nonzero non-native aggregate delta requires at least one selected stablecoin exception in the chain.",
-      "informal_argument": "`Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta` lifts the accepted-transaction relation into one asset-delta policy. `Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta`, `canonical_boundary_facts_authorized_asset_delta`, and `canonical_boundary_facts_authorized_asset_delta_value` expose the same policy directly from `CanonicalDeployedVerifierBoundaryFacts`, so future deployed-verifier/AIR refinement work can target the packaged canonical proof boundary instead of re-deriving asset facts separately. `Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception` and `canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception` additionally expose the public-field version: once balance/public-field soundness ties a slot delta to public fields, any non-native nonzero public delta forces `stablecoinEnabled = 1` and `assetId = stablecoinAsset`. `canonical_statement_surface_stablecoin_mint_exception_surface` and `canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface` strengthen that consequence into a first-class public exception surface carrying the selected asset, issuance delta, public policy hash, oracle commitment, attestation commitment, policy version, and the matching statement/proof-binding rows. `stablecoin_mint_exception_authorized_payload_bound_to_statement` and `canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface` add the explicit authorization-predicate version: if a live-policy predicate authorizes that payload, the theorem carries the authorization through the same public, statement, and proof-binding rows. Companion theorems prove that unselected non-native assets have zero delta and that any nonzero non-native delta must be the selected stablecoin exception. `accepted_chain_asset_delta_authorized`, `accepted_chain_non_native_no_exception_delta_zero`, and `accepted_chain_non_native_nonzero_requires_exception` lift the same policy across accepted transaction lists, making the chain-level stablecoin exception predicate explicit while keeping deployed verifier soundness and production live stablecoin policy validity / bridge authorization outside the theorem. The native projection theorem `tx_leaf_action_accepts_implies_stablecoin_payload_matches` names the production tx-leaf/action stablecoin payload equality gate so asset-isolation review can cite the decoded artifact/action admission check directly while still leaving live policy freshness explicit. The wallet helper `stablecoin_policy_binding_from_admitted_state` now binds the storage-backed policy lookup, policy hash, oracle commitment, attestation commitment, issuance delta, and policy version into the exact submitted stablecoin payload while rejecting inactive policies, ambiguous oracle-feed records, stale oracle commitments, disputed attestations, zero issuance, and over-range issuance.",
+      "informal_argument": "`Hegemon.Transaction.AssetIsolation.accepted_transaction_relation_authorized_asset_delta` lifts the accepted-transaction relation into one asset-delta policy. `Hegemon.Transaction.ProofSystemBoundary.canonical_boundary_facts_native_delta`, `canonical_boundary_facts_authorized_asset_delta`, and `canonical_boundary_facts_authorized_asset_delta_value` expose the same policy directly from `CanonicalDeployedVerifierBoundaryFacts`, so future deployed-verifier/AIR refinement work can target the packaged canonical proof boundary instead of re-deriving asset facts separately. `Hegemon.Transaction.CanonicalVerifierBoundary.public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception` and `canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception` additionally expose the public-field version: once balance/public-field soundness ties a slot delta to public fields, any non-native nonzero public delta forces `stablecoinEnabled = 1` and `assetId = stablecoinAsset`. `canonical_statement_surface_stablecoin_mint_exception_surface` and `canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface` strengthen that consequence into a first-class public exception surface carrying the selected asset, issuance delta, public policy hash, oracle commitment, attestation commitment, policy version, and the matching statement/proof-binding rows. `stablecoin_mint_exception_authorized_payload_bound_to_statement` and `canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface` add the explicit authorization-predicate version: if a live-policy predicate authorizes that payload, the theorem carries the authorization through the same public, statement, and proof-binding rows. Companion theorems prove that unselected non-native assets have zero delta and that any nonzero non-native delta must be the selected stablecoin exception. `accepted_chain_asset_delta_authorized`, `accepted_chain_non_native_no_exception_delta_zero`, and `accepted_chain_non_native_nonzero_requires_exception` lift the same policy across accepted transaction lists, making the chain-level stablecoin exception predicate explicit while keeping deployed verifier soundness and bridge authorization outside the theorem. The native projection theorem `tx_leaf_action_accepts_implies_stablecoin_payload_matches` names the production tx-leaf/action stablecoin payload equality gate so asset-isolation review can cite the decoded artifact/action admission check directly. The wallet helper `stablecoin_policy_binding_from_admitted_state` binds the storage-backed policy lookup, policy hash, oracle commitment, attestation commitment, issuance delta, and policy version into the exact submitted stablecoin payload while rejecting inactive policies, ambiguous oracle-feed records, stale oracle commitments, disputed attestations, zero issuance, and over-range issuance. The native helper `evaluate_native_stablecoin_policy_authorization`, mirrored by `Hegemon.Native.StablecoinPolicyAuthorization`, now checks the import-time manifest policy/oracle/attestation/freshness/bounds predicate before transfer state admission accepts enabled stablecoin payloads; replayed dynamic policy/oracle/attestation state remains outside this theorem.",
       "depends_on": [
         "formal.transaction-balance",
         "formal.transaction-accepted-soundness-boundary",
@@ -866,6 +866,9 @@
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean",
+        "formal/lean/Hegemon/Native/GenerateStablecoinPolicyAuthorizationVectors.lean",
+        "node/src/native/mod.rs",
         "wallet/src/node_rpc.rs",
         "formal/lean/Hegemon.lean",
         "scripts/check_formal_core.sh",
@@ -873,9 +876,13 @@
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/Balance.lean",
+        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean",
+        "formal/lean/Hegemon/Native/GenerateStablecoinPolicyAuthorizationVectors.lean",
+        "node/src/native/mod.rs",
         "wallet/src/node_rpc.rs",
         "formal/lean/Hegemon.lean",
         "DESIGN.md",
@@ -887,7 +894,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
-        "notes": "Accepted as a non-production transaction and accepted-transaction-chain asset-isolation boundary with a production-bound public stablecoin exception payload surface, explicit live-policy authorization predicate, and a wallet-side storage-backed policy/oracle/attestation payload-construction regression. It does not certify native import-time stablecoin policy/oracle/attestation lookup validity or bridge mint authorization."
+        "notes": "Accepted as a non-production transaction and accepted-transaction-chain asset-isolation boundary with a production-bound public stablecoin exception payload surface, explicit live-policy authorization predicate, wallet-side storage-backed policy/oracle/attestation payload-construction regression, and native import-time protocol-manifest policy/oracle/attestation/freshness/bounds admission. It does not certify replayed dynamic stablecoin policy state or bridge mint authorization."
       },
       "falsification_cases": [
         {
@@ -7950,11 +7957,27 @@
             "native_transfer_state_admission_input_for_mempool",
             "native_transfer_state_admission_input_for_block"
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "native_stablecoin_policy_binding_authorized_by_protocol_manifest",
+          "required_callers": [
+            "native_transfer_stablecoin_policy_authorized"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_stablecoin_policy_authorization",
+          "required_callers": [
+            "native_stablecoin_policy_binding_authorized_by_entries"
+          ]
         }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateTransferStateAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean",
+        "formal/lean/Hegemon/Native/GenerateStablecoinPolicyAuthorizationVectors.lean",
         "node/src/native/mod.rs",
         "formal/lean/README.md",
         "scripts/check_formal_core.sh",
@@ -7978,6 +8001,16 @@
           "gate": "HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_state_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "lean-generated-stablecoin-policy-authorization-conformance",
+          "description": "Changing the production stablecoin policy authorization table away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_stablecoin_policy_authorization_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-stablecoin-policy-manifest-regressions",
+          "description": "Native stablecoin policy authorization must accept exact active manifest records and reject missing, inactive, stale, disputed, over-limit, zero-issuance, or metadata-mismatched records.",
+          "gate": "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_ --lib --no-default-features"
+        },
+        {
           "id": "native-transfer-state-regressions",
           "description": "Native transfer state validation must reject unknown anchors, duplicate nullifiers, zero commitments, unauthorized stablecoin policies, missing staged sidecar ciphertexts, and staged sidecar size mismatches.",
           "gate": "cargo test -p hegemon-node transfer_state_ --lib --no-default-features"
@@ -7988,7 +8021,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It proves enabled stablecoin transfers require the exact production-derived authorization predicate before mempool/block acceptance, but it does not prove a complete stablecoin policy-state writer, oracle freshness source, SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native shielded transfer state admission only. It proves enabled stablecoin transfers require the exact production-derived authorization predicate before mempool/block acceptance, and the companion stablecoin policy authorization gate now binds that predicate to protocol-manifest active policy/oracle/attestation/freshness/bounds checks. It does not prove a complete replayed stablecoin policy-state writer, dynamic oracle freshness source, SCALE decoder correctness, commitment-tree hash security, BTreeSet/BTreeMap implementation correctness, ciphertext hash derivation/security, native tx-leaf proof soundness, recursive block proof soundness, DA durability, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-validation",

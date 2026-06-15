@@ -132,6 +132,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean
   lake env lean Hegemon/Native/TransferStateAdmission.lean
   lake env lean Hegemon/Native/GenerateTransferStateAdmissionVectors.lean
+  lake env lean Hegemon/Native/StablecoinPolicyAuthorization.lean
+  lake env lean Hegemon/Native/GenerateStablecoinPolicyAuthorizationVectors.lean
   lake env lean Hegemon/Native/TxLeafCanonicalSurface.lean
   lake env lean Hegemon/Native/TransferNoTheftBoundary.lean
   lake env lean Hegemon/Native/BlockArtifactBindingAdmission.lean

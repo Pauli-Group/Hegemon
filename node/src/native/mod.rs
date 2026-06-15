@@ -38,6 +38,7 @@ use network::{
     RelayConfig,
 };
 use parking_lot::{Mutex, RwLock};
+use protocol_kernel::manifest::{protocol_manifest, StablecoinPolicyManifestEntry};
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
@@ -1265,6 +1266,56 @@ impl NativeTransferStateAdmissionRejection {
             Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
             Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
             Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeStablecoinPolicyAuthorizationInput {
+    stablecoin_present: bool,
+    policy_known: bool,
+    policy_active: bool,
+    asset_matches: bool,
+    policy_hash_matches: bool,
+    policy_version_matches: bool,
+    oracle_commitment_matches: bool,
+    attestation_commitment_matches: bool,
+    attestation_not_disputed: bool,
+    oracle_fresh: bool,
+    issuance_nonzero: bool,
+    issuance_within_limit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeStablecoinPolicyAuthorizationRejection {
+    PolicyMissing,
+    PolicyInactive,
+    AssetMismatch,
+    PolicyHashMismatch,
+    PolicyVersionMismatch,
+    OracleCommitmentMismatch,
+    AttestationCommitmentMismatch,
+    AttestationDisputed,
+    OracleStale,
+    IssuanceZero,
+    IssuanceOverLimit,
+}
+
+impl NativeStablecoinPolicyAuthorizationRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::PolicyMissing => "policy_missing",
+            Self::PolicyInactive => "policy_inactive",
+            Self::AssetMismatch => "asset_mismatch",
+            Self::PolicyHashMismatch => "policy_hash_mismatch",
+            Self::PolicyVersionMismatch => "policy_version_mismatch",
+            Self::OracleCommitmentMismatch => "oracle_commitment_mismatch",
+            Self::AttestationCommitmentMismatch => "attestation_commitment_mismatch",
+            Self::AttestationDisputed => "attestation_disputed",
+            Self::OracleStale => "oracle_stale",
+            Self::IssuanceZero => "issuance_zero",
+            Self::IssuanceOverLimit => "issuance_over_limit",
         }
     }
 }
@@ -7294,8 +7345,120 @@ fn sidecar_ciphertext_state_for_action(
     (all_available, all_sizes_present, all_sizes_match)
 }
 
+#[cfg(test)]
 fn stablecoin_policy_authorization_key(binding: &StablecoinPolicyBinding) -> Vec<u8> {
     binding.encode()
+}
+
+fn evaluate_native_stablecoin_policy_authorization(
+    input: NativeStablecoinPolicyAuthorizationInput,
+) -> Result<(), NativeStablecoinPolicyAuthorizationRejection> {
+    if !input.stablecoin_present {
+        Ok(())
+    } else if !input.policy_known {
+        Err(NativeStablecoinPolicyAuthorizationRejection::PolicyMissing)
+    } else if !input.policy_active {
+        Err(NativeStablecoinPolicyAuthorizationRejection::PolicyInactive)
+    } else if !input.asset_matches {
+        Err(NativeStablecoinPolicyAuthorizationRejection::AssetMismatch)
+    } else if !input.policy_hash_matches {
+        Err(NativeStablecoinPolicyAuthorizationRejection::PolicyHashMismatch)
+    } else if !input.policy_version_matches {
+        Err(NativeStablecoinPolicyAuthorizationRejection::PolicyVersionMismatch)
+    } else if !input.oracle_commitment_matches {
+        Err(NativeStablecoinPolicyAuthorizationRejection::OracleCommitmentMismatch)
+    } else if !input.attestation_commitment_matches {
+        Err(NativeStablecoinPolicyAuthorizationRejection::AttestationCommitmentMismatch)
+    } else if !input.attestation_not_disputed {
+        Err(NativeStablecoinPolicyAuthorizationRejection::AttestationDisputed)
+    } else if !input.oracle_fresh {
+        Err(NativeStablecoinPolicyAuthorizationRejection::OracleStale)
+    } else if !input.issuance_nonzero {
+        Err(NativeStablecoinPolicyAuthorizationRejection::IssuanceZero)
+    } else if !input.issuance_within_limit {
+        Err(NativeStablecoinPolicyAuthorizationRejection::IssuanceOverLimit)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_stablecoin_policy_entry_for_binding<'a>(
+    binding: &StablecoinPolicyBinding,
+    entries: &'a [StablecoinPolicyManifestEntry],
+) -> Option<&'a StablecoinPolicyManifestEntry> {
+    entries
+        .iter()
+        .find(|entry| u64::from(entry.asset_id) == binding.asset_id)
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| entry.policy_hash() == binding.policy_hash)
+        })
+}
+
+fn native_stablecoin_policy_authorization_input_for_entry(
+    current_height: u64,
+    binding: &StablecoinPolicyBinding,
+    entry: Option<&StablecoinPolicyManifestEntry>,
+) -> NativeStablecoinPolicyAuthorizationInput {
+    let Some(entry) = entry else {
+        return NativeStablecoinPolicyAuthorizationInput {
+            stablecoin_present: true,
+            policy_known: false,
+            policy_active: false,
+            asset_matches: false,
+            policy_hash_matches: false,
+            policy_version_matches: false,
+            oracle_commitment_matches: false,
+            attestation_commitment_matches: false,
+            attestation_not_disputed: false,
+            oracle_fresh: false,
+            issuance_nonzero: false,
+            issuance_within_limit: false,
+        };
+    };
+    let oracle_fresh = entry.oracle_submitted_at <= current_height
+        && current_height.saturating_sub(entry.oracle_submitted_at) <= entry.oracle_max_age;
+    let issuance_abs = binding.issuance_delta.unsigned_abs();
+    NativeStablecoinPolicyAuthorizationInput {
+        stablecoin_present: true,
+        policy_known: true,
+        policy_active: entry.active,
+        asset_matches: u64::from(entry.asset_id) == binding.asset_id,
+        policy_hash_matches: entry.policy_hash() == binding.policy_hash,
+        policy_version_matches: entry.policy_version == binding.policy_version,
+        oracle_commitment_matches: entry.oracle_commitment == binding.oracle_commitment,
+        attestation_commitment_matches: entry.attestation_commitment
+            == binding.attestation_commitment,
+        attestation_not_disputed: !entry.attestation_disputed,
+        oracle_fresh,
+        issuance_nonzero: binding.issuance_delta != 0,
+        issuance_within_limit: issuance_abs <= entry.max_mint_per_epoch
+            && issuance_abs <= u64::MAX as u128,
+    }
+}
+
+fn native_stablecoin_policy_binding_authorized_by_entries(
+    current_height: u64,
+    binding: &StablecoinPolicyBinding,
+    entries: &[StablecoinPolicyManifestEntry],
+) -> bool {
+    let entry = native_stablecoin_policy_entry_for_binding(binding, entries);
+    let input =
+        native_stablecoin_policy_authorization_input_for_entry(current_height, binding, entry);
+    evaluate_native_stablecoin_policy_authorization(input).is_ok()
+}
+
+fn native_stablecoin_policy_binding_authorized_by_protocol_manifest(
+    current_height: u64,
+    binding: &StablecoinPolicyBinding,
+) -> bool {
+    let manifest = protocol_manifest();
+    native_stablecoin_policy_binding_authorized_by_entries(
+        current_height,
+        binding,
+        &manifest.stablecoin_policies,
+    )
 }
 
 fn native_transfer_stablecoin_policy_authorized(
@@ -7304,9 +7467,24 @@ fn native_transfer_stablecoin_policy_authorized(
 ) -> bool {
     match transfer_action_stablecoin_binding(action) {
         Ok(None) => true,
-        Ok(Some(binding)) => state
-            .stablecoin_policy_authorizations
-            .contains(&stablecoin_policy_authorization_key(&binding)),
+        Ok(Some(binding)) => {
+            let manifest_authorized =
+                native_stablecoin_policy_binding_authorized_by_protocol_manifest(
+                    state.best.height,
+                    &binding,
+                );
+            #[cfg(test)]
+            {
+                manifest_authorized
+                    || state
+                        .stablecoin_policy_authorizations
+                        .contains(&stablecoin_policy_authorization_key(&binding))
+            }
+            #[cfg(not(test))]
+            {
+                manifest_authorized
+            }
+        }
         Err(_) => false,
     }
 }
@@ -13293,6 +13471,33 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanStablecoinPolicyAuthorizationVectorFile {
+        schema_version: u32,
+        stablecoin_policy_authorization_cases: Vec<LeanStablecoinPolicyAuthorizationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStablecoinPolicyAuthorizationCase {
+        name: String,
+        stablecoin_present: bool,
+        policy_known: bool,
+        policy_active: bool,
+        asset_matches: bool,
+        policy_hash_matches: bool,
+        policy_version_matches: bool,
+        oracle_commitment_matches: bool,
+        attestation_commitment_matches: bool,
+        attestation_not_disputed: bool,
+        oracle_fresh: bool,
+        issuance_nonzero: bool,
+        issuance_within_limit: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanActionStateEffectVectorFile {
         schema_version: u32,
         action_state_effect_cases: Vec<LeanActionStateEffectCase>,
@@ -18586,6 +18791,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lean_generated_stablecoin_policy_authorization_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean stablecoin policy authorization vectors");
+        let vectors: LeanStablecoinPolicyAuthorizationVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean stablecoin policy authorization vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.stablecoin_policy_authorization_cases.is_empty(),
+            "Lean stablecoin policy authorization cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.stablecoin_policy_authorization_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_stablecoin_policy_authorization_case(case);
+        }
+    }
+
+    fn verify_lean_stablecoin_policy_authorization_case(
+        case: &LeanStablecoinPolicyAuthorizationCase,
+    ) {
+        let input = NativeStablecoinPolicyAuthorizationInput {
+            stablecoin_present: case.stablecoin_present,
+            policy_known: case.policy_known,
+            policy_active: case.policy_active,
+            asset_matches: case.asset_matches,
+            policy_hash_matches: case.policy_hash_matches,
+            policy_version_matches: case.policy_version_matches,
+            oracle_commitment_matches: case.oracle_commitment_matches,
+            attestation_commitment_matches: case.attestation_commitment_matches,
+            attestation_not_disputed: case.attestation_not_disputed,
+            oracle_fresh: case.oracle_fresh,
+            issuance_nonzero: case.issuance_nonzero,
+            issuance_within_limit: case.issuance_within_limit,
+        };
+        let actual_rejection = evaluate_native_stablecoin_policy_authorization(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native stablecoin policy authorization validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native stablecoin policy authorization rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn lean_transfer_nullifier_state(
         state: &str,
         case_name: &str,
@@ -23276,6 +23539,124 @@ mod tests {
     }
 
     #[test]
+    fn stablecoin_policy_manifest_authorization_accepts_exact_active_policy() {
+        let height = 20;
+        let (entry, binding) = test_manifest_authorized_stablecoin_policy(10, height);
+
+        assert!(native_stablecoin_policy_binding_authorized_by_entries(
+            height,
+            &binding,
+            &[entry]
+        ));
+    }
+
+    #[test]
+    fn stablecoin_policy_manifest_authorization_rejects_invalid_records() {
+        let height = 20;
+        let (entry, binding) = test_manifest_authorized_stablecoin_policy(11, height);
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[]),
+            "missing policy must reject"
+        );
+
+        let mut inactive = entry.clone();
+        inactive.active = false;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[inactive]),
+            "inactive policy must reject"
+        );
+
+        let mut stale = entry.clone();
+        stale.oracle_submitted_at = height
+            .saturating_sub(stale.oracle_max_age)
+            .saturating_sub(1);
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[stale]),
+            "stale oracle commitment must reject"
+        );
+
+        let mut disputed = entry.clone();
+        disputed.attestation_disputed = true;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &binding, &[disputed]),
+            "disputed attestation must reject"
+        );
+
+        let mut over_limit = binding.clone();
+        over_limit.issuance_delta = entry.max_mint_per_epoch as i128 + 1;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &over_limit,
+                &[entry.clone()]
+            ),
+            "issuance above policy limit must reject"
+        );
+
+        let mut zero_issuance = binding.clone();
+        zero_issuance.issuance_delta = 0;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &zero_issuance,
+                &[entry.clone()]
+            ),
+            "zero issuance must reject"
+        );
+
+        let mut bad_hash = binding.clone();
+        bad_hash.policy_hash[0] ^= 1;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &bad_hash,
+                &[entry.clone()]
+            ),
+            "policy hash mismatch must reject"
+        );
+
+        let mut bad_oracle = binding.clone();
+        bad_oracle.oracle_commitment[0] ^= 1;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &bad_oracle,
+                &[entry.clone()]
+            ),
+            "oracle commitment mismatch must reject"
+        );
+
+        let mut bad_attestation = binding.clone();
+        bad_attestation.attestation_commitment[0] ^= 1;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &bad_attestation,
+                &[entry.clone()]
+            ),
+            "attestation commitment mismatch must reject"
+        );
+
+        let mut bad_version = binding.clone();
+        bad_version.policy_version ^= 1;
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(
+                height,
+                &bad_version,
+                &[entry.clone()]
+            ),
+            "policy version mismatch must reject"
+        );
+
+        let mut bad_asset = binding;
+        bad_asset.asset_id = bad_asset.asset_id.saturating_add(1);
+        assert!(
+            !native_stablecoin_policy_binding_authorized_by_entries(height, &bad_asset, &[entry]),
+            "asset mismatch against a known policy hash must reject"
+        );
+    }
+
+    #[test]
     fn transfer_state_accepts_authorized_stablecoin_policy_in_mempool() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -25332,6 +25713,35 @@ mod tests {
             issuance_delta: i128::from(seed) - 20,
             policy_version: u32::from(seed),
         }
+    }
+
+    fn test_manifest_authorized_stablecoin_policy(
+        seed: u8,
+        height: u64,
+    ) -> (StablecoinPolicyManifestEntry, StablecoinPolicyBinding) {
+        let entry = StablecoinPolicyManifestEntry {
+            asset_id: u32::from(seed),
+            oracle_feed: u32::from(seed).saturating_add(1),
+            attestation_id: u64::from(seed).saturating_add(2),
+            min_collateral_ratio_ppm: 1_500_000,
+            max_mint_per_epoch: 100,
+            oracle_max_age: 10,
+            oracle_submitted_at: height.saturating_sub(1),
+            policy_version: u32::from(seed).saturating_add(3),
+            active: true,
+            oracle_commitment: [seed.wrapping_add(4); 48],
+            attestation_commitment: [seed.wrapping_add(5); 48],
+            attestation_disputed: false,
+        };
+        let binding = StablecoinPolicyBinding {
+            asset_id: u64::from(entry.asset_id),
+            policy_hash: entry.policy_hash(),
+            oracle_commitment: entry.oracle_commitment,
+            attestation_commitment: entry.attestation_commitment,
+            issuance_delta: 42,
+            policy_version: entry.policy_version,
+        };
+        (entry, binding)
     }
 
     fn authorize_test_stablecoin_policy(
