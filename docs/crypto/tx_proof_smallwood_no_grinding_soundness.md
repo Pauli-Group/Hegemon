@@ -6,7 +6,7 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the shipped default now has a structural upper bound of `90830` bytes on the current backend, while the checked exact sampled release proofs on the current benchmark witness now land in the `87086 .. 87214` byte band after the compact inner wire-format rewrite replaced nested bincode lengths with one flat profile-checked layout,
+- the shipped default now has a structural upper bound of `91262` bytes on the current backend after adding output ciphertext-hash binding rows to the inline-Merkle statement; the exact sampled release proof report predates that hardening and should be refreshed before quoting a new exact sampled byte band,
 - and the latest focused local release roundtrips on the current host measured about `6.1s` directly on the old bridge statement and about `5.4s` on the older compact-binding branch before the final `skip-initial-mds` promotion, after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
@@ -42,17 +42,17 @@ and from fixed shape metadata for the packed expanded native witness.
 The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 72`
+- `raw_witness_len = 84`
 - `poseidon_permutation_count = 143`
 - `poseidon_state_row_count = 4433`
-- `expanded_witness_len = 76032`
-- `lppc_row_count = 1188`
+- `expanded_witness_len = 76800`
+- `lppc_row_count = 1200`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
 Those values are locked by the current integrated inline-Merkle shape test in [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs). The repo still also carries the separate frozen structural target (`raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`), but that is not the statement the live backend is proving today.
 
-The linear constraints are now sparse bridge selectors over the packed witness rows, not transcript-derived dense random checks. Public values are no longer embedded as duplicated witness rows; they are carried directly in the public statement and transcript binding, while the linear system enforces duplicated secret-row equalities plus the bridge-side constant/copy relations that tie the compact witness rows to the grouped Poseidon program. The current row-aligned statement also binds the previously missing public tx fields explicitly: active output ciphertext hashes and stablecoin policy version / policy hash / oracle / attestation commitments now occupy dedicated local secret rows that are linearly tied to the public statement. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
+The linear constraints are now sparse bridge selectors over the packed witness rows, not transcript-derived dense random checks. Public values are no longer embedded as duplicated witness rows; they are carried directly in the public statement and transcript binding, while the linear system enforces duplicated secret-row equalities plus the bridge-side constant/copy relations that tie the compact witness rows to the grouped Poseidon program. The current inline-Merkle compact statement also binds the previously free output ciphertext-hash fields explicitly: each output carries six local ciphertext-hash rows that are linearly tied to the public statement, and active/inactive mutation regressions prove those rows cannot be drifted independently of the public ciphertext hashes. Stablecoin policy metadata is bound by the public-input, SmallWood balance-boundary, and P3 AIR balance-boundary gates rather than by extra inline-Merkle witness rows. That implementation now lives in the Rust semantic/kernel path across [smallwood_frontend.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_frontend.rs), [smallwood_engine.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_engine.rs), and [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs).
 
 The current no-grinding claim also assumes the hardened PCS/evaluation binding now implemented in the Rust engine:
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now has a structural upper bound of `90830` bytes with checked exact sampled release proofs landing in the `87086 .. 87214` byte band on the current benchmark witness. That is about `4.1x` smaller than the shipped Plonky3 proof, about `13.6% .. 13.7%` smaller than the old `100956`-byte bridge baseline, and about `11.3% .. 11.6%` smaller than the former `98532`-byte shipped default. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now has a structural upper bound of `91262` bytes after adding twelve scalar rows that bind both output ciphertext hashes to public statement fields. That is still about `3.9x` smaller than the shipped Plonky3 proof and about `9.6%` smaller than the old `100956`-byte bridge baseline. The exact sampled release proof report predates this binding fix, so do not quote the older sampled byte band as current until that ignored release-size artifact is refreshed. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
 
 ## Product conclusion
 

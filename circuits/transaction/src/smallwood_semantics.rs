@@ -88,7 +88,7 @@ impl PackedRowLayout {
             | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
                 Self {
                     input_rows: BASE_INPUT_ROWS,
-                    output_rows: 2,
+                    output_rows: 2 + HASH_LIMBS,
                     stable_binding_rows: 0,
                     inline_merkle_aggregates: true,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,

@@ -202,6 +202,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Privacy/CiphertextPrivacy.lean
   lake env lean Hegemon/Privacy/Observer.lean
   lake env lean Hegemon/Privacy/NativeObserverSurface.lean
+  lake env lean Hegemon/Privacy/NativeSidecarObserverSurface.lean
   lake env lean Hegemon/Wallet/NoteCiphertextDecrypt.lean
   lake env lean Hegemon/Wallet/NotePlaintextCommitment.lean
   lake env lean Hegemon/Wallet/NoteCiphertextWire.lean
@@ -239,6 +240,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean
   lake env lean Hegemon/Transaction/SmallWoodSpendAuthorization.lean
+  lake env lean Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean
   lake env lean Hegemon/Transaction/StatementHash.lean
   lake env lean Hegemon/Transaction/GenerateStatementHashVectors.lean
 )

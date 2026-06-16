@@ -384,7 +384,7 @@ impl SmallwoodBridgeRowLayout {
                 SmallwoodMerkleAggregationMode::InlinePoseidonV1,
             ) => Self {
                 input_rows: SMALLWOOD_BASE_INPUT_ROWS,
-                output_secret_rows: 1 + 1,
+                output_secret_rows: 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES,
                 stable_binding_rows: 0,
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
                 poseidon_layout: shape.poseidon_layout,
@@ -467,6 +467,17 @@ impl SmallwoodBridgeRowLayout {
             SmallwoodMerkleAggregationMode::InlinePoseidonV1 => None,
         }
     }
+}
+
+const fn binds_output_ciphertext_hash_rows(shape: SmallwoodFrontendShape) -> bool {
+    matches!(
+        (shape.public_binding_mode, shape.merkle_aggregation_mode),
+        (SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1, _)
+            | (
+                SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+                SmallwoodMerkleAggregationMode::InlinePoseidonV1
+            )
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -2654,10 +2665,7 @@ fn build_packed_bridge_linear_constraints(
 
     for output in 0..MAX_OUTPUTS {
         if statement.public_values[PUB_OUTPUT_FLAG0 + output] == 0 {
-            if matches!(
-                shape.public_binding_mode,
-                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
-            ) {
+            if binds_output_ciphertext_hash_rows(shape) {
                 for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
                     push_bridge_constant(
                         &mut constraints,
@@ -2707,15 +2715,12 @@ fn build_packed_bridge_linear_constraints(
                     [PUB_COMMITMENTS + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
             );
         }
-        if matches!(
-            shape.public_binding_mode,
-            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
-        ) {
+        if binds_output_ciphertext_hash_rows(shape) {
             for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
                 push_bridge_constant(
                     &mut constraints,
                     output_base + 2 + limb,
-                    lane0,
+                    0,
                     statement.public_values
                         [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
                 );
@@ -3088,10 +3093,7 @@ fn semantic_secret_witness_rows_with_shape(
     for (idx, output) in outputs.iter().enumerate() {
         values.push(output.note.value);
         values.push(output.note.asset_id);
-        if matches!(
-            shape.public_binding_mode,
-            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
-        ) {
+        if binds_output_ciphertext_hash_rows(shape) {
             let ciphertext_hash = witness.ciphertext_hashes.get(idx).copied();
             let ciphertext_hash = ciphertext_hash.unwrap_or([0u8; 48]);
             let ciphertext_hash_words = bytes48_to_felts(&ciphertext_hash).ok_or(
@@ -3610,6 +3612,8 @@ mod tests {
         smallwood_spend_authorization_cases: Vec<LeanSmallwoodSpendAuthorizationCase>,
         #[serde(default)]
         smallwood_spend_boundary_cases: Vec<LeanSmallwoodSpendBoundaryCase>,
+        #[serde(default)]
+        smallwood_output_binding_cases: Vec<LeanSmallwoodOutputBindingCase>,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -3635,6 +3639,18 @@ mod tests {
         nullifier_position: u64,
         merkle_position: u64,
         merkle_path_accepted: bool,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodOutputBindingCase {
+        name: String,
+        active_flag: u64,
+        note_opening_commitment: u64,
+        commitment_row_commitment: u64,
+        public_commitment: u64,
+        ciphertext_hash_row: u64,
+        public_ciphertext_hash: u64,
         expected_valid: bool,
     }
 
@@ -3665,6 +3681,21 @@ mod tests {
                     && case.merkle_path_accepted
             }
             0 => case.public_nullifier == 0 && case.nullifier_row == 0,
+            _ => false,
+        }
+    }
+
+    fn smallwood_output_binding_case_accepts(case: &LeanSmallwoodOutputBindingCase) -> bool {
+        match case.active_flag {
+            1 => {
+                Felt::from_u64(case.commitment_row_commitment)
+                    == Felt::from_u64(case.note_opening_commitment)
+                    && Felt::from_u64(case.public_commitment)
+                        == Felt::from_u64(case.commitment_row_commitment)
+                    && Felt::from_u64(case.ciphertext_hash_row)
+                        == Felt::from_u64(case.public_ciphertext_hash)
+            }
+            0 => case.public_commitment == 0 && case.public_ciphertext_hash == 0,
             _ => false,
         }
     }
@@ -3815,6 +3846,18 @@ mod tests {
                 smallwood_spend_boundary_case_accepts(case),
                 case.expected_valid,
                 "Lean SmallWood spend boundary vector case {} disagreed with Rust row-boundary check",
+                case.name
+            );
+        }
+        assert!(
+            !vectors.smallwood_output_binding_cases.is_empty(),
+            "Lean SmallWood output binding vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_output_binding_cases {
+            assert_eq!(
+                smallwood_output_binding_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood output binding vector case {} disagreed with Rust row-boundary check",
                 case.name
             );
         }
@@ -4493,7 +4536,10 @@ mod tests {
             &linear_constraints.targets,
             auxiliary_witness_words,
         );
-        let err = result.unwrap_err();
+        let err = match result {
+            Ok(()) => panic!("inline-merkle SmallWood accepted mutation for {label}"),
+            Err(err) => err,
+        };
         assert!(err.to_string().contains("smallwood"), "{label}: {err}");
     }
 
@@ -4748,6 +4794,102 @@ mod tests {
         );
         assert_inline_merkle_relation_rejects(
             "inactive input public nullifier mutation",
+            &statement,
+            &material.packed_expanded_witness,
+            &linear_constraints,
+            &auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_active_output_binding_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+
+        for (public_index, label) in [
+            (PUB_COMMITMENTS, "active output public commitment"),
+            (
+                PUB_CIPHERTEXT_HASHES,
+                "active output public ciphertext hash",
+            ),
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &witness,
+                &statement.public_values,
+            )
+            .unwrap();
+            let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &statement,
+                shape,
+                auxiliary_witness_words.len(),
+            );
+            assert_inline_merkle_relation_rejects(
+                label,
+                &statement,
+                &material.packed_expanded_witness,
+                &linear_constraints,
+                &auxiliary_witness_words,
+            );
+        }
+
+        let commitment0 = bridge_output_commitment_permutation(0, 0);
+        let commitment2 = bridge_output_commitment_permutation(0, 2);
+        let lane0 = packed_bridge_permutation_lane(commitment0, packing_factor);
+        let output_lane = packed_bridge_permutation_lane(commitment2, packing_factor);
+
+        let mut mutated_commitment_rows = material.packed_expanded_witness.clone();
+        let commitment_row = bridge_poseidon_row(
+            packing_factor,
+            layout,
+            commitment2,
+            layout.poseidon_last_row(),
+            0,
+        );
+        mutated_commitment_rows[commitment_row * packing_factor + output_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active output commitment row mutation",
+            &material.public_statement,
+            &mutated_commitment_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+
+        let mut mutated_ciphertext_rows = material.packed_expanded_witness.clone();
+        let ciphertext_row = bridge_output_base(layout, 0) + 2;
+        mutated_ciphertext_rows[ciphertext_row * packing_factor + lane0] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active output ciphertext row mutation",
+            &material.public_statement,
+            &mutated_ciphertext_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, _layout, material) = inline_merkle_material_for_test(&witness);
+        let mut statement = material.public_statement.clone();
+        statement.public_values[PUB_CIPHERTEXT_HASHES + SMALLWOOD_WORDS_PER_48_BYTES] = 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        assert_inline_merkle_relation_rejects(
+            "inactive output public ciphertext hash mutation",
             &statement,
             &material.packed_expanded_witness,
             &linear_constraints,

@@ -76,6 +76,26 @@ def spendBoundaryCaseJson
     ++ boolJson (activeInputSpendBoundaryAccepted surface) ++ "\n"
     ++ "    }"
 
+def outputBindingCaseJson
+    (name : String)
+    (surface : ActiveOutputBindingSurface) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"active_flag\": " ++ toString surface.activeFlag ++ ",\n"
+    ++ "      \"note_opening_commitment\": "
+    ++ toString surface.noteOpeningCommitment ++ ",\n"
+    ++ "      \"commitment_row_commitment\": "
+    ++ toString surface.commitmentRowCommitment ++ ",\n"
+    ++ "      \"public_commitment\": "
+    ++ toString surface.publicCommitment ++ ",\n"
+    ++ "      \"ciphertext_hash_row\": "
+    ++ toString surface.ciphertextHashRow ++ ",\n"
+    ++ "      \"public_ciphertext_hash\": "
+    ++ toString surface.publicCiphertextHash ++ ",\n"
+    ++ "      \"expected_valid\": "
+    ++ boolJson (activeOutputBindingAccepted surface) ++ "\n"
+    ++ "    }"
+
 def validNoWrap : ActiveAuthLinkSurface :=
   { active := true,
     previousAuth0 := 1,
@@ -156,6 +176,32 @@ def inactiveBoundaryNullifierRowNonzero : ActiveInputSpendBoundarySurface :=
 def boundaryMalformedFlag : ActiveInputSpendBoundarySurface :=
   { activeBoundaryValid with activeFlag := 2 }
 
+def outputBindingValid : ActiveOutputBindingSurface :=
+  sampleActiveOutputBindingSurface
+
+def outputBindingCommitmentRowMismatch : ActiveOutputBindingSurface :=
+  { outputBindingValid with commitmentRowCommitment := 124 }
+
+def outputBindingPublicCommitmentMismatch : ActiveOutputBindingSurface :=
+  { outputBindingValid with publicCommitment := 124 }
+
+def outputBindingCiphertextHashMismatch : ActiveOutputBindingSurface :=
+  { outputBindingValid with ciphertextHashRow := 457 }
+
+def inactiveOutputBindingValid : ActiveOutputBindingSurface :=
+  sampleInactiveOutputBindingSurface
+
+def inactiveOutputBindingPublicCommitmentNonzero :
+    ActiveOutputBindingSurface :=
+  { inactiveOutputBindingValid with publicCommitment := 1 }
+
+def inactiveOutputBindingPublicCiphertextHashNonzero :
+    ActiveOutputBindingSurface :=
+  { inactiveOutputBindingValid with publicCiphertextHash := 1 }
+
+def outputBindingMalformedFlag : ActiveOutputBindingSurface :=
+  { outputBindingValid with activeFlag := 2 }
+
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
@@ -198,6 +244,32 @@ def vectorJson : String :=
     ++ spendBoundaryCaseJson
       "boundary-malformed-active-flag-rejected"
       boundaryMalformedFlag ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"smallwood_output_binding_cases\": [\n"
+    ++ outputBindingCaseJson
+      "active-output-binding-valid"
+      outputBindingValid ++ ",\n"
+    ++ outputBindingCaseJson
+      "active-output-binding-commitment-row-mismatch-rejected"
+      outputBindingCommitmentRowMismatch ++ ",\n"
+    ++ outputBindingCaseJson
+      "active-output-binding-public-commitment-mismatch-rejected"
+      outputBindingPublicCommitmentMismatch ++ ",\n"
+    ++ outputBindingCaseJson
+      "active-output-binding-ciphertext-hash-mismatch-rejected"
+      outputBindingCiphertextHashMismatch ++ ",\n"
+    ++ outputBindingCaseJson
+      "inactive-output-binding-public-zero-valid"
+      inactiveOutputBindingValid ++ ",\n"
+    ++ outputBindingCaseJson
+      "inactive-output-binding-public-commitment-nonzero-rejected"
+      inactiveOutputBindingPublicCommitmentNonzero ++ ",\n"
+    ++ outputBindingCaseJson
+      "inactive-output-binding-public-ciphertext-hash-nonzero-rejected"
+      inactiveOutputBindingPublicCiphertextHashNonzero ++ ",\n"
+    ++ outputBindingCaseJson
+      "output-binding-malformed-active-flag-rejected"
+      outputBindingMalformedFlag ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

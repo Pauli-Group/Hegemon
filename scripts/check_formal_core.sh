@@ -453,6 +453,8 @@ HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS="$LEAN_SMALLWOOD_SPEND_AUTHOR
 cargo test -p transaction-circuit packed_smallwood_frontend_compact_bindings_inline_merkle_skip_initial_mds_witness_satisfies_constraints --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects --lib -- --nocapture
+cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_active_output_binding_mutation --lib -- --nocapture
+cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture
 cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture

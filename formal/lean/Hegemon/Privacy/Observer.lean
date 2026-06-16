@@ -42,12 +42,20 @@ structure PrivateWitness where
   memoPlaintextSeeds : List Nat
 deriving DecidableEq, Repr
 
+structure LocalActionMetadata where
+  receivedMs : Nat
+  mempoolOrdinal : Nat
+  peerTag : Nat
+  storageGeneration : Nat
+deriving DecidableEq, Repr
+
 structure ShieldedTransactionWorld where
   publicInputs : PublicInputShape
   ciphertextBytes : List (List Byte)
   ciphertextSummaries : List NoteCiphertextSummary
   blockHeight : Nat
   actionIndex : Nat
+  localActionMetadata : LocalActionMetadata
   privateWitness : PrivateWitness
   proverRandomnessSeed : Nat
 deriving DecidableEq, Repr
@@ -282,6 +290,27 @@ theorem batch_timing_view_ignores_prover_randomness
       batchTimingView world := by
   rfl
 
+theorem observer_view_ignores_local_action_metadata
+    (world : ShieldedTransactionWorld)
+    (localActionMetadata : LocalActionMetadata) :
+    observerView { world with localActionMetadata := localActionMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_local_action_metadata
+    (world : ShieldedTransactionWorld)
+    (localActionMetadata : LocalActionMetadata) :
+    publicMetadataView { world with localActionMetadata := localActionMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_local_action_metadata
+    (world : ShieldedTransactionWorld)
+    (localActionMetadata : LocalActionMetadata) :
+    batchTimingView { world with localActionMetadata := localActionMetadata } =
+      batchTimingView world := by
+  rfl
+
 theorem observer_view_ignores_private_witness_and_randomness
     (world : ShieldedTransactionWorld)
     (privateWitness : PrivateWitness)
@@ -312,6 +341,45 @@ theorem batch_timing_view_ignores_private_witness_and_randomness
         { world with
           privateWitness := privateWitness
           proverRandomnessSeed := proverRandomnessSeed } =
+      batchTimingView world := by
+  rfl
+
+theorem observer_view_ignores_private_witness_randomness_and_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata) :
+    observerView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_private_witness_randomness_and_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata) :
+    publicMetadataView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_private_witness_randomness_and_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata) :
+    batchTimingView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata } =
       batchTimingView world := by
   rfl
 
@@ -618,6 +686,33 @@ theorem same_allowed_leakage_iff_observer_view_eq
     {left right : ShieldedTransactionWorld} :
     sameAllowedLeakage left right ↔ observerView left = observerView right := by
   rfl
+
+theorem same_allowed_leakage_stable_under_local_action_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    sameAllowedLeakage
+      { left with localActionMetadata := leftLocal }
+      { right with localActionMetadata := rightLocal } := by
+  exact same
+
+theorem same_public_metadata_leakage_stable_under_local_action_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : samePublicMetadataLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    samePublicMetadataLeakage
+      { left with localActionMetadata := leftLocal }
+      { right with localActionMetadata := rightLocal } := by
+  exact same
+
+theorem same_batch_timing_leakage_stable_under_local_action_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameBatchTimingLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    sameBatchTimingLeakage
+      { left with localActionMetadata := leftLocal }
+      { right with localActionMetadata := rightLocal } := by
+  exact same
 
 end Observer
 end Privacy

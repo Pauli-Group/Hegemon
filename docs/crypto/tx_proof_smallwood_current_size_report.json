@@ -2,7 +2,7 @@
   "generator": {
     "command": "cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture",
     "date_utc": "2026-05-03T09:37:45Z",
-    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the current tree. The shipped structural upper bound for this arithmetization is 90830 bytes; exact sampled release proofs drift slightly with sampled DECS auth paths, and this run emitted 87310 bytes."
+    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the 2026-05-03 tree before the 2026-06 output ciphertext-hash binding hardening. The current shipped structural upper bound after that hardening is 91262 bytes; rerun the ignored release-size report before quoting a refreshed exact sampled byte band."
   },
   "report": {
     "total_bytes": 87310,

@@ -97,6 +97,42 @@ structure CiphertextPrivacyBoundaryFacts
             privateWitness := privateWitness
             proverRandomnessSeed := proverRandomnessSeed } =
         batchTimingView right
+  leftObserverIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      observerView
+          { left with
+            localActionMetadata := localActionMetadata } =
+        observerView left
+  rightObserverIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      observerView
+          { right with
+            localActionMetadata := localActionMetadata } =
+        observerView right
+  leftPublicMetadataIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      publicMetadataView
+          { left with
+            localActionMetadata := localActionMetadata } =
+        publicMetadataView left
+  rightPublicMetadataIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      publicMetadataView
+          { right with
+            localActionMetadata := localActionMetadata } =
+        publicMetadataView right
+  leftBatchTimingIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      batchTimingView
+          { left with
+            localActionMetadata := localActionMetadata } =
+        batchTimingView left
+  rightBatchTimingIgnoresLocalActionMetadata :
+    ∀ localActionMetadata,
+      batchTimingView
+          { right with
+            localActionMetadata := localActionMetadata } =
+        batchTimingView right
 
 structure SecretResamplingPrivacyFacts
     (left right : ShieldedTransactionWorld)
@@ -130,6 +166,32 @@ structure SecretResamplingPrivacyFacts
         { right with
           privateWitness := rightPrivateWitness
           proverRandomnessSeed := rightProverRandomnessSeed }
+  publicMetadataStableUnderIndependentSecretAndLocalResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftLocal rightLocal,
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }
+  batchTimingStableUnderIndependentSecretAndLocalResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftLocal rightLocal,
+      sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }
 
 structure RawWireExcludedPublicLeakageFacts
     (left right : ShieldedTransactionWorld)
@@ -296,6 +358,36 @@ theorem ciphertext_privacy_game_boundary_facts
           right
           privateWitness
           proverRandomnessSeed
+    leftObserverIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        observer_view_ignores_local_action_metadata
+          left
+          localActionMetadata
+    rightObserverIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        observer_view_ignores_local_action_metadata
+          right
+          localActionMetadata
+    leftPublicMetadataIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        public_metadata_view_ignores_local_action_metadata
+          left
+          localActionMetadata
+    rightPublicMetadataIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        public_metadata_view_ignores_local_action_metadata
+          right
+          localActionMetadata
+    leftBatchTimingIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        batch_timing_view_ignores_local_action_metadata
+          left
+          localActionMetadata
+    rightBatchTimingIgnoresLocalActionMetadata :=
+      fun localActionMetadata =>
+        batch_timing_view_ignores_local_action_metadata
+          right
+          localActionMetadata
   }
 
 theorem ciphertext_privacy_game_secret_resampling_boundary_facts
@@ -367,6 +459,66 @@ theorem ciphertext_privacy_game_secret_resampling_boundary_facts
               (boundary.rightBatchTimingIgnoresSecrets
                 rightPrivateWitness
                 rightProverRandomnessSeed).symm
+    publicMetadataStableUnderIndependentSecretAndLocalResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftLocal rightLocal => by
+        unfold samePublicMetadataLeakage
+        calc
+          publicMetadataView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localActionMetadata := leftLocal } =
+            publicMetadataView left :=
+              public_metadata_view_ignores_private_witness_randomness_and_local_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftLocal
+          _ = publicMetadataView right :=
+              boundary.publicMetadataLeakage
+          _ =
+            publicMetadataView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localActionMetadata := rightLocal } :=
+              (public_metadata_view_ignores_private_witness_randomness_and_local_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightLocal).symm
+    batchTimingStableUnderIndependentSecretAndLocalResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftLocal rightLocal => by
+        unfold sameBatchTimingLeakage
+        calc
+          batchTimingView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localActionMetadata := leftLocal } =
+            batchTimingView left :=
+              batch_timing_view_ignores_private_witness_randomness_and_local_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftLocal
+          _ = batchTimingView right :=
+              boundary.batchTimingLeakage
+          _ =
+            batchTimingView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localActionMetadata := rightLocal } :=
+              (batch_timing_view_ignores_private_witness_randomness_and_local_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightLocal).symm
   }
 
 def buildCiphertextPrivacyGame

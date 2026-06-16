@@ -24043,6 +24043,29 @@ mod tests {
         let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
         insert_test_sidecar_ciphertext(&da_ciphertext_tree, &first);
 
+        let first_planned = plan_materialized_action_effects(
+            &da_ciphertext_tree,
+            &state,
+            std::slice::from_ref(&first),
+        )
+        .expect("plan first sidecar replay projection");
+        let second_planned = plan_materialized_action_effects(
+            &da_ciphertext_tree,
+            &state,
+            std::slice::from_ref(&second),
+        )
+        .expect("plan second sidecar replay projection");
+        assert_eq!(first_planned.len(), 1);
+        assert_eq!(second_planned.len(), 1);
+        let first_effect = first_planned.first().expect("first planned effect");
+        let second_effect = second_planned.first().expect("second planned effect");
+        assert_eq!(
+            first_effect.commitment_start,
+            second_effect.commitment_start
+        );
+        assert_eq!(first_effect.ciphertexts, second_effect.ciphertexts);
+        assert_eq!(first_effect.replay_key, second_effect.replay_key);
+
         let first_payloads =
             materialize_native_action_payloads(&da_ciphertext_tree, std::slice::from_ref(&first))
                 .expect("materialize first sidecar payload");
@@ -24071,6 +24094,16 @@ mod tests {
         assert_eq!(first_tx.ciphertexts, second_tx.ciphertexts);
         assert_eq!(first_tx.id, second_tx.id);
         assert_eq!(first_tx.hash(), second_tx.hash());
+        assert_eq!(
+            consensus::types::build_da_blob(std::slice::from_ref(&first_tx)),
+            consensus::types::build_da_blob(std::slice::from_ref(&second_tx))
+        );
+        assert_eq!(
+            consensus::types::da_root(std::slice::from_ref(&first_tx), native_da_params())
+                .expect("first consensus DA root"),
+            consensus::types::da_root(std::slice::from_ref(&second_tx), native_da_params())
+                .expect("second consensus DA root")
+        );
     }
 
     #[test]

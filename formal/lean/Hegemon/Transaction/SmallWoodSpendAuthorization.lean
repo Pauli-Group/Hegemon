@@ -351,6 +351,214 @@ theorem sample_inactive_spend_boundary_accepts :
     activeInputSpendBoundaryAccepted sampleInactiveSpendBoundarySurface = true := by
   decide
 
+structure ActiveOutputBindingSurface where
+  activeFlag : Nat
+  noteOpeningCommitment : Nat
+  commitmentRowCommitment : Nat
+  publicCommitment : Nat
+  ciphertextHashRow : Nat
+  publicCiphertextHash : Nat
+deriving DecidableEq, Repr
+
+def activeOutputBindingAccepted
+    (surface : ActiveOutputBindingSurface) : Bool :=
+  if surface.activeFlag = 1 then
+    natEq surface.commitmentRowCommitment surface.noteOpeningCommitment
+      && natEq surface.publicCommitment surface.commitmentRowCommitment
+      && natEq surface.ciphertextHashRow surface.publicCiphertextHash
+  else if surface.activeFlag = 0 then
+    natEq surface.publicCommitment 0
+      && natEq surface.publicCiphertextHash 0
+  else
+    false
+
+structure ActiveOutputBindingFacts
+    (surface : ActiveOutputBindingSurface) : Prop where
+  activeFlagBoolean : surface.activeFlag = 0 ∨ surface.activeFlag = 1
+  commitmentRowsBindNoteOpening :
+    surface.activeFlag = 1 ->
+      surface.commitmentRowCommitment = surface.noteOpeningCommitment
+  commitmentRowsBindPublicCommitment :
+    surface.activeFlag = 1 ->
+      surface.publicCommitment = surface.commitmentRowCommitment
+  ciphertextRowsBindPublicHash :
+    surface.activeFlag = 1 ->
+      surface.ciphertextHashRow = surface.publicCiphertextHash
+  inactivePublicCommitmentZero :
+    surface.activeFlag = 0 ->
+      surface.publicCommitment = 0
+  inactivePublicCiphertextHashZero :
+    surface.activeFlag = 0 ->
+      surface.publicCiphertextHash = 0
+
+theorem active_output_commitment_rows_bind_note_opening
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.commitmentRowCommitment = surface.noteOpeningCommitment := by
+  unfold activeOutputBindingAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact natEq_true_eq accepted.left.left
+
+theorem active_output_commitment_rows_bind_public_commitment
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.publicCommitment = surface.commitmentRowCommitment := by
+  unfold activeOutputBindingAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact natEq_true_eq accepted.left.right
+
+theorem active_output_ciphertext_rows_bind_public_hash
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.ciphertextHashRow = surface.publicCiphertextHash := by
+  unfold activeOutputBindingAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact natEq_true_eq accepted.right
+
+theorem active_output_public_commitment_binds_note_opening
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.publicCommitment = surface.noteOpeningCommitment := by
+  rw [
+    active_output_commitment_rows_bind_public_commitment accepted active,
+    active_output_commitment_rows_bind_note_opening accepted active
+  ]
+
+theorem inactive_output_public_fields_zero
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true)
+    (inactive : surface.activeFlag = 0) :
+    surface.publicCommitment = 0 ∧ surface.publicCiphertextHash = 0 := by
+  unfold activeOutputBindingAccepted at accepted
+  rw [inactive] at accepted
+  simp at accepted
+  exact
+    ⟨natEq_true_eq accepted.left,
+      natEq_true_eq accepted.right⟩
+
+theorem accepted_smallwood_output_constraints_imply_active_output_binding_boundary
+    {surface : ActiveOutputBindingSurface}
+    (accepted : activeOutputBindingAccepted surface = true) :
+    ActiveOutputBindingFacts surface := by
+  by_cases inactive : surface.activeFlag = 0
+  · have zeroFacts := inactive_output_public_fields_zero accepted inactive
+    refine {
+      activeFlagBoolean := Or.inl inactive,
+      commitmentRowsBindNoteOpening := ?_,
+      commitmentRowsBindPublicCommitment := ?_,
+      ciphertextRowsBindPublicHash := ?_,
+      inactivePublicCommitmentZero := ?_,
+      inactivePublicCiphertextHashZero := ?_
+    }
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro _
+      exact zeroFacts.left
+    · intro _
+      exact zeroFacts.right
+  · by_cases active : surface.activeFlag = 1
+    · refine {
+        activeFlagBoolean := Or.inr active,
+        commitmentRowsBindNoteOpening := ?_,
+        commitmentRowsBindPublicCommitment := ?_,
+        ciphertextRowsBindPublicHash := ?_,
+        inactivePublicCommitmentZero := ?_,
+        inactivePublicCiphertextHashZero := ?_
+      }
+      · intro _
+        exact
+          active_output_commitment_rows_bind_note_opening
+            accepted
+            active
+      · intro _
+        exact
+          active_output_commitment_rows_bind_public_commitment
+            accepted
+            active
+      · intro _
+        exact
+          active_output_ciphertext_rows_bind_public_hash
+            accepted
+            active
+      · intro inactiveNow
+        rw [active] at inactiveNow
+        cases inactiveNow
+      · intro inactiveNow
+        rw [active] at inactiveNow
+        cases inactiveNow
+    · unfold activeOutputBindingAccepted at accepted
+      simp [inactive, active] at accepted
+
+theorem active_output_binding_mismatched_commitment_rejects
+    {surface : ActiveOutputBindingSurface}
+    (active : surface.activeFlag = 1)
+    (mismatch :
+      surface.publicCommitment ≠ surface.commitmentRowCommitment) :
+    activeOutputBindingAccepted surface = false := by
+  cases accepted : activeOutputBindingAccepted surface
+  · rfl
+  · have publicCommitment :=
+      active_output_commitment_rows_bind_public_commitment
+        accepted
+        active
+    exact False.elim (mismatch publicCommitment)
+
+theorem active_output_binding_mismatched_ciphertext_rejects
+    {surface : ActiveOutputBindingSurface}
+    (active : surface.activeFlag = 1)
+    (mismatch :
+      surface.ciphertextHashRow ≠ surface.publicCiphertextHash) :
+    activeOutputBindingAccepted surface = false := by
+  cases accepted : activeOutputBindingAccepted surface
+  · rfl
+  · have ciphertextHash :=
+      active_output_ciphertext_rows_bind_public_hash
+        accepted
+        active
+    exact False.elim (mismatch ciphertextHash)
+
+def sampleActiveOutputBindingSurface : ActiveOutputBindingSurface :=
+  {
+    activeFlag := 1,
+    noteOpeningCommitment := 123,
+    commitmentRowCommitment := 123,
+    publicCommitment := 123,
+    ciphertextHashRow := 456,
+    publicCiphertextHash := 456
+  }
+
+theorem sample_active_output_binding_accepts :
+    activeOutputBindingAccepted sampleActiveOutputBindingSurface = true := by
+  decide
+
+def sampleInactiveOutputBindingSurface : ActiveOutputBindingSurface :=
+  {
+    activeFlag := 0,
+    noteOpeningCommitment := 123,
+    commitmentRowCommitment := 124,
+    publicCommitment := 0,
+    ciphertextHashRow := 789,
+    publicCiphertextHash := 0
+  }
+
+theorem sample_inactive_output_binding_accepts :
+    activeOutputBindingAccepted sampleInactiveOutputBindingSurface = true := by
+  decide
+
 end SmallWoodSpendAuthorization
 end Transaction
 end Hegemon
