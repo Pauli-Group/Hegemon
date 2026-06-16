@@ -28,29 +28,32 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T19:18:23Z",
-    "commit": "b02e036e",
-    "status": "passed after fast-forward to codex/superneo-formal-verification without rebuild/restart, remote formal metadata gates, targeted native publication row-equivalence Lean, RPC smoke, wallet-send, live mining/service/NTP sample, and isolated single-node mining",
+    "date": "2026-06-16T20:52:36Z",
+    "commit": "a2103561",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, targeted SmallWood transcript/profile Lean and Rust conformance, deterministic native restart/reorg regression, release rebuild, service restart, RPC readiness, smoke, wallet-send, live mining/service/NTP sample",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from e3072cea to codex/superneo-formal-verification at b02e036e",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 94d9eee8 to codex/superneo-formal-verification at a2103561",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "highest-standard matrix recomputed to 86.16% with total weight 100 across 18 properties",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1769 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 498 falsification cases, 209 implementation bindings, and 163 result obligations",
-      "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed with 145 jobs after exporting the remote elan/cargo toolchain path",
-      "bash scripts/smoke-test.sh passed at live height 14688",
+      "highest-standard matrix recomputed to 86.26% with total weight 100 across 18 properties",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1776 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 499 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "cd formal/lean && lake build Hegemon.Transaction.SmallWoodTranscriptBinding gen_smallwood_transcript_binding_vectors Hegemon passed with 151 jobs",
+      "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=/tmp/hegemon-smallwood-transcript-vectors.json cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture passed",
+      "cargo test -p hegemon-node native::tests::mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication -- --nocapture passed",
+      "make node rebuilt target/release/hegemon-node and sudo systemctl restart hegemon-node.service restarted the live service",
+      "initial post-restart smoke attempt reached the service before RPC reopened and failed with connection refused; explicit RPC readiness wait then succeeded",
+      "bash scripts/smoke-test.sh passed at live height 14738 after RPC readiness",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, and hash_rate about 19.6 kH/s before and after the 20-second sample",
-      "live height remained at 14688 during the 20-second mining sample at current difficulty, so bash scripts/test-node.sh single-node was run and mined height 29387 in an isolated dev node",
+      "live mining advanced from 0x3995 to 0x399c during the 20-second sample; hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found 3 to 10, and hash_rate about 6.9 to 10.0 kH/s",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active"
     ],
-    "runtime_note": "No release rebuild or service restart was performed because this slice changes only Lean/formal metadata/docs. The live service stayed active with NRestarts=0 while the branch fast-forwarded.",
+    "runtime_note": "The release node was rebuilt and restarted because the transaction circuit crate changed. The first smoke command raced RPC startup after restart; readiness-gated smoke, wallet-send, health, mining, service, and NTP checks passed.",
     "known_limitations": [
-      "The remote validation proves targeted native publication row-equivalence Lean conformance and live smoke on hegemon-dev, not full remote formal-core because the full patched formal-core gate already passed locally for the b02e036e theorem slice before deployment.",
-      "The theorem slice packages accepted row-equivalence facts across raw-ingress full-byte publication and mined commit publication; arbitrary parser internals, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions.",
-      "Hash/crypto security, proof-system soundness, DA availability, and the remaining announced/sync/reorg/startup generalization into one complete native-node refinement theorem remain explicit residuals."
+      "The remote validation proves targeted SmallWood transcript/profile Lean and Rust conformance plus live hegemon-dev smoke, not full remote formal-core; full patched formal-core passed locally at 2026-06-16T20:45:59Z before deployment.",
+      "The theorem slice proves serialized transcript/profile byte binding, not bincode correctness, BLAKE security, SmallWood PCS/AIR soundness, witness extraction, zero knowledge, or complete native-node equivalence.",
+      "The deterministic mixed restart/reorg regression hardens the formal-core test gate but does not by itself complete the native-node refinement theorem."
     ]
   },
   "last_coordinator_audit": {
