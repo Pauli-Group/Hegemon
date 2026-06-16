@@ -14815,6 +14815,87 @@ mod tests {
     }
 
     #[test]
+    fn reorg_replay_rejects_exact_decodable_action_byte_drift_before_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), test_pow_bits, "safe", false);
+
+        let (canonical, side_parent, side_child) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let genesis = node.best_meta();
+
+            let canonical_work = node.prepare_work().expect("prepare canonical native work");
+            let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+            let canonical = node
+                .import_mined_block(&canonical_work, canonical_seal)
+                .expect("canonical import")
+                .expect("canonical block");
+            assert_eq!(node.best_meta().hash, canonical.hash);
+
+            let original = test_outbound_bridge_action(b"reorg action-byte original");
+            let substitute = test_outbound_bridge_action(b"reorg action-byte substitute");
+            let side_parent = (1..1024)
+                .map(|round| {
+                    mined_child_with_actions(
+                        &genesis,
+                        1,
+                        test_pow_bits,
+                        round,
+                        vec![original.clone()],
+                    )
+                })
+                .find(|candidate| !native_meta_better_than(candidate, &canonical))
+                .expect("side parent that does not beat canonical tip");
+            let mut corrupted_parent = side_parent.clone();
+            replace_single_action_body_with_exact_decodable_substitute(
+                &mut corrupted_parent,
+                &substitute,
+            );
+            persist_block_record(&node.block_tree, &corrupted_parent)
+                .expect("persist corrupted side parent");
+            node.db.flush().expect("flush corrupted side parent");
+
+            let side_child = mined_empty_child(&side_parent, 2, test_pow_bits, 2048);
+            (canonical, side_parent, side_child)
+        };
+
+        let node = NativeNode::open(config).expect("reopen node with corrupted side branch parent");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert!(
+            node.header_by_hash(&side_parent.hash)
+                .expect("side parent record")
+                .is_some(),
+            "corrupted side parent remains hash-addressable"
+        );
+
+        let err = node
+            .import_announced_block(side_child.clone())
+            .expect_err("reorg replay must reject exact-decodable action-byte drift");
+        let err = format!("{err:?}");
+        assert!(err.contains("native replay action root"), "{err}");
+        assert!(err.contains("extrinsics_root_mismatch"), "{err}");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert_eq!(
+            node.hash_by_height(1)
+                .expect("height one after failed reorg"),
+            Some(canonical.hash),
+            "failed replay action-root verification must not replace canonical height index"
+        );
+        assert_eq!(
+            node.hash_by_height(2)
+                .expect("height two after failed reorg"),
+            None,
+            "failed replay action-root verification must not publish the winning child height"
+        );
+        assert!(
+            node.header_by_hash(&side_child.hash)
+                .expect("side child lookup after failed import")
+                .is_none(),
+            "failed reorg child must not be persisted"
+        );
+    }
+
+    #[test]
     fn reorg_rejects_missing_old_canonical_chain_before_publish() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -15480,6 +15561,56 @@ mod tests {
         };
         let err = format!("{err:?}");
         assert!(err.contains("block action payload count mismatch"), "{err}");
+    }
+
+    #[test]
+    fn startup_rejects_nonempty_exact_decodable_action_byte_drift_before_accepting_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let imported = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let subsidy = consensus::reward::block_subsidy(1);
+            stage_test_coinbase(&node, subsidy, [31u8; 48]);
+            let work = node.prepare_work().expect("prepare coinbase work");
+            let seal = mine_native_round(work.clone(), 0).expect("coinbase seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("coinbase import")
+                .expect("coinbase block");
+            assert_eq!(imported.tx_count, 1);
+            assert_eq!(imported.action_bytes.len(), 1);
+            node.db.flush().expect("flush coinbase block");
+            imported
+        };
+
+        {
+            let db = sled::open(&config.db_path).expect("open test db for body corruption");
+            let meta_tree = db.open_tree("meta").expect("meta tree");
+            let block_tree = db.open_tree("block_meta_by_hash").expect("block tree");
+            let substitute = test_coinbase_action_with_seed(
+                consensus::reward::block_subsidy(imported.height),
+                [91u8; 32],
+            );
+            let mut corrupted = imported;
+            replace_single_action_body_with_exact_decodable_substitute(&mut corrupted, &substitute);
+            let encoded = bincode::serialize(&corrupted).expect("serialize corrupted metadata");
+            meta_tree
+                .insert(META_BEST_KEY, encoded.clone())
+                .expect("corrupt best body");
+            block_tree
+                .insert(corrupted.hash.as_slice(), encoded)
+                .expect("corrupt block body");
+            db.flush().expect("flush body corruption");
+        }
+
+        let err = match NativeNode::open(config) {
+            Ok(_) => panic!("startup must reject exact-decodable action-byte drift"),
+            Err(err) => err,
+        };
+        let err = format!("{err:?}");
+        assert!(err.contains("native replay action root"), "{err}");
+        assert!(err.contains("extrinsics_root_mismatch"), "{err}");
     }
 
     #[test]
@@ -16266,6 +16397,40 @@ mod tests {
             "action-root mismatch should not be masked by payload validation: {err}"
         );
         assert_eq!(node.best_meta().height, 0);
+    }
+
+    #[test]
+    fn announced_block_rejects_exact_decodable_action_byte_drift_before_persist_or_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let parent = node.best_meta();
+        let height = parent.height.saturating_add(1);
+        let original = test_outbound_bridge_action(b"announced action-byte original");
+        let substitute = test_outbound_bridge_action(b"announced action-byte substitute");
+        let mut block = mined_child_with_actions(&parent, height, pow_bits, 0, vec![original]);
+        replace_single_action_body_with_exact_decodable_substitute(&mut block, &substitute);
+
+        let err = node
+            .import_announced_block(block.clone())
+            .expect_err("announced block must reject exact-decodable action-byte drift");
+        let err = format!("{err:?}");
+        assert!(err.contains("announced block action root"), "{err}");
+        assert!(err.contains("extrinsics_root_mismatch"), "{err}");
+        assert_eq!(node.best_meta().hash, parent.hash);
+        assert_eq!(
+            node.hash_by_height(height)
+                .expect("height index after rejected announced block"),
+            None,
+            "failed announced action-root verification must not write a height index"
+        );
+        assert!(
+            node.header_by_hash(&block.hash)
+                .expect("block lookup after rejected announced block")
+                .is_none(),
+            "failed announced action-root verification must not persist the block"
+        );
     }
 
     #[test]
@@ -21603,6 +21768,47 @@ mod tests {
             "{err}"
         );
         assert!(err.contains("block action payload count mismatch"), "{err}");
+    }
+
+    #[test]
+    fn block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let subsidy = consensus::reward::block_subsidy(1);
+        stage_test_coinbase(&node, subsidy, [41u8; 48]);
+        let work = node.prepare_work().expect("prepare coinbase native work");
+        let seal = mine_native_round(work.clone(), 0).expect("coinbase native seal");
+        let first = node
+            .import_mined_block(&work, seal)
+            .expect("coinbase native import")
+            .expect("coinbase native block");
+        assert_eq!(first.height, 1);
+        assert_eq!(first.tx_count, 1);
+
+        let substitute = test_coinbase_action_with_seed(subsidy, [92u8; 32]);
+        let mut corrupted = first.clone();
+        replace_single_action_body_with_exact_decodable_substitute(&mut corrupted, &substitute);
+        let encoded = bincode::serialize(&corrupted).expect("serialize corrupted block body");
+        node.block_tree
+            .insert(first.hash.as_slice(), encoded)
+            .expect("replace canonical block body");
+        node.block_tree.flush().expect("flush block tree");
+
+        let err = node
+            .block_range(0, 1)
+            .expect_err("exact-decodable canonical action-byte drift must reject sync range");
+        let err = format!("{err:?}");
+        assert!(
+            err.contains("validate canonical native sync block body"),
+            "{err}"
+        );
+        assert!(
+            err.contains("canonical native sync block action root"),
+            "{err}"
+        );
+        assert!(err.contains("extrinsics_root_mismatch"), "{err}");
+        assert_eq!(node.best_meta().hash, first.hash);
     }
 
     #[test]
@@ -27239,6 +27445,41 @@ mod tests {
         args.reward_bundle.miner_note.public_seed[0] ^= 1;
         action.public_args = args.encode();
         action.tx_hash = pending_action_hash(action);
+    }
+
+    fn replace_single_action_body_with_exact_decodable_substitute(
+        meta: &mut NativeBlockMeta,
+        substitute: &PendingAction,
+    ) {
+        assert_eq!(
+            meta.tx_count, 1,
+            "test helper only models one-for-one action-byte substitution"
+        );
+        assert_eq!(
+            meta.action_bytes.len(),
+            1,
+            "test helper requires exactly one committed action body"
+        );
+        let replacement = substitute.encode();
+        let decoded: PendingAction =
+            decode_scale_exact(&replacement, "exact-decodable substitute action")
+                .expect("substitute action must decode exactly");
+        assert_eq!(
+            decoded.tx_hash,
+            pending_action_hash(&decoded),
+            "substitute action must be internally hash-bound"
+        );
+        assert_eq!(
+            decoded.encode(),
+            replacement,
+            "substitute action encoding must be canonical"
+        );
+        assert_ne!(
+            actions_extrinsics_root(&[decoded]),
+            meta.extrinsics_root,
+            "substitute action must differ from the committed action root"
+        );
+        meta.action_bytes[0] = replacement;
     }
 
     #[test]

@@ -5109,7 +5109,7 @@
       "id": "native.sync-block-replay-publication",
       "component": "native sync response to raw replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted bounded-request resource facts, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, resource item-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches. A production Rust regression now checks `block_range` response rows against the same decoded/materialized/planned/wire projection helper used by canonical-index rebuild.",
+      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted bounded-request resource facts, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, resource item-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches. Production Rust regressions now check `block_range` response rows against the same decoded/materialized/planned/wire projection helper used by canonical-index rebuild and reject exact-decodable canonical action-byte substitution before sync response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -5123,7 +5123,7 @@
         "The theorem composes accepted sync decode/count, block-action decode, and raw canonical publication predicates; it does not introduce runtime work.",
         "The resource-bound variant carries accepted bounded-request facts through the same synced raw-batch publication surface and proves the bounded-request item count matches both the admitted response count and the raw block batch length.",
         "The equality between decoded block-action payload rows and raw replay action rows is now derived from accepted wire replay projection plus explicit production construction equalities tying the projection to declared decoded action rows and raw replay rows.",
-        "The `block_range_projects_decoded_materialized_wire_rows` conformance gate exercises the live sync range publication surface by serving a canonical block range and checking the served action bytes derive identical canonical projection rows.",
+        "The `block_range_projects_decoded_materialized_wire_rows` conformance gate exercises the live sync range publication surface by serving a canonical block range and checking the served action bytes derive identical canonical projection rows; the `action_byte_drift` gate also rejects a valid replacement action body whose decoded root no longer matches the committed sync block root.",
         "Sync wire parser internals, SCALE/bounded codec implementation correctness, hash security and implementation equivalence, proof-system soundness, storage durability, peer honesty, network liveness, and complete native-node refinement remain outside this theorem."
       ],
       "evidence_paths": [
@@ -5142,6 +5142,7 @@
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/SyncBlockReplayPublication.lean",
         "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
@@ -5207,7 +5208,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface. The pending-action byte publication theorem additionally composes exact pending-action decode, pending-action reload key/hash admission, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts into one byte-admission-to-publication package.",
+      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface. The pending-action byte publication theorem additionally composes exact pending-action decode, pending-action reload key/hash admission, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts into one byte-admission-to-publication package. Production drift regressions now reject exact-decodable action-body substitution on announced import, startup replay, reorg replay, and sync block-range publication surfaces.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5276,7 +5277,8 @@
         "The theorem binds decoded native replay fields to the projected replay model; arbitrary raw SCALE/bincode decoding, hash implementation/security, sled/fs durability below the accepted durability predicate, proof soundness, and complete native-node equivalence remain separate obligations.",
         "Generated Lean conformance vectors cover valid one-action transfer, valid two-action replay with planned commitment starts, bridge replay, and coinbase replay summaries; stream action-effect rejection including cross-action nullifier and bridge replay duplicates; supply overflow and reward overflow; counterfeit claimed supply; tx/message count mismatch; state-root-before-supply-digest rejection precedence; and the exact staged transition trace for every case. The theorem `traced_result_matches_untraced` ties the traced Lean evaluator back to the untraced executable transition, `accepted_trace_is_canonical` pins the accepted-stage order, and the ledger-chain theorems pin stale leaf/bridge replay carried-state rejection at the chain level.",
         "The canonical publication refinement theorem is a zero-runtime-cost composition over existing production-bound reload, reorg-chain, atomic commit, durability, and ledger/tree replay predicates; it does not add a new Rust vector beyond the existing gates for those predicates.",
-        "The pending-action byte publication theorem composes existing production-bound parser/admission booleans with raw canonical publication facts; it still does not prove arbitrary byte parser implementation correctness, BLAKE3/hash security, tx-leaf proof soundness, or complete native-node equivalence."
+        "The pending-action byte publication theorem composes existing production-bound parser/admission booleans with raw canonical publication facts; it still does not prove arbitrary byte parser implementation correctness, BLAKE3/hash security, tx-leaf proof soundness, or complete native-node equivalence.",
+        "The `action_byte_drift` Rust conformance gate is production evidence for decoded exact-decodable body substitution rejection at import/replay/sync boundaries; it is not a parser-internal proof for all arbitrary byte strings."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
@@ -5297,6 +5299,7 @@
         "cargo test -p hegemon-node materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -5844,7 +5847,7 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "component": "native raw ingress full byte publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection field-row agreement across decoded, validated, materialized, planned, wire-replay, and canonical rows. Production conformance now also checks the mined coinbase path from exact action bytes through atomic commit rows, canonical rebuild rows, and startup replay, and rejects exact-decodable mined metadata/action-byte drift before sled mutation.",
+      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection field-row agreement across decoded, validated, materialized, planned, wire-replay, and canonical rows. Production conformance now also checks the mined coinbase path from exact action bytes through atomic commit rows, canonical rebuild rows, and startup replay; rejects exact-decodable mined metadata/action-byte drift before sled mutation; and rejects exact-decodable action-byte drift on announced import, startup replay, reorg replay, and sync block-range publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_top_level_review_surface_over_existing_refinement_theorems",
       "production_eligible": true,
@@ -5856,7 +5859,7 @@
       "assumptions": [
         "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, canonical publication, and pending-action production projection predicates.",
         "The parser-to-canonical tx-leaf vector projection remains an explicit `NativeTxLeafArtifactCanonicalProjectionAssumptions` input, and arbitrary-byte parser internals remain separate from this composition theorem.",
-        "The production projection row theorem relies on named projection facts for validation, materialization, planning, wire replay, and canonical row construction; companion Rust regressions exercise the current production helper path, exact canonical row contents, mined commit/startup replay row agreement, and exact-decodable mined action-byte mismatch rejection.",
+        "The production projection row theorem relies on named projection facts for validation, materialization, planning, wire replay, and canonical row construction; companion Rust regressions exercise the current production helper path, exact canonical row contents, mined commit/startup replay row agreement, exact-decodable mined action-byte mismatch rejection, and exact-decodable action-byte substitution rejection on announced import, startup replay, reorg replay, and sync block_range.",
         "The theorem intentionally does not prove cryptographic hash security, proof-system soundness, DA availability, storage durability below accepted predicates, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -5881,7 +5884,8 @@
         "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {

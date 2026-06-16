@@ -10158,9 +10158,29 @@
           "id": "rust-mined-commit-action-byte-drift-rejection-test",
           "description": "Allowing an exact-decodable substituted mined action body to publish rows from a different committed action slice must fail the targeted Rust gate.",
           "gate": "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-announced-import-action-byte-drift-rejection-test",
+          "description": "Allowing an exact-decodable substituted announced action body to persist or publish under the original committed action root must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-startup-replay-action-byte-drift-rejection-test",
+          "description": "Allowing startup canonical replay to accept a nonempty block body whose valid action bytes no longer match the committed action root must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-reorg-replay-action-byte-drift-rejection-test",
+          "description": "Allowing reorg replay to publish a winning child over a corrupted persisted side-parent action body must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-block-range-action-byte-drift-rejection-test",
+          "description": "Allowing sync block_range publication to serve a canonical block whose valid action bytes no longer match the committed action root must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, named production row projection facts, and ordered field-row projection evidence. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
+      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, named production row projection facts, and ordered field-row projection evidence. Rust gates now also cover exact-decodable substituted action bodies across mined commit, announced import, startup replay, reorg replay, and sync block_range publication. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
     },
     {
       "id": "native.materialized-sidecar-da-blob-publication",
