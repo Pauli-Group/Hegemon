@@ -4,23 +4,23 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.46,
+  "overall_completion_percent": 84.48,
   "last_full_formal_core": {
-    "date": "2026-06-16T03:47:51Z",
-    "commit": "2321c4b52ebc",
-    "status": "passed locally after adding native block-action byte-budget production gate and parser resource-bound refinement theorem",
+    "date": "2026-06-16T04:28:14Z",
+    "commit": "pending",
+    "status": "passed locally after adding generic bounded-request production conformance, native sync response-count resource binding, and sync raw-batch publication resource theorem",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1706,
+    "named_lean_theorems": 1707,
     "axiom_free_theorems": 771,
-    "axiom_dependent_theorems": 935,
+    "axiom_dependent_theorems": 936,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 475,
-    "implementation_bindings": 208,
-    "implementation_result_obligations": 162,
+    "falsification_cases": 479,
+    "implementation_bindings": 209,
+    "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
     "implementation_order_edges": 374,
     "implementation_dominance_constraints": 130,
@@ -70,29 +70,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Closed the native block-action parser resource-bound slice. Production decode now runs a cheap byte-budget gate over declared/payload action counts, per-action payload bytes, aggregate overflow, and aggregate action bytes before decoded-action allocation or SCALE action decode; Lean composes that bounded-request acceptance with exact pending/block-action decode, pending reload, and wire replay rows.",
+    "summary": "Closed the generic bounded-request production-conformance and native sync response resource-bound slice. Formal-core now checks Lean-generated bounded-request vectors against the production helper, inbound native sync response-count admission routes through that generic item-count gate before sorting/import, and Lean carries accepted bounded-request facts through synced raw-batch publication.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
-      "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean"
+      "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
+      "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
+      "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows"
+      "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows",
+      "Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions",
+      "Hegemon.Resource.BoundedRequestAdmission.accepted_bounded_request_exposes_all_caps"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteParserRefinement Hegemon passed locally",
-      "targeted_rust": "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture passed locally; the regression checks count, per-payload, aggregate-byte, and pre-decode oversized-payload rejection.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T03:47:51Z with 118 claims, 1706 named Lean theorem declarations, 771 axiom-free declarations, 935 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 475 falsification cases, and 208 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.SyncBlockReplayPublication Hegemon passed locally",
+      "targeted_rust": "HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bounded_request_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally; cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T04:28:14Z with 118 claims, 1707 named Lean theorem declarations, 771 axiom-free declarations, 936 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 479 falsification cases, and 209 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1706,
+      "named_lean_theorems": 1707,
       "axiom_free_theorems": 771,
-      "axiom_dependent_theorems": 935,
+      "axiom_dependent_theorems": 936,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 475,
-      "implementation_bindings": 208,
-      "implementation_result_obligations": 162,
+      "falsification_cases": 479,
+      "implementation_bindings": 209,
+      "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
       "implementation_order_edges": 374,
       "implementation_dominance_constraints": 130,
@@ -100,9 +103,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves resource-bound composition for accepted pending/block action parser rows, not arbitrary SCALE parser internals or a full Rust refinement proof.",
-      "The reusable bounded-request table is now bound to native block-action decode; other consensus-facing parser families still need equivalent concrete bindings.",
-      "The theorem does not prove primitive cryptographic security, proof-system soundness, storage durability below accepted predicates, or complete native-node equivalence."
+      "This slice proves generic bounded-request production conformance and sync response-count binding, not arbitrary SCALE/parser internals or a full Rust refinement proof.",
+      "The reusable bounded-request table is now bound to native block-action decode and native sync response counts; other consensus-facing parser families still need equivalent concrete bindings.",
+      "The theorem does not prove primitive cryptographic security, proof-system soundness, peer honesty, storage durability below accepted predicates, or complete native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
@@ -760,7 +763,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 80,
+      "completion_percent": 81,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -777,10 +780,12 @@
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean emits parse-checked acceptance/rejection examples for the reusable bounded-request table",
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean and generated Rust conformance tests bind network/PQ frame-size caps and fail-closed oversize-before-parse rejection to production codecs.",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean composes accepted bounded-request cap facts with exact pending/block-action decode, pending reload, and wire replay, proving resource item count matches declared, decoded, and wire-row action counts.",
-        "node/src/native/mod.rs `validate_block_action_byte_budget` rejects over-cap block action counts, per-action payloads, aggregate-byte overflow, and aggregate bytes before SCALE action decode; formal-core runs the focused `block_action_byte_budget` regression."
+        "node/src/native/mod.rs `validate_block_action_byte_budget` rejects over-cap block action counts, per-action payloads, aggregate-byte overflow, and aggregate bytes before SCALE action decode; formal-core runs the focused `block_action_byte_budget` regression.",
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now proves `accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows`, carrying `AcceptedBoundedRequestFacts` through accepted sync decode/count, exact block-action decode, wire replay, and raw canonical publication while proving resource item count matches admitted response count and raw block batch length.",
+        "node/src/native/mod.rs now checks Lean-generated bounded-request vectors against production `evaluate_native_bounded_request_admission` and routes inbound sync response-count admission through `native_sync_response_count_bounded_request` before block sorting/import; formal-core runs both `lean_generated_bounded_request_admission_vectors_match_production` and `native_sync_response_count_uses_bounded_request_item_gate`."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families beyond native block actions to the reusable bounded-request admission table.",
+        "Bind the remaining consensus-facing parser families beyond native block actions and sync response counts to the reusable bounded-request admission table.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

@@ -2,6 +2,7 @@ import Hegemon.Native.ActionWireReplayProjectionAdmission
 import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.SyncAdmission
+import Hegemon.Resource.BoundedRequestAdmission
 
 namespace Hegemon
 namespace Native
@@ -18,6 +19,7 @@ open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
 open Hegemon.Native.StorageDurabilityAdmission
 open Hegemon.Native.SyncAdmission
+open Hegemon.Resource.BoundedRequestAdmission
 
 def rawDecodedTreeReplayActionCount :
     List RawDecodedNativeTreeReplayBlock -> Nat
@@ -71,6 +73,41 @@ structure SyncBlockReplayPublicationFacts
       (rawTreeReplayInputs blocks)
   rawTreeCarriedStatePreconditions :
     rawProjectedTreeCarriedStatePreconditions initial blocks = true
+
+structure SyncBlockReplayResourcePublicationFacts
+    (policy : ResourcePolicy)
+    (request : ResourceRequest)
+    (syncDecode : SyncDecodeInput)
+    (responseCount : SyncResponseCountInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) : Prop where
+  syncPublicationFacts :
+    SyncBlockReplayPublicationFacts
+      syncDecode
+      responseCount
+      blockActionDecode
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+  resourceFacts :
+    AcceptedBoundedRequestFacts policy request
+  resourceItemCountMatchesResponseCount :
+    request.itemCount = responseCount.blockCount
+  resourceItemCountMatchesRawBlocks :
+    request.itemCount = blocks.length
+  responseCountWithinResourceCap :
+    ¬ policy.itemCountCap < responseCount.blockCount
 
 theorem accepted_sync_block_response_binds_raw_canonical_publication
     {syncDecode : SyncDecodeInput}
@@ -280,6 +317,125 @@ theorem accepted_sync_block_response_binds_raw_canonical_publication_from_decode
       initialNullifiersNodup
       initialBridgeReplaysNodup
       acceptedRaw
+
+theorem accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows
+    {policy : ResourcePolicy}
+    {request : ResourceRequest}
+    {syncDecode : SyncDecodeInput}
+    {responseCount : SyncResponseCountInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    (resourceAccepted :
+      evaluateBoundedRequest policy request = none)
+    (syncAccepted : syncDecodeAccepts syncDecode = true)
+    (responseCountAccepted :
+      responseCountAccepts responseCount = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (wireProjectionAccepted :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (syncBlockCountMatches :
+      blocks.length = responseCount.blockCount)
+    (resourceItemCountMatchesResponseCount :
+      request.itemCount = responseCount.blockCount)
+    (wireActionCountMatchesDeclared :
+      wireProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (wireProjectedActionCountMatchesRawReplay :
+      wireOutput.projectedActionCount =
+        rawDecodedTreeReplayActionCount blocks)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final) :
+    SyncBlockReplayResourcePublicationFacts
+      policy
+      request
+      syncDecode
+      responseCount
+      blockActionDecode
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks := by
+  have syncFacts :
+      SyncBlockReplayPublicationFacts
+        syncDecode
+        responseCount
+        blockActionDecode
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks :=
+    accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows
+      syncAccepted
+      responseCountAccepted
+      blockActionDecodeAccepted
+      wireProjectionAccepted
+      syncBlockCountMatches
+      wireActionCountMatchesDeclared
+      wireProjectedActionCountMatchesRawReplay
+      blockIndexAccepted
+      canonicalStateAccepted
+      canonicalReorgAccepted
+      atomicCommitAccepted
+      durabilityAccepted
+      initialNullifiersNodup
+      initialBridgeReplaysNodup
+      acceptedRaw
+  have resourceFacts :
+      AcceptedBoundedRequestFacts policy request :=
+    accepted_bounded_request_exposes_all_caps resourceAccepted
+  have resourceItemCountMatchesRawBlocks :
+      request.itemCount = blocks.length := by
+    calc
+      request.itemCount = responseCount.blockCount :=
+        resourceItemCountMatchesResponseCount
+      _ = blocks.length :=
+        Eq.symm syncBlockCountMatches
+  have responseCountWithinResourceCap :
+      ¬ policy.itemCountCap < responseCount.blockCount := by
+    simpa [resourceItemCountMatchesResponseCount] using
+      resourceFacts.itemCountWithinCap
+  exact
+    {
+      syncPublicationFacts := syncFacts,
+      resourceFacts := resourceFacts,
+      resourceItemCountMatchesResponseCount :=
+        resourceItemCountMatchesResponseCount,
+      resourceItemCountMatchesRawBlocks :=
+        resourceItemCountMatchesRawBlocks,
+      responseCountWithinResourceCap :=
+        responseCountWithinResourceCap
+    }
 
 end SyncBlockReplayPublication
 end Native

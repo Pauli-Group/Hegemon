@@ -2011,6 +2011,46 @@ impl NativeResourceBudgetAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBoundedRequestAdmissionInput {
+    raw_byte_cap: usize,
+    decoded_byte_cap: usize,
+    item_count_cap: usize,
+    item_byte_cap: usize,
+    aggregate_byte_cap: usize,
+    work_unit_cap: usize,
+    raw_bytes: usize,
+    decoded_bytes: usize,
+    item_count: usize,
+    max_item_bytes: usize,
+    aggregate_bytes: usize,
+    work_units: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBoundedRequestAdmissionRejection {
+    RawBytesExceeded,
+    DecodedBytesExceeded,
+    ItemCountExceeded,
+    ItemBytesExceeded,
+    AggregateBytesExceeded,
+    WorkUnitsExceeded,
+}
+
+impl NativeBoundedRequestAdmissionRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::RawBytesExceeded => "raw_bytes_exceeded",
+            Self::DecodedBytesExceeded => "decoded_bytes_exceeded",
+            Self::ItemCountExceeded => "item_count_exceeded",
+            Self::ItemBytesExceeded => "item_bytes_exceeded",
+            Self::AggregateBytesExceeded => "aggregate_bytes_exceeded",
+            Self::WorkUnitsExceeded => "work_units_exceeded",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeSidecarRequestCountAdmissionInput {
     item_count: usize,
     max_items: usize,
@@ -8133,6 +8173,26 @@ fn evaluate_native_staged_proof_byte_budget_admission(
     }
 }
 
+fn evaluate_native_bounded_request_admission(
+    input: NativeBoundedRequestAdmissionInput,
+) -> Result<(), NativeBoundedRequestAdmissionRejection> {
+    if input.raw_bytes > input.raw_byte_cap {
+        Err(NativeBoundedRequestAdmissionRejection::RawBytesExceeded)
+    } else if input.decoded_bytes > input.decoded_byte_cap {
+        Err(NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded)
+    } else if input.item_count > input.item_count_cap {
+        Err(NativeBoundedRequestAdmissionRejection::ItemCountExceeded)
+    } else if input.max_item_bytes > input.item_byte_cap {
+        Err(NativeBoundedRequestAdmissionRejection::ItemBytesExceeded)
+    } else if input.aggregate_bytes > input.aggregate_byte_cap {
+        Err(NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded)
+    } else if input.work_units > input.work_unit_cap {
+        Err(NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded)
+    } else {
+        Ok(())
+    }
+}
+
 fn native_resource_budget_admission_error(
     current_bytes: usize,
     candidate_bytes: usize,
@@ -8189,10 +8249,27 @@ fn native_sync_missing_request_range(
 fn evaluate_native_sync_response_count_admission(
     input: NativeSyncResponseCountAdmissionInput,
 ) -> Result<(), NativeSyncAdmissionRejection> {
-    if input.block_count > input.max_blocks {
-        Err(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
-    } else {
-        Ok(())
+    let bounded = native_sync_response_count_bounded_request(input);
+    evaluate_native_bounded_request_admission(bounded)
+        .map_err(|_| NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
+}
+
+fn native_sync_response_count_bounded_request(
+    input: NativeSyncResponseCountAdmissionInput,
+) -> NativeBoundedRequestAdmissionInput {
+    NativeBoundedRequestAdmissionInput {
+        raw_byte_cap: usize::MAX,
+        decoded_byte_cap: usize::MAX,
+        item_count_cap: input.max_blocks,
+        item_byte_cap: usize::MAX,
+        aggregate_byte_cap: usize::MAX,
+        work_unit_cap: usize::MAX,
+        raw_bytes: 0,
+        decoded_bytes: 0,
+        item_count: input.block_count,
+        max_item_bytes: 0,
+        aggregate_bytes: 0,
+        work_units: 0,
     }
 }
 
@@ -13948,6 +14025,33 @@ mod tests {
         schema_version: u32,
         mempool_budget_cases: Vec<LeanMempoolBudgetCase>,
         staged_proof_budget_cases: Vec<LeanStagedProofBudgetCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBoundedRequestAdmissionVectorFile {
+        schema_version: u32,
+        bounded_request_cases: Vec<LeanBoundedRequestCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBoundedRequestCase {
+        name: String,
+        raw_byte_cap: usize,
+        decoded_byte_cap: usize,
+        item_count_cap: usize,
+        item_byte_cap: usize,
+        aggregate_byte_cap: usize,
+        work_unit_cap: usize,
+        raw_bytes: usize,
+        decoded_bytes: usize,
+        item_count: usize,
+        max_item_bytes: usize,
+        aggregate_bytes: usize,
+        work_units: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -20362,6 +20466,61 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lean_generated_bounded_request_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bounded request admission vectors");
+        let vectors: LeanBoundedRequestAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bounded request admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bounded_request_cases.is_empty(),
+            "Lean bounded-request admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bounded_request_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bounded_request_case(case);
+        }
+    }
+
+    fn verify_lean_bounded_request_case(case: &LeanBoundedRequestCase) {
+        let input = NativeBoundedRequestAdmissionInput {
+            raw_byte_cap: case.raw_byte_cap,
+            decoded_byte_cap: case.decoded_byte_cap,
+            item_count_cap: case.item_count_cap,
+            item_byte_cap: case.item_byte_cap,
+            aggregate_byte_cap: case.aggregate_byte_cap,
+            work_unit_cap: case.work_unit_cap,
+            raw_bytes: case.raw_bytes,
+            decoded_bytes: case.decoded_bytes,
+            item_count: case.item_count,
+            max_item_bytes: case.max_item_bytes,
+            aggregate_bytes: case.aggregate_bytes,
+            work_units: case.work_units,
+        };
+        let actual = evaluate_native_bounded_request_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bounded-request admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bounded-request admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn verify_lean_mempool_budget_case(case: &LeanMempoolBudgetCase) {
         let input = NativeMempoolByteBudgetAdmissionInput {
             pending_bytes: case.pending_bytes,
@@ -21070,6 +21229,27 @@ mod tests {
                 block_count: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1,
                 max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
             },),
+            Err(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
+        );
+    }
+
+    #[test]
+    fn native_sync_response_count_uses_bounded_request_item_gate() {
+        let input = NativeSyncResponseCountAdmissionInput {
+            block_count: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1,
+            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+        };
+        let bounded = native_sync_response_count_bounded_request(input);
+        assert_eq!(bounded.item_count, input.block_count);
+        assert_eq!(bounded.item_count_cap, input.max_blocks);
+        assert_eq!(bounded.raw_bytes, 0);
+        assert_eq!(bounded.decoded_bytes, 0);
+        assert_eq!(
+            evaluate_native_bounded_request_admission(bounded),
+            Err(NativeBoundedRequestAdmissionRejection::ItemCountExceeded)
+        );
+        assert_eq!(
+            evaluate_native_sync_response_count_admission(input),
             Err(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge)
         );
     }

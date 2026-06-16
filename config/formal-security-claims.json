@@ -2840,7 +2840,7 @@
       "id": "native.sync-admission",
       "component": "native sync semantic admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
+      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Production inbound response-count admission now routes through the generic bounded-request helper with the sync block cap as the item-count cap. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2868,6 +2868,7 @@
       "assumptions": [
         "The Lean model represents decoded native sync semantic admission after bounded wire decoding, with peer identity, message framing, and block validity represented outside this predicate.",
         "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, and exact/over-limit inbound response counts.",
+        "The production inbound response-count helper constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and maps the sync response block count to the bounded-request item count.",
         "The theorem covers executable native sync range and response-count admission only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -2881,6 +2882,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
@@ -3197,7 +3199,7 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, receipt-root artifact schedule facts, pending/block action parser resource caps, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, tx-leaf parser shape bounds, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, or mining work.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, receipt-root artifact schedule facts, pending/block action parser resource caps, sync response item-count caps, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, recursive artifact proof caps, tx-leaf parser shape bounds, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, sync response import work, or mining work.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -3209,6 +3211,7 @@
         "Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts",
         "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_public_input_parser_admission_bounds_verification_paths",
         "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows",
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows",
         "Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions",
         "Hegemon.Resource.BoundedRequestAdmission.complete_bounded_request_accepts",
         "Hegemon.Resource.BoundedRequestAdmission.accepted_bounded_request_exposes_all_caps",
@@ -3231,6 +3234,7 @@
         "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, native tx-leaf artifact parsing, and native receipt-root artifact schedule parsing; it inherits production conformance from those gates and adds no new runtime helper.",
         "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, strict action-request JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, tx-leaf artifact byte-shape bounds, and receipt-root nonzero expected leaves, leaf/fold-count agreement, and exact fold-shape schedule facts.",
         "Pending/block action parser resource binding now composes accepted bounded-request caps with exact pending-action decode, block-action count binding, pending reload, and wire replay projection; production `decode_block_actions` rejects over-cap action counts, per-action payloads, and aggregate action bytes before SCALE action decode.",
+        "Sync response resource binding now composes accepted bounded-request caps with accepted sync decode/count, exact block-action decode, wire replay projection, and raw canonical publication; production inbound response-count admission calls the generic bounded-request helper before sorting or importing response blocks.",
         "Parser correctness, remaining per-family bounded-request production binding, and benchmark-cap coverage are explicit assumptions on the verification-path surface; the theorem does not silently prove parser internals or cost-model completeness.",
         "The theorem covers decision-table composition only. It does not prove JSON parser correctness, RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness beyond cap behavior, DA availability, sled durability, proof-system soundness, mining liveness, or complete native-node equivalence."
       ],
@@ -3247,6 +3251,7 @@
         "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -3257,7 +3262,9 @@
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "cd formal/lean && lake exe gen_bounded_request_admission_vectors | python3 -m json.tool >/dev/null",
+        "HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bounded_request_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -5100,17 +5107,19 @@
       "id": "native.sync-block-replay-publication",
       "component": "native sync response to raw replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches. A production Rust regression now checks `block_range` response rows against the same decoded/materialized/planned/wire projection helper used by canonical-index rebuild.",
+      "summary": "The Lean sync block replay publication theorems compose accepted bounded sync wire decode, inbound sync response-count admission, exact decoded block-action admission, accepted bounded-request resource facts, accepted wire replay projection, and raw canonical publication. They derive decoded action-row equality to raw replay rows from the shared wire projection, then package exact sync-wire preconditions, response block-count bounds, resource item-count bounds, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor equality, commitment-plan preconditions, and final nullifier/bridge replay-key uniqueness for synced raw block batches. A production Rust regression now checks `block_range` response rows against the same decoded/materialized/planned/wire projection helper used by canonical-index rebuild.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication",
         "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_derives_decoded_rows_match_raw_replay",
-        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows"
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_binds_raw_canonical_publication_from_decoded_rows",
+        "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows"
       ],
       "assumptions": [
         "The theorem composes accepted sync decode/count, block-action decode, and raw canonical publication predicates; it does not introduce runtime work.",
+        "The resource-bound variant carries accepted bounded-request facts through the same synced raw-batch publication surface and proves the bounded-request item count matches both the admitted response count and the raw block batch length.",
         "The equality between decoded block-action payload rows and raw replay action rows is now derived from accepted wire replay projection plus explicit production construction equalities tying the projection to declared decoded action rows and raw replay rows.",
         "The `block_range_projects_decoded_materialized_wire_rows` conformance gate exercises the live sync range publication surface by serving a canonical block range and checking the served action bytes derive identical canonical projection rows.",
         "Sync wire parser internals, SCALE/bounded codec implementation correctness, hash security and implementation equivalence, proof-system soundness, storage durability, peer honesty, network liveness, and complete native-node refinement remain outside this theorem."
@@ -5129,6 +5138,7 @@
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.SyncBlockReplayPublication Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/SyncBlockReplayPublication.lean",
+        "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
