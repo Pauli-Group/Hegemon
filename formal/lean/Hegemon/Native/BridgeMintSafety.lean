@@ -37,15 +37,42 @@ structure InboundBridgeMintAmountSurface where
   payloadHashMatches : Bool
 deriving DecidableEq, Repr
 
+structure InboundBridgeMintAssetSurface where
+  decodedPayloadAsset : Nat
+  authorizedExternalAsset : Nat
+  decodedPayloadAmount : Nat
+  authorizedExternalAmount : Nat
+  nativeAssetId : Nat
+  payloadHashMatches : Bool
+deriving DecidableEq, Repr
+
 def inboundBridgeDirectMintDelta
     (input : BridgePayloadInput) : Nat :=
   if input.stateDeltasAbsent then 0 else 1
+
+def inboundBridgeAuthorizedAssetDeltaValue
+    (surface : InboundBridgeMintAssetSurface)
+    (assetId : Nat) : Nat :=
+  if assetId = surface.authorizedExternalAsset then
+    surface.authorizedExternalAmount
+  else
+    0
 
 def bridgeMintAmountAuthorized
     (surface : InboundBridgeMintAmountSurface) : Bool :=
   surface.payloadHashMatches
     && (if surface.decodedPayloadAmount =
           surface.authorizedExternalAmount then true else false)
+
+def bridgeMintAssetAuthorized
+    (surface : InboundBridgeMintAssetSurface) : Bool :=
+  surface.payloadHashMatches
+    && (if surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount then true else false)
+    && (if surface.decodedPayloadAsset =
+          surface.authorizedExternalAsset then true else false)
+    && (if surface.decodedPayloadAsset =
+          surface.nativeAssetId then false else true)
 
 theorem bridge_mint_amount_authorized_facts
     {surface : InboundBridgeMintAmountSurface}
@@ -60,6 +87,45 @@ theorem bridge_mint_amount_authorized_facts
   · simp [amountEq] at authorized
     exact ⟨rfl, amountEq⟩
   · simp [amountEq] at authorized
+
+theorem bridge_mint_asset_authorized_facts
+    {surface : InboundBridgeMintAssetSurface}
+    (authorized : bridgeMintAssetAuthorized surface = true) :
+    surface.payloadHashMatches = true
+      ∧ surface.decodedPayloadAmount =
+          surface.authorizedExternalAmount
+      ∧ surface.decodedPayloadAsset =
+          surface.authorizedExternalAsset
+      ∧ surface.decodedPayloadAsset ≠ surface.nativeAssetId := by
+  unfold bridgeMintAssetAuthorized at authorized
+  cases payload : surface.payloadHashMatches <;>
+    simp [payload] at authorized
+  by_cases amountEq :
+      surface.decodedPayloadAmount = surface.authorizedExternalAmount
+  · by_cases assetEq :
+        surface.decodedPayloadAsset = surface.authorizedExternalAsset
+    · by_cases nativeEq :
+          surface.decodedPayloadAsset = surface.nativeAssetId
+      · have externalNative :
+            surface.authorizedExternalAsset = surface.nativeAssetId := by
+          rw [← assetEq, nativeEq]
+        simp [amountEq, assetEq, externalNative] at authorized
+      · simp [amountEq, assetEq] at authorized
+        exact ⟨rfl, amountEq, assetEq, nativeEq⟩
+    · simp [amountEq, assetEq] at authorized
+  · simp [amountEq] at authorized
+
+theorem bridge_mint_asset_authorized_delta_value
+    {surface : InboundBridgeMintAssetSurface}
+    (authorized : bridgeMintAssetAuthorized surface = true) :
+    inboundBridgeAuthorizedAssetDeltaValue
+        surface
+        surface.decodedPayloadAsset =
+      surface.decodedPayloadAmount := by
+  have facts :=
+    bridge_mint_asset_authorized_facts authorized
+  unfold inboundBridgeAuthorizedAssetDeltaValue
+  simp [facts.right.right.left, facts.right.left]
 
 theorem inbound_payload_with_state_delta_rejects
     {input : BridgePayloadInput}

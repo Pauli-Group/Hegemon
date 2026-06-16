@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.04,
+  "overall_completion_percent": 86.15,
   "last_full_formal_core": {
-    "date": "2026-06-16T17:52:14Z",
-    "commit": "90b70782",
-    "status": "passed locally after adding raw-ingress transfer authorized per-asset delta and public stablecoin-exception publication theorem slice",
+    "date": "2026-06-16T18:33:38Z",
+    "commit": "working-tree-on-bd164fd4",
+    "status": "passed locally after adding raw-ingress bridge authorized non-native asset-delta publication theorem slice",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1763,
+    "named_lean_theorems": 1766,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 968,
+    "axiom_dependent_theorems": 971,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
@@ -68,26 +68,25 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved accepted raw-ingress transfer publication carries canonical authorized per-asset delta values and public non-native nonzero stablecoin-exception consequences under explicit full or split deployed-verifier soundness assumptions.",
+    "summary": "Proved accepted raw-ingress bridge canonical publication carries an explicit authorized non-native bridge asset-delta value, decoded/external asset equality, zero direct native mint delta, raw/canonical replayed supply equality, and replay uniqueness under existing Hegemon-side publication/replay assumptions.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
-      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
-      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
+      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
+      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication",
-      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness",
-      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_authorized_asset_delta_value",
-      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_public_non_native_nonzero_requires_stablecoin_exception"
+      "Hegemon.Native.BridgeMintSafety.bridge_mint_asset_authorized_facts",
+      "Hegemon.Native.BridgeMintSafety.bridge_mint_asset_authorized_delta_value",
+      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_safe",
+      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_authorized_bridge_asset_delta"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean passed; cd formal/lean && lake build Hegemon.Native.RawIngressTransferNoTheftPublication Hegemon passed locally.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.BridgeMintSafety Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon passed locally.",
       "targeted_rust": "No runtime Rust changes in this slice; existing Lean-generated Rust conformance and native backend vector suites passed as part of the full formal-core gate.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T17:52:14Z after adding the raw-ingress transfer authorized-delta and stablecoin-exception theorem slice.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T18:33:38Z after adding the raw-ingress bridge authorized non-native asset-delta theorem slice.",
       "claims": 118,
-      "named_lean_theorems": 1763,
+      "named_lean_theorems": 1766,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 968,
+      "axiom_dependent_theorems": 971,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
@@ -102,9 +101,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice has no runtime changes; it composes existing accepted raw-ingress, transfer publication, canonical tx-leaf, and verifier-boundary surfaces.",
-      "It still keeps deployed verifier soundness, AIR/SmallWood/tx-leaf proof soundness, witness extraction, parser internals, and hash/security equivalence explicit.",
-      "Dynamic stablecoin governance, bridge asset conservation, storage durability below accepted predicates, and complete native-node equivalence remain explicit residuals."
+      "This slice has no runtime changes; it composes existing accepted raw-ingress bridge publication, bridge mint safety, replay, and canonical publication surfaces.",
+      "The explicit decoded bridge asset surface still must be bound to the future live PQ-clean bridge mint payload grammar, decoder, and verifier before inbound bridge minting can be enabled.",
+      "External receipt/PQ verifier soundness, primitive hash/security equivalence, parser internals, DA availability, storage durability below accepted predicates, dynamic stablecoin governance history, and complete native-node equivalence remain explicit residuals."
     ]
   },
   "last_production_binding_slice": {
@@ -308,7 +307,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -329,11 +328,12 @@
         "public input shape and binding gates",
         "transaction public-input and serialized-input admission rejects noncanonical asset ids, including balance-slot padding field aliases",
         "native block artifact binding admission",
-        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves accepted raw-ingress transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface"
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves accepted raw-ingress transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface",
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves accepted raw-ingress bridge canonical publication carries an explicit authorized non-native bridge asset-delta value equal to the decoded payload amount while direct native mint delta remains zero"
       ],
       "missing_work": [
         "Complete and discharge full deployed AIR/proof-system soundness for all balance slots and spend authorization, beyond the now-modeled P3 final-row public balance equations.",
-        "Bind bridge asset conservation and dynamic stablecoin governance history into the complete native-node replay theorem."
+        "Bind dynamic stablecoin governance history and the future PQ-clean bridge receipt verifier grammar into the complete native-node replay theorem."
       ],
       "performance_constraint": "Formal proof only or cheap public-input checks; do not add per-proof duplicate arithmetic beyond existing verifier inputs."
     },
@@ -741,7 +741,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 74,
+      "completion_percent": 75,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -759,6 +759,7 @@
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_safe`, packaging Hegemon-side bridge payload, decoded amount, raw pending-action publication, canonical publication, commitment-root, raw/canonical supply replay, and replay uniqueness facts without external receipt-soundness assumptions",
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_authorized_bridge_asset_delta`, packaging decoded/external asset equality, non-native bridge asset identity, authorized bridge asset-delta value, zero direct native mint delta, raw/canonical supply replay, and replay uniqueness on the same accepted canonical publication surface",
         "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean proves an abstract accepted receipt-mint replay decision table: receipt verification and payload equality precede replay-key import, consumed replay keys reject before mint authorization, mint authorization and exact amount/range checks are required, accepted imports the replay key, and immediate replay rejects",
         "formal/lean/Hegemon/Bridge/Replay.lean now models import with set-style pending-key removal, matching production replay-state semantics instead of list erase semantics",
         "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits schema-v2 acceptance/rejection and exact next replay-state vectors for the abstract bridge mint/replay decision table, including pending replay-key import clearing and unrelated pending-key preservation",
@@ -768,7 +769,7 @@
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets checks materialized replay keys, planned replay keys, canonical rebuild rows, and persisted bridge replay markers agree in order"
       ],
       "missing_work": [
-        "Bind the now Rust-conformant abstract bridge mint/replay decision table to a live production PQ-clean bridge mint payload grammar, decoder, and verifier when bridge minting is enabled.",
+        "Bind the explicit authorized bridge asset-delta surface and now Rust-conformant abstract bridge mint/replay decision table to a live production PQ-clean bridge mint payload grammar, decoder, and verifier when bridge minting is enabled.",
         "Mechanize or parameterize external-chain proof soundness.",
         "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths.",
         "Replace the disabled experimental RISC Zero envelope with a production PQ-clean receipt verifier and bind its soundness to the decoded output-admission table."
