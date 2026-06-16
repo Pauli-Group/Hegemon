@@ -7,7 +7,7 @@
   "overall_completion_percent": 84.48,
   "last_full_formal_core": {
     "date": "2026-06-16T04:28:14Z",
-    "commit": "pending",
+    "commit": "e3352e27fc75",
     "status": "passed locally after adding generic bounded-request production conformance, native sync response-count resource binding, and sync raw-batch publication resource theorem",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
